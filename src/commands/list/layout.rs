@@ -531,6 +531,9 @@ pub struct LayoutConfig {
     pub max_summary_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
+    /// How every cell in this layout presents a reference with a URL behind it.
+    /// Set once for the whole render — see [`LinkStyle`].
+    pub link_style: LinkStyle,
 }
 
 /// `Send + Sync` snapshot of the column geometry: `(kind, start, width)` per
@@ -538,9 +541,23 @@ pub struct LayoutConfig {
 /// threads, so renderers running outside `collect` — the picker's `--prs`
 /// thread — take this snapshot to place their cells on the same grid as the
 /// worktree rows.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ColumnGrid {
     pub columns: Vec<GridColumn>,
+    /// The layout's [`LinkStyle`], so a row rendered off-thread presents its
+    /// references exactly as the worktree rows beside it do.
+    pub link_style: LinkStyle,
+}
+
+impl Default for ColumnGrid {
+    /// An empty grid places no cells, so it emits nothing either way;
+    /// [`LinkStyle::Expanded`] is the inert choice.
+    fn default() -> Self {
+        Self {
+            columns: Vec::new(),
+            link_style: LinkStyle::Expanded,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -568,6 +585,7 @@ impl LayoutConfig {
                     width: col.width,
                 })
                 .collect(),
+            link_style: self.link_style,
         }
     }
 }
@@ -601,41 +619,110 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
-/// Format the dev-server URL, optionally as an OSC 8 hyperlink.
+/// How one render presents a reference that has a URL behind it — a PR number
+/// (`#3604`) or a dev-server port (`:11486`).
 ///
-/// A linked cell shows just the port (e.g. `:3000`) — the URL rides inside the
-/// escape sequence, so the cell costs the port's width rather than the whole
-/// URL's. Without links, or when the URL carries no parseable port, there is
-/// nowhere to hide the URL, so it renders in full and stays copyable.
-///
-/// `wt list` passes the terminal probe, because there the answer changes what
-/// the reader gets: [`estimate_url_width`] reserves a column wide enough for the
-/// full URL, so an unlinked cell can print it (the two have to agree on when a
-/// cell collapses to `:port`, hence the adjacency). The statusline passes
-/// `true`. It has no column to reserve — it fits a fixed-width line by dropping
-/// its worst-priority segment, and the URL is the worst — so an unlinked cell
-/// would grow past the budget and be dropped entirely, trading a port for
-/// nothing. A terminal that doesn't implement OSC 8 discards the escape and
-/// renders the same `:3000`, so emitting it unconditionally costs that reader
-/// nothing.
-pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
-    if include_link && let Some(port) = parse_port_from_url(url) {
-        return worktrunk::styling::hyperlink(url, &format!(":{port}"));
+/// A reference is short because the URL rides inside the OSC 8 escape, and two
+/// facts decide whether it can: whether the terminal draws OSC 8, and whether
+/// the destination delivers the escape there intact. One value answers both for
+/// a whole render, so a row's cells cannot disagree — a cell that underlines a
+/// reference whose escape something downstream strips leaves an underline with
+/// nothing to click.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkStyle {
+    /// An underlined OSC 8 link. A dev-server URL shows as `:3000` with the URL
+    /// itself inside the escape.
+    Linked,
+    /// The same short text, with neither escape nor underline: the picker feeds
+    /// its rows through skim, whose pipeline mangles OSC 8 into garbage like
+    /// `^[8;;…`. Nothing on those rows is clickable, so nothing is underlined.
+    /// The column is sized for the short form either way, so a dev-server URL
+    /// still collapses to `:3000`.
+    Unlinked,
+    /// The terminal doesn't draw OSC 8, so there is no escape to hide a URL in
+    /// and a dev-server URL prints in full, staying copyable. A PR reference
+    /// reads the same as under [`Unlinked`](Self::Unlinked) — it has nothing to
+    /// expand.
+    Expanded,
+}
+
+impl LinkStyle {
+    /// Resolve the style from the one thing a caller knows that the terminal
+    /// probe doesn't: whether its output reaches the terminal intact.
+    fn for_destination(carries_escapes: bool) -> Self {
+        match (supports_hyperlinks(Stream::Stdout), carries_escapes) {
+            (true, true) => Self::Linked,
+            (true, false) => Self::Unlinked,
+            (false, _) => Self::Expanded,
+        }
     }
-    url.to_string()
+}
+
+/// Where a rendered row is going: how many columns it may occupy, and whether
+/// an OSC 8 escape survives the trip.
+///
+/// The two travel together because one fact decides both. `wt list` writes to
+/// the terminal, so it gets the full width and its escapes arrive intact. The
+/// picker hands its rows to skim, which grants the list only part of the
+/// terminal — the rest is the preview pane — and mangles OSC 8 on the way.
+#[derive(Clone, Copy, Debug)]
+pub struct Destination {
+    pub width: usize,
+    pub link_style: LinkStyle,
+}
+
+impl Destination {
+    /// Rows written straight to the terminal — the `wt list` table.
+    pub fn terminal(width: usize) -> Self {
+        Self {
+            width,
+            link_style: LinkStyle::for_destination(true),
+        }
+    }
+
+    /// Rows handed to skim — the interactive picker.
+    pub fn picker(width: usize) -> Self {
+        Self {
+            width,
+            link_style: LinkStyle::for_destination(false),
+        }
+    }
+}
+
+/// Format the dev-server URL for a cell.
+///
+/// A collapsed cell shows just the port (e.g. `:3000`), costing the port's
+/// width rather than the whole URL's. Only [`LinkStyle::Expanded`] has nowhere
+/// to put the URL, so it renders in full and stays copyable — and
+/// [`estimate_url_width`] reserves a column wide enough for that, which is why
+/// the two sit together and read the same style.
+///
+/// The statusline passes [`LinkStyle::Linked`] whatever the terminal reports.
+/// It has no column to reserve — it fits a fixed-width line by dropping its
+/// worst-priority segment, and the URL is the worst — so an expanded cell would
+/// grow past the budget and be dropped entirely, trading a port for nothing. A
+/// terminal that doesn't implement OSC 8 discards the escape and renders the
+/// same `:3000`, so emitting it unconditionally costs that reader nothing.
+pub(crate) fn format_url_cell(url: &str, link: LinkStyle) -> String {
+    match (link, parse_port_from_url(url)) {
+        (LinkStyle::Linked, Some(port)) => worktrunk::styling::hyperlink(url, &format!(":{port}")),
+        (LinkStyle::Unlinked, Some(port)) => format!(":{port}"),
+        _ => url.to_string(),
+    }
 }
 
 /// Estimate URL column width using heuristics.
 ///
-/// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
-/// Otherwise, estimates full URL width from template structure.
-fn estimate_url_width(url_template: Option<&str>, hyperlinks_supported: bool) -> usize {
+/// A cell that collapses to its port displays as `:PORT` (6 chars for 5-digit
+/// ports); an [`Expanded`](LinkStyle::Expanded) one needs the full URL width,
+/// estimated from the template structure.
+fn estimate_url_width(url_template: Option<&str>, link: LinkStyle) -> usize {
     let Some(template) = url_template else {
         return 0;
     };
 
-    // When hyperlinks are supported, URLs with ports display as ":XXXXX" (6 chars)
-    if hyperlinks_supported {
+    // A collapsed cell shows ":XXXXX" (6 chars) whenever the template has a port
+    if link != LinkStyle::Expanded {
         // Check for port patterns: template variables or static ports
         if template.contains("hash_port")
             || template.contains(":{{")
@@ -783,10 +870,14 @@ fn allocate_columns_with_priority(
     tasks: &HashSet<TaskKind>,
     max_path_width: usize,
     commit_width: usize,
-    terminal_width: usize,
+    destination: Destination,
     main_worktree_path: PathBuf,
     columns: ColumnSelection,
 ) -> LayoutConfig {
+    let Destination {
+        width: terminal_width,
+        link_style,
+    } = destination;
     let ColumnSelection {
         custom: custom_columns,
         selected,
@@ -1049,6 +1140,7 @@ fn allocate_columns_with_priority(
         max_summary_len,
         hidden_column_count,
         status_position_mask: metadata.status_position_mask,
+        link_style,
     }
 }
 
@@ -1079,12 +1171,13 @@ fn allocate_columns_with_priority(
 pub fn calculate_layout_with_width(
     items: &[super::model::ListItem],
     tasks: &HashSet<TaskKind>,
-    terminal_width: usize,
+    destination: Destination,
     main_worktree_path: &Path,
     url_template: Option<&str>,
     max_pr_number: Option<u64>,
     columns: ColumnSelection,
 ) -> LayoutConfig {
+    let link_style = destination.link_style;
     let custom_columns = columns.custom;
     // Calculate actual widths for things we know
     // Include branch names from both worktrees and standalone branches
@@ -1113,7 +1206,7 @@ pub fn calculate_layout_with_width(
         .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
 
     // Estimate URL width from template (heuristic, no expansion needed)
-    let url_width = estimate_url_width(url_template, supports_hyperlinks(Stream::Stdout));
+    let url_width = estimate_url_width(url_template, link_style);
 
     // Custom column widths are measured, not estimated: values were expanded
     // before layout. A column empty on every row stays 0 and is excluded.
@@ -1152,7 +1245,7 @@ pub fn calculate_layout_with_width(
         tasks,
         max_path_width,
         commit_width,
-        terminal_width,
+        destination,
         main_worktree_path.to_path_buf(),
         columns,
     )
@@ -1563,7 +1656,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+            Destination {
+                width: terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+                link_style: LinkStyle::Expanded,
+            },
             &main_worktree_path,
             None,
             None,
@@ -1680,7 +1776,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+            Destination {
+                width: terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+                link_style: LinkStyle::Expanded,
+            },
             &main_worktree_path,
             None,
             None,
@@ -1705,8 +1804,8 @@ mod tests {
 
     #[test]
     fn test_estimate_url_width_no_template() {
-        assert_eq!(estimate_url_width(None, false), 0);
-        assert_eq!(estimate_url_width(None, true), 0);
+        assert_eq!(estimate_url_width(None, LinkStyle::Expanded), 0);
+        assert_eq!(estimate_url_width(None, LinkStyle::Linked), 0);
     }
 
     #[test]
@@ -1715,10 +1814,10 @@ mod tests {
 
         // Without hyperlinks: full URL width from template expansion
         // Replaces {{ branch | hash_port }} with "12345" → "http://localhost:12345" = 22
-        assert_eq!(estimate_url_width(Some(template), false), 22);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Expanded), 22);
 
         // With hyperlinks: compact port display ":12345" = 6
-        assert_eq!(estimate_url_width(Some(template), true), 6);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 6);
     }
 
     #[test]
@@ -1728,10 +1827,10 @@ mod tests {
 
         // Without hyperlinks: full URL width from template expansion
         // Replaces {{ branch }} with "feature-xx" → "http://localhost/feature-xx" = 27
-        assert_eq!(estimate_url_width(Some(template), false), 27);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Expanded), 27);
 
         // With hyperlinks: no port pattern, so still uses template estimation
-        assert_eq!(estimate_url_width(Some(template), true), 27);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 27);
     }
 
     #[test]
@@ -1739,10 +1838,10 @@ mod tests {
         let template = "http://localhost:3000";
 
         // Without hyperlinks: template length = 21
-        assert_eq!(estimate_url_width(Some(template), false), 21);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Expanded), 21);
 
         // With hyperlinks: has static port, compact display ":3000" = 6
-        assert_eq!(estimate_url_width(Some(template), true), 6);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 6);
     }
 
     #[test]
@@ -1750,10 +1849,13 @@ mod tests {
         let template = "http://localhost:{{ port }}";
 
         // Without hyperlinks: template length (no branch/hash_port replacement)
-        assert_eq!(estimate_url_width(Some(template), false), template.len());
+        assert_eq!(
+            estimate_url_width(Some(template), LinkStyle::Expanded),
+            template.len()
+        );
 
         // With hyperlinks: has ":{{" pattern, compact display = 6
-        assert_eq!(estimate_url_width(Some(template), true), 6);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 6);
     }
 
     // --- Flexible column (Summary/Message) allocation tests ---
@@ -1810,7 +1912,10 @@ mod tests {
         calculate_layout_with_width(
             &items,
             tasks,
-            width,
+            Destination {
+                width,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1853,7 +1958,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &full_run_tasks(),
-            300,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1912,7 +2020,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &full_run_tasks(),
-            300,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1955,7 +2066,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &full_run_tasks(),
-            300,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1985,7 +2099,10 @@ mod tests {
         let unplanned = calculate_layout_with_width(
             &items,
             &non_full_run_tasks(),
-            200,
+            Destination {
+                width: 200,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2005,7 +2122,10 @@ mod tests {
         let planned = calculate_layout_with_width(
             &items,
             &full_run_tasks(),
-            200,
+            Destination {
+                width: 200,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2030,7 +2150,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &full_run_tasks(),
-            24,
+            Destination {
+                width: 24,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2303,7 +2426,10 @@ mod tests {
         let layout_wide = calculate_layout_with_width(
             &items,
             &tasks,
-            300,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2327,7 +2453,10 @@ mod tests {
         let layout_170 = calculate_layout_with_width(
             &items,
             &tasks,
-            170,
+            Destination {
+                width: 170,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2480,7 +2609,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            170,
+            Destination {
+                width: 170,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2518,7 +2650,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            30,
+            Destination {
+                width: 30,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2542,7 +2677,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            80,
+            Destination {
+                width: 80,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2606,7 +2744,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &non_full_run_tasks(),
-            300,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2648,7 +2789,10 @@ mod tests {
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            300,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2674,7 +2818,10 @@ mod tests {
         let narrow = calculate_layout_with_width(
             &items,
             &non_full_run_tasks(),
-            30,
+            Destination {
+                width: 30,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,

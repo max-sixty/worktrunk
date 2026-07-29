@@ -756,9 +756,12 @@ format!("{style}{}{style:#}", hyperlink(url, text))
 format!("{}{text}{}", osc8::Hyperlink::new(url), osc8::Hyperlink::END)
 ```
 
-Text that isn't a link stays plain. On a terminal without OSC 8 support `wt
-list` prints the dev-server URL in full, unadorned, because there's nothing
-there to click.
+Text that isn't a link stays plain, and whether a run of text is a link belongs
+to the render rather than to the cell emitting it: `LayoutConfig::link_style`
+answers it once for a whole row, so a CI reference and a dev-server port can't
+disagree. Two destinations carry no links, and so no underline: a terminal
+without OSC 8 support, where `wt list` prints the dev-server URL in full, and
+the picker, whose rows pass through skim.
 
 ## Design Principles
 

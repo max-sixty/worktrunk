@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn test_statusline_fitting_never_splits_a_hyperlink() {
         use super::super::list::columns::ColumnKind;
-        use super::super::list::layout::format_url_cell;
+        use super::super::list::layout::{LinkStyle, format_url_cell};
 
         let ci = StatuslineSegment::from_column(
             format!(
@@ -1217,7 +1217,7 @@ mod tests {
             ColumnKind::CiStatus,
         );
         let url = StatuslineSegment::from_column(
-            format_url_cell("http://127.0.0.1:17913", true),
+            format_url_cell("http://127.0.0.1:17913", LinkStyle::Linked),
             ColumnKind::Url,
         );
         let segments = vec![

@@ -15,7 +15,7 @@ use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus}
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::columns::ColumnKind;
-use crate::commands::list::layout::format_url_cell;
+use crate::commands::list::layout::{LinkStyle, format_url_cell};
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
@@ -568,7 +568,7 @@ impl ListItem {
         // bare `#` otherwise (no width cap in the statusline)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
-                pr_status.format_cell(usize::MAX, true),
+                pr_status.format_cell(usize::MAX, LinkStyle::Linked),
                 ColumnKind::CiStatus,
             ));
         }
@@ -576,7 +576,7 @@ impl ListItem {
         // 8. URL (priority 9) — the dev server, as in `wt list`: the port as a
         // link, dimmed unless the health check found something listening on it.
         if let Some(ref url) = self.url {
-            let cell = format_url_cell(url, true);
+            let cell = format_url_cell(url, LinkStyle::Linked);
             segments.push(StatuslineSegment::from_column(
                 if self.url_active == Some(true) {
                     cell
@@ -973,7 +973,7 @@ mod tests {
                 .content
         };
 
-        let plain = format_url_cell("http://127.0.0.1:17913", true);
+        let plain = format_url_cell("http://127.0.0.1:17913", LinkStyle::Linked);
         let dim = cformat!("<dim>{plain}</>");
         assert_eq!(url_cell(Some(false)), dim, "a dead port should dim");
         assert_eq!(url_cell(None), dim, "an unfinished health check should dim");

@@ -14,6 +14,7 @@ mod platform;
 
 use std::process::Output;
 
+use super::layout::LinkStyle;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -498,15 +499,15 @@ impl PrStatus {
         }
     }
 
-    /// Wrap `text` in this status's style, optionally as an OSC 8 hyperlink
-    /// to the PR/pipeline URL.
+    /// Wrap `text` in this status's style, as an OSC 8 hyperlink to the
+    /// PR/pipeline URL when the render carries links.
     ///
     /// The status color goes outside the link, which supplies its own
     /// underline and closes it without disturbing that color.
-    fn styled(&self, text: &str, include_link: bool) -> String {
+    fn styled(&self, text: &str, link: LinkStyle) -> String {
         let style = self.style();
-        let body = match (include_link, &self.url) {
-            (true, Some(url)) => worktrunk::styling::hyperlink(url, text),
+        let body = match (link, &self.url) {
+            (LinkStyle::Linked, Some(url)) => worktrunk::styling::hyperlink(url, text),
             _ => text.to_string(),
         };
         format!("{style}{body}{style:#}")
@@ -523,15 +524,15 @@ impl PrStatus {
     /// known: Error and Conflicts share the warning color, so a yellow
     /// `#3035` would be indistinguishable from a conflicted PR.
     ///
-    /// When `include_link` is false, the cell is colored but not clickable —
-    /// for the `wt list` table on a terminal without OSC 8, and for the picker,
-    /// which strips the sequences.
-    pub fn format_cell(&self, max_width: usize, include_link: bool) -> String {
+    /// Under any style but [`LinkStyle::Linked`] the cell is colored but not
+    /// clickable, and carries no underline to suggest otherwise — the `wt list`
+    /// table on a terminal without OSC 8, and every picker row.
+    pub fn format_cell(&self, max_width: usize, link: LinkStyle) -> String {
         match self.number {
             Some(r) if !matches!(self.ci_status, CiStatus::Error) && r.width() <= max_width => {
-                self.styled(&r.to_string(), include_link)
+                self.styled(&r.to_string(), link)
             }
-            _ => self.styled(self.indicator(), include_link),
+            _ => self.styled(self.indicator(), link),
         }
     }
 
@@ -828,19 +829,25 @@ mod tests {
             updated_at: None,
         };
 
-        // Number fits → PR reference, hyperlinked when supported
-        assert_snapshot!(pr.format_cell(4, false), @"[32m#123[0m");
-        assert_snapshot!(pr.format_cell(4, true), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[24m[0m");
+        // Number fits → PR reference, underlined and linked only where the
+        // render carries links. A reference has no URL to fall back on, so
+        // `Expanded` reads the same as `Unlinked`.
+        assert_eq!(
+            pr.format_cell(4, LinkStyle::Expanded),
+            pr.format_cell(4, LinkStyle::Unlinked)
+        );
+        assert_snapshot!(pr.format_cell(4, LinkStyle::Unlinked), @"[32m#123[0m");
+        assert_snapshot!(pr.format_cell(4, LinkStyle::Linked), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[24m[0m");
         // Number wider than the column → bare # indicator, still hyperlinked
-        assert_snapshot!(pr.format_cell(3, false), @"[32m#[0m");
-        assert_snapshot!(pr.format_cell(3, true), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#]8;;\[24m[0m");
+        assert_snapshot!(pr.format_cell(3, LinkStyle::Unlinked), @"[32m#[0m");
+        assert_snapshot!(pr.format_cell(3, LinkStyle::Linked), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#]8;;\[24m[0m");
 
         // No number (branch workflow or pre-number cache entry) → bare # indicator
         let branch = PrStatus {
             number: None,
             ..pr.clone()
         };
-        assert_snapshot!(branch.format_cell(10, false), @"[32m#[0m");
+        assert_snapshot!(branch.format_cell(10, LinkStyle::Unlinked), @"[32m#[0m");
 
         // Error renders ⚠ even when the number fits: Error and Conflicts
         // share yellow, so a yellow "#123" would read as a conflicted PR
@@ -848,14 +855,14 @@ mod tests {
             ci_status: CiStatus::Error,
             ..pr.clone()
         };
-        assert_snapshot!(error.format_cell(usize::MAX, false), @"[33m⚠[0m");
+        assert_snapshot!(error.format_cell(usize::MAX, LinkStyle::Unlinked), @"[33m⚠[0m");
 
         // GitLab sigil
         let mr = PrStatus {
             number: Some(PrRef::mr(7)),
             ..pr
         };
-        assert_snapshot!(mr.format_cell(usize::MAX, false), @"[32m!7[0m");
+        assert_snapshot!(mr.format_cell(usize::MAX, LinkStyle::Unlinked), @"[32m!7[0m");
     }
 
     #[test]
@@ -929,7 +936,7 @@ mod tests {
         let dim = "\u{1b}[2m";
 
         // Fresh verdict: green, not dimmed.
-        let fresh = passed(false, false).format_cell(3, false);
+        let fresh = passed(false, false).format_cell(3, LinkStyle::Unlinked);
         assert!(
             fresh.contains(green) && !fresh.contains(dim),
             "fresh: green, no dim: {fresh:?}"
@@ -937,7 +944,7 @@ mod tests {
 
         // SHA-mismatch stale keeps its verdict color, dimmed — `wt list` flags a
         // failing/passing pushed commit even when local HEAD has moved on.
-        let stale = passed(true, false).format_cell(3, false);
+        let stale = passed(true, false).format_cell(3, LinkStyle::Unlinked);
         assert!(
             stale.contains(green) && stale.contains(dim),
             "stale: green + dim: {stale:?}"
@@ -945,7 +952,7 @@ mod tests {
 
         // Cache-prime placeholder: dimmed and neutral — the number shows, but no
         // green/red is asserted until the live fetch lands.
-        let priming = passed(false, true).format_cell(3, false);
+        let priming = passed(false, true).format_cell(3, LinkStyle::Unlinked);
         assert!(
             priming.contains(dim) && !priming.contains(green),
             "priming: dim, neutral: {priming:?}"

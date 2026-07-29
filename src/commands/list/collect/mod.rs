@@ -1338,13 +1338,20 @@ pub fn collect(
 
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
-    // terminal — the rest belongs to the preview pane.
+    // terminal — the rest belongs to the preview pane — and takes its rows
+    // link-free because skim mangles OSC 8 (see `Destination`).
+    let width = list_width
+        .or_else(crate::display::terminal_width)
+        .unwrap_or(usize::MAX);
+    let destination = if progressive_handler.is_some() {
+        super::layout::Destination::picker(width)
+    } else {
+        super::layout::Destination::terminal(width)
+    };
     let layout = super::layout::calculate_layout_with_width(
         &all_items,
         &tasks,
-        list_width
-            .or_else(crate::display::terminal_width)
-            .unwrap_or(usize::MAX),
+        destination,
         &main_worktree.path,
         url_template.as_deref(),
         max_pr_number,
@@ -2634,7 +2641,7 @@ remove the file manually to continue.";
     /// any task results.
     #[test]
     fn test_render_reveal_picks_renderer_per_row() {
-        use super::super::layout::calculate_layout_with_width;
+        use super::super::layout::{Destination, LinkStyle, calculate_layout_with_width};
         use super::super::model::ListItem;
         use std::path::Path;
 
@@ -2646,7 +2653,10 @@ remove the file manually to continue.";
         let layout = calculate_layout_with_width(
             &items,
             &tasks,
-            80,
+            Destination {
+                width: 80,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/tmp"),
             None,
             None,

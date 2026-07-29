@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::{HINT_SYMBOL, StyledLine, strip_osc8_hyperlinks};
+use worktrunk::styling::{HINT_SYMBOL, StyledLine};
 
 use super::super::list::ci_status::PrStatus;
 
@@ -404,9 +404,7 @@ impl PickerProgressHandler for PickerHandler {
                 search_base.push_str(&path_str);
             }
 
-            // Strip OSC 8 hyperlinks — skim's pipeline mangles them into
-            // garbage like `^[8;;…`. Colors (SGR codes) are preserved.
-            let rendered_arc = Arc::new(Mutex::new(strip_osc8_hyperlinks(&rendered_line)));
+            let rendered_arc = Arc::new(Mutex::new(rendered_line));
             slots.push(Arc::clone(&rendered_arc));
 
             let item_arc = Arc::new(item);
@@ -567,7 +565,7 @@ impl PickerProgressHandler for PickerHandler {
         if let Some(slots) = self.rendered_slots.get()
             && let Some(slot) = slots.get(idx)
         {
-            *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
+            *slot.lock().unwrap() = rendered;
         }
         // Mirror the row's current CI status into its live slot so the `pr` /
         // `comments` tabs reflect the fetch as it lands. Track change at the
@@ -635,7 +633,7 @@ impl PickerProgressHandler for PickerHandler {
             return;
         };
         for (slot, line) in slots.iter().zip(rendered) {
-            *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
+            *slot.lock().unwrap() = line;
         }
         self.request_render(false);
     }
