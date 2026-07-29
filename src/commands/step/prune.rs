@@ -251,8 +251,8 @@ struct RemovalContext<'a> {
     /// the write side because branch deletion was `git branch -D`, which
     /// rewrites `.git/config` (it drops the `[branch "<name>"]` section —
     /// even when none exists). The removal chain has since moved to the CAS
-    /// `git update-ref -d`, and neither it nor `git worktree prune` /
-    /// `git worktree remove` (the rename-failure fallback) touches
+    /// `git update-ref -d`, and neither it nor `git worktree remove` (both the
+    /// scoped metadata prune and the rename-failure fallback) touches
     /// `.git/config` — verified empirically by inode-watching `.git/config`
     /// across each command — so hook-free removals only spawn readers of
     /// shared repo state and can run concurrently. (`git branch -D` remains
@@ -276,11 +276,13 @@ struct RemovalContext<'a> {
 ///   trash-cleanup spinner, and concurrent spinners would fight over the
 ///   cursor.
 /// - **`StaleDetached` and plan-less `Prunable` candidates** — both call
-///   `prune_worktrees()` fail-hard, so they don't race sibling prunes.
+///   `prune_worktree_entry()` fail-hard. The exclusion is now conservative:
+///   each call names its own stale entry, so it touches only that
+///   `.git/worktrees/<id>` and can no longer disturb a sibling's. TODO(prune):
+///   move these to the read-side fan-out.
 ///   (The fail-soft prune inside `stage_worktree_removal` stays on the read
-///   side: concurrent `git worktree prune` runs are idempotent and exit 0 —
-///   verified empirically — and a swallowed failure only leaves stale
-///   metadata for the next prune, never data loss. The scan's
+///   side, as it always has: a swallowed failure only leaves stale metadata
+///   for the next prune, never data loss. The scan's
 ///   `prepare_worktree_removal` can also prune under the read guard when a
 ///   Linked item's directory vanished mid-scan; `check_one` `.ok()`s that
 ///   prepare, so an error there just deselects the candidate.)
@@ -342,7 +344,16 @@ fn try_remove(
     };
 
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
-        ctx.repo.prune_worktrees()?;
+        // Name the stale entry rather than sweeping the repository, so a
+        // sibling whose directory is merely absent right now (unmounted
+        // volume, half-finished `mv`) keeps its registration. `gather_check_items`
+        // never selects a locked worktree, so the scoped removal can't hit
+        // git's lock refusal.
+        let path = candidate
+            .path
+            .as_deref()
+            .context("stale detached candidate has no worktree path")?;
+        ctx.repo.prune_worktree_entry(path)?;
         // A stale detached entry has no branch to delete.
         return Ok(Some(false));
     }
@@ -416,7 +427,8 @@ struct CheckOutcome {
     /// `None` means not removable (dirty, locked, primary — filtered
     /// silently, never reported as "younger than") — except for `Prunable`
     /// items, which are always removable but plan in `try_remove`: preparing
-    /// them calls `prune_worktrees()`, a mutation that must stay serialized.
+    /// them calls `prune_worktree_entry()`, a mutation that must stay
+    /// serialized.
     plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,

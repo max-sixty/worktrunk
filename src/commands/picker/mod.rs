@@ -3240,8 +3240,9 @@ pub mod tests {
     /// concurrent background removal can trigger.
     ///
     /// `apply` renames the worktree into the trash (so its path vanishes) and
-    /// then runs `git worktree prune`, which deletes the `.git/worktrees/<id>`
-    /// admin dir — all on a background thread. `git branch --list` enumerates
+    /// then runs `git worktree remove` on it, which deletes that worktree's
+    /// `.git/worktrees/<id>` admin dir — all on a background thread.
+    /// `git branch --list` enumerates
     /// worktrees to mark checked-out branches, so a query that races the
     /// in-flight prune can read a half-deleted admin dir and fail with
     /// `exit 128`. A test that `.unwrap()`s such a query flakes; retry until the

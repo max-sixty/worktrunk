@@ -1558,8 +1558,9 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
 /// continues: `try_remove` treats a preparation error as "not selected", not
 /// a command failure. Preparing a stale entry prunes its metadata — the
 /// mutation that keeps `Prunable` candidates planning under the write lock
-/// rather than on the scan — so a `git` shim failing `worktree prune` is the
-/// deterministic trigger. Unix-only for the same `CreateProcess` reason as
+/// rather than on the scan — and it names the entry (`git worktree remove`)
+/// rather than sweeping the repo, so a `git` shim failing `worktree remove` is
+/// the deterministic trigger. Unix-only for the same `CreateProcess` reason as
 /// the canary shim above.
 #[cfg(unix)]
 #[rstest]
@@ -1574,10 +1575,10 @@ fn test_prune_skips_prunable_candidate_whose_preparation_fails(mut repo: TestRep
     let mut cmd = repo.wt_command();
     let git_wrapper_dir = repo.home_path().join("git-wrapper");
     std::fs::create_dir_all(&git_wrapper_dir).unwrap();
-    write_failing_worktree_prune_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    write_failing_worktree_remove_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
     prepend_path(&mut cmd, &git_wrapper_dir);
-    let prune_failed_marker = repo.home_path().join("worktree-prune-failed");
-    cmd.env("WT_TEST_WORKTREE_PRUNE_FAILED", &prune_failed_marker);
+    let prune_failed_marker = repo.home_path().join("worktree-remove-failed");
+    cmd.env("WT_TEST_WORKTREE_REMOVE_FAILED", &prune_failed_marker);
 
     let output = cmd
         .args(["step", "prune", "--yes", "--min-age=0s"])
@@ -1870,18 +1871,18 @@ exec {real_git} "$@"
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// A `git` shim that fails every `git worktree prune` and passes everything
+/// A `git` shim that fails every `git worktree remove` and passes everything
 /// else through to the real git.
 #[cfg(unix)]
-fn write_failing_worktree_prune_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+fn write_failing_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
 
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
     let script = format!(
         r#"#!/bin/sh
-if [ "$1" = "worktree" ] && [ "$2" = "prune" ]; then
-  : > "$WT_TEST_WORKTREE_PRUNE_FAILED"
-  echo "shim: worktree prune disabled" >&2
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  : > "$WT_TEST_WORKTREE_REMOVE_FAILED"
+  echo "shim: worktree remove disabled" >&2
   exit 1
 fi
 exec {real_git} "$@"

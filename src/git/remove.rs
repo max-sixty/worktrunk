@@ -391,14 +391,23 @@ pub fn remove_worktree_with_cleanup(
 /// This is a lower-level building block exposed for callers that want to
 /// stage the directory up-front and defer the `rm -rf` to a detached
 /// background process (the pattern `wt remove` uses internally).
+///
+/// The metadata cleanup names this worktree
+/// ([`prune_worktree_entry`](Repository::prune_worktree_entry)) rather than
+/// sweeping the repository, so a sibling worktree whose directory happens to
+/// be absent right now keeps its registration. A locked worktree never reaches
+/// here — `prepare_worktree_removal` rejects one before staging.
 pub fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option<PathBuf> {
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, worktree_path);
 
     if std::fs::rename(worktree_path, &staged_path).is_ok() {
-        if let Err(e) = repo.prune_worktrees() {
-            tracing::debug!(error = %e, "Failed to prune worktrees after rename: {e}");
+        // The rename moved the directory out from under `worktree_path`, so
+        // git resolves the entry by its recorded path and skips the clean
+        // check.
+        if let Err(e) = repo.prune_worktree_entry(worktree_path) {
+            tracing::debug!(error = %e, "Failed to prune worktree entry after rename: {e}");
         }
         Some(staged_path)
     } else {
