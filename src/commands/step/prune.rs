@@ -253,12 +253,13 @@ struct RemovalContext<'a> {
     /// even when none exists). The removal chain has since moved to the CAS
     /// `git update-ref -d`, and neither it nor `git worktree remove` (both the
     /// scoped metadata prune and the rename-failure fallback) touches
-    /// `.git/config` — verified empirically by inode-watching `.git/config`
-    /// across each command — so hook-free removals only spawn readers of
-    /// shared repo state and can run concurrently. (`git branch -D` remains
-    /// reachable only via `delete_branch_if_safe`'s force arm, which prune
-    /// never uses, and its snapshot-miss arm, unreachable here because the
-    /// chain captures the snapshot immediately before consulting it.)
+    /// `.git/config`, so hook-free removals never rewrite it and can run
+    /// concurrently. Verified empirically: with `.git/config` made immutable,
+    /// only `git branch -D` reports `could not write config file`.
+    /// (`git branch -D` remains reachable only via `delete_branch_if_safe`'s
+    /// force arm, which prune never uses, and its snapshot-miss arm,
+    /// unreachable here because the chain captures the snapshot immediately
+    /// before consulting it.)
     check_lock: &'a RwLock<()>,
 }
 
@@ -275,37 +276,42 @@ struct RemovalContext<'a> {
 /// - **`--foreground` worktree candidates** — the foreground path runs a TTY
 ///   trash-cleanup spinner, and concurrent spinners would fight over the
 ///   cursor.
-/// - **`StaleDetached` and plan-less `Prunable` candidates** — both call
-///   `prune_worktree_entry()` fail-hard. The exclusion is now conservative:
-///   each call names its own stale entry, so it touches only that
-///   `.git/worktrees/<id>` and can no longer disturb a sibling's. TODO(prune):
-///   move these to the read-side fan-out.
-///   (The fail-soft prune inside `stage_worktree_removal` stays on the read
-///   side, as it always has: a swallowed failure only leaves stale metadata
-///   for the next prune, never data loss. The scan's
-///   `prepare_worktree_removal` can also prune under the read guard when a
-///   Linked item's directory vanished mid-scan; `check_one` `.ok()`s that
-///   prepare, so an error there just deselects the candidate.)
 /// - **The current worktree** — deferred until after the fan-out drains and
 ///   run alone; write for uniformity with its post-switch hooks.
+///
+/// Everything else fans out, including the two candidate shapes that
+/// unregister stale worktree metadata: `StaleDetached`, and the plan-less
+/// `Prunable` candidates whose `prepare_worktree_removal` prunes. Each call
+/// names its own entry, so concurrent prunes are safe against each other and
+/// against the scan — see the concurrency section on
+/// [`prune_worktree_entry`](Repository::prune_worktree_entry).
 fn removal_needs_write(
     candidate: &Candidate,
     plan: Option<&RemovalPlan>,
     ctx: &RemovalContext<'_>,
 ) -> bool {
-    match candidate.kind {
-        CandidateKind::Current | CandidateKind::StaleDetached => true,
+    // The worktree whose `pre-remove` body and trash-cleanup spinner this
+    // removal would run, `None` when it runs neither.
+    let hook_anchor = match candidate.kind {
+        CandidateKind::Current => return true,
+        // `try_remove` prunes the stale entry and returns before either runs.
+        CandidateKind::StaleDetached => None,
         CandidateKind::Other | CandidateKind::BranchOnly => match plan {
-            None => true,
-            Some(RemovalPlan::Worktree { worktree_path, .. }) => {
-                ctx.foreground
-                    || ctx
-                        .hook_plan
-                        .has_hooks_for(worktree_path, &[HookType::PreRemove, HookType::PostRemove])
-            }
-            Some(RemovalPlan::BranchOnly { .. }) => false,
+            Some(RemovalPlan::Worktree { worktree_path, .. }) => Some(worktree_path.as_path()),
+            Some(RemovalPlan::BranchOnly { .. }) => None,
+            // A plan-less `Prunable` candidate plans inside `try_remove`, so
+            // ask its own path what that plan will decide: an entry whose
+            // directory turns out to still be there plans a full worktree
+            // removal, hooks and spinner and all.
+            None => candidate.path.as_deref(),
         },
-    }
+    };
+    hook_anchor.is_some_and(|anchor| {
+        ctx.foreground
+            || ctx
+                .hook_plan
+                .has_hooks_for(anchor, &[HookType::PreRemove, HookType::PostRemove])
+    })
 }
 
 /// Try to remove a candidate immediately. Returns `Ok(Some(branch_deleted))`
@@ -313,9 +319,10 @@ fn removal_needs_write(
 /// skipped (preparation error), `Err` on execution error.
 ///
 /// `plan` is the scan-time `prepare_worktree_removal` result from
-/// [`check_one`]. `Prunable` candidates arrive plan-less and prepare here,
-/// under the write lock, because preparing them prunes stale worktree
-/// metadata. Scan-time plans may be stale by execution; the pre-rename
+/// [`check_one`]. `Prunable` candidates arrive plan-less and prepare here
+/// rather than on the scan, because preparing them prunes stale worktree
+/// metadata and the scan also backs `--dry-run`, which mutates nothing.
+/// Scan-time plans may be stale by execution; the pre-rename
 /// `ensure_clean` and the branch-delete CAS re-validate what matters — and the
 /// returned [`BranchFate`](crate::commands::worktree::BranchFate) is how a CAS
 /// refusal reaches the summary.
@@ -427,8 +434,8 @@ struct CheckOutcome {
     /// `None` means not removable (dirty, locked, primary — filtered
     /// silently, never reported as "younger than") — except for `Prunable`
     /// items, which are always removable but plan in `try_remove`: preparing
-    /// them calls `prune_worktree_entry()`, a mutation that must stay
-    /// serialized.
+    /// them calls `prune_worktree_entry()`, and this scan also backs
+    /// `--dry-run`, which mutates nothing.
     plan: Option<RemovalPlan>,
     /// Whether the item passed the removability gate (see `plan`).
     removable: bool,
@@ -441,8 +448,7 @@ struct CheckOutcome {
 
 /// One check item's full parallel work: integration + removability + age.
 /// Held under the check-lock read guard at the call site so it never overlaps
-/// a write-side removal (hook-bearing or metadata-pruning candidates — see
-/// [`removal_needs_write`]).
+/// a write-side removal (see [`removal_needs_write`]).
 #[allow(clippy::too_many_arguments)]
 fn check_one(
     item: &CheckItem,

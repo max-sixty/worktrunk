@@ -1557,8 +1557,8 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
 /// preparation fails at removal time is skipped silently and the run
 /// continues: `try_remove` treats a preparation error as "not selected", not
 /// a command failure. Preparing a stale entry prunes its metadata — the
-/// mutation that keeps `Prunable` candidates planning under the write lock
-/// rather than on the scan — and it names the entry (`git worktree remove`)
+/// mutation that keeps `Prunable` candidates planning in `try_remove` rather
+/// than on the `--dry-run`-shared scan — and it names the entry (`git worktree remove`)
 /// rather than sweeping the repo, so a `git` shim failing `worktree remove` is
 /// the deterministic trigger. Unix-only for the same `CreateProcess` reason as
 /// the canary shim above.
@@ -1662,6 +1662,100 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     );
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     for name in ["para-a", "para-b"] {
+        assert!(
+            !branches.lines().any(|branch| branch == name),
+            "{name} should have been deleted; branches:\n{branches}"
+        );
+    }
+}
+
+/// The removals that unregister stale worktree metadata are on the read side
+/// too, not held back one at a time.
+///
+/// Four stale entries: two carrying a branch (prune's plan-less `Prunable`
+/// candidates, which prune while planning) and two detached (`StaleDetached`,
+/// which prune in place of a removal). Each unregisters its own metadata with
+/// `git worktree remove <path>`, and the shim makes every one of them wait for
+/// all four to start before proceeding. Serialized, the first would wait out
+/// the shim's 15 s timeout and drop a sentinel file, which the test asserts
+/// absent. Unix-only for the same `CreateProcess` shim reason as the canary
+/// above.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_metadata_removals_run_concurrently(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // At main HEAD, so every entry is same-commit integrated.
+    let mut stale = vec![repo.add_worktree("stale-a"), repo.add_worktree("stale-b")];
+    for name in ["det-a", "det-b"] {
+        let path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{name}"));
+        repo.run_git(&[
+            "worktree",
+            "add",
+            "--detach",
+            path.to_str().unwrap(),
+            "HEAD",
+        ]);
+        stale.push(path);
+    }
+    for path in &stale {
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    let mut cmd = repo.wt_command();
+    // The removal pool is sized from the rayon thread count; pin it to four so
+    // the barrier can resolve even on a single-core runner (the workers block
+    // in subprocess waits, so four threads don't need four CPUs).
+    cmd.env("RAYON_NUM_THREADS", "4");
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_barrier_worktree_remove_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    let barrier_dir = repo.home_path().join("barrier");
+    std::fs::create_dir_all(&barrier_dir).unwrap();
+    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+    cmd.env("WT_TEST_BARRIER_COUNT", stale.len().to_string());
+
+    let output = cmd
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+    let sentinels: Vec<String> = std::fs::read_dir(&barrier_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    let started: Vec<&String> = sentinels
+        .iter()
+        .filter(|n| n.starts_with("started-"))
+        .collect();
+    assert_eq!(
+        started.len(),
+        stale.len(),
+        "every stale entry should have pruned its own metadata: {started:?}"
+    );
+    let timeouts: Vec<&String> = sentinels
+        .iter()
+        .filter(|n| n.starts_with("timeout-"))
+        .collect();
+    assert!(
+        timeouts.is_empty(),
+        "a metadata prune waited out the barrier — it ran on the write side: {timeouts:?}"
+    );
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !list.contains("prunable"),
+        "every stale entry should be unregistered; worktrees:\n{list}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    for name in ["stale-a", "stale-b"] {
         assert!(
             !branches.lines().any(|branch| branch == name),
             "{name} should have been deleted; branches:\n{branches}"
@@ -1827,6 +1921,41 @@ while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
 done
 {real_git} update-ref -d "$3" || true
 exit 1
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
+/// A `git` shim whose `worktree remove` arms rendezvous with each other (see
+/// `test_prune_metadata_removals_run_concurrently`): each records that it
+/// started, then waits until `$WT_TEST_BARRIER_COUNT` of them have. Everything
+/// else passes through to the real git.
+#[cfg(unix)]
+fn write_barrier_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+case "$1 $2" in
+  "worktree remove") ;;
+  *) exec {real_git} "$@" ;;
+esac
+: > "$WT_TEST_BARRIER_DIR/started-$(basename "$3")"
+i=0
+while [ "$(ls "$WT_TEST_BARRIER_DIR" | grep -c '^started-')" -lt "$WT_TEST_BARRIER_COUNT" ]; do
+  i=$((i+1))
+  if [ "$i" -gt 300 ]; then
+    : > "$WT_TEST_BARRIER_DIR/timeout-$(basename "$3")"
+    break
+  fi
+  sleep 0.05
+done
+exec {real_git} "$@"
 "#
     );
     let path = dir.join("git");

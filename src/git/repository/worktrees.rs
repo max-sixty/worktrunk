@@ -149,6 +149,22 @@ impl Repository {
     /// returns `WorktreeLocked` at the top of its path/current arm and rejects
     /// a locked worktree before staging one for removal, and prune's
     /// `gather_check_items` never selects one as a candidate.
+    ///
+    /// # Concurrent calls
+    ///
+    /// `wt step prune` calls this from several removals at once. Each names one
+    /// entry, so no call deletes another's `.git/worktrees/<id>`. Git also
+    /// `rmdir`s the containing `.git/worktrees` once the last entry goes, but
+    /// that only succeeds on an already-empty directory: `git worktree remove`
+    /// enumerates the directory before deleting its own entry, and every
+    /// per-worktree command in the removal chain (`git status`, the fsmonitor
+    /// stop) runs while that worktree is still registered, so an emptied
+    /// directory has no in-flight reader left to strand.
+    ///
+    /// A `git worktree list` in another process is the one thing that
+    /// disappearing directory can still fail (`fatal: Invalid path
+    /// '…/.git/worktrees'`, between its readdir and its realpath). That is
+    /// git's own race, and it holds however wt schedules its removals.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
         // Every caller's path came from `list_worktrees`, which parses git's
         // porcelain as UTF-8, so this only fires if that edge ever stops
