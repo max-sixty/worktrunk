@@ -211,13 +211,14 @@ impl RepositoryCliExt for Repository {
                 // worktree has no branch to fall back to, so it proceeds and
                 // surfaces the removal error.
                 //
-                // A locked entry is skipped rather than pruned, which is what
-                // a repo-wide prune did here too — `git worktree remove` fails
-                // on one instead of ignoring it, and this route resolves a
-                // locked worktree before the lock check below sees it.
-                // `pruned_from` still carries the path either way: it is what
-                // the sibling-checkout guard in Phase 4 tests, not a record of
-                // whether the metadata went.
+                // The lock guard sits in the `else` arm below, so a locked
+                // worktree whose directory is missing arrives here with
+                // `locked` still set: the `is_none()` check is live, not
+                // redundant with it. Skipping preserves what the repo-wide
+                // prune did (it ignored locked entries), where `git worktree
+                // remove` would fail on one instead. `pruned_from` carries the
+                // path either way — it feeds the sibling-checkout guard in
+                // Phase 4, and is not a record of whether the metadata went.
                 if let Some(branch) = wt.branch.as_deref()
                     && !wt.path.exists()
                 {

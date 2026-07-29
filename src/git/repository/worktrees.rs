@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
+use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
@@ -146,14 +147,10 @@ impl Repository {
     /// fails on one instead. Callers establish that the target is unlocked
     /// before calling — see the two that do.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
-        let path_str = path.to_str().ok_or_else(|| {
-            anyhow::Error::from(GitError::Other {
-                message: format!(
-                    "Worktree path contains invalid UTF-8: {}",
-                    format_path_for_display(path)
-                ),
-            })
-        })?;
+        // Every caller's path came from `list_worktrees`, which parses git's
+        // porcelain as UTF-8, so this only fires if that edge ever stops
+        // guaranteeing it — a bare `?` rather than a rendered path.
+        let path_str = path.to_str().context("worktree path is not valid UTF-8")?;
         self.run_command(&["worktree", "remove", path_str])?;
         Ok(())
     }
