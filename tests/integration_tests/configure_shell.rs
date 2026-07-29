@@ -853,7 +853,10 @@ fn test_configure_shell_fish_legacy_removal_accepted_when_already_configured(
     child.stdin.take().unwrap().write_all(b"y\n").unwrap();
     let output = child.wait_with_output().unwrap();
 
-    assert!(output.status.success(), "accepting should succeed: {output:?}");
+    assert!(
+        output.status.success(),
+        "accepting should succeed: {output:?}"
+    );
     assert!(
         !legacy_file.exists(),
         "accepting must remove legacy conf.d/wt.fish: {legacy_file:?}"
