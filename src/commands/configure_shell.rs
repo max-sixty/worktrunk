@@ -179,8 +179,16 @@ fn is_worktrunk_managed_content(content: &str) -> bool {
 /// {cmd}` defined there is already loaded by the time fish would autoload
 /// `functions/{cmd}.fish`, and the stale wrapper wins every time.
 ///
+/// With `dry_run`, the same detection runs but nothing is removed — the returned
+/// paths are what a real run *would* delete, so a preview and the confirmation
+/// prompt can name them before the user consents (issue #3644).
+///
 /// Returns the paths of files that were cleaned up, each paired with `Shell::Fish`.
-fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
+fn cleanup_legacy_fish_conf_d(
+    configured: &[ConfigureResult],
+    cmd: &str,
+    dry_run: bool,
+) -> Vec<(Shell, PathBuf)> {
     let mut cleaned = Vec::new();
 
     // Clean up if fish was part of the install (regardless of whether it already existed)
@@ -198,6 +206,11 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
     };
 
     if !legacy_path.exists() {
+        return cleaned;
+    }
+
+    if dry_run {
+        cleaned.push((Shell::Fish, legacy_path));
         return cleaned;
     }
 
@@ -232,8 +245,16 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
 /// (`config_paths`), so — as with the fish `conf.d` cleanup — the path settles
 /// ownership and the file is removed whole, unread.
 ///
+/// With `dry_run`, the same detection runs but nothing is removed — the returned
+/// paths are what a real run *would* delete, so a preview and the confirmation
+/// prompt can name them before the user consents (issue #3644).
+///
 /// Returns the paths removed, each paired with `Shell::Nushell`.
-fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
+fn cleanup_stranded_nushell(
+    configured: &[ConfigureResult],
+    cmd: &str,
+    dry_run: bool,
+) -> Vec<(Shell, PathBuf)> {
     let mut cleaned = Vec::new();
 
     // Only act if nushell was part of this install.
@@ -249,6 +270,10 @@ fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(S
 
     for path in candidates {
         if &path == canonical || !path.exists() {
+            continue;
+        }
+        if dry_run {
+            cleaned.push((Shell::Nushell, path));
             continue;
         }
         match fs::remove_file(&path) {
@@ -267,6 +292,22 @@ fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(S
     }
 
     cleaned
+}
+
+/// Both legacy-location cleanups for one install, as one list.
+///
+/// With `dry_run`, detects the files a real install would remove without
+/// removing them, so a `--dry-run` preview and the install confirmation can name
+/// the deletions before they happen (issue #3644). With `dry_run` false, removes
+/// them and returns what was removed.
+fn collect_legacy_cleanups(
+    configured: &[ConfigureResult],
+    cmd: &str,
+    dry_run: bool,
+) -> Vec<(Shell, PathBuf)> {
+    let mut cleanups = cleanup_legacy_fish_conf_d(configured, cmd, dry_run);
+    cleanups.extend(cleanup_stranded_nushell(configured, cmd, dry_run));
+    cleanups
 }
 
 pub fn handle_configure_shell(
@@ -304,9 +345,20 @@ pub fn handle_configure_shell(
         .iter()
         .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
 
+    // Detect (without removing) the legacy files a real install would delete, so
+    // both the --dry-run preview and the confirmation prompt can name them before
+    // the user consents — the removal is destructive and used to happen unpreviewed
+    // (issue #3644).
+    let legacy_preview = collect_legacy_cleanups(&preview.configured, &cmd, true);
+
     // For --dry-run, show preview and return without modifying anything
     if dry_run {
-        let preview_text = show_install_preview(&preview.configured, &completion_preview, &cmd);
+        let preview_text = show_install_preview(
+            &preview.configured,
+            &completion_preview,
+            &legacy_preview,
+            &cmd,
+        );
         if !preview_text.is_empty() {
             println!("{preview_text}");
         }
@@ -315,15 +367,38 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
-            legacy_cleanups: Vec::new(),
+            legacy_cleanups: legacy_preview,
         });
     }
 
-    // If nothing needs to be changed, still clean up legacy fish conf.d files
-    // A user might have upgraded and have both functions/wt.fish and conf.d/wt.fish
+    // If nothing needs to be changed, there may still be legacy files to clean up
+    // (a user who upgraded and has both functions/wt.fish and conf.d/wt.fish). That
+    // removal is destructive, so gate it behind the same confirmation as an install
+    // — never delete a hand-written file as a silent side effect (issue #3644).
     if !needs_shell_changes && !needs_completion_changes {
-        let mut legacy_cleanups = cleanup_legacy_fish_conf_d(&preview.configured, &cmd);
-        legacy_cleanups.extend(cleanup_stranded_nushell(&preview.configured, &cmd));
+        if legacy_preview.is_empty() {
+            return Ok(ScanResult {
+                configured: preview.configured,
+                completion_results: completion_preview,
+                skipped: preview.skipped,
+                zsh_needs_compinit: false,
+                legacy_cleanups: Vec::new(),
+            });
+        }
+
+        if !skip_confirmation
+            && !prompt_for_install(
+                &preview.configured,
+                &completion_preview,
+                &legacy_preview,
+                &cmd,
+                "Remove deprecated shell integration files?",
+            )?
+        {
+            return Err("Cancelled by user".to_string());
+        }
+
+        let legacy_cleanups = collect_legacy_cleanups(&preview.configured, &cmd, false);
         return Ok(ScanResult {
             configured: preview.configured,
             completion_results: completion_preview,
@@ -338,6 +413,7 @@ pub fn handle_configure_shell(
         && !prompt_for_install(
             &preview.configured,
             &completion_preview,
+            &legacy_preview,
             &cmd,
             "Install shell integration?",
         )?
@@ -382,9 +458,9 @@ pub fn handle_configure_shell(
 
     // Clean up legacy fish conf.d file if we just installed to functions/
     // (issue #566), plus any nushell wrapper stranded at a legacy autoload
-    // location (issue #2878).
-    let mut legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
-    legacy_cleanups.extend(cleanup_stranded_nushell(&result.configured, &cmd));
+    // location (issue #2878). The confirmation above listed these removals
+    // (issue #3644).
+    let legacy_cleanups = collect_legacy_cleanups(&result.configured, &cmd, false);
 
     Ok(ScanResult {
         configured: result.configured,
@@ -766,18 +842,26 @@ fn configure_wrapper_file(
     }))
 }
 
-/// Format what will be installed (shell extensions and completions).
+/// Format what will be installed (shell extensions and completions) and what
+/// legacy files will be removed to make way for them.
 ///
 /// Returns the preview as a string (no trailing newline); the caller picks the
 /// sink. `--dry-run` is the command's answer, so it prints to stdout; the
 /// interactive `?` re-preview during the install prompt is mid-prompt narration,
 /// so it prints to stderr. See /writing-user-outputs.
 ///
+/// `legacy_cleanups` are the deprecated wrapper files a real install would
+/// delete (fish `conf.d`, stranded nushell autoload). Listing them here is what
+/// makes the removal consented rather than a silent side effect (issue #3644);
+/// the message mirrors the after-the-fact "Removed … (deprecated; now using …)"
+/// line, in the future tense.
+///
 /// Note: I/O errors are intentionally ignored - preview is best-effort
 /// and shouldn't block the prompt flow.
 pub fn show_install_preview(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
+    legacy_cleanups: &[(Shell, PathBuf)],
     cmd: &str,
 ) -> String {
     let bold = Style::new().bold();
@@ -834,6 +918,21 @@ pub fn show_install_preview(
             result.action.symbol(),
             result.action.description(),
             format_bash_with_gutter(fish_completion.trim()),
+        ));
+    }
+
+    // Show legacy files that will be removed. The canonical replacement is the
+    // path this shell is being configured at (found in `results`), matching the
+    // "now using <new>" the after-the-fact removal message shows.
+    for (shell, legacy_path) in legacy_cleanups {
+        let old_path = format_path_for_display(legacy_path);
+        let new_path = results
+            .iter()
+            .find(|r| r.shell == *shell)
+            .map(|r| format_path_for_display(&r.path))
+            .unwrap_or_default();
+        blocks.push(format!(
+            "{INFO_SYMBOL} Will remove {bold}{old_path}{bold:#} (deprecated; now using {bold}{new_path}{bold:#})",
         ));
     }
 
@@ -909,6 +1008,7 @@ pub(crate) fn format_matched_lines(matched_lines: &[String]) -> String {
 pub fn prompt_for_install(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
+    legacy_cleanups: &[(Shell, PathBuf)],
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
@@ -917,7 +1017,7 @@ pub fn prompt_for_install(
         // blank separates it from the re-prompt). See /writing-user-outputs.
         eprintln!(
             "{}\n",
-            show_install_preview(results, completion_results, cmd)
+            show_install_preview(results, completion_results, legacy_cleanups, cmd)
         );
     })
     .map_err(|e| e.to_string())?;
