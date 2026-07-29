@@ -521,7 +521,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m");
+    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m[4m]8;;http://main.localhost:3000\:3000]8;;\[24m[22m");
 }
 
 #[rstest]
@@ -542,7 +542,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m]8;;http://feature.localhost:3000\:3000]8;;\[22m");
+    assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m[4m]8;;http://feature.localhost:3000\:3000]8;;\[24m[22m");
 }
 
 /// The URL segment lands after the CI reference and before the model in Claude
@@ -562,7 +562,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m  Opus");
+        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m[4m]8;;http://main.localhost:3000\:3000]8;;\[24m[22m  Opus");
     });
 }
 

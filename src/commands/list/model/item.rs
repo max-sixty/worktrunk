@@ -980,6 +980,44 @@ mod tests {
         assert_eq!(url_cell(Some(true)), plain, "a live port should not dim");
     }
 
+    /// Underline is the statusline's only cue that a reference is clickable:
+    /// link text is tuned for width (`#123`, `:17913`) and reads as ordinary
+    /// content, and color is already spoken for by CI state. So every link on
+    /// the line carries one, whichever segment emitted it.
+    #[test]
+    fn test_statusline_links_are_underlined() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.url = Some("http://127.0.0.1:17913".to_string());
+        item.url_active = Some(true);
+        item.pr_status = Some(Some(PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://github.com/owner/repo/pull/123".to_string()),
+            number: Some(PrRef::pr(123)),
+            review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
+            updated_at: None,
+        }));
+
+        let line = item.format_statusline();
+        for (url, text) in [
+            ("https://github.com/owner/repo/pull/123", "#123"),
+            ("http://127.0.0.1:17913", ":17913"),
+        ] {
+            assert!(
+                line.contains(&worktrunk::styling::hyperlink(url, text)),
+                "{text} should render as an underlined link in {line:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_list_item_counts() {
         // New items have no counts computed yet

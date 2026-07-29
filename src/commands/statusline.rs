@@ -1022,7 +1022,7 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 
 /// Get git status as prioritized segments for the current worktree.
 ///
-/// CI status and the dev-server URL render as clickable OSC 8 hyperlinks.
+/// CI status and the dev-server URL render as underlined OSC 8 hyperlinks.
 fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 

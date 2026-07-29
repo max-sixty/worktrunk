@@ -736,6 +736,30 @@ eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktree
 eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
 ```
 
+## Hyperlinks
+
+Every OSC 8 link is underlined. Link text is sized to fit a column (`#3604`,
+`:11486`) and reads as ordinary content, and color already carries state (the
+CI verdict, dim for a port nothing answers on), so the underline is what marks
+a run of text as clickable.
+
+`worktrunk::styling::hyperlink(url, text)` emits the link and its underline
+together, which is what keeps the rule true at every call site. It closes with
+`[24m`, leaving a surrounding color or dim intact.
+
+```rust
+// GOOD - the helper carries the underline
+let cell = hyperlink(url, &format!(":{port}"));
+// GOOD - a caller's own style wraps the link
+format!("{style}{}{style:#}", hyperlink(url, text))
+// BAD - hand-assembled sequences, unmarked link
+format!("{}{text}{}", osc8::Hyperlink::new(url), osc8::Hyperlink::END)
+```
+
+Text that isn't a link stays plain. On a terminal without OSC 8 support `wt
+list` prints the dev-server URL in full, unadorned, because there's nothing
+there to click.
+
 ## Design Principles
 
 - **`cformat!` for styling** — Never manual escape codes (`\x1b[...`)

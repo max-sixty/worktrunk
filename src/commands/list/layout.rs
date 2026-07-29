@@ -620,11 +620,7 @@ struct PendingColumn<'a> {
 /// nothing.
 pub(crate) fn format_url_cell(url: &str, include_link: bool) -> String {
     if include_link && let Some(port) = parse_port_from_url(url) {
-        return format!(
-            "{}:{port}{}",
-            osc8::Hyperlink::new(url),
-            osc8::Hyperlink::END
-        );
+        return worktrunk::styling::hyperlink(url, &format!(":{port}"));
     }
     url.to_string()
 }

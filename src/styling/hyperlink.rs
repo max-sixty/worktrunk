@@ -1,9 +1,30 @@
 //! OSC 8 hyperlink support for terminal output.
 
+use color_print::cformat;
 use osc8::Hyperlink;
 
 // Re-export for direct use
 pub use supports_hyperlinks::{Stream, on as supports_hyperlinks};
+
+/// Render `text` as an underlined OSC 8 hyperlink to `url`.
+///
+/// Every link worktrunk emits goes through here, so the underline is a
+/// property of being a link rather than a rule each call site remembers. Link
+/// text is sized to fit a column (`#3604`, `:11486`) and reads as ordinary
+/// content, and color is already spoken for by state (the CI verdict, dim for
+/// a port nothing answers on), so the underline is what marks the text as
+/// clickable.
+///
+/// Closing with `[24m` rather than a full reset keeps a surrounding color or
+/// dim intact, so a caller can wrap the result in either without the link
+/// punching a hole in it.
+pub fn hyperlink(url: &str, text: &str) -> String {
+    cformat!(
+        "<underline>{}{text}{}</>",
+        Hyperlink::new(url),
+        Hyperlink::END
+    )
+}
 
 /// Strip OSC 8 hyperlinks while preserving other ANSI sequences (colors).
 ///
@@ -54,6 +75,27 @@ pub fn strip_osc8_hyperlinks(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The underline brackets the link and closes with `[24m`, so a caller's
+    /// color or dim survives the link untouched.
+    #[test]
+    fn test_hyperlink_underlines_the_link_text() {
+        let linked = hyperlink("https://example.com", "#123");
+
+        assert_eq!(
+            linked,
+            format!(
+                "\u{1b}[4m{}#123{}\u{1b}[24m",
+                Hyperlink::new("https://example.com"),
+                Hyperlink::END
+            )
+        );
+        assert_eq!(
+            strip_osc8_hyperlinks(&linked),
+            "\u{1b}[4m#123\u{1b}[24m",
+            "stripping the link leaves the underline and nothing else"
+        );
+    }
 
     #[test]
     fn test_strip_osc8_hyperlinks_removes_hyperlink() {

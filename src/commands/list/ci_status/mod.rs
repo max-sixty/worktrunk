@@ -500,21 +500,16 @@ impl PrStatus {
 
     /// Wrap `text` in this status's style, optionally as an OSC 8 hyperlink
     /// to the PR/pipeline URL.
+    ///
+    /// The status color goes outside the link, which supplies its own
+    /// underline and closes it without disturbing that color.
     fn styled(&self, text: &str, include_link: bool) -> String {
-        if let (true, Some(url)) = (include_link, &self.url) {
-            let style = self.style().underline();
-            format!(
-                "{}{}{}{}{}",
-                style,
-                osc8::Hyperlink::new(url),
-                text,
-                osc8::Hyperlink::END,
-                style.render_reset()
-            )
-        } else {
-            let style = self.style();
-            format!("{style}{text}{style:#}")
-        }
+        let style = self.style();
+        let body = match (include_link, &self.url) {
+            (true, Some(url)) => worktrunk::styling::hyperlink(url, text),
+            _ => text.to_string(),
+        };
+        format!("{style}{body}{style:#}")
     }
 
     /// Format CI status for a cell `max_width` columns wide.
@@ -835,10 +830,10 @@ mod tests {
 
         // Number fits → PR reference, hyperlinked when supported
         assert_snapshot!(pr.format_cell(4, false), @"[32m#123[0m");
-        assert_snapshot!(pr.format_cell(4, true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[0m");
+        assert_snapshot!(pr.format_cell(4, true), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[24m[0m");
         // Number wider than the column → bare # indicator, still hyperlinked
         assert_snapshot!(pr.format_cell(3, false), @"[32m#[0m");
-        assert_snapshot!(pr.format_cell(3, true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#]8;;\[0m");
+        assert_snapshot!(pr.format_cell(3, true), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#]8;;\[24m[0m");
 
         // No number (branch workflow or pre-number cache entry) → bare # indicator
         let branch = PrStatus {
