@@ -511,32 +511,15 @@ fn render_user_hooks(
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();
 
-    let mut has_any = false;
-    for (hook_type, cfg) in &hooks {
-        // Apply filter if specified
-        if let Some(f) = filter
-            && f != *hook_type
-        {
-            continue;
-        }
-
-        has_any = true;
-        render_hook_commands(
-            out,
-            *hook_type,
-            cfg,
-            HookSource::User,
-            approvals,
-            project_id,
-            ctx,
-        )?;
-    }
-
-    if !has_any {
-        writeln!(out, "{}", hint_message("(none configured)"))?;
-    }
-
-    Ok(())
+    render_hook_section(
+        out,
+        &hooks,
+        HookSource::User,
+        approvals,
+        project_id,
+        filter,
+        ctx,
+    )
 }
 
 /// Render project hooks section
@@ -572,25 +555,42 @@ fn render_project_hooks(
         .filter_map(|ht| config.hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();
 
+    render_hook_section(
+        out,
+        &hooks,
+        HookSource::Project,
+        approvals,
+        project_id,
+        filter,
+        ctx,
+    )
+}
+
+/// Render a section's body: every hook that survives `filter`, or
+/// `(none configured)` when that leaves the section with nothing.
+///
+/// The fallback keys off what was printed, not off what the config declared —
+/// a hook type carrying an empty command list (`post-switch = []`) has an entry
+/// but no commands to show, and a section holding only those is empty.
+fn render_hook_section(
+    out: &mut String,
+    hooks: &[(HookType, &CommandConfig)],
+    source: HookSource,
+    approvals: &Approvals,
+    project_id: Option<&str>,
+    filter: Option<HookType>,
+    ctx: Option<&CommandContext>,
+) -> anyhow::Result<()> {
     let mut has_any = false;
-    for (hook_type, cfg) in &hooks {
-        // Apply filter if specified
+    for (hook_type, config) in hooks {
         if let Some(f) = filter
             && f != *hook_type
         {
             continue;
         }
 
-        has_any = true;
-        render_hook_commands(
-            out,
-            *hook_type,
-            cfg,
-            HookSource::Project,
-            approvals,
-            project_id,
-            ctx,
-        )?;
+        has_any |=
+            render_hook_commands(out, *hook_type, config, source, approvals, project_id, ctx)?;
     }
 
     if !has_any {
@@ -600,7 +600,7 @@ fn render_project_hooks(
     Ok(())
 }
 
-/// Render commands for a single hook type
+/// Render commands for a single hook type, reporting whether it wrote any.
 fn render_hook_commands(
     out: &mut String,
     hook_type: HookType,
@@ -609,8 +609,10 @@ fn render_hook_commands(
     approvals: &Approvals,
     project_id: Option<&str>,
     ctx: Option<&CommandContext>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
+    let mut wrote_any = false;
     for row in hook_command_rows(config, ctx, hook_type, source)? {
+        wrote_any = true;
         let label = command_label(hook_type, row.name.as_deref());
 
         let needs_approval = needs_approval(source, approvals, project_id, &row.template);
@@ -627,7 +629,7 @@ fn render_hook_commands(
         writeln!(out, "{}", format_bash_with_gutter(shown))?;
     }
 
-    Ok(())
+    Ok(wrote_any)
 }
 
 /// Whether a listed command still needs the user's approval to run.
@@ -666,8 +668,9 @@ struct HookCommandRow {
 /// builds what actually executes, so every context key the execution path
 /// gains reaches this preview with no second edit here. Rendering then goes
 /// through [`render_template_preview`], shared with `wt hook <type>
-/// --dry-run`, which shows a `vars.*` template raw — its values resolve from
-/// git config when the step runs, possibly written by an earlier step.
+/// --dry-run`, which renders each `{{ vars.<key> }}` as itself while the rest
+/// of the template expands — those values resolve from git config when the
+/// step runs, possibly written by an earlier step.
 ///
 /// A manual invocation has no source or destination worktree, so the
 /// directional vars come from [`build_manual_hook_template_vars`], exactly as

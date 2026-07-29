@@ -320,6 +320,32 @@ url = "http://localhost:8080"
     });
 }
 
+/// A hook type declared with an empty command list contributes no commands, so
+/// both sections read as `(none configured)` rather than a bare heading.
+#[rstest]
+fn test_hook_show_empty_command_lists(repo: TestRepo, temp_home: TempDir) {
+    repo.write_test_config(
+        r#"post-switch = []
+"#,
+    );
+
+    repo.write_project_config(
+        r#"pre-merge = []
+"#,
+    );
+    repo.commit("Add project config with an empty hook list");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_hook_show_outside_git_repo(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
