@@ -14,7 +14,7 @@ metadata:
    git fetch origin
    git merge --ff-only origin/main
    ```
-   `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`. Note the resulting commit SHA: this is the tip the changelog covers, and step 12 checks that nothing else reaches `main` before the tag.
+   `--ff-only` advances the branch when it's a strict ancestor of `origin/main` and **fails** (rather than creating a merge commit or discarding work) if it has diverged — reconcile manually before continuing. This is the release-branch equivalent of `wt up`, spelled out because the `up` alias rebases each branch onto its own upstream (`origin/release`), not `main`. Note the resulting commit SHA: this is the tip the changelog covers, and step 12 checks the changelog against everything that reaches `main` before the tag.
 2. **Run tests**: Two gates — the local suite and the full cross-platform suite.
    - Local: `cargo run -- hook pre-merge --yes`.
    - Cross-platform: dispatch the `nightly` workflow on the cut-from tip and wait for it to go green. This is where a release gets its full linux/macos/windows validation: the PR path (`ci.yaml`) is moving to cargo-affected selection and will stop running the full `test` matrix, while `nightly` hosts `full-tests` (the full 3-OS suite) alongside feature-powerset, release-target, nix-flake, and minimal-versions. Benchmarks aren't part of `nightly` — they run in their own `benchmarks.yaml` and gate nothing.
@@ -42,15 +42,16 @@ metadata:
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
     ```
 11. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree). `main` can advance during the CI wait; step 12 catches anything that lands before the tag.
-12. **Verify nothing drifted in, then tag and push**: `/gpk` squash-merges onto whatever `main` tip exists at merge time, so a commit that lands during the PR's CI wait ships in the release but goes undocumented (the easy miss is a follow-up that reworks a feature this release already documents). Confirm the only commit added to `main` since the cut-from tip (step 1) is the release commit:
+12. **Verify the changelog covers `main`, then tag and push**: the tag decides what ships — `release.yaml` builds the binaries and the GitHub release notes from the tree at the tag, so everything reachable from it is in the release. `/gpk` squash-merges onto whatever `main` tip exists at merge time, so a commit that lands during the PR's CI wait is already an ancestor of the release commit and ships whether or not the changelog mentions it (the easy miss is a follow-up that reworks a feature this release already documents). List what reached `main` since the cut-from tip (step 1):
     ```bash
     git fetch origin
     git log --oneline <cut-from-commit>..origin/main
     ```
-    Expect a single line — the `Release vX.Y.Z (#NNNN)` squash commit. Any extra line drifted in during the window: review it, fold it into the changelog if user-facing (a quick follow-up squash PR), then re-run the check. Once clean, tag the squash commit (not the local branch HEAD, which `/gpk` reset) so the tag is reachable from `main`:
+    Clean means the changelog at `origin/main` documents every user-facing commit listed. With no drift the list is one line, the `Release vX.Y.Z (#NNNN)` squash commit. Review anything else that drifted in during the window and fold what's user-facing into the changelog with a follow-up squash PR, then re-fetch and re-run. The list only grows across passes — the drifted commits stay, joined by the follow-up's own squash commit — so each pass re-checks coverage over a longer list.
+
+    Once clean, tag `origin/main`. The check and the tag then name the same ref, and it's main's tip, so the tag is reachable from `main`:
     ```bash
-    MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
-    git tag vX.Y.Z "$MERGE_SHA" && git push origin vX.Y.Z
+    git tag vX.Y.Z origin/main && git push origin vX.Y.Z
     ```
 13. **Wait for the release workflow**: The tag push triggers `release.yaml`. Launch a ci-reporter agent to monitor the run through to completion (avoid `gh run watch` — it can hang); the run ID comes from:
     ```bash
