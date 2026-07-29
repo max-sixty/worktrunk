@@ -144,8 +144,11 @@ impl Repository {
     /// # Locked worktrees
     ///
     /// A repo-wide prune silently skips a locked entry; `git worktree remove`
-    /// fails on one instead. Callers establish that the target is unlocked
-    /// before calling — see the two that do.
+    /// fails on one instead. Every call site has already established the target
+    /// is unlocked, by a different route each: `prepare_worktree_removal`
+    /// returns `WorktreeLocked` at the top of its path/current arm and rejects
+    /// a locked worktree before staging one for removal, and prune's
+    /// `gather_check_items` never selects one as a candidate.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
         // Every caller's path came from `list_worktrees`, which parses git's
         // porcelain as UTF-8, so this only fires if that edge ever stops
