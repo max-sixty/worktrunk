@@ -214,23 +214,33 @@ fn test_bare_root_without_keys_has_no_project_config(_repo: TestRepo) {
 #[rstest]
 fn test_git_config_scope_precedence_local_over_global(repo: TestRepo, temp_home: TempDir) {
     write_user_config(&temp_home);
-    repo.run_git(&[
-        "config",
-        "--global",
-        "worktrunk.config.list.url",
-        "http://global:9999",
-    ]);
-    repo.run_git(&[
-        "config",
-        "--global",
-        "worktrunk.config.forge.platform",
-        "gitlab",
-    ]);
+    // The global tier gets its own GIT_CONFIG_GLOBAL file. Writing `--global`
+    // would land in the process-shared test gitconfig (`test_gitconfig_path`),
+    // leaking `worktrunk.config.*` keys into every parallel test's merged
+    // config; a private file keeps the global scope local to this test.
+    let global_config = temp_home.path().join("global-gitconfig");
+    let write_global = |key: &str, value: &str| {
+        let ok = std::process::Command::new("git")
+            .args([
+                "config",
+                "--file",
+                global_config.to_str().unwrap(),
+                key,
+                value,
+            ])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "failed to write global git config {key}");
+    };
+    write_global("worktrunk.config.list.url", "http://global:9999");
+    write_global("worktrunk.config.forge.platform", "gitlab");
     repo.run_git(&["config", "worktrunk.config.list.url", "http://local:3000"]);
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    cmd.args(["config", "show", "--format=json"])
+    cmd.env("GIT_CONFIG_GLOBAL", &global_config)
+        .args(["config", "show", "--format=json"])
         .current_dir(repo.root_path());
     set_temp_home_env(&mut cmd, temp_home.path());
 
