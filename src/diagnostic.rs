@@ -512,9 +512,10 @@ fn config_show_output(repo: &Repository) -> Option<String> {
             for (key, _) in &pairs {
                 output.push_str(&format!("{}{key}\n", worktrunk::config::GIT_CONFIG_PREFIX));
             }
-            if let Some(superseded) = worktrunk::config::superseded_project_file_label(repo) {
-                output.push_str(&format!("(superseded file: {superseded})\n"));
-            }
+            let superseded = worktrunk::config::superseded_project_file_label(repo)
+                .map(|s| format!("(superseded file: {s})\n"))
+                .unwrap_or_default();
+            output.push_str(&superseded);
             output.push_str(&format!(
                 "(values omitted; to inspect them, run {})\n",
                 worktrunk::config::GIT_CONFIG_LIST_COMMAND
@@ -590,6 +591,80 @@ mod tests {
         User config: /nonexistent/path.toml
         (file not found)
         ");
+    }
+
+    #[test]
+    fn test_config_show_output_names_git_source_and_superseded_file() {
+        // Git keys plus a committed .config/wt.toml: the report names the
+        // source and the superseded file, lists the key names, and omits the
+        // values (#3454).
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        std::fs::create_dir_all(test.root_path().join(".config")).unwrap();
+        std::fs::write(
+            test.root_path().join(".config/wt.toml"),
+            "pre-merge = \"cargo test\"\n",
+        )
+        .unwrap();
+        test.run_git(&[
+            "config",
+            "worktrunk.config.post-start",
+            "echo private-value",
+        ]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let output = config_show_output(&repo).unwrap_or_default();
+        assert!(
+            output.contains("worktrunk.config.post-start"),
+            "should name the active keys:\n{output}"
+        );
+        assert!(
+            output.contains("superseded file:"),
+            "should name the superseded file:\n{output}"
+        );
+        assert!(
+            output.contains("values omitted"),
+            "should omit values:\n{output}"
+        );
+        assert!(
+            !output.contains("echo private-value"),
+            "must not leak the hook body:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_config_show_output_falls_back_to_file_without_git_keys() {
+        // No git keys: the report shows the project config file section.
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        std::fs::create_dir_all(test.root_path().join(".config")).unwrap();
+        std::fs::write(
+            test.root_path().join(".config/wt.toml"),
+            "pre-merge = \"cargo test\"\n",
+        )
+        .unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let output = config_show_output(&repo).unwrap_or_default();
+        assert!(
+            output.contains("Project config:"),
+            "should render the file section:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_config_show_output_reports_git_config_read_failure() {
+        // A corrupt git config makes the bulk `git config --list -z` read
+        // fail; the diagnostic must note that rather than silently rendering
+        // `.config/wt.toml` as the active project source (#3454).
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        // Corrupt after opening: `all_config` populates lazily on first read.
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let output = config_show_output(&repo).unwrap_or_default();
+        assert!(
+            output.contains("git config read failed"),
+            "diagnostic should report the failed git-config read:\n{output}"
+        );
     }
 
     #[test]

@@ -200,9 +200,10 @@ pub(crate) fn warn_superseded_project_file(repo: &crate::git::Repository) {
         return;
     };
 
-    if WARNED.set(()).is_err() {
-        return;
-    }
+    // Race-tolerant: the peek above already suppresses the common re-entry;
+    // in the rare case two threads pass it before either sets the latch,
+    // both emit once, which is preferable to an untestable race-loser guard.
+    let _ = WARNED.set(());
 
     eprintln!(
         "{}",

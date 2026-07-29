@@ -808,22 +808,24 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         let source = format!("@ {}", worktrunk::config::GIT_CONFIG_SOURCE_LABEL);
         write_heading_and_identifier(out, &repo, &source)?;
         if let Some(superseded) = worktrunk::config::superseded_project_file_label(&repo) {
-            writeln!(
-                out,
-                "{}",
-                warning_message(cformat!(
+            // push_str, not writeln!(…)? — the write into a String is
+            // infallible, so `?` leaves an uncoverable error region.
+            out.push_str(
+                &warning_message(cformat!(
                     "Project config file @ <bold>{superseded}</> is superseded by these keys"
                 ))
-            )?;
+                .to_string(),
+            );
+            out.push('\n');
         }
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
+        out.push_str(
+            &hint_message(cformat!(
                 "To list the keys and their origins, run <underline>{}</>",
                 worktrunk::config::GIT_CONFIG_LIST_COMMAND
             ))
-        )?;
+            .to_string(),
+        );
+        out.push('\n');
         match worktrunk::config::render_git_source_toml(&git_pairs) {
             Ok(rendered) => {
                 // Same validation rendering as the file branch below.

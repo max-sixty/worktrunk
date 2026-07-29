@@ -975,18 +975,9 @@ impl Repository {
     pub fn project_config(&self) -> anyhow::Result<Option<&ProjectConfig>> {
         self.cache
             .project_config
-            .get_or_try_init(|| {
-                // The file source needs a worktree to resolve against; the
-                // git-config source (worktrunk.config.*) does not — a bare
-                // root with keys in the bare repo's config still has project
-                // config. Outside a worktree, load only when such keys exist
-                // (the accessor is an in-memory scan, so this probe is free).
-                let in_worktree = self.current_worktree().root().is_ok();
-                if in_worktree || !self.worktrunk_config_git_pairs()?.is_empty() {
-                    ProjectConfig::load(self, true).context("Failed to load project config")
-                } else {
-                    Ok(None)
-                }
+            .get_or_try_init(|| match self.current_worktree().root() {
+                Ok(_) => ProjectConfig::load(self, true).context("Failed to load project config"),
+                Err(_) => Ok(None), // Not in a worktree, no project config
             })
             .map(Option::as_ref)
     }
