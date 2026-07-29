@@ -813,6 +813,53 @@ fn test_configure_shell_fish_legacy_removal_declined_when_already_configured(
     );
 }
 
+/// Accepting the prompt in the already-configured branch removes the legacy file
+/// (issue #3644).
+///
+/// The complement of the decline test: confirming the `Remove deprecated shell
+/// integration files?` prompt proceeds with the cleanup that used to run
+/// unprompted.
+#[rstest]
+fn test_configure_shell_fish_legacy_removal_accepted_when_already_configured(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Run without --yes and accept the prompt.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish"])
+        .current_dir(repo.root_path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    use std::io::Write as _;
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success(), "accepting should succeed: {output:?}");
+    assert!(
+        !legacy_file.exists(),
+        "accepting must remove legacy conf.d/wt.fish: {legacy_file:?}"
+    );
+}
+
 /// Test that detection finds fish integration in legacy conf.d location
 ///
 /// `wt config show` should detect shell integration whether it's in the
