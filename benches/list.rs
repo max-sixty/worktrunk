@@ -28,62 +28,27 @@
 //   cargo bench --bench list skeleton/warm           # Skeleton group, warm only
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use worktrunk::testing::isolate_subprocess_env;
+use std::path::Path;
 use wt_perf::{
-    CacheState, RepoConfig, add_history_spread_branches, add_worktrees, bench_wt, clone_rust_repo,
-    create_mixed_repo, create_repo, run_git, setup_fake_remote,
+    CacheState, FixtureRepo, RepoConfig, add_history_spread_branches, add_worktrees, bench_wt,
+    clone_rust_repo, create_mixed_repo, create_repo, run_git, wt_command,
 };
-
-/// Benchmark configuration wrapping RepoConfig with cache state.
-#[derive(Clone)]
-struct BenchConfig {
-    repo: RepoConfig,
-    cold_cache: bool,
-}
-
-impl BenchConfig {
-    const fn typical(worktrees: usize, cold_cache: bool) -> Self {
-        Self {
-            repo: RepoConfig::typical(worktrees),
-            cold_cache,
-        }
-    }
-
-    const fn many_divergent_branches(cold_cache: bool) -> Self {
-        Self {
-            repo: RepoConfig::many_divergent_branches(),
-            cold_cache,
-        }
-    }
-
-    fn label(&self) -> &'static str {
-        if self.cold_cache { "cold" } else { "warm" }
-    }
-}
 
 /// Run `wt` with `args` in `repo_path`, on a warm or cold cache.
 ///
 /// Fixture-agnostic: callers build whatever repo shape they want, then pass
-/// `cold_cache` to pick the iteration strategy (see [`bench_wt`]).
+/// `cache` to pick the iteration strategy (see [`bench_wt`]).
 fn run_benchmark(
     b: &mut criterion::Bencher,
     binary: &Path,
     repo_path: &Path,
-    cold_cache: bool,
+    cache: CacheState,
     args: &[&str],
     env: Option<(&str, &str)>,
 ) {
-    let cache = if cold_cache {
-        CacheState::Cold
-    } else {
-        CacheState::Warm
-    };
     bench_wt(b, repo_path, cache, || {
-        let mut cmd = Command::new(binary);
-        cmd.args(args).current_dir(repo_path);
-        isolate_subprocess_env(&mut cmd, None);
+        let mut cmd = wt_command(binary, repo_path, None);
+        cmd.args(args);
         if let Some((key, value)) = env {
             cmd.env(key, value);
         }
@@ -96,21 +61,17 @@ fn bench_skeleton(c: &mut Criterion) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
-        for cold in [false, true] {
-            let config = BenchConfig::typical(worktrees, cold);
-
+        for cache in CacheState::WARM_AND_COLD {
             group.bench_with_input(
-                BenchmarkId::new(config.label(), worktrees),
-                &config,
-                |b, config| {
-                    let temp = create_repo(&config.repo);
-                    let repo_path = temp.path().join("repo");
-                    setup_fake_remote(&repo_path);
+                BenchmarkId::new(cache.label(), worktrees),
+                &cache,
+                |b, &cache| {
+                    let fixture = create_repo(&RepoConfig::typical(worktrees));
                     run_benchmark(
                         b,
                         binary,
-                        &repo_path,
-                        config.cold_cache,
+                        fixture.path(),
+                        cache,
                         &["list"],
                         Some(("WORKTRUNK_SKELETON_ONLY", "1")),
                     );
@@ -127,17 +88,14 @@ fn bench_worktree_scaling(c: &mut Criterion) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
-        for cold in [false, true] {
-            let config = BenchConfig::typical(worktrees, cold);
-
+        for cache in CacheState::WARM_AND_COLD {
             group.bench_with_input(
-                BenchmarkId::new(config.label(), worktrees),
-                &config,
-                |b, config| {
-                    let temp = create_repo(&config.repo);
-                    let repo_path = temp.path().join("repo");
-                    run_git(&repo_path, &["status"]);
-                    run_benchmark(b, binary, &repo_path, config.cold_cache, &["list"], None);
+                BenchmarkId::new(cache.label(), worktrees),
+                &cache,
+                |b, &cache| {
+                    let fixture = create_repo(&RepoConfig::typical(worktrees));
+                    run_git(fixture.path(), &["status"]);
+                    run_benchmark(b, binary, fixture.path(), cache, &["list"], None);
                 },
             );
         }
@@ -168,28 +126,23 @@ fn bench_real_repo(c: &mut Criterion) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
     let worktrees = 8;
 
-    for cold in [false, true] {
-        let label = if cold { "cold" } else { "warm" };
+    for cache in CacheState::WARM_AND_COLD {
+        group.bench_with_input(
+            BenchmarkId::new(cache.label(), worktrees),
+            &cache,
+            |b, &cache| {
+                let config = RepoConfig::typical(worktrees);
+                let fixture = clone_rust_repo();
+                add_worktrees(&config, fixture.path());
+                run_git(fixture.path(), &["status"]);
 
-        group.bench_with_input(BenchmarkId::new(label, worktrees), &cold, |b, &cold| {
-            let config = RepoConfig::typical(worktrees);
-            let temp = tempfile::tempdir().unwrap();
-            let workspace_main = clone_rust_repo(&temp);
-            add_worktrees(&config, &workspace_main);
-            run_git(&workspace_main, &["status"]);
-
-            let cache = if cold {
-                CacheState::Cold
-            } else {
-                CacheState::Warm
-            };
-            bench_wt(b, &workspace_main, cache, || {
-                let mut cmd = Command::new(binary);
-                cmd.arg("list").current_dir(&workspace_main);
-                isolate_subprocess_env(&mut cmd, None);
-                cmd
-            });
-        });
+                bench_wt(b, fixture.path(), cache, || {
+                    let mut cmd = wt_command(binary, fixture.path(), None);
+                    cmd.arg("list");
+                    cmd
+                });
+            },
+        );
     }
 
     group.finish();
@@ -202,18 +155,15 @@ fn bench_divergent_branches(c: &mut Criterion) {
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    for cold in [false, true] {
-        let config = BenchConfig::many_divergent_branches(cold);
-
-        group.bench_function(config.label(), |b| {
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            run_git(&repo_path, &["status"]);
+    for cache in CacheState::WARM_AND_COLD {
+        group.bench_function(cache.label(), |b| {
+            let fixture = create_repo(&RepoConfig::many_divergent_branches());
+            run_git(fixture.path(), &["status"]);
             run_benchmark(
                 b,
                 binary,
-                &repo_path,
-                config.cold_cache,
+                fixture.path(),
+                cache,
                 &["list", "--branches", "--progressive"],
                 None,
             );
@@ -224,12 +174,11 @@ fn bench_divergent_branches(c: &mut Criterion) {
 }
 
 /// Set up rust repo workspace with branches at different history depths.
-/// Returns the workspace path (temp dir must outlive usage).
-fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: usize) -> PathBuf {
-    let workspace_main = clone_rust_repo(temp);
-    add_history_spread_branches(&workspace_main, num_branches);
-    run_git(&workspace_main, &["status"]);
-    workspace_main
+fn setup_rust_workspace_with_branches(num_branches: usize) -> FixtureRepo {
+    let fixture = clone_rust_repo();
+    add_history_spread_branches(fixture.path(), num_branches);
+    run_git(fixture.path(), &["status"]);
+    fixture
 }
 
 /// Benchmark GH #461 scenario: large real repo (rust-lang/rust) with branches at different
@@ -261,13 +210,12 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     // Setup function - each bench_function creates its own fresh workspace
     // Uses setup_rust_workspace_with_branches plus a worktree for worktrees_only test
     let setup_workspace = || {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_main = setup_rust_workspace_with_branches(&temp, 50);
+        let fixture = setup_rust_workspace_with_branches(50);
 
         // Add a second worktree (needed for worktrees_only to not auto-show branches)
-        let wt_path = temp.path().join("wt-test");
+        let wt_path = fixture.root().join("wt-test");
         run_git(
-            &workspace_main,
+            fixture.path(),
             &[
                 "worktree",
                 "add",
@@ -278,28 +226,25 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
             ],
         );
 
-        (temp, workspace_main)
+        fixture
     };
 
     // Baseline: all branches
     group.bench_function("warm", |b| {
-        let (_temp, workspace_main) = setup_workspace();
-        bench_wt(b, &workspace_main, CacheState::Warm, || {
-            let mut cmd = Command::new(binary);
-            cmd.args(["list", "--branches"])
-                .current_dir(&workspace_main);
-            isolate_subprocess_env(&mut cmd, None);
+        let fixture = setup_workspace();
+        bench_wt(b, fixture.path(), CacheState::Warm, || {
+            let mut cmd = wt_command(binary, fixture.path(), None);
+            cmd.args(["list", "--branches"]);
             cmd
         });
     });
 
     // Worktrees only: no branch enumeration, skips expensive %(ahead-behind) batch
     group.bench_function("warm_worktrees_only", |b| {
-        let (_temp, workspace_main) = setup_workspace();
-        bench_wt(b, &workspace_main, CacheState::Warm, || {
-            let mut cmd = Command::new(binary);
-            cmd.arg("list").current_dir(&workspace_main); // no --branches
-            isolate_subprocess_env(&mut cmd, None);
+        let fixture = setup_workspace();
+        bench_wt(b, fixture.path(), CacheState::Warm, || {
+            let mut cmd = wt_command(binary, fixture.path(), None);
+            cmd.arg("list"); // no --branches
             cmd
         });
     });
@@ -350,16 +295,14 @@ fn bench_full(c: &mut Criterion) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
     let (worktrees, branches) = (24usize, 120usize);
 
-    for cold in [false, true] {
-        let label = if cold { "cold" } else { "warm" };
-        group.bench_function(label, |b| {
-            let temp = create_mixed_repo(worktrees, branches);
-            let repo_path = temp.path().join("repo");
+    for cache in CacheState::WARM_AND_COLD {
+        group.bench_function(cache.label(), |b| {
+            let fixture = create_mixed_repo(worktrees, branches);
             run_benchmark(
                 b,
                 binary,
-                &repo_path,
-                cold,
+                fixture.path(),
+                cache,
                 &["list", "--branches", "--progressive"],
                 None,
             );

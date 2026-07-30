@@ -47,7 +47,7 @@ it runs on.
 | `RepoConfig::branches(N, M)` | `branches-N[-M]` | `completion_switch` (completion.rs) |
 | `RepoConfig::many_divergent_branches()` | `divergent` | `divergent_branches` (list.rs) |
 | `create_mixed_repo(W, B)` | `mixed-W-B` | `full` (list.rs) |
-| `create_prune_repo_at(M, U)` | `prune-M-U` | `prune_e2e` (prune.rs) |
+| `create_prune_repo(M, U)` | `prune-M-U` | `prune_e2e` (prune.rs) |
 | `ensure_prune_real_repo(M, U)` | `prune-real[-M-U]` | `prune_real_repo` (prune.rs) |
 | rust-lang/rust clone (`clone_rust_repo`) | — | `real_repo`, `real_repo_many_branches` (list.rs) |
 | `lean_worktrees` (local to alias.rs) | — | `dispatch` (alias.rs) |
@@ -57,6 +57,12 @@ Renaming a bench group is not free: `.github/scripts/criterion-to-jsonl.py`
 keys each time-series row by the criterion output path (`<group>/<id>`), and the
 daily `benchmarks` workflow appends those to a gist. A rename orphans that
 series.
+
+Every ephemeral generator returns `FixtureRepo`, the owner of the temporary
+root plus the canonical primary/linked-worktree paths. Repo-bound benchmark
+subprocesses start through `wt_command`, and warm/cold matrices use
+`CacheState::WARM_AND_COLD`; keep lifecycle, environment isolation, and cache
+labels in those shared APIs rather than re-deriving them in a bench target.
 
 ## Rust Repo Caching
 
