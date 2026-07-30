@@ -533,11 +533,24 @@ pub fn add_worktrees(config: &RepoConfig, repo_path: &Path) {
 /// Create `count` remote-tracking refs under `refs/remotes/origin/`, on top of
 /// the `origin/main` + `origin/HEAD` pair [`setup_fake_remote`] writes.
 ///
-/// The refs are spread round-robin over the commits already on `main` so they
-/// name distinct objects: the scan's cost is `%(committerdate)` reading one
-/// commit object per ref, and pointing them all at `HEAD` would collapse that
-/// to a single object read repeated, giving a misleadingly cheap number. Their
-/// timestamps are all `TEST_EPOCH` regardless — fixture commit dates are pinned
+/// The refs are spread round-robin over the commits already on `main` rather
+/// than all pointing at `HEAD`, which would leave `%(committerdate)` re-reading
+/// one object and understate the scan. It does not reach one object per ref:
+/// the round-robin can only spread over the history it has, so at
+/// `create_mixed_repo`'s 200 commits a four-digit ref count lands ~7 refs on
+/// each of ~200 distinct commits. Git parses a given object once and reuses it
+/// for the rest of the `for-each-ref`, so the scan pays ~200 parses plus a
+/// cheap iteration hit per ref, where a real long-lived clone — whose remote
+/// tips are mostly distinct commits — would pay a parse per ref.
+///
+/// So this under-weights object reads relative to the clone it models, and
+/// deliberately: closing the gap needs a history as deep as the ref count, and
+/// `BASE_COMMITS` is shared with `full`, so deepening it would slow that
+/// fixture and shift the repo `full` has been measured on for the sake of a
+/// per-object parse this bench is not primarily about. The ref-count dimension
+/// is what it exists to vary.
+///
+/// Timestamps are all `TEST_EPOCH` regardless — fixture commit dates are pinned
 /// — so the sort is not what this measures.
 ///
 /// Names are `remote-only-<i>`, which no fixture uses for a local branch, so
