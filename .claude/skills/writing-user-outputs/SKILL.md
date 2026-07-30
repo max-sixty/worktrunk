@@ -140,7 +140,7 @@ The split-trust design enforces two trust levels:
 
 All directive env vars are removed from spawned subprocesses by default via
 `shell_exec::scrub_directive_env_vars()`. `DirectivePassthrough::inherit_from_env()`
-re-adds only the CD file (and legacy compat file) for trusted contexts.
+re-adds only the CD file for trusted contexts.
 
 ## Windows Compatibility (Git Bash / MSYS2)
 

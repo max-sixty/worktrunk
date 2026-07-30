@@ -16,20 +16,20 @@ use worktrunk::styling::{
 
 /// Target for worktree removal.
 #[derive(Debug)]
-pub enum RemoveTarget<'a> {
+pub enum RemoveTarget {
     /// Delete a branch that has no worktree.
     ///
     /// A branch names a worktree only while it has exactly one: let it name
     /// two, which `git worktree add --force` allows, and the lookup silently
     /// picks git's first-listed checkout. So callers resolve first and pass
-    /// [`Path`](Self::Path) for anything that has a worktree, and this variant
-    /// carries only the branch-only case. One that has since acquired a
-    /// worktree lost the race and errors rather than removing it unasked.
-    Branch(&'a str),
-    /// Remove the current worktree (supports detached HEAD)
-    Current,
-    /// Remove worktree by path (supports detached HEAD)
-    Path(&'a std::path::Path),
+    /// [`WorktreePath`](Self::WorktreePath) for anything that has a worktree,
+    /// and this variant carries only the branch-only case. One that has since
+    /// acquired a worktree lost the race and errors rather than removing it
+    /// unasked.
+    BranchOnly(String),
+    /// Remove the exact worktree at this path (supports detached HEAD and
+    /// duplicate branch checkouts).
+    WorktreePath(PathBuf),
 }
 
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
@@ -48,10 +48,9 @@ pub trait RepositoryCliExt {
     /// callers may plan speculatively: on a `--dry-run` scan, before an
     /// approval prompt, or on the picker's event loop.
     ///
-    /// `current_path` overrides process-CWD discovery for determining which
-    /// worktree is "current". Pass `None` for normal CLI usage (discovers from
-    /// CWD). Pass `Some` when calling from a context where CWD may have changed
-    /// (e.g., background threads in the picker).
+    /// `current_path` is the worktree the caller started in. Callers resolve it
+    /// once at their boundary so target preparation never depends on a later
+    /// process-CWD lookup (notably on picker and prune background paths).
     ///
     /// `worktrees` provides a pre-fetched worktree list to avoid redundant
     /// `git worktree list` calls. Pass `None` to fetch on demand.
@@ -66,7 +65,7 @@ pub trait RepositoryCliExt {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
-        current_path: Option<PathBuf>,
+        current_path: &Path,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
     ) -> anyhow::Result<RemovalPlan>;
@@ -113,11 +112,10 @@ impl RepositoryCliExt for Repository {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
-        current_path: Option<PathBuf>,
+        current_path: &Path,
         worktrees: Option<&[WorktreeInfo]>,
         snapshot: Option<&RefSnapshot>,
     ) -> anyhow::Result<RemovalPlan> {
-        let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
         let worktrees = match worktrees {
             Some(wts) => wts,
             None => self.list_worktrees()?,
@@ -158,7 +156,7 @@ impl RepositoryCliExt for Repository {
         }
 
         let resolved = match target {
-            RemoveTarget::Branch(branch) => {
+            RemoveTarget::BranchOnly(branch) => {
                 // The caller established there was no worktree, so one here
                 // appeared in between. Falling through would remove it — the
                 // wrong operation, and on a worktree nobody named — so the
@@ -166,7 +164,7 @@ impl RepositoryCliExt for Repository {
                 // that does mean "remove that worktree".
                 if let Some(wt) = worktrees
                     .iter()
-                    .find(|wt| wt.branch.as_deref() == Some(branch))
+                    .find(|wt| wt.branch.as_deref() == Some(branch.as_str()))
                 {
                     let path = format_path_for_display(&wt.path);
                     bail!(cformat!(
@@ -176,18 +174,18 @@ impl RepositoryCliExt for Repository {
                 }
                 // Check the branch exists locally, so a typo or a remote-only
                 // name reports itself rather than deleting nothing.
-                let branch_handle = self.branch(branch);
+                let branch_handle = self.branch(&branch);
                 if !branch_handle.exists_locally()? {
                     let remotes = branch_handle.remotes()?;
                     if !remotes.is_empty() {
                         return Err(GitError::RemoteOnlyBranch {
-                            branch: branch.into(),
+                            branch,
                             remote: remotes[0].clone(),
                         }
                         .into());
                     }
                     return Err(GitError::BranchNotFound {
-                        branch: branch.into(),
+                        branch,
                         show_create_hint: false,
                         last_fetch_ago: None,
                         pr_mr_platform: None,
@@ -196,17 +194,13 @@ impl RepositoryCliExt for Repository {
                 }
                 Resolved::BranchOnly {
                     pruned_from: None,
-                    branch: branch.to_string(),
+                    branch,
                 }
             }
-            RemoveTarget::Current | RemoveTarget::Path(_) => {
-                let lookup_path = match target {
-                    RemoveTarget::Path(p) => p,
-                    _ => current_path.as_path(),
-                };
+            RemoveTarget::WorktreePath(lookup_path) => {
                 let wt = worktrees
                     .iter()
-                    .find(|wt| worktrunk::path::paths_match(&wt.path, lookup_path))
+                    .find(|wt| worktrunk::path::paths_match(&wt.path, &lookup_path))
                     .ok_or_else(|| {
                         anyhow::anyhow!("Worktree not found at {}", lookup_path.display())
                     })?;
@@ -251,7 +245,7 @@ impl RepositoryCliExt for Repository {
                         branch: branch.to_string(),
                     }
                 } else {
-                    let is_current = wt.path == current_path;
+                    let is_current = worktrunk::path::paths_match(&wt.path, current_path);
                     Resolved::Worktree {
                         path: wt.path.clone(),
                         branch: wt.branch.clone(),
@@ -343,7 +337,7 @@ impl RepositoryCliExt for Repository {
         // changed_directory: whether the user needs to cd away from cwd.
         let changed_directory = is_current;
         let main_path = if worktree_path == primary_path {
-            current_path
+            current_path.to_path_buf()
         } else {
             primary_path
         };
@@ -731,6 +725,85 @@ impl TargetWorktreeStash {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::git::{BranchDeletionOutcome, execute_branch_deletion};
+    use worktrunk::testing::TestRepo;
+
+    /// A branch-only plan is only a snapshot of topology. If another process
+    /// checks the branch out before execution, the final safe-delete guard must
+    /// retain the ref so the new worktree's HEAD stays resolvable.
+    #[test]
+    fn branch_only_execution_rechecks_worktree_topology() {
+        let test = TestRepo::with_initial_commit();
+        test.create_branch("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let current_path = test.root_path().to_path_buf();
+
+        let plan = repo
+            .prepare_worktree_removal(
+                RemoveTarget::BranchOnly("feature".to_string()),
+                BranchDeletionMode::SafeDelete,
+                false,
+                &current_path,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(matches!(plan, RemovalPlan::BranchOnly { .. }));
+
+        let checkout = test.home_path().join("repo.feature-raced-checkout");
+        test.run_git(&["worktree", "add", checkout.to_str().unwrap(), "feature"]);
+
+        let result = execute_branch_deletion(&repo, "feature", "main", false).unwrap();
+        let BranchDeletionOutcome::RetainedCheckedOut { path } = result.outcome else {
+            panic!("safe deletion must report the checkout added after planning");
+        };
+        assert!(
+            worktrunk::path::paths_match(&path, &checkout),
+            "retention should name the checkout: {} != {}",
+            path.display(),
+            checkout.display()
+        );
+        assert!(
+            repo.run_command(&["rev-parse", "--verify", "refs/heads/feature"])
+                .is_ok(),
+            "the checked-out branch ref must survive"
+        );
+        assert!(
+            repo.worktree_at(&checkout)
+                .run_command(&["rev-parse", "--verify", "HEAD"])
+                .is_ok(),
+            "the new checkout must not be orphaned"
+        );
+    }
+
+    /// Duplicate checkout detection excludes the worktree being removed by
+    /// canonical path identity, not by its literal spelling, and still finds a
+    /// separate checkout of the same branch.
+    #[test]
+    fn duplicate_checkout_detection_compares_paths_canonically() {
+        let mut test = TestRepo::with_initial_commit();
+        let removed = test.add_worktree("feature");
+        let survivor = test.home_path().join("repo.feature-survivor");
+        test.run_git(&[
+            "worktree",
+            "add",
+            "--force",
+            survivor.to_str().unwrap(),
+            "feature",
+        ]);
+
+        let alias_anchor = removed.join("alias-anchor");
+        std::fs::create_dir(&alias_anchor).unwrap();
+        let removed_alias = alias_anchor.join("..");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worktrees = repo.list_worktrees().unwrap();
+
+        let found = live_sibling_checkout(worktrees, "feature", &removed_alias).unwrap();
+        assert!(
+            worktrunk::path::paths_match(&found.path, &survivor),
+            "only the canonical target path may be excluded"
+        );
+    }
 
     #[test]
     fn test_parse_porcelain_z_modified_staged() {

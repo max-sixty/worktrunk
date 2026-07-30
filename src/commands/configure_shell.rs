@@ -451,10 +451,12 @@ pub fn handle_configure_shell(
         && (shell_filter == Some(Shell::Zsh)
             || (shell_filter.is_none() && shell::current_shell() == Some(Shell::Zsh)));
 
-    // Probe user's zsh to check if compinit is enabled.
+    // Probe a normal interactive zsh (global + user startup files) to check if
+    // compinit is enabled in the session the freshly installed wrapper enters.
     // Only flag if we positively detect it's missing (Some(false)).
     // If detection fails (None), stay silent - we can't be sure.
-    let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
+    let zsh_needs_compinit = should_check_compinit
+        && shell::probe_zsh_compdef(shell::ZshStartupScope::GlobalAndUser) == Some(false);
 
     // Clean up legacy fish conf.d file if we just installed to functions/
     // (issue #566), plus any nushell wrapper stranded at a legacy autoload

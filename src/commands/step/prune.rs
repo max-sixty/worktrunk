@@ -415,6 +415,7 @@ fn check_one(
     snapshot: &RefSnapshot,
     integration_target: &str,
     worktrees: &[WorktreeInfo],
+    current_path: &Path,
     min_age_duration: Duration,
     now_secs: u64,
 ) -> anyhow::Result<CheckOutcome> {
@@ -442,10 +443,10 @@ fn check_one(
         match &item.source {
             CheckSource::Orphan => repo
                 .prepare_worktree_removal(
-                    RemoveTarget::Branch(&item.integration_ref),
+                    RemoveTarget::BranchOnly(item.integration_ref.clone()),
                     BranchDeletionMode::SafeDelete,
                     false,
-                    None,
+                    current_path,
                     Some(worktrees),
                     Some(snapshot),
                 )
@@ -457,12 +458,13 @@ fn check_one(
                     // by branch would re-resolve to git's first-listed
                     // checkout, which for a duplicated branch is a different
                     // worktree — and for a stale entry is the live one. A
-                    // `Path` target degrades to branch-only deletion when the
-                    // directory is gone, so a stale entry plans its prune.
-                    RemoveTarget::Path(&wt.path),
+                    // `WorktreePath` target degrades to branch-only deletion
+                    // when the directory is gone, so a stale entry plans its
+                    // prune.
+                    RemoveTarget::WorktreePath(wt.path.clone()),
                     BranchDeletionMode::SafeDelete,
                     false,
-                    None,
+                    current_path,
                     Some(worktrees),
                     Some(snapshot),
                 )
@@ -902,6 +904,7 @@ pub fn step_prune(
             let snapshot_ref = &snapshot;
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
+            let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
             s.spawn(move || {
                 check_items_ref
@@ -916,6 +919,7 @@ pub fn step_prune(
                                 snapshot_ref,
                                 integration_target_ref,
                                 worktrees,
+                                current_path_ref,
                                 min_age_duration,
                                 now_secs,
                             )
@@ -1075,6 +1079,7 @@ pub fn step_prune(
             let snapshot_ref = &snapshot;
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
+            let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
             s.spawn(move || {
                 check_items_ref
@@ -1089,6 +1094,7 @@ pub fn step_prune(
                                 snapshot_ref,
                                 integration_target_ref,
                                 worktrees,
+                                current_path_ref,
                                 min_age_duration,
                                 now_secs,
                             )

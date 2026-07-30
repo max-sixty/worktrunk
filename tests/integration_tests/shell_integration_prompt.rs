@@ -347,12 +347,6 @@ mod pty_tests {
         fs::write(&bashrc, format!("{config_line}\n")).unwrap();
 
         let mut env_vars = repo.test_env_vars();
-        // Remove directive env vars (ensure shell integration not active)
-        env_vars.retain(|(k, _)| {
-            k != "WORKTRUNK_DIRECTIVE_CD_FILE"
-                && k != "WORKTRUNK_DIRECTIVE_EXEC_FILE"
-                && k != "WORKTRUNK_DIRECTIVE_FILE"
-        });
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
@@ -397,7 +391,6 @@ mod pty_tests {
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
         let mut env_vars = repo.test_env_vars();
-        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
@@ -453,7 +446,6 @@ mod pty_tests {
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
         let mut env_vars = repo.test_env_vars();
-        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
@@ -510,7 +502,6 @@ mod pty_tests {
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
         let mut env_vars = repo.test_env_vars();
-        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 
@@ -566,7 +557,6 @@ mod pty_tests {
         fs::write(&bashrc, "# empty bashrc\n").unwrap();
 
         let mut env_vars = repo.test_env_vars();
-        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 

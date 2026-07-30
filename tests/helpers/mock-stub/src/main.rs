@@ -31,14 +31,9 @@
 //! - `output`: output literal string to stdout
 //! - `stderr`: output literal string to stderr
 //! - `exit_code`: exit with specified code (default 0)
-//! - `delay_ms`: sleep this long before responding (default 0), to simulate a
-//!   slow command (e.g. a forge call the picker streams in behind its frame)
-//! - `hold_until_parent_exit`: hold the response until the parent process (the
-//!   `wt` under test) exits, then exit without producing output. Lets a test
-//!   pin a *transient* frame — e.g. the picker's `Loading open PRs…` marker,
-//!   on screen only while a forge call is in flight — on screen for exactly as
-//!   long as the picker lives, with no fixed `delay_ms` to outguess boot
-//!   latency. Overrides `delay_ms` and any `file`/`output` response.
+//! - `wait_for_file`: wait for this path under the config directory to exist
+//!   before responding. Lets a test observe a loading state, then causally
+//!   release the response without another user input.
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -64,47 +59,7 @@ struct CommandResponse {
     stderr: Option<String>,
     #[serde(default)]
     exit_code: i32,
-    #[serde(default)]
-    delay_ms: u64,
-    #[serde(default)]
-    hold_until_parent_exit: bool,
-}
-
-/// Block until the parent process (the `wt` under test) exits, then return.
-///
-/// A test that asserts a *transient* frame — the picker's `Loading open PRs…`
-/// marker, on screen only while a forge call is in flight — needs that frame to
-/// stay up for exactly as long as the picker lives, with no fixed sleep to
-/// outguess boot latency. This mock *is* the in-flight forge call: the picker's
-/// fetch thread runs it with a piped stdout and blocks reading that pipe to EOF,
-/// so as long as this process neither writes a full response nor exits, the
-/// marker stays. When the test aborts the picker, `wt` detaches the fetch thread
-/// and exits, which closes the read end of our stdout pipe; the next write here
-/// then fails with `BrokenPipe`.
-///
-/// Polling for that write error is a *causal* parent-death signal — release is
-/// tied to the parent exiting, not to a timer — and it needs no platform
-/// primitive (`getppid` / `OpenProcess`), so it behaves identically on Unix and
-/// Windows. Rust's runtime ignores `SIGPIPE`, so the broken write surfaces as an
-/// `Err` rather than killing this process.
-///
-/// The one-byte probes written into stdout are harmless: this mode's contract is
-/// that the parent aborts without ever parsing the response, and the fetch
-/// thread drains the pipe until process exit, so the bytes are never observed. A
-/// generous cap bounds a stuck orphan if the pipe somehow never breaks.
-fn wait_for_parent_exit() {
-    // 20ms per poll × 3000 = a 60s ceiling, far beyond any picker lifetime; it
-    // exists only so a detached mock can't linger forever if detection fails.
-    const MAX_POLLS: u32 = 3000;
-    let mut stdout = io::stdout();
-    for _ in 0..MAX_POLLS {
-        match stdout.write_all(&[0]).and_then(|()| stdout.flush()) {
-            // Write succeeded → the parent's read end is still open → still alive.
-            Ok(()) => sleep(Duration::from_millis(20)),
-            // BrokenPipe (or any other write failure) → the parent has exited.
-            Err(_) => return,
-        }
-    }
+    wait_for_file: Option<String>,
 }
 
 /// Get command name from argv\[0\].
@@ -187,8 +142,7 @@ fn main() {
         output: None,
         stderr: None,
         exit_code: 1,
-        delay_ms: 0,
-        hold_until_parent_exit: false,
+        wait_for_file: None,
     };
 
     // Try triple match first (e.g., "mr view 1", "mr view 2")
@@ -220,17 +174,26 @@ fn main() {
         .or_else(|| config.commands.get("_default"))
         .unwrap_or(&default_response);
 
-    // Hold the response for the parent's whole lifetime, then exit without
-    // output — the marker-clearing edge is the parent's death, not a timer.
-    if response.hold_until_parent_exit {
-        wait_for_parent_exit();
-        exit(0);
-    }
-
-    // Simulate a slow command (e.g. a forge call) so tests can observe the
-    // caller's in-flight UI before the response lands.
-    if response.delay_ms > 0 {
-        sleep(Duration::from_millis(response.delay_ms));
+    // Causal release gate for tests that must first observe the caller's
+    // in-flight state. Bound the wait so a failed test cannot orphan the mock.
+    if let Some(path) = &response.wait_for_file {
+        const MAX_POLLS: u32 = 6000; // 10ms × 6000 = 60s
+        let release = config_dir.join(path);
+        let mut released = false;
+        for _ in 0..MAX_POLLS {
+            if release.exists() {
+                released = true;
+                break;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        if !released {
+            eprintln!(
+                "mock: timed out waiting for release file {}",
+                release.display()
+            );
+            exit(1);
+        }
     }
 
     if let Some(file) = &response.file {

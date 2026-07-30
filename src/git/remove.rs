@@ -68,7 +68,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{IntegrationReason, Repository};
+use crate::git::{IntegrationReason, Repository, WorktreeInfo};
 use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
 
@@ -229,6 +229,10 @@ impl BranchDeletionMode {
 pub enum BranchDeletionOutcome {
     /// Branch was not deleted — it was not integrated, and deletion was not forced.
     NotDeleted,
+    /// Branch was integrated, but a fresh topology read found it checked out in
+    /// a worktree immediately before deletion. The ref is retained so that
+    /// worktree's HEAD remains resolvable.
+    RetainedCheckedOut { path: PathBuf },
     /// Branch was integrated but the atomic compare-and-swap deletion was
     /// rejected because the ref moved between the integration check and the
     /// delete attempt — e.g. a hook or concurrent process advanced it. The
@@ -421,13 +425,14 @@ pub fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option
 /// site that doesn't already hold a fresh snapshot (the background fast path,
 /// prune's synchronous fallback, branch-only removal, a picker row). The
 /// invariant it carries — no deletion ever runs against the planning-time
-/// snapshot, so the CAS in [`delete_branch_if_safe`] re-decides against the
-/// live ref — also holds on the two paths that don't call it: the foreground
-/// removal captures its own fresh snapshot just before
+/// snapshot, so the topology guard and CAS in [`delete_branch_if_safe`]
+/// re-decide against live state — also holds on the two paths that don't call
+/// it: the foreground removal captures its own fresh snapshot just before
 /// [`remove_worktree_with_cleanup`], and the detached fallback can't call
-/// Rust, so it gets the guarantee from an `update-ref -d <ref> <sha>` shell
-/// tail instead. A hook or concurrent process that advanced the branch since
-/// planning surfaces as `RetainedRaced`, not a lost commit.
+/// Rust, so it gets the guarantee from a fresh porcelain topology read followed
+/// by an `update-ref -d <ref> <sha>` shell tail instead. A hook or concurrent
+/// process that checked out or advanced the branch since planning retains it,
+/// rather than orphaning a worktree or losing a commit.
 pub fn execute_branch_deletion(
     repo: &Repository,
     branch_name: &str,
@@ -447,7 +452,8 @@ pub fn execute_branch_deletion(
 ///
 /// Returns a [`BranchDeletionResult`] rather than raising an error for the
 /// "not integrated" case — that's a normal outcome and the caller decides how
-/// to surface it. Only `git branch -D` failures propagate as `Err`.
+/// to surface it. Failures to read current topology or run the Git mutation
+/// propagate as `Err`.
 pub fn delete_branch_if_safe(
     repo: &Repository,
     snapshot: &crate::git::RefSnapshot,
@@ -469,6 +475,24 @@ pub fn delete_branch_if_safe(
 
     let outcome = match reason {
         Some(r) => {
+            // `update-ref` deliberately bypasses `git branch`'s checked-out
+            // branch protection, so sample topology from a brand-new
+            // Repository immediately before the ref mutation. Never consult
+            // `repo.list_worktrees()` here: callers often used that planning
+            // cache before a pre-remove hook or another process had a chance to
+            // add a checkout.
+            //
+            // Git exposes no transaction spanning worktree registration and ref
+            // updates. Keeping this fresh read directly adjacent to the CAS
+            // minimizes that unavoidable TOCTOU window; either command failing
+            // leaves the branch intact.
+            if let Some(path) = fresh_branch_checkout(repo, branch_name)? {
+                return Ok(BranchDeletionResult {
+                    outcome: BranchDeletionOutcome::RetainedCheckedOut { path },
+                    integration_target: effective_target,
+                });
+            }
+
             // Atomic compare-and-swap against the snapshotted SHA. If the ref
             // moved between `integration_reason` and the delete (e.g. a hook
             // advanced the branch), `git update-ref -d <ref> <expected>` fails
@@ -499,6 +523,36 @@ pub fn delete_branch_if_safe(
         outcome,
         integration_target: effective_target,
     })
+}
+
+/// Find a live checkout of `branch` using a new repository cache.
+///
+/// Removal planning intentionally caches `git worktree list`, but branch
+/// deletion happens after hooks and other concurrent actors may have changed
+/// topology. Constructing a new [`Repository`] is the cache boundary: its first
+/// `list_worktrees` call executes a fresh `git worktree list --porcelain`.
+///
+/// Git still lists stale registrations whose directories are gone, marking
+/// them `prunable`; those have no live checkout to orphan and must not strand
+/// the branch. Missing locked worktrees remain non-prunable, so their lock
+/// continues to retain the branch conservatively.
+fn fresh_branch_checkout(repo: &Repository, branch_name: &str) -> anyhow::Result<Option<PathBuf>> {
+    let fresh_repo = Repository::at(repo.discovery_path())?;
+    Ok(fresh_repo
+        .list_worktrees()?
+        .iter()
+        .find(|worktree| branch_checkout_requires_retention(worktree, branch_name))
+        .map(|worktree| worktree.path.clone()))
+}
+
+/// Whether deleting `branch` would risk orphaning this worktree record.
+///
+/// Git normally reports a missing locked worktree as `locked` but not
+/// `prunable`. Letting the lock win explicitly keeps the guard fail-closed if a
+/// Git version or synthetic porcelain record ever carries both fields.
+fn branch_checkout_requires_retention(worktree: &WorktreeInfo, branch_name: &str) -> bool {
+    worktree.branch.as_deref() == Some(branch_name)
+        && (!worktree.is_prunable() || worktree.locked.is_some())
 }
 
 /// Atomically delete `refs/heads/<branch>` iff it currently points at
@@ -666,6 +720,51 @@ mod tests {
         );
     }
 
+    /// ForceDelete remains a direct `git branch -D` operation. If topology
+    /// changes after planning, Git's own checked-out-branch protection rejects
+    /// it rather than the SafeDelete topology guard translating it into a
+    /// retained outcome.
+    #[test]
+    fn force_delete_uses_git_checkout_protection() {
+        let test = TestRepo::with_initial_commit();
+        test.create_branch("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let snapshot = repo.capture_refs().unwrap();
+
+        let checkout = test.home_path().join("repo.feature-force-race");
+        test.run_git(&["worktree", "add", checkout.to_str().unwrap(), "feature"]);
+
+        assert!(
+            delete_branch_if_safe(&repo, &snapshot, "feature", "main", true).is_err(),
+            "git branch -D must refuse a branch checked out after planning"
+        );
+        assert!(
+            repo.run_command(&["rev-parse", "--verify", "refs/heads/feature"])
+                .is_ok(),
+            "Git's refusal must preserve the branch"
+        );
+    }
+
+    /// A lock is the user's explicit protection for a temporarily absent
+    /// worktree. It must win even over a synthetic record that is also marked
+    /// prunable; an ordinary unlocked prunable record remains stale.
+    #[test]
+    fn locked_prunable_checkout_still_requires_retention() {
+        let mut worktree = WorktreeInfo {
+            path: PathBuf::from("/missing/feature"),
+            head: "0123456789abcdef".to_string(),
+            branch: Some("feature".to_string()),
+            bare: false,
+            detached: false,
+            locked: Some("detachable media".to_string()),
+            prunable: Some("gitdir file points to non-existent location".to_string()),
+        };
+
+        assert!(branch_checkout_requires_retention(&worktree, "feature"));
+        worktree.locked = None;
+        assert!(!branch_checkout_requires_retention(&worktree, "feature"));
+    }
+
     /// When the branch ref vanishes between snapshot capture and the CAS
     /// delete, `git update-ref -d` fails *and* the ref is already absent, so
     /// the outcome is a real error (propagated) — distinct from the
@@ -733,6 +832,12 @@ mod tests {
         // Ensure the match patterns work correctly
         let outcomes = [
             (BranchDeletionOutcome::NotDeleted, false),
+            (
+                BranchDeletionOutcome::RetainedCheckedOut {
+                    path: PathBuf::from("/tmp/feature"),
+                },
+                false,
+            ),
             (BranchDeletionOutcome::RetainedRaced, false),
             (BranchDeletionOutcome::ForceDeleted, true),
             (

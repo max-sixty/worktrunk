@@ -47,9 +47,10 @@ use color_print::cformat;
 use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::git::{CiPlatform, Repository};
+use worktrunk::git::{ForgeKind, RefType, Repository};
 use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
 
+use super::super::legacy_forge_alias_diagnostic;
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubComment, GitHubPrInfo, PrRef, PrStatus, ReviewState,
     non_interactive_cmd, tool_available,
@@ -125,25 +126,8 @@ const MAX_PRS: u8 = 50;
 /// 2-cell gutter column.
 const PR_GUTTER_SIGIL: &str = "# ";
 
-/// Whether a listed ref is a GitHub PR or a GitLab MR. Drives the `output()`
-/// shortcut (`pr:`/`mr:`) and the row label.
-#[derive(Clone, Copy)]
-enum RefKind {
-    Pr,
-    Mr,
-}
-
-impl RefKind {
-    /// Shortcut prefix understood by `wt switch` (`pr` / `mr`).
-    fn shortcut(self) -> &'static str {
-        match self {
-            RefKind::Pr => "pr",
-            RefKind::Mr => "mr",
-        }
-    }
-}
-
 /// One open PR/MR, normalized across forges for the picker row.
+#[derive(Debug)]
 struct PrEntry {
     number: u32,
     title: String,
@@ -157,7 +141,7 @@ struct PrEntry {
     author: String,
     is_draft: bool,
     url: Option<String>,
-    kind: RefKind,
+    kind: RefType,
     /// PR/MR description (GitHub `body`, GitLab `description`), rendered as
     /// markdown in the `pr` preview tab. Rides the one list call — empty when
     /// the forge returns no body.
@@ -179,8 +163,8 @@ impl PrEntry {
     /// the row and preview renderers so both pick the sigil from one place.
     fn pr_ref(&self) -> PrRef {
         match self.kind {
-            RefKind::Pr => PrRef::pr(u64::from(self.number)),
-            RefKind::Mr => PrRef::mr(u64::from(self.number)),
+            RefType::Pr => PrRef::pr(u64::from(self.number)),
+            RefType::Mr => PrRef::mr(u64::from(self.number)),
         }
     }
 
@@ -188,7 +172,7 @@ impl PrEntry {
     /// `output()` and as the preview-cache key prefix — git forbids `:` in ref
     /// names, so it can never collide with a worktree row's branch-name key.
     fn output_token(&self) -> String {
-        format!("{}:{}", self.kind.shortcut(), self.number)
+        format!("{}{}", self.kind.syntax(), self.number)
     }
 
     /// The `PrStatus` a listed `--prs` row feeds into the unified row's static
@@ -339,10 +323,11 @@ fn fetch_and_stream(
     let entries = match fetch_open_prs(repo) {
         Ok(entries) => entries,
         Err(e) => {
-            stashed_warnings
-                .lock()
-                .unwrap()
-                .push(warning_message(format!("{e:#}")).to_string());
+            let warning = warning_message(format!("{e:#}")).to_string();
+            let mut warnings = stashed_warnings.lock().unwrap();
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
             return;
         }
     };
@@ -569,7 +554,7 @@ fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     spawn_gen: &SpawnGeneration,
     key_token: String,
-    kind: RefKind,
+    kind: RefType,
     number: u32,
     updated_at: Option<String>,
     width: usize,
@@ -601,8 +586,7 @@ pub(super) fn spawn_worktree_comments_fetch(
     width: usize,
 ) {
     let kind = match orchestrator.repo().ci_platform(None) {
-        Some(CiPlatform::GitHub) => RefKind::Pr,
-        Some(CiPlatform::GitLab) => RefKind::Mr,
+        Some(forge @ (ForgeKind::GitHub | ForgeKind::GitLab)) => forge.ref_type(),
         _ => {
             orchestrator.fill_external(
                 spawn_gen,
@@ -638,7 +622,7 @@ fn comments_unsupported_forge_pane() -> String {
 /// where there's no entry to read the kind from.
 pub(super) fn forge_noun(repo: &Repository) -> &'static str {
     match repo.ci_platform(None) {
-        Some(CiPlatform::GitLab) => "MRs",
+        Some(ForgeKind::GitLab) => "MRs",
         _ => "PRs",
     }
 }
@@ -651,12 +635,17 @@ fn fetch_open_prs(repo: &Repository) -> anyhow::Result<Vec<PrEntry>> {
         .context("Failed to resolve worktree root for --prs")?;
 
     match repo.ci_platform(None) {
-        Some(CiPlatform::GitHub) => fetch_github(&repo_root),
-        Some(CiPlatform::GitLab) => fetch_gitlab(&repo_root),
+        Some(ForgeKind::GitHub) => fetch_github(&repo_root),
+        Some(ForgeKind::GitLab) => fetch_gitlab(&repo_root),
         Some(other) => {
             anyhow::bail!("--prs supports GitHub and GitLab; this repository's forge is {other}")
         }
-        None => anyhow::bail!("--prs could not determine the forge from the remote URL"),
+        None => {
+            if let Some(alias) = repo.legacy_forge_alias() {
+                anyhow::bail!("{}", legacy_forge_alias_diagnostic(&alias));
+            }
+            anyhow::bail!("--prs could not determine the forge from the remote URL")
+        }
     }
 }
 
@@ -727,7 +716,7 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 .unwrap_or_default(),
             is_draft: pr.info.is_draft == Some(true),
             url: pr.info.url.clone(),
-            kind: RefKind::Pr,
+            kind: RefType::Pr,
             body: pr.info.body.clone().unwrap_or_default(),
             updated_at: pr.info.updated_at.clone(),
             status: Some(pr.info.open_pr_status()),
@@ -813,7 +802,7 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
                 author: mr.author.username,
                 is_draft: mr.draft,
                 url: mr.web_url,
-                kind: RefKind::Mr,
+                kind: RefType::Mr,
                 body: mr.description,
                 // GitLab's MR `updated_at` is throttled and delete-blind, so it
                 // can't key a comments cache — MR comments stay uncached.
@@ -919,14 +908,14 @@ fn pr_unavailable_pane(label: &str) -> String {
 /// terminal [`pr_unavailable_pane`] (see [`spawn_pr_previews`]).
 fn fetch_forge_json(
     repo: &Repository,
-    kind: RefKind,
+    kind: RefType,
     gh_args: &[&str],
     glab_args: &[&str],
 ) -> Option<Vec<u8>> {
     let repo_root = repo.current_worktree().root().ok()?;
     let (program, args) = match kind {
-        RefKind::Pr => ("gh", gh_args),
-        RefKind::Mr => ("glab", glab_args),
+        RefType::Pr => ("gh", gh_args),
+        RefType::Mr => ("glab", glab_args),
     };
     let output = non_interactive_cmd(program)
         .args(args.iter().copied())
@@ -954,7 +943,7 @@ fn fetch_forge_json(
 /// `gh`'s complete `--json` result.
 fn compute_pr_log(
     repo: &Repository,
-    kind: RefKind,
+    kind: RefType,
     number: u32,
     head_oid: Option<&str>,
     head_branch: &str,
@@ -976,8 +965,8 @@ fn compute_pr_log(
         &["api", "--paginate", &endpoint],
     )?;
     match kind {
-        RefKind::Pr => render_github_commits(&stdout, width),
-        RefKind::Mr => render_gitlab_commits(&stdout, width),
+        RefType::Pr => render_github_commits(&stdout, width),
+        RefType::Mr => render_gitlab_commits(&stdout, width),
     }
 }
 
@@ -1096,7 +1085,7 @@ fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
 /// path and writes nothing to disk. See [`super::preview_cache::read_comments`].
 fn compute_pr_comments(
     repo: &Repository,
-    kind: RefKind,
+    kind: RefType,
     number: u32,
     updated_at: Option<&str>,
     width: usize,
@@ -1127,8 +1116,8 @@ fn compute_pr_comments(
         &["api", "--paginate", &endpoint],
     )?;
     let comments = match kind {
-        RefKind::Pr => parse_github_comments(&stdout),
-        RefKind::Mr => parse_gitlab_notes(&stdout),
+        RefType::Pr => parse_github_comments(&stdout),
+        RefType::Mr => parse_gitlab_notes(&stdout),
     }?;
 
     // Persist the raw thread for the next session, keyed by the content
@@ -1362,10 +1351,10 @@ mod tests {
         row.rendered.lock().unwrap().clone()
     }
 
-    fn entry(kind: RefKind, number: u32, title: &str) -> PrEntry {
+    fn entry(kind: RefType, number: u32, title: &str) -> PrEntry {
         let number_ref = match kind {
-            RefKind::Pr => PrRef::pr(u64::from(number)),
-            RefKind::Mr => PrRef::mr(u64::from(number)),
+            RefType::Pr => PrRef::pr(u64::from(number)),
+            RefType::Mr => PrRef::mr(u64::from(number)),
         };
         PrEntry {
             number,
@@ -1400,7 +1389,7 @@ mod tests {
     #[test]
     fn additional_prs_drops_already_shown_branches() {
         let pr = |number, head: &str| {
-            let mut e = entry(RefKind::Pr, number, "t");
+            let mut e = entry(RefType::Pr, number, "t");
             e.head_branch = head.to_string();
             e
         };
@@ -1431,16 +1420,16 @@ mod tests {
 
     #[test]
     fn output_token_is_the_switch_shortcut() {
-        let pr = pr_item(entry(RefKind::Pr, 123, "Fix the flaky test"), 120, None);
+        let pr = pr_item(entry(RefType::Pr, 123, "Fix the flaky test"), 120, None);
         assert_eq!(pr.output(), "pr:123");
 
-        let mr = pr_item(entry(RefKind::Mr, 7, "Add caching"), 120, None);
+        let mr = pr_item(entry(RefType::Mr, 7, "Add caching"), 120, None);
         assert_eq!(mr.output(), "mr:7");
     }
 
     #[test]
     fn search_text_covers_number_title_branch_author() {
-        let pr = pr_item(entry(RefKind::Pr, 42, "Speed up startup"), 120, None);
+        let pr = pr_item(entry(RefType::Pr, 42, "Speed up startup"), 120, None);
         let text = pr.text();
         assert!(text.contains("42"));
         assert!(text.contains("Speed up startup"));
@@ -1468,7 +1457,7 @@ mod tests {
                 .is_some()
         };
 
-        let pr = pr_item(entry(RefKind::Pr, 42, "Speed up startup"), 120, None);
+        let pr = pr_item(entry(RefType::Pr, 42, "Speed up startup"), 120, None);
         assert!(matches(&pr), "# selects the PR row");
         // A worktree-style row carries no `#` in its folded search_text.
         assert!(
@@ -1482,7 +1471,7 @@ mod tests {
         // No grid: the freeform fallback shows reference and branch. The title
         // and author have no column, so they stay off the row — but the title
         // still feeds `search_text`.
-        let pr = pr_item(entry(RefKind::Pr, 1, "Retry the flaky test"), 80, None);
+        let pr = pr_item(entry(RefType::Pr, 1, "Retry the flaky test"), 80, None);
         let row = plain(&rendered_of(&pr));
         assert!(row.contains("feature/auth"), "branch on the row: {row:?}");
         assert!(row.contains("#1"), "reference on the row: {row:?}");
@@ -1501,7 +1490,7 @@ mod tests {
     fn freeform_row_truncates_a_long_branch_to_the_pane() {
         // The branch absorbs the remaining width after the reference and
         // truncates so the row stays inside the pane.
-        let mut e = entry(RefKind::Pr, 1, "Title");
+        let mut e = entry(RefType::Pr, 1, "Title");
         e.head_branch = "a-very-long-branch-name-that-would-otherwise-overflow".to_string();
         let pr = pr_item(e, 40, None);
         let row = plain(&rendered_of(&pr));
@@ -1515,7 +1504,7 @@ mod tests {
         // The row carries no title or inline flag, so a draft shows in the pr
         // pane (and, with a CI column, as the dimmed number — see
         // `grid_row_with_ci_dims_drafts_instead_of_flagging_them`).
-        let mut e = entry(RefKind::Pr, 9, "WIP refactor");
+        let mut e = entry(RefType::Pr, 9, "WIP refactor");
         e.is_draft = true;
         let pr = pr_item(e, 120, None);
         assert!(pr.render_pr_pane_cached(120).contains("draft"));
@@ -1532,7 +1521,7 @@ mod tests {
 
         // First build: PR #42 is a draft; rendering its `pr` tab memoizes the
         // draft pane under (pr:42, Pr).
-        let mut draft = entry(RefKind::Pr, 42, "WIP refactor");
+        let mut draft = entry(RefType::Pr, 42, "WIP refactor");
         draft.is_draft = true;
         let row = pr_item_with_cache(draft, 120, None, Arc::clone(&cache));
         assert!(
@@ -1541,7 +1530,7 @@ mod tests {
         );
 
         // Reload: #42 is now marked ready. The rebuilt row shares the cache.
-        let ready = entry(RefKind::Pr, 42, "WIP refactor");
+        let ready = entry(RefType::Pr, 42, "WIP refactor");
         let row = pr_item_with_cache(ready, 120, None, Arc::clone(&cache));
         assert!(
             !row.render_pr_pane_cached(120).contains("draft"),
@@ -1590,7 +1579,7 @@ mod tests {
         // Branch column (which ends at 22, so the reference lands at 24). The
         // title and author stay off the row.
         let pr = pr_item(
-            entry(RefKind::Pr, 123, "Fix the flaky test"),
+            entry(RefType::Pr, 123, "Fix the flaky test"),
             120,
             Some(&grid()),
         );
@@ -1612,7 +1601,7 @@ mod tests {
 
     #[test]
     fn grid_row_truncates_long_branch_to_its_column() {
-        let mut e = entry(RefKind::Pr, 5, "Title");
+        let mut e = entry(RefType::Pr, 5, "Title");
         e.head_branch = "a-very-long-branch-name-overflowing".to_string();
         let pr = pr_item(e, 120, Some(&grid_with_ci()));
         let text = plain(&rendered_of(&pr));
@@ -1627,7 +1616,7 @@ mod tests {
         // (the CI column, `wt list`). The CI-column number, freeform row, and
         // preview all derive the sigil from `PrEntry::pr_ref`.
         let mr = pr_item(
-            entry(RefKind::Mr, 42, "Add caching"),
+            entry(RefType::Mr, 42, "Add caching"),
             120,
             Some(&grid_with_ci()),
         );
@@ -1642,7 +1631,7 @@ mod tests {
             "preview uses ! for MRs"
         );
 
-        let mr_freeform = pr_item(entry(RefKind::Mr, 42, "Add caching"), 120, None);
+        let mr_freeform = pr_item(entry(RefType::Mr, 42, "Add caching"), 120, None);
         assert!(
             plain(&rendered_of(&mr_freeform)).contains("!42"),
             "freeform row uses !"
@@ -1650,7 +1639,7 @@ mod tests {
 
         // GitHub PRs keep `#N`.
         let pr = pr_item(
-            entry(RefKind::Pr, 42, "Add caching"),
+            entry(RefType::Pr, 42, "Add caching"),
             120,
             Some(&grid_with_ci()),
         );
@@ -1671,7 +1660,7 @@ mod tests {
                 grid_col(ColumnKind::Branch, 2, 20),
             ],
         };
-        let mut e = entry(RefKind::Pr, 1, "Title");
+        let mut e = entry(RefType::Pr, 1, "Title");
         e.head_branch = "a-very-long-branch-name-that-runs-past-the-edge".to_string();
         let pr = pr_item(e, 60, Some(&no_flexible));
         let text = plain(&rendered_of(&pr));
@@ -1685,7 +1674,7 @@ mod tests {
     #[test]
     fn grid_row_places_the_number_in_the_ci_column() {
         let pr = pr_item(
-            entry(RefKind::Pr, 123, "Fix the flaky test"),
+            entry(RefType::Pr, 123, "Fix the flaky test"),
             120,
             Some(&grid_with_ci()),
         );
@@ -1711,7 +1700,7 @@ mod tests {
             ],
         };
         let pr = pr_item(
-            entry(RefKind::Pr, 42, "Retry the flaky test"),
+            entry(RefType::Pr, 42, "Retry the flaky test"),
             120,
             Some(&grid),
         );
@@ -1728,7 +1717,7 @@ mod tests {
     fn grid_row_dims_drafts_via_the_ci_number() {
         // A draft shows only as the dimmed number in the CI column (review
         // state Draft) — never as a "draft" word on the row.
-        let mut e = entry(RefKind::Pr, 9, "WIP");
+        let mut e = entry(RefType::Pr, 9, "WIP");
         e.is_draft = true;
         if let Some(status) = e.status.as_mut() {
             status.review_state = Some(ReviewState::Draft);
@@ -1810,7 +1799,7 @@ mod tests {
         );
         assert_eq!(entries[0].author, "octocat");
         assert!(!entries[0].is_draft);
-        assert!(matches!(entries[0].kind, RefKind::Pr));
+        assert!(matches!(entries[0].kind, RefType::Pr));
         assert_eq!(entries[0].body, "Bumps the CI image and re-pins actions.");
 
         assert_eq!(entries[1].number, 2969);
@@ -1844,12 +1833,28 @@ mod tests {
         // A repo with no remote can't be classified as GitHub or GitLab, so
         // `--prs` reports that instead of shelling out to gh/glab.
         let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let err = match fetch_open_prs(&test.repo) {
-            Ok(_) => panic!("expected --prs to bail without a forge remote"),
-            Err(e) => e,
-        };
+        let err =
+            fetch_open_prs(&test.repo).expect_err("expected --prs to bail without a forge remote");
         assert!(
             err.to_string().contains("could not determine the forge"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn fetch_open_prs_explains_legacy_forge_alias_configuration() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "git@github-personal:owner/repo.git",
+        ]);
+        let err = fetch_open_prs(&test.repo)
+            .expect_err("expected --prs to require explicit forge config");
+        let message = err.to_string();
+        assert!(
+            message.contains("github-personal") && message.contains("forge.platform = \"github\""),
             "unexpected error: {err:#}"
         );
     }
@@ -1860,10 +1865,8 @@ mod tests {
         // the GitHub/GitLab limitation rather than shelling out.
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         test.run_git(&["remote", "add", "origin", "https://gitea.com/o/r.git"]);
-        let err = match fetch_open_prs(&test.repo) {
-            Ok(_) => panic!("expected --prs to bail on an unsupported forge"),
-            Err(e) => e,
-        };
+        let err =
+            fetch_open_prs(&test.repo).expect_err("expected --prs to bail on an unsupported forge");
         assert!(
             err.to_string().contains("supports GitHub and GitLab"),
             "unexpected error: {err:#}"
@@ -1930,7 +1933,7 @@ mod tests {
         );
         assert!(entries[1].head_oid.is_none());
         assert_eq!(entries[0].author, "alice");
-        assert!(matches!(entries[0].kind, RefKind::Mr));
+        assert!(matches!(entries[0].kind, RefType::Mr));
         assert_eq!(entries[0].body, "Caches the dependency graph between jobs.");
         // GitLab's `description` maps to the same `body` slot; absent → empty.
         assert_eq!(entries[1].body, "");
@@ -1949,7 +1952,7 @@ mod tests {
 
     #[test]
     fn pr_pane_shows_description_only_when_present() {
-        let mut with_body = entry(RefKind::Pr, 1, "t");
+        let mut with_body = entry(RefType::Pr, 1, "t");
         with_body.body = "A short summary of the change.".to_string();
         let pr = pr_item(with_body, 120, Some(&grid()));
         let pane = pr.render_pr_pane_cached(120);
@@ -1966,7 +1969,7 @@ mod tests {
 
         // The base fixture has an empty body — the description block is skipped,
         // label and all.
-        let plain_pr = pr_item(entry(RefKind::Pr, 2, "t"), 120, Some(&grid()));
+        let plain_pr = pr_item(entry(RefType::Pr, 2, "t"), 120, Some(&grid()));
         let plain_pane = plain_pr.render_pr_pane_cached(120);
         assert!(
             !plain_pane.contains("\n\n\x1b[0m"),
@@ -1986,7 +1989,7 @@ mod tests {
         // real `SkimItem::preview` (the `--prs` streaming path is too async to
         // exercise it reliably under a PTY). `context.width` (80) is wide enough
         // for the full tab bar, so the `pr` / `comments` tabs show their labels.
-        let pr = pr_item(entry(RefKind::Pr, 7, "Title"), 120, Some(&grid()));
+        let pr = pr_item(entry(RefType::Pr, 7, "Title"), 120, Some(&grid()));
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
@@ -2018,7 +2021,7 @@ mod tests {
         // alt-2); once the background fetch lands a value under that key, the
         // pane shows it.
         let cache: PreviewCache = Arc::new(DashMap::new());
-        let pr = pr_item_with_cache(entry(RefKind::Pr, 42, "t"), 120, None, Arc::clone(&cache));
+        let pr = pr_item_with_cache(entry(RefType::Pr, 42, "t"), 120, None, Arc::clone(&cache));
 
         let miss = pr.cached_or_loading(PreviewMode::Log);
         assert!(miss.contains("Loading commit log"), "miss: {miss:?}");
@@ -2128,7 +2131,7 @@ mod tests {
 
         // `compute_pr_log` takes the local path for a present head without
         // touching the forge.
-        let via_compute = compute_pr_log(&repo, RefKind::Pr, 42, Some(&oid), "feature", 80, 24)
+        let via_compute = compute_pr_log(&repo, RefType::Pr, 42, Some(&oid), "feature", 80, 24)
             .expect("compute_pr_log renders the local log");
         assert!(plain(&via_compute).contains("Add the retry"));
     }
@@ -2139,7 +2142,7 @@ mod tests {
         // keyed by the row's output token, with a loading placeholder (pointing
         // at alt-7) on a miss.
         let cache: PreviewCache = Arc::new(DashMap::new());
-        let pr = pr_item_with_cache(entry(RefKind::Mr, 7, "t"), 120, None, Arc::clone(&cache));
+        let pr = pr_item_with_cache(entry(RefType::Mr, 7, "t"), 120, None, Arc::clone(&cache));
 
         let miss = pr.cached_or_loading(PreviewMode::Comments);
         assert!(miss.contains("Loading comments"), "miss: {miss:?}");

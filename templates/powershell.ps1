@@ -30,7 +30,7 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
 
         try {
             # Run wt with split directive env vars
-            # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping (legacy compat)
+            # WORKTRUNK_SHELL selects PowerShell escaping for the EXEC directive payload
             $env:WORKTRUNK_DIRECTIVE_CD_FILE = $cdFile
             $env:WORKTRUNK_DIRECTIVE_EXEC_FILE = $execFile
             $env:WORKTRUNK_SHELL = "powershell"

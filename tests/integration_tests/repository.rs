@@ -651,6 +651,17 @@ fn test_detect_ref_type() {
     let r = Repository::at(gitlab.root_path().to_path_buf()).unwrap();
     assert_eq!(r.detect_ref_type(), Some(RefType::Mr));
 
+    // Other known PR forges use the same canonical mapping.
+    for url in [
+        "https://gitea.example.com/owner/repo.git",
+        "https://dev.azure.com/org/project/_git/repo",
+    ] {
+        let repo = TestRepo::new();
+        repo.run_git(&["remote", "add", "origin", url]);
+        let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+        assert_eq!(r.detect_ref_type(), Some(RefType::Pr), "{url}");
+    }
+
     // Unknown host → None
     let other = TestRepo::new();
     other.run_git(&[

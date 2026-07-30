@@ -71,7 +71,7 @@
 //!
 //! Uses `tea api repos/{owner}/{repo}/pulls/<number>`. Unlike `gh`, `tea`'s
 //! `{owner}`/`{repo}` template expansion depends on local repo context, so the
-//! provider resolves owner/repo from the primary remote URL and passes a
+//! provider resolves owner/repo from a matching Gitea remote and passes a
 //! pre-expanded path.
 //!
 //! ## Azure DevOps
@@ -98,8 +98,10 @@ use std::process::Output;
 
 use anyhow::{Context, bail};
 
+use crate::git::ci_platform::{host_is_within, normalized_hostname};
 use crate::git::error::GitError;
-use crate::git::{GitRepoInfo, GitRepoProvider, RefType, Repository};
+use crate::git::url::authority_host;
+use crate::git::{ForgeKind, GitRepoInfo, GitRepoProvider, RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// Provider trait for platform-specific PR/MR operations.
@@ -107,15 +109,13 @@ use crate::shell_exec::Cmd;
 /// Each platform (GitHub, Gitea, GitLab, Azure DevOps) implements this trait to
 /// provide unified access to PR/MR metadata and ref paths.
 pub trait RemoteRefProvider {
-    /// The reference type this provider handles.
-    fn ref_type(&self) -> RefType;
+    /// The forge whose API and ref namespace this provider implements.
+    fn forge_kind(&self) -> ForgeKind;
 
-    /// Short, stable identifier for the platform — `"github"`, `"gitea"`,
-    /// `"gitlab"`, or `"azure-devops"`. Useful for diagnostic logging and for
-    /// tests that need to verify which provider was selected (the other trait
-    /// methods don't distinguish GitHub, Gitea, and Azure DevOps — all three
-    /// use `RefType::Pr` and `pull/{N}/head`).
-    fn platform_label(&self) -> &'static str;
+    /// The reference type this provider handles.
+    fn ref_type(&self) -> RefType {
+        self.forge_kind().ref_type()
+    }
 
     /// Fetch ref information from the platform API.
     ///
@@ -194,28 +194,6 @@ pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output)
     .into()
 }
 
-/// Whether `host` is `domain` itself or a subdomain of it.
-///
-/// Compared label-wise, so `dev.azure.com` matches `dev.azure.com` and
-/// `x.dev.azure.com` but not `dev.azure.com.attacker.example` or
-/// `notdev.azure.com` — a plain substring test accepts an attacker-chosen host
-/// that merely contains the domain.
-fn host_is_within(host: &str, domain: &str) -> bool {
-    let host = host.to_ascii_lowercase();
-    host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
-}
-
-/// Whether any dot-separated label of `host` is exactly `label`.
-///
-/// Recognizes both `github.com` and the usual self-hosted naming
-/// (`github.corp.example`) without matching a host that merely spells the name
-/// inside a longer label, such as a `github-mirror.example` running something
-/// else. A deployment this misses names its provider explicitly — see
-/// `provider_override`.
-fn host_has_label(host: &str, label: &str) -> bool {
-    host.to_ascii_lowercase().split('.').any(|l| l == label)
-}
-
 /// Extract the host (e.g. `github.com`) from a PR/MR `html_url` returned by
 /// the forge API. Both GitHub and Gitea responses use the same `https://host/...`
 /// shape, so we share the parser.
@@ -223,8 +201,8 @@ pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<Strin
     html_url
         .strip_prefix("https://")
         .or_else(|| html_url.strip_prefix("http://"))
-        .and_then(|s| s.split('/').next())
-        .filter(|h| !h.is_empty())
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .and_then(authority_host)
         .map(String::from)
         .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
 }
@@ -467,14 +445,20 @@ pub fn repo_info_from_ref_url_with_provider(
     if repo_segments.len() < 3 {
         return None;
     }
-    let url = format!("{}://{}", parts.scheme, repo_segments.join("/"));
-    let host = repo_segments[0].to_string();
+    let host = authority_host(repo_segments[0])?.to_string();
+    let url = format!(
+        "{}://{}/{}",
+        parts.scheme,
+        host,
+        repo_segments[1..].join("/")
+    );
     let marker = parts.segments[parts.marker_index];
-    let provider_override = GitRepoProvider::from_platform(provider_override);
+    let provider_override = provider_override.and_then(|value| value.parse::<ForgeKind>().ok());
 
     let provider = match marker {
         "pull" => {
-            if provider_override == Some(GitRepoProvider::GitHub) || host_has_label(&host, "github")
+            if provider_override == Some(ForgeKind::GitHub)
+                || ForgeKind::from_host(&host) == Some(ForgeKind::GitHub)
             {
                 GitRepoProvider::GitHub
             } else {
@@ -484,9 +468,8 @@ pub fn repo_info_from_ref_url_with_provider(
         "pulls" => GitRepoProvider::Gitea,
         "merge_requests" => GitRepoProvider::GitLab,
         "pullrequest" => {
-            if provider_override == Some(GitRepoProvider::AzureDevOps)
-                || host_is_within(&host, "dev.azure.com")
-                || host_is_within(&host, "visualstudio.com")
+            if provider_override == Some(ForgeKind::AzureDevOps)
+                || ForgeKind::from_host(&host) == Some(ForgeKind::AzureDevOps)
             {
                 GitRepoProvider::AzureDevOps
             } else {
@@ -497,7 +480,7 @@ pub fn repo_info_from_ref_url_with_provider(
     };
 
     if provider == GitRepoProvider::AzureDevOps {
-        let allow_generic_host = provider_override == Some(GitRepoProvider::AzureDevOps);
+        let allow_generic_host = provider_override == Some(ForgeKind::AzureDevOps);
         if let Some((owner, project, name)) =
             azure_repo_segments(&host, &repo_segments[1..], allow_generic_host)
         {
@@ -543,16 +526,8 @@ fn azure_repo_segments(
     segments: &[&str],
     allow_generic_host: bool,
 ) -> Option<(String, String, String)> {
-    let host_lower = host.to_ascii_lowercase();
-    if host_lower == "dev.azure.com" {
-        if segments.len() >= 4 && segments.get(2) == Some(&"_git") {
-            return Some((
-                segments[0].to_string(),
-                segments[1].to_string(),
-                segments[3].to_string(),
-            ));
-        }
-    } else if host_lower == "ssh.dev.azure.com" {
+    let host_lower = normalized_hostname(host);
+    if host_lower == "ssh.dev.azure.com" {
         if segments.len() >= 4 && segments.first() == Some(&"v3") {
             return Some((
                 segments[1].to_string(),
@@ -560,7 +535,15 @@ fn azure_repo_segments(
                 segments[3].to_string(),
             ));
         }
-    } else if host_lower.ends_with(".visualstudio.com") {
+    } else if host_is_within(&host_lower, "dev.azure.com") {
+        if segments.len() >= 4 && segments.get(2) == Some(&"_git") {
+            return Some((
+                segments[0].to_string(),
+                segments[1].to_string(),
+                segments[3].to_string(),
+            ));
+        }
+    } else if host_is_within(&host_lower, "visualstudio.com") {
         if segments.len() >= 3 && segments.get(1) == Some(&"_git") {
             let organization = host.split('.').next()?.to_string();
             return Some((
@@ -584,28 +567,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_host_matching_respects_label_boundaries() {
-        // The domain itself and subdomains of it.
-        assert!(host_is_within("dev.azure.com", "dev.azure.com"));
-        assert!(host_is_within("DEV.AZURE.COM", "dev.azure.com"));
-        assert!(host_is_within("myorg.visualstudio.com", "visualstudio.com"));
-        // A host that only spells the domain inside a longer name. A substring
-        // test takes each of these for Azure DevOps.
-        assert!(!host_is_within(
-            "dev.azure.com.attacker.example",
-            "dev.azure.com"
-        ));
-        assert!(!host_is_within("notdev.azure.com", "dev.azure.com"));
-        assert!(!host_is_within("evil-visualstudio.com", "visualstudio.com"));
-
-        // github.com and the usual self-hosted naming.
-        assert!(host_has_label("github.com", "github"));
-        assert!(host_has_label("github.corp.example", "github"));
-        assert!(host_has_label("git.github.corp.example", "github"));
-        // Spelled inside a longer label: not GitHub.
-        assert!(!host_has_label("github-mirror.example", "github"));
-        assert!(!host_has_label("mygithubmirror.com", "github"));
-        assert!(!host_has_label("notgithub.io", "github"));
+    fn api_url_host_uses_the_network_host_after_userinfo() {
+        assert_eq!(
+            extract_host_from_html_url("https://github.com@attacker.example/owner/repo/pull/1")
+                .unwrap(),
+            "attacker.example"
+        );
+        assert_eq!(
+            extract_host_from_html_url("http://user:token@github.com:8443/owner/repo/pull/1")
+                .unwrap(),
+            "github.com:8443"
+        );
+        assert!(extract_host_from_html_url("https://github.com@/owner/repo/pull/1").is_err());
     }
 
     #[test]
@@ -862,6 +835,46 @@ mod tests {
         assert_eq!(info.owner, "owner");
         assert_eq!(info.name, "repo");
         assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_respects_host_boundaries_and_ports() {
+        let github = repo_info_from_ref_url("https://github.com:8443/owner/repo/pull/1")
+            .expect("GitHub PR URL");
+        assert_eq!(github.provider, GitRepoProvider::GitHub);
+
+        let azure = repo_info_from_ref_url(
+            "https://dev.azure.com:8443/org/project/_git/repo/pullrequest/9",
+        )
+        .expect("Azure DevOps PR URL");
+        assert_eq!(azure.provider, GitRepoProvider::AzureDevOps);
+        assert_eq!(azure.owner, "org");
+        assert_eq!(azure.project.as_deref(), Some("project"));
+
+        let azure_with_forge_label = repo_info_from_ref_url(
+            "https://github.dev.azure.com/org/project/_git/repo/pullrequest/9",
+        )
+        .expect("Azure DevOps PR URL");
+        assert_eq!(
+            azure_with_forge_label.provider,
+            GitRepoProvider::AzureDevOps
+        );
+
+        let hostile_userinfo =
+            repo_info_from_ref_url("https://github.com@attacker.example/owner/repo/pull/1")
+                .expect("ref URL is structurally valid");
+        assert_eq!(hostile_userinfo.provider, GitRepoProvider::Unknown);
+        assert_eq!(hostile_userinfo.host, "attacker.example");
+        assert_eq!(hostile_userinfo.url, "https://attacker.example/owner/repo");
+
+        for input in [
+            "https://github-mirror.example/owner/repo/pull/1",
+            "https://dev.azure.com.attacker.example/org/project/_git/repo/pullrequest/9",
+            "https://evil-visualstudio.com/org/project/_git/repo/pullrequest/9",
+        ] {
+            let info = repo_info_from_ref_url(input).expect("ref URL is structurally valid");
+            assert_eq!(info.provider, GitRepoProvider::Unknown, "{input}");
+        }
     }
 
     #[test]

@@ -1,17 +1,18 @@
 ---
-source: tests/integration_tests/merge.rs
+source: tests/integration_tests/directives.rs
 info:
   program: wt
   args:
-    - merge
-    - main
-    - "--no-commit"
-    - "--no-squash"
-    - "--no-remove"
+    - switch
+    - feature
+    - "--execute"
+    - echo spawned > retired-execute-ran
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -27,6 +28,7 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -38,6 +40,7 @@ info:
     WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -49,9 +52,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
-[107m [0m * [33m[HASH][m Add feature file
-[107m [0m  feature.txt | 1 [32m+[m
-[107m [0m  1 file changed, 1 insertion(+)
-[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-[2m○[22m Worktree preserved (--no-remove)
+[33m▲[39m [33m[1m--execute[22m will change in a future release: it will run a single program, with arguments after [1m--[22m, not a shell command line[39m
+[2m↳[22m [2mComment at [4mhttps://github.com/max-sixty/worktrunk/issues/2860[24m if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: [4m--execute sh -- -c 'echo spawned > retired-execute-ran'[24m[22m
+[2m○[22m Already on worktree for [1mfeature[22m @ [1m_REPO_.feature[22m
+[33m▲[39m [33m[1m--execute[22m disabled because the shell wrapper is out of date; skipping [1mecho spawned > retired-execute-ran[22m[39m
+[2m↳[22m [2mTo update the shell wrapper, run [4mwt config shell install[24m[22m

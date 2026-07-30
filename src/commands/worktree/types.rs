@@ -189,8 +189,9 @@ pub enum BranchFate {
     /// The deletion ran and the branch is gone.
     Deleted,
     /// The deletion ran and the branch survives: SafeDelete declined an
-    /// unmerged branch, the CAS refused a moved ref, or the delete command
-    /// itself failed (already narrated at the site that observed it).
+    /// unmerged branch, a final topology check found a checkout, the CAS refused
+    /// a moved ref, or the delete command itself failed (already narrated at
+    /// the site that observed it).
     Retained,
     /// The deletion was handed to a detached background process (the legacy
     /// `git worktree remove` fallback) whose outcome this process never sees.
@@ -212,9 +213,9 @@ impl BranchFate {
                 BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
                     Self::Deleted
                 }
-                BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced => {
-                    Self::Retained
-                }
+                BranchDeletionOutcome::NotDeleted
+                | BranchDeletionOutcome::RetainedCheckedOut { .. }
+                | BranchDeletionOutcome::RetainedRaced => Self::Retained,
             },
             Some(Err(_)) => Self::Retained,
         }
@@ -233,8 +234,8 @@ impl BranchFate {
 ///
 /// Produced by the planner, executed by `output::handle_remove_output`. The
 /// deletion-relevant fields are intent, not fact: `deletion_mode` says what the
-/// executor should attempt, and the actual deletion re-decides against fresh
-/// refs (`delete_branch_if_safe`'s CAS).
+/// executor should attempt, and the actual safe deletion rechecks both worktree
+/// topology and fresh refs (`delete_branch_if_safe`'s guard + CAS).
 pub enum RemovalPlan {
     /// Remove a worktree, changing directory away from it first if it's current.
     Worktree {
@@ -283,9 +284,8 @@ pub enum RemovalPlan {
         /// `origin/main` when upstream is ahead) or the local default branch.
         /// `None` when no default branch is configured.
         target_branch: Option<String>,
-        /// Pre-computed integration reason. Branch-only removal has no
-        /// worktree-local `pre-remove` hook, so the integration decision can
-        /// be made during preparation.
+        /// Integration reason computed during preparation for display. The
+        /// executor still rechecks topology and ref state before safe deletion.
         integration_reason: Option<worktrunk::git::IntegrationReason>,
         /// A surviving checkout of `branch_name`, when one exists. Only reachable
         /// on a pruned removal — the target's directory was gone, but a sibling
@@ -308,8 +308,8 @@ impl RemovalPlan {
         }
     }
 
-    /// Branch name of the removed worktree, if known. `None` for detached-HEAD
-    /// worktrees and (structurally) for branch-only deletions.
+    /// Branch named by this plan. `None` only for a detached-HEAD worktree;
+    /// branch-only plans always return their branch.
     ///
     /// Only the `--reap` label needs this, which is Unix-only; gated to avoid a
     /// dead-code warning on Windows where nothing consumes it.
@@ -392,13 +392,6 @@ impl RemovalPlan {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_switch_result_path_already_at() {
-        let path = PathBuf::from("/test/path");
-        let result = SwitchResult::AlreadyAt(path.clone());
-        assert_eq!(result.path(), &path);
-    }
-
     #[cfg(unix)]
     #[test]
     fn remove_result_branch_name_reads_both_variants() {
@@ -472,6 +465,12 @@ mod tests {
             BranchFate::Retained
         );
         assert_eq!(
+            fate(BranchDeletionOutcome::RetainedCheckedOut {
+                path: PathBuf::from("/tmp/feature"),
+            }),
+            BranchFate::Retained
+        );
+        assert_eq!(
             fate(BranchDeletionOutcome::RetainedRaced),
             BranchFate::Retained
         );
@@ -483,40 +482,51 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_result_path_existing() {
-        let path = PathBuf::from("/test/existing");
-        let result = SwitchResult::Existing { path: path.clone() };
-        assert_eq!(result.path(), &path);
-    }
+    fn test_switch_result_path() {
+        let cases = [
+            (
+                "already at worktree",
+                SwitchResult::AlreadyAt(PathBuf::from("/test/path")),
+                PathBuf::from("/test/path"),
+            ),
+            (
+                "existing worktree",
+                SwitchResult::Existing {
+                    path: PathBuf::from("/test/existing"),
+                },
+                PathBuf::from("/test/existing"),
+            ),
+            (
+                "created branch",
+                SwitchResult::Created {
+                    path: PathBuf::from("/test/created"),
+                    created_branch: true,
+                    base_branch: Some("main".to_string()),
+                    base_worktree_path: Some("/test/main".to_string()),
+                    from_remote: None,
+                    pr_number: None,
+                    pr_url: None,
+                },
+                PathBuf::from("/test/created"),
+            ),
+            (
+                "created from remote",
+                SwitchResult::Created {
+                    path: PathBuf::from("/test/remote"),
+                    created_branch: false,
+                    base_branch: None,
+                    base_worktree_path: None,
+                    from_remote: Some("origin/feature".to_string()),
+                    pr_number: None,
+                    pr_url: None,
+                },
+                PathBuf::from("/test/remote"),
+            ),
+        ];
 
-    #[test]
-    fn test_switch_result_path_created() {
-        let path = PathBuf::from("/test/created");
-        let result = SwitchResult::Created {
-            path: path.clone(),
-            created_branch: true,
-            base_branch: Some("main".to_string()),
-            base_worktree_path: Some("/test/main".to_string()),
-            from_remote: None,
-            pr_number: None,
-            pr_url: None,
-        };
-        assert_eq!(result.path(), &path);
-    }
-
-    #[test]
-    fn test_switch_result_created_with_remote() {
-        let path = PathBuf::from("/test/remote");
-        let result = SwitchResult::Created {
-            path: path.clone(),
-            created_branch: false,
-            base_branch: None,
-            base_worktree_path: None,
-            from_remote: Some("origin/feature".to_string()),
-            pr_number: None,
-            pr_url: None,
-        };
-        assert_eq!(result.path(), &path);
+        for (name, result, expected) in cases {
+            assert_eq!(result.path(), &expected, "{name}");
+        }
     }
 
     #[test]

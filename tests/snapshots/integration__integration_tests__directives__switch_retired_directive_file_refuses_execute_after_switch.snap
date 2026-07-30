@@ -5,10 +5,14 @@ info:
   args:
     - switch
     - feature
+    - "--execute"
+    - echo spawned > retired-execute-ran
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -36,6 +40,7 @@ info:
     WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -47,7 +52,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mShell wrapper uses the legacy directive-file protocol; it will be removed in a future release[39m
-[2m↳[22m [2mTo update, run [4mwt config shell install[24m[22m
-[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m
-[0m
+[33m▲[39m [33m[1m--execute[22m will change in a future release: it will run a single program, with arguments after [1m--[22m, not a shell command line[39m
+[2m↳[22m [2mComment at [4mhttps://github.com/max-sixty/worktrunk/issues/2860[24m if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: [4m--execute sh -- -c 'echo spawned > retired-execute-ran'[24m[22m
+[33m▲[39m [33mWorktree for [1mfeature[22m @ [1m_REPO_.feature[22m, but cannot change directory — shell wrapper is out of date[39m
+[2m↳[22m [2mTo update the shell wrapper, run [4mwt config shell install[24m[22m
+[33m▲[39m [33m[1m--execute[22m disabled because the shell wrapper is out of date; skipping [1mecho spawned > retired-execute-ran[22m[39m

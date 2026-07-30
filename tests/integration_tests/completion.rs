@@ -2174,16 +2174,25 @@ fn test_complete_custom_subcommand_listed(repo: TestRepo) {
 #[rstest]
 fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
     use std::os::unix::fs::PermissionsExt;
+    use worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR;
+
     repo.commit("initial");
 
     // Create a real shell script that outputs completions (not mock-stub, which
     // needs WORKTRUNK_TEST_MOCK_CONFIG_DIR and doesn't know about COMPLETE env
     // var).
     let ext_dir = tempfile::tempdir().unwrap();
+    let retired_file = ext_dir.path().join("retired");
+    std::fs::write(&retired_file, "").unwrap();
     let script = ext_dir.path().join("wt-testext");
     std::fs::write(
         &script,
-        "#!/bin/sh\nprintf '%s\\n%s' '--custom-flag' '--another'\n",
+        r#"#!/bin/sh
+if [ -n "${WORKTRUNK_DIRECTIVE_FILE+x}" ]; then
+    printf 'retired write\n' >> "$WORKTRUNK_DIRECTIVE_FILE"
+fi
+printf '%s\n%s\n%s' '--custom-flag' '--another' "retired:${WORKTRUNK_DIRECTIVE_FILE-unset}"
+"#,
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -2191,6 +2200,7 @@ fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
     // Complete "wt testext --" — should forward to wt-testext and show its output
     let mut cmd = repo.completion_cmd(&["wt", "testext", "--"]);
     prepend_path(&mut cmd, ext_dir.path());
+    cmd.env(RETIRED_DIRECTIVE_FILE_ENV_VAR, &retired_file);
     let output = cmd.output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2198,5 +2208,14 @@ fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
     assert!(
         stdout.contains("--custom-flag"),
         "Forwarded completion output missing '--custom-flag': {stdout}"
+    );
+    assert!(
+        stdout.contains("retired:unset"),
+        "Forwarded completion received the retired directive variable: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&retired_file).unwrap(),
+        "",
+        "the retired directive file must remain untouched"
     );
 }

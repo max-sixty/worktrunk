@@ -39,7 +39,7 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
 // Re-exports from submodules
-pub use ci_platform::CiPlatform;
+pub use ci_platform::{ForgeKind, LegacyForgeAlias};
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
@@ -59,7 +59,6 @@ pub use error::{
     // Special-handling error enum
     HookErrorWithHint,
     // Platform-specific reference type (PR vs MR)
-    RefContext,
     RefType,
     // CLI context for enriching switch suggestions in error hints
     SwitchSuggestionCtx,

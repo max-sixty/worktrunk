@@ -538,6 +538,16 @@ Equivalent coverage or identical snapshots are useful duplication signals, not
 automatic deletion rules. Before removing a test, identify the belief it owns
 and make sure another test proves that belief at an equal or better boundary.
 
+A test's setup is part of its proof. For topology, absence, and error paths,
+assert the precondition named by the test; fixture names and comments are not
+evidence. If an earlier guard can produce the observed result, the test proves
+that guard rather than the intended condition.
+
+Configuring a subprocess mock is likewise not evidence that production used
+that route. When route selection is the belief, assert the recorded call with
+`mock_calls` and make unexpected calls fail (for example, through `_default`);
+otherwise a fallback or blank response can satisfy the oracle.
+
 Assert semantics through state, structured values, and exit status; snapshot
 the pragmatic user experience when the complete rendering is the contract. A
 custom verifier must fail for every violation it claims to check—diagnostic

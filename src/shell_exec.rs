@@ -507,12 +507,12 @@ pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 /// since the body is user-authored just like a top-level `wt --execute`.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
-/// Legacy pre-split directive file env var. Honored for one release so users
-/// who upgraded `wt` without restarting their shell still get shell integration
-/// from their current session's old wrapper. When only this is set (no new
-/// vars), wt writes shell-format directives to it. Remove in the next breaking
-/// release.
-pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
+/// Retired pre-split directive file env var.
+///
+/// wt never writes to or passes this file through, but still removes the
+/// variable from child environments so an old wrapper cannot expose a file
+/// that its parent shell will source.
+pub const RETIRED_DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 
 /// Scrub all directive file env vars from a `std::process::Command`.
 ///
@@ -522,7 +522,7 @@ pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
     cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
     cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
-    cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+    cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
 }
 
 /// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from a child
@@ -664,8 +664,8 @@ pub enum ShellEscapeMode {
 /// Escape mode for a payload the *active directive shell* will parse.
 ///
 /// Reads [`WORKTRUNK_SHELL_ENV_VAR`] — the single source of truth for the
-/// per-shell escaping decision shared by `escape_legacy_cd`, the `--execute`
-/// command template, and its trailing args. `powershell` ⇒
+/// per-shell escaping decision shared by the `--execute` command template and
+/// its trailing args. `powershell` ⇒
 /// [`ShellEscapeMode::PowerShell`], `fish` ⇒ [`ShellEscapeMode::Fish`], any
 /// other value or absent ⇒ [`ShellEscapeMode::Posix`].
 pub fn directive_shell_escape_mode() -> ShellEscapeMode {
@@ -1052,10 +1052,6 @@ pub struct Cmd {
     /// user typing it at the top level. Project aliases and hooks must NEVER
     /// set this — they could inject arbitrary shell into the parent session.
     directive_exec_file: Option<std::path::PathBuf>,
-    /// When set, re-adds the legacy `WORKTRUNK_DIRECTIVE_FILE` env var. Used in
-    /// legacy-wrapper compat mode to preserve pre-split behavior for alias/hook
-    /// bodies running under an old shell wrapper.
-    directive_legacy_file: Option<std::path::PathBuf>,
 }
 
 struct ExternalCommandLog {
@@ -1197,7 +1193,6 @@ impl Cmd {
             external_label: None,
             directive_cd_file: None,
             directive_exec_file: None,
-            directive_legacy_file: None,
         }
     }
 
@@ -1277,9 +1272,9 @@ impl Cmd {
 
         // Prevent subprocesses from writing shell directives (security).
         // Applied last so it can't be re-added by user-provided envs.
-        // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` (and
-        // the legacy var, in compat mode) for trusted contexts — but never
-        // `WORKTRUNK_DIRECTIVE_EXEC_FILE`, which carries arbitrary shell.
+        // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` for
+        // trusted contexts, and `WORKTRUNK_DIRECTIVE_EXEC_FILE` only for
+        // trusted user-source aliases.
         scrub_directive_env_vars(cmd);
     }
 
@@ -1488,17 +1483,6 @@ impl Cmd {
         self
     }
 
-    /// Pass the legacy (pre-split) directive file through to the child process.
-    ///
-    /// Used only in legacy-wrapper compat mode. Preserves pre-split behavior
-    /// for alias/hook bodies running under an old shell wrapper that still
-    /// sets `WORKTRUNK_DIRECTIVE_FILE`. Remove together with the legacy env
-    /// var in the next breaking release.
-    pub fn directive_legacy_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.directive_legacy_file = Some(path.into());
-        self
-    }
-
     /// Execute the command and return its output.
     ///
     /// Captures stdout/stderr and returns them in `Output`. For interactive
@@ -1515,9 +1499,7 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_cd_file.is_none()
-                && self.directive_exec_file.is_none()
-                && self.directive_legacy_file.is_none(),
+            self.directive_cd_file.is_none() && self.directive_exec_file.is_none(),
             "directive_*_file is only applied by .stream(), not .run()"
         );
 
@@ -1656,10 +1638,8 @@ impl Cmd {
         debug_assert!(
             self.directive_cd_file.is_none()
                 && self.directive_exec_file.is_none()
-                && self.directive_legacy_file.is_none()
                 && next.directive_cd_file.is_none()
-                && next.directive_exec_file.is_none()
-                && next.directive_legacy_file.is_none(),
+                && next.directive_exec_file.is_none(),
             "directive_*_file is only applied by .stream(), not pipe_into"
         );
 
@@ -1879,9 +1859,6 @@ impl Cmd {
         if let Some(ref path) = self.directive_exec_file {
             cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
         }
-        if let Some(ref path) = self.directive_legacy_file {
-            cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
-        }
 
         if let Err(e) = self.check_spawn_preconditions() {
             // Nothing spawned yet — emit a one-shot failed record (the trace
@@ -2087,8 +2064,7 @@ impl Cmd {
                 && self.timeout.is_none()
                 && self.external_label.is_none()
                 && self.directive_cd_file.is_none()
-                && self.directive_exec_file.is_none()
-                && self.directive_legacy_file.is_none(),
+                && self.directive_exec_file.is_none(),
             "delayed_stream does not support stdin/timeout/external/directive options"
         );
 
@@ -2249,6 +2225,34 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_scrub_directive_env_vars_includes_retired_variable() {
+        assert_eq!(RETIRED_DIRECTIVE_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_FILE");
+
+        let mut cmd = std::process::Command::new("child");
+        for var in [
+            DIRECTIVE_CD_FILE_ENV_VAR,
+            DIRECTIVE_EXEC_FILE_ENV_VAR,
+            RETIRED_DIRECTIVE_FILE_ENV_VAR,
+        ] {
+            cmd.env(var, "directive");
+        }
+
+        scrub_directive_env_vars(&mut cmd);
+
+        for var in [
+            DIRECTIVE_CD_FILE_ENV_VAR,
+            DIRECTIVE_EXEC_FILE_ENV_VAR,
+            RETIRED_DIRECTIVE_FILE_ENV_VAR,
+        ] {
+            assert!(
+                cmd.get_envs()
+                    .any(|(key, value)| { key == std::ffi::OsStr::new(var) && value.is_none() }),
+                "{var} should be removed from the child environment"
+            );
+        }
+    }
 
     /// The only test allowed to set `FOREGROUND_THREAD` (a process-wide
     /// set-once): with it unset, `is_foreground_thread()` is false everywhere,

@@ -4463,7 +4463,6 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-highlight",
  "unicode-width 0.2.2",
