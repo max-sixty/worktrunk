@@ -576,9 +576,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn test_probe_reports_invoked_name_for_sh() {
-        // Compound command so sh doesn't exec-replace itself with `sleep`.
+        // Block in a shell builtin so sh stays alive without spawning a child.
         let mut child = Command::new("/bin/sh")
-            .args(["-c", "sleep 30; true"])
+            .args(["-c", "read _"])
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()
             .expect("spawn sh");

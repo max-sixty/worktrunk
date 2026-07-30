@@ -269,53 +269,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_template_references_repo_name_default() {
-        // Default template uses {{ repo }}
-        assert!(template_references_repo_name(
-            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
-        ));
-    }
+    fn test_template_references_repo_name() {
+        let cases = [
+            (
+                "default template",
+                "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}",
+                true,
+            ),
+            ("repo with filter", "{{ repo | sanitize }}", true),
+            (
+                "deprecated main_worktree alias",
+                "{{ main_worktree }}.{{ branch }}",
+                true,
+            ),
+            (
+                "repo_path is a distinct variable",
+                "{{ repo_path }}/../{{ branch | sanitize }}",
+                false,
+            ),
+            (
+                "no repository variable",
+                "../{{ branch | sanitize }}",
+                false,
+            ),
+            ("expression without spaces", "{{repo}}.{{branch}}", true),
+            (
+                "repo outside an expression",
+                "my-repo-path/{{ branch }}",
+                false,
+            ),
+            ("repo suffix in myrepo", "{{ myrepo }}", false),
+            ("repo suffix in norepo", "{{ norepo }}", false),
+        ];
 
-    #[test]
-    fn test_template_references_repo_name_with_filter() {
-        assert!(template_references_repo_name("{{ repo | sanitize }}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_deprecated_alias() {
-        assert!(template_references_repo_name(
-            "{{ main_worktree }}.{{ branch }}"
-        ));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_not_repo_path() {
-        // {{ repo_path }} should NOT match
-        assert!(!template_references_repo_name(
-            "{{ repo_path }}/../{{ branch | sanitize }}"
-        ));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_no_repo() {
-        assert!(!template_references_repo_name("../{{ branch | sanitize }}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_no_spaces() {
-        assert!(template_references_repo_name("{{repo}}.{{branch}}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_no_braces() {
-        // "repo" outside template expressions should not match
-        assert!(!template_references_repo_name("my-repo-path/{{ branch }}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_substring_prefix() {
-        // "myrepo" should NOT match — "repo" is a suffix of a longer identifier
-        assert!(!template_references_repo_name("{{ myrepo }}"));
-        assert!(!template_references_repo_name("{{ norepo }}"));
+        for (name, template, expected) in cases {
+            assert_eq!(
+                template_references_repo_name(template),
+                expected,
+                "{name}: {template}"
+            );
+        }
     }
 }

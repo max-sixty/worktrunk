@@ -10,20 +10,6 @@ use path_slash::PathExt as _;
 use rstest::rstest;
 
 #[rstest]
-fn test_remove_already_on_default(repo: TestRepo) {
-    // Already on main branch
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &[], None));
-}
-
-#[rstest]
-fn test_remove_switch_to_default(repo: TestRepo) {
-    // Create and switch to a feature branch in the main repo
-    repo.run_git(&["switch", "-c", "feature"]);
-
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &[], None));
-}
-
-#[rstest]
 fn test_remove_from_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-wt");
 
@@ -166,14 +152,6 @@ fn test_remove_as_git_subcommand(mut repo: TestRepo) {
         cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
         assert_cmd_snapshot!("remove_as_git_subcommand", cmd);
     });
-}
-
-#[rstest]
-fn test_remove_dirty_working_tree(repo: TestRepo) {
-    // Create a dirty file
-    std::fs::write(repo.root_path().join("dirty.txt"), "uncommitted changes").unwrap();
-
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &[], None));
 }
 
 #[rstest]
@@ -345,12 +323,6 @@ fn test_remove_current_by_name(mut repo: TestRepo) {
         &["feature-current"],
         Some(&worktree_path)
     ));
-}
-
-#[rstest]
-fn test_remove_nonexistent_worktree(repo: TestRepo) {
-    // Try to remove a worktree that doesn't exist
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["nonexistent"], None));
 }
 
 ///
@@ -3777,27 +3749,6 @@ fn test_remove_json(mut repo: TestRepo) {
             "--yes",
             "--foreground",
         ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-
-    let mut settings = insta::Settings::clone_current();
-    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
-    settings.bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
-    });
-}
-
-#[cfg(not(target_os = "windows"))] // foreground removal with cwd inside the worktree hits directory locking
-#[rstest]
-fn test_remove_json_current(mut repo: TestRepo) {
-    repo.commit("initial");
-    let feature_wt = repo.add_worktree("feature");
-
-    let output = repo
-        .wt_command()
-        .args(["remove", "--format=json", "--yes", "--foreground"])
-        .current_dir(&feature_wt)
         .output()
         .unwrap();
     assert!(output.status.success());

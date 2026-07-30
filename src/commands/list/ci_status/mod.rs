@@ -857,6 +857,25 @@ mod tests {
         };
         assert_snapshot!(error.format_cell(usize::MAX, LinkStyle::Unlinked), @"[33m⚠[0m");
 
+        // A PR or MR without CI still keeps its forge reference
+        let no_ci_pr = PrStatus {
+            ci_status: CiStatus::NoCI,
+            ..pr.clone()
+        };
+        assert_snapshot!(
+            no_ci_pr.format_cell(usize::MAX, LinkStyle::Unlinked),
+            @"[90m#123[0m"
+        );
+        let no_ci_mr = PrStatus {
+            ci_status: CiStatus::NoCI,
+            number: Some(PrRef::mr(7)),
+            ..pr.clone()
+        };
+        assert_snapshot!(
+            no_ci_mr.format_cell(usize::MAX, LinkStyle::Unlinked),
+            @"[90m!7[0m"
+        );
+
         // GitLab sigil
         let mr = PrStatus {
             number: Some(PrRef::mr(7)),

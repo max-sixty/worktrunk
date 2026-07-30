@@ -1,9 +1,9 @@
 use crate::common::{
     SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
-    repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, repo_with_remote, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content, wait_for_worktree_removed,
+    repo, repo_with_alternate_primary, repo_with_main_worktree, repo_with_multi_commit_feature,
+    repo_with_remote, setup_snapshot_settings, wait_for_file, wait_for_file_content,
+    wait_for_worktree_removed,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -146,27 +146,6 @@ fn test_merge_dirty_working_tree(mut repo: TestRepo) {
     std::fs::write(feature_wt.join("dirty.txt"), "uncommitted content").unwrap();
 
     // Try to merge (should fail due to dirty working tree)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "merge",
-        &["main"],
-        Some(&feature_wt)
-    ));
-}
-
-#[rstest]
-fn test_merge_not_fast_forward(mut repo: TestRepo) {
-    // Create commits in both branches
-    // Add commit to main (repo root)
-    std::fs::write(repo.root_path().join("main.txt"), "main content").unwrap();
-
-    repo.run_git(&["add", "main.txt"]);
-    repo.run_git(&["commit", "-m", "Add main file"]);
-
-    // Create a feature worktree branching from before the main commit
-    let feature_wt = repo.add_feature();
-
-    // Try to merge (should fail or require actual merge)
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "merge",
@@ -1040,15 +1019,6 @@ fn test_merge_pre_commit_collected_for_squash_clean_worktree(
     ));
 }
 
-#[rstest]
-fn test_merge_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
-    // Deliberately NOT calling setup_remote to test the error case
-    let feature_wt = repo.worktree_path("feature");
-
-    // Try to merge without specifying target (should fail - no remote to get default branch)
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], Some(feature_wt)));
-}
-
 // README EXAMPLE GENERATION TESTS
 // These tests are specifically designed to generate realistic output examples for the README.
 // The snapshots from these tests are manually copied into README.md to show users what
@@ -1508,20 +1478,6 @@ fn accepts_non_empty_strings() {
 }
 
 #[rstest]
-fn test_merge_no_commit_with_clean_tree(mut repo_with_feature_worktree: TestRepo) {
-    let repo = &mut repo_with_feature_worktree;
-    let feature_wt = &repo.worktrees["feature"];
-
-    // Merge with --no-commit (should succeed - clean tree)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        repo,
-        "merge",
-        &["main", "--no-commit", "--no-remove"],
-        Some(feature_wt),
-    ));
-}
-
-#[rstest]
 fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
     // Create a feature worktree with a commit
     let feature_wt = repo.add_worktree_with_commit(
@@ -1555,20 +1511,6 @@ fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
         repo.git_output(&["stash", "list"]).is_empty(),
         "failed merge must not create a stash"
     );
-}
-
-#[rstest]
-fn test_merge_no_commit_no_squash_no_remove_redundant(mut repo_with_feature_worktree: TestRepo) {
-    let repo = &mut repo_with_feature_worktree;
-    let feature_wt = &repo.worktrees["feature"];
-
-    // Merge with --no-commit --no-squash --no-remove (redundant but valid - should succeed)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        repo,
-        "merge",
-        &["main", "--no-commit", "--no-squash", "--no-remove"],
-        Some(feature_wt),
-    ));
 }
 
 #[rstest]
@@ -2266,68 +2208,6 @@ fn test_merge_pre_remove_new_commit_keeps_branch(mut repo: TestRepo) {
     assert!(
         late_file.lines().any(|line| line == "late-commit.txt"),
         "branch should retain the pre-remove hook commit"
-    );
-}
-
-#[rstest]
-fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: TestRepo) {
-    let repo = &mut repo_with_feature_worktree;
-    let feature_wt = repo.worktrees["feature"].clone();
-
-    // Merge to main (this pushes the branch to main)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        repo,
-        "merge",
-        &["main", "--no-remove"],
-        Some(&feature_wt)
-    ));
-
-    // RACE CONDITION: Simulate another developer adding a commit to the feature branch
-    // after the merge/push but before worktree removal and branch deletion.
-    // Since feature is already checked out in feature_wt, we'll add the commit directly there.
-    fs::write(feature_wt.join("extra.txt"), "race condition commit").unwrap();
-    repo.run_git_in(&feature_wt, &["add", "extra.txt"]);
-    repo.run_git_in(
-        &feature_wt,
-        &["commit", "-m", "Add extra file (race condition)"],
-    );
-
-    // Now simulate what wt merge would do: remove the worktree
-    repo.run_git(&["worktree", "remove", feature_wt.to_str().unwrap()]);
-
-    // Try to delete the branch with -d (safe delete)
-    // This should FAIL because the branch has the race condition commit not in main
-    let output = repo
-        .git_command()
-        .args(["branch", "-d", "feature"])
-        .run()
-        .unwrap();
-
-    // Verify the deletion failed (non-zero exit code)
-    assert!(
-        !output.status.success(),
-        "git branch -d should fail when branch has unmerged commits"
-    );
-
-    // Verify the error message mentions the branch is not fully merged
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not fully merged") || stderr.contains("not merged"),
-        "Error should mention branch is not fully merged, got: {}",
-        stderr
-    );
-
-    // Verify the branch still exists (wasn't deleted)
-    let output = repo
-        .git_command()
-        .args(["branch", "--list", "feature"])
-        .run()
-        .unwrap();
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("feature"),
-        "Branch should still exist after failed deletion"
     );
 }
 

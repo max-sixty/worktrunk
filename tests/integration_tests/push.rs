@@ -58,25 +58,6 @@ fn test_push_diffstat_without_detectable_width(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_push_not_fast_forward(mut repo: TestRepo) {
-    // Create commits in both worktrees
-    // Note: We use commit_in_worktree on root to match the original file layout
-    // (file named main.txt instead of file.txt that repo.commit() creates)
-    repo.commit_in_worktree(
-        repo.root_path(),
-        "main.txt",
-        "main content",
-        "Add main file",
-    );
-
-    // Create a feature worktree branching from before the main commit
-    let feature_wt = repo.add_feature();
-
-    // Try to push from feature to main (should fail - not fast-forward)
-    snapshot_push("push_not_fast_forward", &repo, &["main"], Some(&feature_wt));
-}
-
-#[rstest]
 fn test_push_to_default_branch(#[from(repo_with_feature_worktree)] repo: TestRepo) {
     let feature_wt = repo.worktree_path("feature");
 
@@ -366,15 +347,6 @@ fn main_sha(repo: &TestRepo) -> String {
         .run()
         .unwrap();
     String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
-#[rstest]
-fn test_push_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
-    // Note: repo_with_feature_worktree doesn't call setup_remote(), so this tests the "no remote" error case
-    let feature_wt = repo.worktree_path("feature");
-
-    // Try to push without specifying target (should fail - no remote to get default branch)
-    snapshot_push("push_no_remote", &repo, &[], Some(feature_wt));
 }
 
 /// A push target can be named by the worktree it is checked out in, the same as

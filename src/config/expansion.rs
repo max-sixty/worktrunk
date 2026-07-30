@@ -2440,67 +2440,52 @@ mod tests {
     }
 
     #[test]
-    fn test_redact_credentials_https_token() {
-        // GitHub-style personal access token
-        assert_eq!(
-            redact_credentials("https://ghp_token123@github.com/owner/repo"),
-            "https://[REDACTED]@github.com/owner/repo"
-        );
-        // GitLab-style token
-        assert_eq!(
-            redact_credentials("https://glpat-xxxxxxxxxxxx@gitlab.com/owner/repo.git"),
-            "https://[REDACTED]@gitlab.com/owner/repo.git"
-        );
-    }
+    fn test_redact_credentials() {
+        let cases = [
+            (
+                "GitHub personal access token",
+                "https://ghp_token123@github.com/owner/repo",
+                "https://[REDACTED]@github.com/owner/repo",
+            ),
+            (
+                "GitLab personal access token",
+                "https://glpat-xxxxxxxxxxxx@gitlab.com/owner/repo.git",
+                "https://[REDACTED]@gitlab.com/owner/repo.git",
+            ),
+            (
+                "HTTPS username and password",
+                "https://user:password123@github.com/owner/repo",
+                "https://[REDACTED]@github.com/owner/repo",
+            ),
+            (
+                "HTTPS without credentials",
+                "https://github.com/owner/repo",
+                "https://github.com/owner/repo",
+            ),
+            (
+                "SSH URL",
+                "git@github.com:owner/repo.git",
+                "git@github.com:owner/repo.git",
+            ),
+            ("branch name", "main", "main"),
+            ("branch name with slash", "feature/auth", "feature/auth"),
+            ("filesystem path", "/path/to/worktree", "/path/to/worktree"),
+            ("empty value", "", ""),
+            (
+                "git protocol token",
+                "git://token@github.com/owner/repo.git",
+                "git://[REDACTED]@github.com/owner/repo.git",
+            ),
+            (
+                "path and query after credentials",
+                "https://token@github.com/owner/repo.git?ref=main",
+                "https://[REDACTED]@github.com/owner/repo.git?ref=main",
+            ),
+        ];
 
-    #[test]
-    fn test_redact_credentials_https_user_pass() {
-        // Username:password format
-        assert_eq!(
-            redact_credentials("https://user:password123@github.com/owner/repo"),
-            "https://[REDACTED]@github.com/owner/repo"
-        );
-    }
-
-    #[test]
-    fn test_redact_credentials_no_credentials() {
-        // Normal HTTPS URL without credentials - unchanged
-        assert_eq!(
-            redact_credentials("https://github.com/owner/repo"),
-            "https://github.com/owner/repo"
-        );
-        // SSH URL - unchanged (no credentials in URL format)
-        assert_eq!(
-            redact_credentials("git@github.com:owner/repo.git"),
-            "git@github.com:owner/repo.git"
-        );
-    }
-
-    #[test]
-    fn test_redact_credentials_non_url() {
-        // Non-URL values pass through unchanged
-        assert_eq!(redact_credentials("main"), "main");
-        assert_eq!(redact_credentials("feature/auth"), "feature/auth");
-        assert_eq!(redact_credentials("/path/to/worktree"), "/path/to/worktree");
-        assert_eq!(redact_credentials(""), "");
-    }
-
-    #[test]
-    fn test_redact_credentials_git_protocol() {
-        // git:// protocol with credentials
-        assert_eq!(
-            redact_credentials("git://token@github.com/owner/repo.git"),
-            "git://[REDACTED]@github.com/owner/repo.git"
-        );
-    }
-
-    #[test]
-    fn test_redact_credentials_preserves_path() {
-        // Full URL with path and query should preserve everything after host
-        assert_eq!(
-            redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
-            "https://[REDACTED]@github.com/owner/repo.git?ref=main"
-        );
+        for (name, input, expected) in cases {
+            assert_eq!(redact_credentials(input), expected, "{name}: {input}");
+        }
     }
 
     #[test]

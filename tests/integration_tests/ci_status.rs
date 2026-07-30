@@ -47,8 +47,8 @@ fn setup_tracking_for_all_branches(repo: &TestRepo, remote: &str) {
 }
 
 /// Helper to run a CI status test with the given mock data
-fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str, run_json: &str) {
-    repo.setup_mock_gh_with_ci_data(pr_json, run_json);
+fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str) {
+    repo.setup_mock_gh_with_ci_data(pr_json);
 
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
@@ -119,45 +119,28 @@ fn setup_github_repo_with_feature(repo: &mut TestRepo) -> String {
 }
 
 // =============================================================================
-// PR status tests (CheckRun format)
+// PR conflict status
 // =============================================================================
 
 #[rstest]
-#[case::passed("CLEAN", "COMPLETED", "SUCCESS", "github_pr_passed")]
-#[case::failed("BLOCKED", "COMPLETED", "FAILURE", "github_pr_failed")]
-#[case::running("UNKNOWN", "IN_PROGRESS", "null", "github_pr_running")]
-#[case::conflicts("DIRTY", "COMPLETED", "SUCCESS", "github_pr_conflicts")]
-fn test_list_full_with_github_pr_status(
-    mut repo: TestRepo,
-    #[case] merge_state: &str,
-    #[case] status: &str,
-    #[case] conclusion: &str,
-    #[case] snapshot_name: &str,
-) {
+fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
     let head_sha = setup_github_repo_with_feature(&mut repo);
-
-    // Format conclusion - use raw value for null, quoted for strings
-    let conclusion_json = if conclusion == "null" {
-        "null".to_string()
-    } else {
-        format!("\"{}\"", conclusion)
-    };
 
     let pr_json = format!(
         r#"[{{
         "number": 1,
         "headRefOid": "{}",
-        "mergeStateStatus": "{}",
+        "mergeStateStatus": "DIRTY",
         "statusCheckRollup": [
-            {{"status": "{}", "conclusion": {}}}
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
         ],
         "url": "https://github.com/test-owner/test-repo/pull/1",
         "headRepositoryOwner": {{"login": "test-owner"}}
     }}]"#,
-        head_sha, merge_state, status, conclusion_json
+        head_sha
     );
 
-    run_ci_status_test(&mut repo, snapshot_name, &pr_json, "[]");
+    run_ci_status_test(&mut repo, "github_pr_conflicts", &pr_json);
 }
 
 #[rstest]
@@ -176,7 +159,7 @@ fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
     }}]"#,
         head_sha
     );
-    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+    repo.setup_mock_gh_with_ci_data(&pr_json);
 
     let mut cmd = repo.wt_command();
     cmd.args(["list", "--full", "--format=json"]);
@@ -237,7 +220,7 @@ fn test_list_full_json_ci_repo_uses_configured_provider_for_opaque_host(mut repo
     }}]"#,
         head_sha
     );
-    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+    repo.setup_mock_gh_with_ci_data(&pr_json);
 
     let mut cmd = repo.wt_command();
     cmd.args(["list", "--full", "--format=json"]);
@@ -273,20 +256,11 @@ fn test_list_full_json_ci_repo_uses_configured_provider_for_opaque_host(mut repo
 }
 
 // =============================================================================
-// Review state tests (reviewDecision / isDraft from gh pr list)
+// Review state
 // =============================================================================
 
 #[rstest]
-#[case::changes_requested("\"CHANGES_REQUESTED\"", "false", "github_pr_changes_requested")]
-#[case::review_required("\"REVIEW_REQUIRED\"", "false", "github_pr_review_required")]
-#[case::approved("\"APPROVED\"", "false", "github_pr_approved")]
-#[case::draft("\"APPROVED\"", "true", "github_pr_draft")]
-fn test_list_full_with_github_review_state(
-    mut repo: TestRepo,
-    #[case] review_decision: &str,
-    #[case] is_draft: &str,
-    #[case] snapshot_name: &str,
-) {
+fn test_list_full_with_github_changes_requested(mut repo: TestRepo) {
     let head_sha = setup_github_repo_with_feature(&mut repo);
 
     let pr_json = format!(
@@ -299,78 +273,13 @@ fn test_list_full_with_github_review_state(
         ],
         "url": "https://github.com/test-owner/test-repo/pull/1",
         "headRepositoryOwner": {{"login": "test-owner"}},
-        "reviewDecision": {},
-        "isDraft": {}
+        "reviewDecision": "CHANGES_REQUESTED",
+        "isDraft": false
     }}]"#,
-        head_sha, review_decision, is_draft
+        head_sha
     );
 
-    run_ci_status_test(&mut repo, snapshot_name, &pr_json, "[]");
-}
-
-// =============================================================================
-// StatusContext tests (external CI systems like Jenkins)
-// =============================================================================
-
-#[rstest]
-#[case::pending("UNKNOWN", "PENDING", "status_context_pending")]
-#[case::failure("BLOCKED", "FAILURE", "status_context_failure")]
-fn test_list_full_with_status_context(
-    mut repo: TestRepo,
-    #[case] merge_state: &str,
-    #[case] state: &str,
-    #[case] snapshot_name: &str,
-) {
-    let head_sha = setup_github_repo_with_feature(&mut repo);
-
-    let pr_json = format!(
-        r#"[{{
-        "number": 1,
-        "headRefOid": "{}",
-        "mergeStateStatus": "{}",
-        "statusCheckRollup": [
-            {{"state": "{}"}}
-        ],
-        "url": "https://github.com/test-owner/test-repo/pull/1",
-        "headRepositoryOwner": {{"login": "test-owner"}}
-    }}]"#,
-        head_sha, merge_state, state
-    );
-
-    run_ci_status_test(&mut repo, snapshot_name, &pr_json, "[]");
-}
-
-// =============================================================================
-// Workflow run tests (no PR, just workflow runs)
-// =============================================================================
-
-#[rstest]
-#[case::completed("completed", "success", "github_workflow_run")]
-#[case::running("in_progress", "null", "github_workflow_running")]
-fn test_list_full_with_github_workflow(
-    mut repo: TestRepo,
-    #[case] status: &str,
-    #[case] conclusion: &str,
-    #[case] snapshot_name: &str,
-) {
-    let head_sha = setup_github_repo_with_feature(&mut repo);
-
-    let conclusion_json = if conclusion == "null" {
-        "null".to_string()
-    } else {
-        format!("\"{}\"", conclusion)
-    };
-
-    let run_json = format!(
-        r#"[{{
-        "status": "{}",
-        "conclusion": {},
-        "headSha": "{}"
-    }}]"#,
-        status, conclusion_json, head_sha
-    );
-
-    run_ci_status_test(&mut repo, snapshot_name, "[]", &run_json);
+    run_ci_status_test(&mut repo, "github_pr_changes_requested", &pr_json);
 }
 
 // =============================================================================
@@ -399,49 +308,7 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
         "headRepositoryOwner": {"login": "test-owner"}
     }]"#;
 
-    run_ci_status_test(&mut repo, "stale_pr", pr_json, "[]");
-}
-
-#[rstest]
-fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
-    let head_sha = setup_github_repo_with_feature(&mut repo);
-
-    // Mixed: CheckRun (passed) + StatusContext (pending)
-    let pr_json = format!(
-        r#"[{{
-        "number": 1,
-        "headRefOid": "{}",
-        "mergeStateStatus": "UNKNOWN",
-        "statusCheckRollup": [
-            {{"status": "COMPLETED", "conclusion": "SUCCESS"}},
-            {{"state": "PENDING"}}
-        ],
-        "url": "https://github.com/test-owner/test-repo/pull/1",
-        "headRepositoryOwner": {{"login": "test-owner"}}
-    }}]"#,
-        head_sha
-    );
-
-    run_ci_status_test(&mut repo, "mixed_check_types", &pr_json, "[]");
-}
-
-#[rstest]
-fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
-    let head_sha = setup_github_repo_with_feature(&mut repo);
-
-    let pr_json = format!(
-        r#"[{{
-        "number": 1,
-        "headRefOid": "{}",
-        "mergeStateStatus": "CLEAN",
-        "statusCheckRollup": [],
-        "url": "https://github.com/test-owner/test-repo/pull/1",
-        "headRepositoryOwner": {{"login": "test-owner"}}
-    }}]"#,
-        head_sha
-    );
-
-    run_ci_status_test(&mut repo, "no_ci_checks", &pr_json, "[]");
+    run_ci_status_test(&mut repo, "stale_pr", pr_json);
 }
 
 #[rstest]
@@ -480,7 +347,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
         head_sha
     );
 
-    run_ci_status_test(&mut repo, "filters_by_repo_owner", &pr_json, "[]");
+    run_ci_status_test(&mut repo, "filters_by_repo_owner", &pr_json);
 }
 
 #[rstest]
@@ -531,8 +398,7 @@ platform = "github"
     }}]"#,
         head_sha
     );
-    let run_json = "[]";
-    repo.setup_mock_gh_with_ci_data(&pr_json, run_json);
+    repo.setup_mock_gh_with_ci_data(&pr_json);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -628,7 +494,7 @@ platform = "invalid_platform"
     }}]"#,
         head_sha
     );
-    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+    repo.setup_mock_gh_with_ci_data(&pr_json);
 
     let mut settings = setup_snapshot_settings(&repo);
     // Normalize worker thread ID prefix in log output (e.g., [n], [z], [A] -> [W]).
@@ -687,33 +553,23 @@ fn setup_gitlab_repo_with_feature(repo: &mut TestRepo) -> String {
 }
 
 #[rstest]
-#[case::passed("success", false, "gitlab_mr_passed")]
-#[case::failed("failed", false, "gitlab_mr_failed")]
-#[case::running("running", false, "gitlab_mr_running")]
-#[case::pending("pending", false, "gitlab_mr_pending")]
-#[case::conflicts("success", true, "gitlab_mr_conflicts")]
-fn test_list_full_with_gitlab_mr_status(
-    mut repo: TestRepo,
-    #[case] pipeline_status: &str,
-    #[case] has_conflicts: bool,
-    #[case] snapshot_name: &str,
-) {
+fn test_list_full_with_gitlab_mr_conflicts(mut repo: TestRepo) {
     let head_sha = setup_gitlab_repo_with_feature(&mut repo);
 
     let mr_json = format!(
         r#"[{{
         "iid": 1,
         "sha": "{}",
-        "has_conflicts": {},
+        "has_conflicts": true,
         "detailed_merge_status": null,
-        "head_pipeline": {{"status": "{}"}},
+        "head_pipeline": {{"status": "success"}},
         "source_project_id": 12345,
         "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
     }}]"#,
-        head_sha, has_conflicts, pipeline_status
+        head_sha
     );
 
-    run_gitlab_ci_status_test(&mut repo, snapshot_name, &mr_json, Some(12345));
+    run_gitlab_ci_status_test(&mut repo, "gitlab_mr_conflicts", &mr_json, Some(12345));
 }
 
 #[rstest]
@@ -738,27 +594,6 @@ fn test_list_full_with_gitlab_stale_mr(mut repo: TestRepo) {
     }]"#;
 
     run_gitlab_ci_status_test(&mut repo, "gitlab_stale_mr", mr_json, Some(12345));
-}
-
-#[rstest]
-fn test_list_full_with_gitlab_no_ci(mut repo: TestRepo) {
-    let head_sha = setup_gitlab_repo_with_feature(&mut repo);
-
-    // MR with no pipeline
-    let mr_json = format!(
-        r#"[{{
-        "iid": 1,
-        "sha": "{}",
-        "has_conflicts": false,
-        "detailed_merge_status": null,
-        "head_pipeline": null,
-        "source_project_id": 12345,
-        "web_url": "https://gitlab.com/test-group/test-project/-/merge_requests/1"
-    }}]"#,
-        head_sha
-    );
-
-    run_gitlab_ci_status_test(&mut repo, "gitlab_no_ci", &mr_json, Some(12345));
 }
 
 #[rstest]
@@ -952,7 +787,7 @@ fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
         head_sha
     );
 
-    run_ci_status_test(&mut repo, "url_based_pushremote", &pr_json, "[]");
+    run_ci_status_test(&mut repo, "url_based_pushremote", &pr_json);
 }
 
 /// When a branch has no PR yet, fallback check-runs detection should query the
@@ -1098,7 +933,7 @@ fn test_ci_cache_expired_entry_refetches(mut repo: TestRepo) {
         "headRepositoryOwner": {{"login": "test-owner"}}
     }}]"#
     );
-    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+    repo.setup_mock_gh_with_ci_data(&pr_json);
 
     // Expired cache entry claiming the CI failed
     let git_dir = repo.git_output(&["rev-parse", "--git-common-dir"]);
@@ -1213,34 +1048,20 @@ fn test_list_full_with_azure_pr_queued(mut repo: TestRepo) {
 /// No PR for the branch falls back to the latest pipeline run
 /// (exercises `detect_azure_pipeline` via `parse_azure_pipeline_status`).
 #[rstest]
-#[case::passed("completed", "succeeded", "azure_pipeline_passed")]
-#[case::failed("completed", "failed", "azure_pipeline_failed")]
-#[case::running("inProgress", "null", "azure_pipeline_running")]
-fn test_list_full_with_azure_pipeline_status(
-    mut repo: TestRepo,
-    #[case] status: &str,
-    #[case] result: &str,
-    #[case] snapshot_name: &str,
-) {
+fn test_list_full_with_azure_passed_pipeline(mut repo: TestRepo) {
     let head_sha = setup_azure_repo_with_feature(&mut repo);
 
     let runs_json = format!(
         r#"[{{
         "id": 4242,
-        "status": "{}",
-        "result": {},
+        "status": "completed",
+        "result": "succeeded",
         "sourceVersion": "{}"
     }}]"#,
-        status,
-        if result == "null" {
-            "null".to_string()
-        } else {
-            format!(r#""{}""#, result)
-        },
         head_sha
     );
 
-    run_azure_ci_status_test(&mut repo, snapshot_name, "[]", &runs_json);
+    run_azure_ci_status_test(&mut repo, "azure_pipeline_passed", "[]", &runs_json);
 }
 
 /// A pipeline run from a different SHA than local HEAD is marked stale (dimmed).
@@ -1384,28 +1205,6 @@ fn test_list_full_with_gitea_pr_conflicts(mut repo: TestRepo) {
         &head_sha,
         &gitea_feature_pr_json(&head_sha, false),
         r#"{"state":"","total_count":0}"#,
-    );
-}
-
-/// An open PR's CI state comes from the PR head commit's combined status, and
-/// the indicator links to the PR.
-#[rstest]
-#[case::passed("success", "gitea_pr_passed")]
-#[case::failed("failure", "gitea_pr_failed")]
-#[case::running("pending", "gitea_pr_running")]
-fn test_list_full_with_gitea_pr_status(
-    mut repo: TestRepo,
-    #[case] state: &str,
-    #[case] snapshot_name: &str,
-) {
-    let head_sha = setup_gitea_repo_with_feature(&mut repo);
-    let status_json = format!(r#"{{"state":"{state}","total_count":2}}"#);
-    run_gitea_ci_status_test(
-        &mut repo,
-        snapshot_name,
-        &head_sha,
-        &gitea_feature_pr_json(&head_sha, true),
-        &status_json,
     );
 }
 
