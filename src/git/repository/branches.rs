@@ -321,7 +321,13 @@ impl Repository {
                 (name, remotes, ts)
             })
             .collect();
-        remote_only.sort_by_key(|b| std::cmp::Reverse(b.2));
+        // Recency first, then name. The name is not a cosmetic tiebreak: these
+        // entries come out of a `HashMap`, whose iteration order varies per
+        // process, and `sort_by_key` is stable — so on the timestamps that tie
+        // (branches cut from one commit, a bulk import) sorting on recency
+        // alone leaves the surviving order randomized, and the completion list
+        // reshuffles between one Tab press and the next.
+        remote_only.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
         let mut result = Vec::with_capacity(locals.len() + remote_only.len() + worktrees.len());
 
@@ -499,6 +505,27 @@ mod tests {
                 .any(|b| matches!(b.category, BranchCategory::Remote(_))),
             "not requested but present: {without:?}",
         );
+    }
+
+    #[test]
+    fn branches_for_completion_orders_tied_remote_only_branches_by_name() {
+        // Remote-only entries are collected through a `HashMap`, whose
+        // iteration order differs per process, and the recency sort is
+        // stable — so branches sharing a timestamp keep whatever random order
+        // they were iterated in unless the sort breaks the tie itself. Left
+        // unbroken, a user's completion list reshuffles between Tab presses.
+        let test = TestRepo::with_initial_commit();
+        add_remote_refs_at_head(&test, &["cherry", "apple", "banana"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let remote_only: Vec<String> = repo
+            .branches_for_completion(true)
+            .unwrap()
+            .into_iter()
+            .filter(|b| matches!(b.category, BranchCategory::Remote(_)))
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(remote_only, vec!["apple", "banana", "cherry"]);
     }
 
     #[test]
