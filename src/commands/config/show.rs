@@ -26,6 +26,7 @@ use worktrunk::styling::{
 
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
+use crate::commands::legacy_forge_alias_diagnostic;
 use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
@@ -505,11 +506,21 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
             }
         }
         None => {
-            writeln!(
-                out,
-                "{}",
-                hint_message("CI status requires GitHub, GitLab, Gitea, or Azure DevOps remote")
-            )?;
+            if let Some(alias) = repo.legacy_forge_alias() {
+                writeln!(
+                    out,
+                    "{}",
+                    warning_message(legacy_forge_alias_diagnostic(&alias))
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "{}",
+                    hint_message(
+                        "CI status requires GitHub, GitLab, Gitea, or Azure DevOps remote"
+                    )
+                )?;
+            }
         }
     }
 

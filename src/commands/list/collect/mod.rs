@@ -2018,6 +2018,21 @@ pub fn collect(
         return Ok(None);
     }
 
+    // The old substring classifier treated branded SSH aliases such as
+    // `github-personal` as forges. Keep provider dispatch on the safer exact
+    // boundary, but explain the migration once when this collection actually
+    // requested CI. Do this after final table rendering so resolving the
+    // effective URL cannot add a git subprocess to the skeleton's critical
+    // path. Picker collections route through the warning stash; the statusline
+    // uses `populate_item`, not this path, and remains silent.
+    if collected.ci
+        && let Some(alias) = repo.legacy_forge_alias()
+    {
+        emit_warning(
+            warning_message(crate::commands::legacy_forge_alias_diagnostic(&alias)).to_string(),
+        );
+    }
+
     // Status symbols are now computed during data collection (both modes), no fallback needed
 
     // Display collection errors/warnings (after table rendering)

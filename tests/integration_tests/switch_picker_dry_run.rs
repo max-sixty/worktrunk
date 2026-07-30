@@ -181,6 +181,42 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
     );
 }
 
+/// The collect and `--prs` threads discover the same legacy alias
+/// independently. Their shared stash emits the actionable migration warning
+/// once after the picker releases the terminal.
+#[rstest]
+fn test_picker_dry_run_deduplicates_legacy_forge_alias_warning(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github-personal:owner/repo.git",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--prs"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("SSH host alias").count(),
+        1,
+        "collect and --prs should share one warning:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("forge.platform = \"github\""),
+        "warning should give the project-config fix:\n{stderr}"
+    );
+}
+
 /// Same as above but with `list.summary=true` and a fake LLM command
 /// configured, to exercise the `spawn_summary` branch in `handle_picker`.
 /// Uses `cat` as the LLM: it reads stdin and writes it back, so the

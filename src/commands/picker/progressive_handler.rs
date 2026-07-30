@@ -639,7 +639,10 @@ impl PickerProgressHandler for PickerHandler {
     }
 
     fn stash_warning(&self, line: String) {
-        self.stashed_warnings.lock().unwrap().push(line);
+        let mut warnings = self.stashed_warnings.lock().unwrap();
+        if !warnings.contains(&line) {
+            warnings.push(line);
+        }
     }
 
     fn provide_layout(&self, layout: &crate::commands::list::layout::LayoutConfig) {
@@ -1561,13 +1564,14 @@ mod tests {
         assert!(!matches("!7", gitlab), "!7 inverse-excludes its own MR row");
     }
 
-    /// `stash_warning` accumulates lines in arrival order so the picker can
-    /// drain them in one shot after skim releases the terminal.
+    /// `stash_warning` accumulates distinct lines in arrival order so refreshes
+    /// and concurrent producers cannot repeat a diagnostic after skim exits.
     #[test]
     fn stash_warning_preserves_order() {
         let (handler, _test, _rx) = make_handler();
         handler.stash_warning("first".into());
         handler.stash_warning("second".into());
+        handler.stash_warning("first".into());
         handler.stash_warning("third".into());
         let stash = handler.stashed_warnings.lock().unwrap();
         assert_eq!(stash.as_slice(), &["first", "second", "third"]);

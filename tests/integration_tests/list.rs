@@ -450,6 +450,54 @@ fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
     );
 }
 
+/// CI collection reports the intentional exact-label compatibility break once,
+/// while an explicit forge platform resolves and suppresses the diagnostic.
+/// The statusline takes its separate silent collection path.
+#[rstest]
+fn test_list_ci_legacy_forge_alias_diagnostic(mut repo: TestRepo) {
+    repo.setup_mock_gh();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github-personal:owner/repo.git",
+    ]);
+
+    let output = repo.wt_command().args(["list", "--full"]).output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("SSH host alias").count(),
+        1,
+        "diagnostic should appear once:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("forge.platform = \"github\""),
+        "diagnostic should give the project-config fix:\n{stderr}"
+    );
+
+    let statusline = repo
+        .wt_command()
+        .args(["list", "statusline", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(statusline.status.success());
+    let statusline_stderr = String::from_utf8_lossy(&statusline.stderr);
+    assert!(
+        !statusline_stderr.contains("SSH host alias"),
+        "statusline must remain silent:\n{statusline_stderr}"
+    );
+
+    repo.write_project_config("[forge]\nplatform = \"github\"\n");
+    let configured = repo.wt_command().args(["list", "--full"]).output().unwrap();
+    assert!(configured.status.success());
+    let configured_stderr = String::from_utf8_lossy(&configured.stderr);
+    assert!(
+        !configured_stderr.contains("SSH host alias"),
+        "explicit forge config should suppress the diagnostic:\n{configured_stderr}"
+    );
+}
+
 #[rstest]
 fn test_list_json_configured_azure_generic_remote_is_unknown(repo: TestRepo) {
     repo.run_git(&[

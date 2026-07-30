@@ -24,6 +24,63 @@ pub enum ForgeKind {
     AzureDevOps,
 }
 
+/// A branded SSH host alias that the former substring classifier recognized.
+///
+/// This is diagnostic-only: callers can explain the compatibility change and
+/// suggest `forge.platform`, but must not use it to select a forge provider.
+/// Dispatch remains on [`ForgeKind::from_host`]'s exact-label boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyForgeAlias {
+    host: String,
+    platform: ForgeKind,
+}
+
+impl LegacyForgeAlias {
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn platform(&self) -> ForgeKind {
+        self.platform
+    }
+
+    /// Recognize the common multi-account SSH alias form (`github-personal`).
+    ///
+    /// Only SSH URLs with a single-label, forge-prefixed host qualify. Dotted
+    /// hosts stay out even when they contain a forge name: those are exactly
+    /// the security-sensitive lookalikes the exact-label classifier rejects.
+    fn from_url(url: &str) -> Option<Self> {
+        let url = url.trim();
+        let is_ssh = url.starts_with("ssh://")
+            || url
+                .split_once(':')
+                .is_some_and(|(authority, _)| !authority.contains('/') && authority.contains('@'));
+        if !is_ssh {
+            return None;
+        }
+
+        let parsed = GitRemoteUrl::parse(url)?;
+        let host = normalized_hostname(parsed.host());
+        if host.contains('.') || ForgeKind::from_host(&host).is_some() {
+            return None;
+        }
+
+        let platform = [
+            ("github-", ForgeKind::GitHub),
+            ("gitlab-", ForgeKind::GitLab),
+            ("gitea-", ForgeKind::Gitea),
+        ]
+        .into_iter()
+        .find_map(|(prefix, platform)| {
+            host.strip_prefix(prefix)
+                .filter(|suffix| !suffix.is_empty())
+                .map(|_| platform)
+        })?;
+
+        Some(Self { host, platform })
+    }
+}
+
 impl ForgeKind {
     /// Classify a forge from a remote hostname.
     ///
@@ -124,6 +181,20 @@ impl Repository {
         }
 
         None
+    }
+
+    /// Return a diagnostic for a legacy branded SSH alias on the primary remote.
+    ///
+    /// A configured platform resolves the ambiguity and suppresses the
+    /// diagnostic. The returned value never participates in provider dispatch.
+    pub fn legacy_forge_alias(&self) -> Option<LegacyForgeAlias> {
+        if self.configured_ci_platform().is_some() {
+            return None;
+        }
+
+        let remote = self.primary_remote().ok()?;
+        let url = self.effective_remote_url(&remote)?;
+        LegacyForgeAlias::from_url(&url)
     }
 
     /// The CI platform set in project config (`forge.platform` / `ci.platform`).
@@ -268,5 +339,45 @@ mod tests {
                 "{host}"
             );
         }
+    }
+
+    #[test]
+    fn test_legacy_forge_alias_is_diagnostic_only_for_branded_ssh_aliases() {
+        for (url, platform) in [
+            ("git@github-personal:owner/repo.git", ForgeKind::GitHub),
+            ("ssh://git@gitlab-work/owner/repo.git", ForgeKind::GitLab),
+            ("git@gitea-local:owner/repo.git", ForgeKind::Gitea),
+        ] {
+            let alias = LegacyForgeAlias::from_url(url).expect(url);
+            assert_eq!(alias.platform(), platform, "{url}");
+            assert_eq!(ForgeKind::from_host(alias.host()), None, "{url}");
+        }
+
+        for url in [
+            "git@github.com:owner/repo.git",
+            "git@work:owner/repo.git",
+            "git@notgithub-personal:owner/repo.git",
+            "git@github-mirror.example:owner/repo.git",
+            "git@github-personal.attacker.example:owner/repo.git",
+            "https://github-personal/owner/repo.git",
+        ] {
+            assert_eq!(LegacyForgeAlias::from_url(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn test_configured_platform_suppresses_legacy_alias_diagnostic() {
+        let test = crate::testing::TestRepo::new();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "git@github-personal:owner/repo.git",
+        ]);
+        test.write_project_config("[forge]\nplatform = \"github\"\n");
+
+        let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitHub));
+        assert_eq!(repo.legacy_forge_alias(), None);
     }
 }
