@@ -127,6 +127,7 @@ const MAX_PRS: u8 = 50;
 const PR_GUTTER_SIGIL: &str = "# ";
 
 /// One open PR/MR, normalized across forges for the picker row.
+#[derive(Debug)]
 struct PrEntry {
     number: u32,
     title: String,
@@ -1832,10 +1833,8 @@ mod tests {
         // A repo with no remote can't be classified as GitHub or GitLab, so
         // `--prs` reports that instead of shelling out to gh/glab.
         let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let err = match fetch_open_prs(&test.repo) {
-            Ok(_) => panic!("expected --prs to bail without a forge remote"),
-            Err(e) => e,
-        };
+        let err =
+            fetch_open_prs(&test.repo).expect_err("expected --prs to bail without a forge remote");
         assert!(
             err.to_string().contains("could not determine the forge"),
             "unexpected error: {err:#}"
@@ -1851,10 +1850,8 @@ mod tests {
             "origin",
             "git@github-personal:owner/repo.git",
         ]);
-        let err = match fetch_open_prs(&test.repo) {
-            Ok(_) => panic!("expected --prs to require explicit forge config"),
-            Err(e) => e,
-        };
+        let err = fetch_open_prs(&test.repo)
+            .expect_err("expected --prs to require explicit forge config");
         let message = err.to_string();
         assert!(
             message.contains("github-personal") && message.contains("forge.platform = \"github\""),
@@ -1868,10 +1865,8 @@ mod tests {
         // the GitHub/GitLab limitation rather than shelling out.
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         test.run_git(&["remote", "add", "origin", "https://gitea.com/o/r.git"]);
-        let err = match fetch_open_prs(&test.repo) {
-            Ok(_) => panic!("expected --prs to bail on an unsupported forge"),
-            Err(e) => e,
-        };
+        let err =
+            fetch_open_prs(&test.repo).expect_err("expected --prs to bail on an unsupported forge");
         assert!(
             err.to_string().contains("supports GitHub and GitLab"),
             "unexpected error: {err:#}"
