@@ -71,7 +71,7 @@ pub(crate) use worktree::{
 pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
-use worktrunk::git::LegacyForgeAlias;
+use worktrunk::git::{LegacyForgeAlias, LegacyForgeAliasShape};
 use worktrunk::styling::{eprintln, format_with_gutter};
 
 pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
@@ -82,14 +82,22 @@ pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
     }
 }
 
-/// Actionable compatibility diagnostic for branded SSH aliases that no longer
-/// cross the exact-label forge-classification boundary.
+/// Actionable compatibility diagnostic for hosts that no longer cross the
+/// exact-label forge-classification boundary.
+///
+/// The lead-in reflects the shape: a branded SSH alias is named as such, a
+/// hyphenated or forge-named hostname (`github-enterprise.acme.com`) as a host.
 pub(crate) fn legacy_forge_alias_diagnostic(alias: &LegacyForgeAlias) -> String {
     let platform = alias.platform().to_string();
     let host = alias.host();
-    cformat!(
-        "SSH host alias <bold>{host}</> is not auto-detected as a forge; enable CI status and <bold>wt switch --prs</> with <bold>forge.platform = \"{platform}\"</> @ <bold>.config/wt.toml</>"
-    )
+    match alias.shape() {
+        LegacyForgeAliasShape::SshAlias => cformat!(
+            "SSH host alias <bold>{host}</> is not auto-detected as a forge; enable CI status and <bold>wt switch --prs</> with <bold>forge.platform = \"{platform}\"</> @ <bold>.config/wt.toml</>"
+        ),
+        LegacyForgeAliasShape::Hostname => cformat!(
+            "Host <bold>{host}</> is not auto-detected as a forge; enable CI status and <bold>wt switch --prs</> with <bold>forge.platform = \"{platform}\"</> @ <bold>.config/wt.toml</>"
+        ),
+    }
 }
 
 /// Format command execution label with optional command name.

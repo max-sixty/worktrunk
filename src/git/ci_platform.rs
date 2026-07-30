@@ -24,7 +24,21 @@ pub enum ForgeKind {
     AzureDevOps,
 }
 
-/// A branded SSH host alias that the former substring classifier recognized.
+/// Which shape produced a [`LegacyForgeAlias`], so the diagnostic can word
+/// itself for the case at hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyForgeAliasShape {
+    /// A single-label, forge-prefixed SSH host alias (`git@github-personal:…`),
+    /// the multi-account setup form.
+    SshAlias,
+    /// A DNS hostname that carries the forge name only inside a label
+    /// (`github-enterprise.acme.com`, `mygithub.com`): recognized by the
+    /// pre-0.71.0 substring rule but not the exact-label classifier.
+    Hostname,
+}
+
+/// A host the former substring classifier recognized but the exact-label
+/// boundary no longer does.
 ///
 /// This is diagnostic-only: callers can explain the compatibility change and
 /// suggest `forge.platform`, but must not use it to select a forge provider.
@@ -33,6 +47,7 @@ pub enum ForgeKind {
 pub struct LegacyForgeAlias {
     host: String,
     platform: ForgeKind,
+    shape: LegacyForgeAliasShape,
 }
 
 impl LegacyForgeAlias {
@@ -44,40 +59,68 @@ impl LegacyForgeAlias {
         self.platform
     }
 
-    /// Recognize the common multi-account SSH alias form (`github-personal`).
+    pub fn shape(&self) -> LegacyForgeAliasShape {
+        self.shape
+    }
+
+    /// Recognize a host that the pre-0.71.0 substring rule classified but the
+    /// exact-label boundary now drops.
     ///
-    /// Only SSH URLs with a single-label, forge-prefixed host qualify. Dotted
-    /// hosts stay out even when they contain a forge name: those are exactly
-    /// the security-sensitive lookalikes the exact-label classifier rejects.
+    /// Two shapes qualify, both diagnostic-only:
+    ///
+    /// - The multi-account SSH alias (`git@github-personal:…`) — a single DNS
+    ///   label, forge-prefixed. Worded as an SSH alias.
+    /// - Any host carrying the forge name only inside a label
+    ///   (`github-enterprise.acme.com`, `mygithub.com`, or an Azure service
+    ///   domain present as a substring) — worded as a hostname.
+    ///
+    /// A host that still classifies on the exact-label boundary needs no
+    /// diagnostic and returns `None`.
     fn from_url(url: &str) -> Option<Self> {
         let url = url.trim();
+        let parsed = GitRemoteUrl::parse(url)?;
+        let host = normalized_hostname(parsed.host());
+
+        // Still classifies normally — a provider resolves, so no diagnostic.
+        if ForgeKind::from_host(&host).is_some() {
+            return None;
+        }
+
+        // The branded multi-account SSH alias: single-label, forge-prefixed.
         let is_ssh = url.starts_with("ssh://")
             || url
                 .split_once(':')
                 .is_some_and(|(authority, _)| !authority.contains('/') && authority.contains('@'));
-        if !is_ssh {
-            return None;
+        if is_ssh && !host.contains('.') {
+            let ssh_platform = [
+                ("github-", ForgeKind::GitHub),
+                ("gitlab-", ForgeKind::GitLab),
+                ("gitea-", ForgeKind::Gitea),
+            ]
+            .into_iter()
+            .find_map(|(prefix, platform)| {
+                host.strip_prefix(prefix)
+                    .filter(|suffix| !suffix.is_empty())
+                    .map(|_| platform)
+            });
+            if let Some(platform) = ssh_platform {
+                return Some(Self {
+                    host,
+                    platform,
+                    shape: LegacyForgeAliasShape::SshAlias,
+                });
+            }
         }
 
-        let parsed = GitRemoteUrl::parse(url)?;
-        let host = normalized_hostname(parsed.host());
-        if host.contains('.') || ForgeKind::from_host(&host).is_some() {
-            return None;
-        }
-
-        let platform = [
-            ("github-", ForgeKind::GitHub),
-            ("gitlab-", ForgeKind::GitLab),
-            ("gitea-", ForgeKind::Gitea),
-        ]
-        .into_iter()
-        .find_map(|(prefix, platform)| {
-            host.strip_prefix(prefix)
-                .filter(|suffix| !suffix.is_empty())
-                .map(|_| platform)
-        })?;
-
-        Some(Self { host, platform })
+        // Any other host the pre-0.71.0 substring rule would have matched — the
+        // forge name appears only inside a label. Additive: it changes no
+        // classification and never feeds provider dispatch.
+        let platform = legacy_substring_platform(&host)?;
+        Some(Self {
+            host,
+            platform,
+            shape: LegacyForgeAliasShape::Hostname,
+        })
     }
 }
 
@@ -132,6 +175,29 @@ pub(super) fn normalized_hostname(host: &str) -> String {
 
 fn host_has_label(host: &str, label: &str) -> bool {
     host.split('.').any(|candidate| candidate == label)
+}
+
+/// The platform the pre-0.71.0 substring classifier would have picked for a
+/// host that no longer classifies on the exact-label boundary.
+///
+/// `host` must already be [`normalized_hostname`]d (lowercased), so the
+/// lowercase literals compare case-insensitively. Azure DevOps is checked
+/// first — its former rule was a `dev.azure.com` / `visualstudio.com`
+/// substring — then the `github`/`gitlab`/`gitea` name substrings, mirroring
+/// [`ForgeKind::from_host`]'s precedence. Diagnostic only: this must never feed
+/// provider dispatch.
+fn legacy_substring_platform(host: &str) -> Option<ForgeKind> {
+    if host.contains("dev.azure.com") || host.contains("visualstudio.com") {
+        Some(ForgeKind::AzureDevOps)
+    } else if host.contains("github") {
+        Some(ForgeKind::GitHub)
+    } else if host.contains("gitlab") {
+        Some(ForgeKind::GitLab)
+    } else if host.contains("gitea") {
+        Some(ForgeKind::Gitea)
+    } else {
+        None
+    }
 }
 
 fn normalized_host_is_within(host: &str, domain: &str) -> bool {
@@ -350,19 +416,64 @@ mod tests {
         ] {
             let alias = LegacyForgeAlias::from_url(url).expect(url);
             assert_eq!(alias.platform(), platform, "{url}");
+            assert_eq!(alias.shape(), LegacyForgeAliasShape::SshAlias, "{url}");
             assert_eq!(ForgeKind::from_host(alias.host()), None, "{url}");
         }
 
+        // A host that still classifies on the exact label, or carries no forge
+        // name at all, gets no diagnostic.
         for url in [
             "git@github.com:owner/repo.git",
             "git@work:owner/repo.git",
-            "git@notgithub-personal:owner/repo.git",
-            "git@github-mirror.example:owner/repo.git",
-            "git@github-personal.attacker.example:owner/repo.git",
-            "https://github-personal/owner/repo.git",
+            "https://bitbucket.org/owner/repo.git",
+            "https://codeberg.org/owner/repo.git",
         ] {
             assert_eq!(LegacyForgeAlias::from_url(url), None, "{url}");
         }
+    }
+
+    #[test]
+    fn test_legacy_forge_alias_widens_to_hostnames_that_lost_exact_label() {
+        // Self-hosted instances (and lookalikes) whose host carries the forge
+        // name only inside a label were classified by the pre-0.71.0 substring
+        // rule but not the exact-label boundary. They now announce the
+        // `forge.platform` remedy as hostnames, over HTTPS and SSH alike.
+        for (url, platform) in [
+            (
+                "https://gitlab-internal.company.com/owner/repo.git",
+                ForgeKind::GitLab,
+            ),
+            (
+                "https://github-enterprise.acme.com/owner/repo.git",
+                ForgeKind::GitHub,
+            ),
+            ("https://mygithub.com/owner/repo.git", ForgeKind::GitHub),
+            ("git@github-mirror.example:owner/repo.git", ForgeKind::GitHub),
+            (
+                "git@gitea-host.example.com:owner/repo.git",
+                ForgeKind::Gitea,
+            ),
+            // The lookalikes #3662 rejects for dispatch still surface a
+            // diagnostic — the hint suggests config; it never dispatches.
+            (
+                "git@github-personal.attacker.example:owner/repo.git",
+                ForgeKind::GitHub,
+            ),
+        ] {
+            let alias = LegacyForgeAlias::from_url(url).expect(url);
+            assert_eq!(alias.platform(), platform, "{url}");
+            assert_eq!(alias.shape(), LegacyForgeAliasShape::Hostname, "{url}");
+            // Dispatch is unchanged: the exact-label classifier still rejects it.
+            assert_eq!(ForgeKind::from_host(alias.host()), None, "{url}");
+        }
+
+        // Azure DevOps: a host carrying a service domain only as a substring
+        // (the equivalent of the branded-label case for the fixed domains).
+        let alias = LegacyForgeAlias::from_url("https://dev.azure.com.mirror.example/o/_git/r")
+            .expect("azure substring host");
+        assert_eq!(alias.platform(), ForgeKind::AzureDevOps);
+        assert_eq!(alias.shape(), LegacyForgeAliasShape::Hostname);
+        assert_eq!(ForgeKind::from_host(alias.host()), None);
     }
 
     #[test]

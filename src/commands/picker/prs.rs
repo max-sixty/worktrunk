@@ -1860,6 +1860,28 @@ mod tests {
     }
 
     #[test]
+    fn fetch_open_prs_explains_legacy_forge_hostname_configuration() {
+        // A self-hosted host that carries the forge name only inside a label is
+        // worded as a host (not an SSH alias) but points at the same remedy.
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab-internal.company.com/owner/repo.git",
+        ]);
+        let err = fetch_open_prs(&test.repo)
+            .expect_err("expected --prs to require explicit forge config");
+        let message = err.to_string();
+        assert!(
+            message.contains("Host")
+                && message.contains("gitlab-internal.company.com")
+                && message.contains("forge.platform = \"gitlab\""),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
     fn fetch_open_prs_bails_on_an_unsupported_forge() {
         // A recognized-but-unsupported forge (here Gitea, by its host) reports
         // the GitHub/GitLab limitation rather than shelling out.
