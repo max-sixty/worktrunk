@@ -11,6 +11,155 @@ fn wt_perf_bin() -> &'static str {
     env!("CARGO_BIN_EXE_wt-perf")
 }
 
+#[test]
+fn setup_help_exposes_the_semantic_fixture_catalog() {
+    let output = Command::new(wt_perf_bin())
+        .args(["setup", "--help"])
+        .output()
+        .expect("Failed to run wt-perf setup --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for subcommand in [
+        "typical",
+        "minimal",
+        "synthetic-divergence",
+        "large-repository-worktrees",
+        "large-repository-history-spread",
+        "mixed",
+        "prune",
+        "picker-test",
+    ] {
+        assert!(
+            stdout.contains(subcommand),
+            "setup help must list {subcommand}:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn setup_subcommands_parse_without_acquiring_large_repository_fixtures() {
+    for subcommand in [
+        "typical",
+        "minimal",
+        "synthetic-divergence",
+        "large-repository-worktrees",
+        "large-repository-history-spread",
+        "mixed",
+        "prune",
+        "picker-test",
+    ] {
+        let output = Command::new(wt_perf_bin())
+            .args(["setup", subcommand, "--help"])
+            .output()
+            .unwrap_or_else(|error| panic!("Failed to parse setup {subcommand}: {error}"));
+        assert!(
+            output.status.success(),
+            "setup {subcommand} --help failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let path = tempfile::tempdir().expect("Failed to create temp dir");
+    let output = Command::new(wt_perf_bin())
+        .args([
+            "setup",
+            "prune",
+            "--base",
+            "large-repository",
+            "--path",
+            path.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to parse managed prune setup");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("large-repository prune fixtures are managed")
+    );
+
+    let output = Command::new(wt_perf_bin())
+        .args(["setup", "large-repository-history-spread", "5001"])
+        .output()
+        .expect("Failed to parse unsupported history-spread count");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("expected at most 5000 branches"),
+        "unsupported count must fail before acquiring the large repository:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn setup_builds_a_semantic_recipe_at_an_explicit_path() {
+    let root = tempfile::tempdir().expect("Failed to create temp dir");
+    let repo = root.path().join("minimal-fixture");
+    let output = Command::new(wt_perf_bin())
+        .args([
+            "setup",
+            "minimal",
+            "0",
+            "0",
+            "--path",
+            repo.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to build minimal fixture");
+    assert!(
+        output.status.success(),
+        "setup failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(repo.join(".git").is_dir(), "setup must create a git repo");
+
+    let branches = Command::new("git")
+        .args([
+            "-C",
+            repo.to_str().unwrap(),
+            "branch",
+            "--format=%(refname:short)",
+        ])
+        .output()
+        .expect("Failed to inspect built fixture");
+    assert!(branches.status.success());
+    assert_eq!(String::from_utf8_lossy(&branches.stdout), "main\n");
+}
+
+#[test]
+fn setup_default_path_rebuilds_a_linked_worktree_fixture() {
+    // Run a copied binary so its executable-derived target directory lives
+    // under the test tempdir rather than touching the workspace's fixtures.
+    let target = tempfile::tempdir().expect("Failed to create isolated target dir");
+    let debug = target.path().join("debug");
+    std::fs::create_dir(&debug).expect("Failed to create isolated debug dir");
+    let binary = debug.join(
+        std::path::Path::new(wt_perf_bin())
+            .file_name()
+            .expect("wt-perf binary must have a file name"),
+    );
+    std::fs::copy(wt_perf_bin(), &binary).expect("Failed to copy wt-perf binary");
+    let unrelated = target.path().join("wt-perf/minimal-0-1.unrelated");
+    std::fs::create_dir_all(&unrelated).expect("Failed to create unrelated sibling");
+    std::fs::write(unrelated.join("sentinel"), "keep").expect("Failed to write sentinel");
+
+    for run in 1..=2 {
+        let output = Command::new(&binary)
+            .args(["setup", "minimal", "0", "1"])
+            .output()
+            .unwrap_or_else(|error| panic!("Failed to run setup attempt {run}: {error}"));
+        assert!(
+            output.status.success(),
+            "setup attempt {run} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(unrelated.join("sentinel")).unwrap(),
+        "keep",
+        "setup must remove exact registered worktrees, not unrelated siblings"
+    );
+}
+
 /// Test that the binary produces Chrome Trace Format JSON for sample trace input.
 #[test]
 fn test_wt_perf_trace_from_stdin() {

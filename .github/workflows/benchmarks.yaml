@@ -56,14 +56,13 @@ jobs:
       with:
         version: '0.114.1'
 
-    - name: 💰 Rust repo cache
+    - name: 💰 Large-repository fixture cache
       uses: actions/cache@v6
       with:
-        # wt-perf builds real-repo fixtures under target/wt-perf/bench-repos at
-        # the workspace root. `cargo clean` would wipe them, so this cache
-        # restores the ~15 GiB rust clone across runs.
+        # The fixture manifest pins the corpus revision and schema. Including
+        # its hash prevents an old cache from crossing either boundary.
         path: target/wt-perf/bench-repos
-        key: bench-repos-rust-${{ runner.os }}
+        key: bench-repos-large-repository-${{ runner.os }}-${{ hashFiles('benches/large-repository-fixture') }}
 
     - name: 📊 Run benchmarks
       run: cargo bench

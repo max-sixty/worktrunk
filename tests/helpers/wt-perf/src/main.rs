@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use wt_perf::{
-    PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED, canonicalize, ensure_prune_real_repo,
-    invalidate_caches_auto, parse_config, parse_pair, wt_perf_fixture_dir,
+    FixtureRecipe, LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES, LargeRepositoryPruneFixture,
+    PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS, PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS, canonicalize,
+    invalidate_caches_auto, remove_fixture_for_rebuild, wt_perf_fixture_dir,
 };
 
 #[derive(Parser)]
@@ -25,11 +26,11 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, prune-real[-M-U], picker-test
-        config: String,
+        #[command(subcommand)]
+        recipe: SetupRecipe,
 
-        /// Directory to create repo in (default: target/wt-perf)
-        #[arg(long)]
+        /// Primary worktree path (default: target/wt-perf/<recipe>)
+        #[arg(long, global = true)]
         path: Option<PathBuf>,
     },
 
@@ -96,34 +97,183 @@ enum Commands {
     },
 }
 
+#[derive(Clone, Copy, Debug, Subcommand)]
+enum SetupRecipe {
+    /// Standard synthetic history, files, and feature worktrees
+    Typical {
+        /// Total worktrees, including the primary worktree
+        #[arg(value_parser = positive_usize)]
+        total_worktrees: usize,
+    },
+    /// Minimal synthetic history with configurable branch/worktree populations
+    Minimal {
+        /// Branches without linked worktrees
+        branchless_branches: usize,
+        /// Linked worktrees, excluding the primary worktree
+        linked_worktrees: usize,
+    },
+    /// Fixed 200-branch deep-divergence stress fixture
+    SyntheticDivergence,
+    /// Pinned large corpus with standard feature worktrees
+    LargeRepositoryWorktrees {
+        /// Total worktrees, including the primary worktree
+        #[arg(value_parser = positive_usize)]
+        total_worktrees: usize,
+    },
+    /// Pinned large corpus with branches spread across history
+    LargeRepositoryHistorySpread {
+        /// Branches without linked worktrees (maximum: 5000)
+        #[arg(value_parser = history_spread_branch_count)]
+        branchless_branches: usize,
+    },
+    /// Varied branch and worktree states
+    Mixed {
+        /// Linked worktrees, excluding the primary worktree
+        linked_worktrees: usize,
+        /// Branches without linked worktrees
+        branchless_branches: usize,
+    },
+    /// Squash-merged prune candidates plus an unintegrated backdrop
+    Prune {
+        /// Squash-merged worktree/branch pairs
+        #[arg(default_value_t = PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS)]
+        candidate_pairs: usize,
+        /// Unintegrated worktree/branch pairs
+        #[arg(default_value_t = PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS)]
+        backdrop_pairs: usize,
+        /// Repository corpus and ownership model
+        #[arg(long, value_enum, default_value_t = PruneBase::Synthetic)]
+        base: PruneBase,
+    },
+    /// Fixed interactive picker debugging fixture
+    PickerTest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum PruneBase {
+    Synthetic,
+    LargeRepository,
+}
+
+fn positive_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "expected a positive integer".to_string())?;
+    (value >= 1)
+        .then_some(value)
+        .ok_or_else(|| "expected a positive integer".to_string())
+}
+
+fn history_spread_branch_count(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "expected a non-negative integer".to_string())?;
+    (value <= LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES)
+        .then_some(value)
+        .ok_or_else(|| {
+            format!("expected at most {LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES} branches")
+        })
+}
+
+impl SetupRecipe {
+    fn fixture_recipe(&self) -> FixtureRecipe {
+        match *self {
+            Self::Typical { total_worktrees } => FixtureRecipe::Typical { total_worktrees },
+            Self::Minimal {
+                branchless_branches,
+                linked_worktrees,
+            } => FixtureRecipe::Minimal {
+                branchless_branches,
+                linked_worktrees,
+            },
+            Self::SyntheticDivergence => FixtureRecipe::SyntheticDivergence,
+            Self::LargeRepositoryWorktrees { total_worktrees } => {
+                FixtureRecipe::LargeRepositoryWorktrees { total_worktrees }
+            }
+            Self::LargeRepositoryHistorySpread {
+                branchless_branches,
+            } => FixtureRecipe::LargeRepositoryHistorySpread {
+                branchless_branches,
+            },
+            Self::Mixed {
+                linked_worktrees,
+                branchless_branches,
+            } => FixtureRecipe::Mixed {
+                linked_worktrees,
+                branchless_branches,
+            },
+            Self::Prune {
+                candidate_pairs,
+                backdrop_pairs,
+                ..
+            } => FixtureRecipe::Prune {
+                candidate_pairs,
+                backdrop_pairs,
+            },
+            Self::PickerTest => FixtureRecipe::PickerTest,
+        }
+    }
+
+    fn directory_name(&self) -> String {
+        match *self {
+            Self::Typical { total_worktrees } => format!("typical-{total_worktrees}"),
+            Self::Minimal {
+                branchless_branches,
+                linked_worktrees,
+            } => format!("minimal-{branchless_branches}-{linked_worktrees}"),
+            Self::SyntheticDivergence => "synthetic-divergence".to_string(),
+            Self::LargeRepositoryWorktrees { total_worktrees } => {
+                format!("large-repository-worktrees-{total_worktrees}")
+            }
+            Self::LargeRepositoryHistorySpread {
+                branchless_branches,
+            } => format!("large-repository-history-spread-{branchless_branches}"),
+            Self::Mixed {
+                linked_worktrees,
+                branchless_branches,
+            } => format!("mixed-{linked_worktrees}-{branchless_branches}"),
+            Self::Prune {
+                candidate_pairs,
+                backdrop_pairs,
+                base,
+            } => format!(
+                "prune-{}-{candidate_pairs}-{backdrop_pairs}",
+                match base {
+                    PruneBase::Synthetic => "synthetic",
+                    PruneBase::LargeRepository => "large-repository",
+                }
+            ),
+            Self::PickerTest => "picker-test".to_string(),
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Setup { config, path } => {
-            // `prune-real[-M-U]`: cache-managed rust-scale fixture (built once
-            // under target/wt-perf/bench-repos, repaired after a live prune consumes
-            // its candidates) — takes no --path and never offers cleanup.
-            // Tested before parse_config so its `prune-` arm never sees it.
-            let prune_real = if config == "prune-real" {
-                Some((PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED))
-            } else {
-                parse_pair(&config, "prune-real-")
-            };
-            if let Some((merged, unmerged)) = prune_real {
+        Commands::Setup { recipe, path } => {
+            if let SetupRecipe::Prune {
+                candidate_pairs,
+                backdrop_pairs,
+                base,
+            } = recipe
+                && base == PruneBase::LargeRepository
+            {
                 if path.is_some() {
                     eprintln!(
-                        "prune-real fixtures are managed under {}; --path is not supported",
+                        "large-repository prune fixtures are managed under {}; --path is not supported",
                         wt_perf_fixture_dir().join("bench-repos").display()
                     );
                     std::process::exit(1);
                 }
-                let repo = ensure_prune_real_repo(merged, unmerged);
+                let fixture = LargeRepositoryPruneFixture::acquire(candidate_pairs, backdrop_pairs);
+                let repo = fixture.path();
                 eprintln!(
                     "Ready: main @ {}, {} worktrees, {} branches",
                     repo.display(),
-                    merged + unmerged + 1,
-                    merged + unmerged
+                    candidate_pairs + backdrop_pairs + 1,
+                    candidate_pairs + backdrop_pairs
                 );
                 eprintln!();
                 eprintln!(
@@ -134,59 +284,37 @@ fn main() {
                     "  wt-perf timeline -- -C {} step prune --min-age 0s   # live; next setup/bench run re-creates the candidates",
                     repo.display()
                 );
-                // No `wt-perf invalidate` hint: deleting this fixture's
-                // worktree indexes flips prune's clean-worktree gate and
-                // degrades every later run (ensure_prune_real_repo heals it,
-                // but only on the next setup/bench call).
                 return;
             }
 
-            let spec = parse_config(&config).unwrap_or_else(|| {
-                eprintln!("Unknown config: {}", config);
-                eprintln!();
-                eprintln!("Available configs:");
-                eprintln!(
-                    "  typical-N       - Typical repo with N worktrees (500 commits, 100 files)"
-                );
-                eprintln!("  branches-N      - N branches with 1 commit each");
-                eprintln!("  branches-N-M    - N branches with M commits each");
-                eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
-                eprintln!("  mixed-W-B       - W worktrees + B branches in varied states");
-                eprintln!(
-                    "  prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches (wt step prune workload)"
-                );
-                eprintln!(
-                    "  prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidates + U unmerged worktrees/branches, cached under target/wt-perf/bench-repos (default {PRUNE_REAL_MERGED}-{PRUNE_REAL_UNMERGED}; first run clones from network)"
-                );
-                eprintln!("  picker-test     - Config for wt switch interactive picker testing");
-                std::process::exit(1);
-            });
-
+            let directory_name = recipe.directory_name();
+            let fixture_recipe = recipe.fixture_recipe();
             let base_path = if let Some(p) = path {
                 std::fs::create_dir_all(&p).unwrap();
                 canonicalize(&p).unwrap()
             } else {
-                let dir = wt_perf_fixture_dir().join(&config);
-                if dir.exists() {
-                    std::fs::remove_dir_all(&dir).unwrap();
-                }
+                let dir = wt_perf_fixture_dir().join(&directory_name);
+                remove_fixture_for_rebuild(&dir);
                 std::fs::create_dir_all(&dir).unwrap();
                 canonicalize(&dir).unwrap()
             };
 
-            eprintln!("Creating {} repo...", config);
-            let (worktrees, branches) = spec.create_at(&base_path);
+            eprintln!("Creating {directory_name} repo...");
+            let summary = fixture_recipe.create_at(&base_path);
 
             let mut parts = vec![format!("main @ {}", base_path.display())];
-            if worktrees > 1 {
-                parts.push(format!("{} worktrees", worktrees));
+            if summary.total_worktrees > 1 {
+                parts.push(format!("{} worktrees", summary.total_worktrees));
             }
-            if branches > 0 {
-                parts.push(format!("{} branches", branches));
+            if summary.branchless_branches > 0 {
+                parts.push(format!(
+                    "{} branchless branches",
+                    summary.branchless_branches
+                ));
             }
             eprintln!("Created: {}", parts.join(", "));
             eprintln!();
-            let example_args = if matches!(spec, wt_perf::SetupConfig::Prune { .. }) {
+            let example_args = if matches!(fixture_recipe, FixtureRecipe::Prune { .. }) {
                 "step prune --dry-run --min-age 0s"
             } else {
                 "list --progressive"

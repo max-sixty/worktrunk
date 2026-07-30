@@ -39,7 +39,7 @@
 
 #[cfg(not(unix))]
 fn main() {
-    // Picker is Unix-only; benchmark is a no-op on Windows.
+    // This benchmark is intentionally a no-op on Windows.
 }
 
 #[cfg(unix)]
@@ -47,7 +47,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(unix)]
-use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, wt_command};
+use wt_perf::{CacheState, FixtureRecipe, bench_wt, wt_command};
 
 #[cfg(unix)]
 fn bench_picker_preview(c: &mut Criterion) {
@@ -62,14 +62,14 @@ fn bench_picker_preview(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(35));
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-    let worktrees = 8;
+    let total_worktrees = 8;
 
     for cache in CacheState::WARM_AND_COLD {
         group.bench_with_input(
-            BenchmarkId::new(cache.label(), format!("typical-{worktrees}")),
+            BenchmarkId::new(cache.label(), format!("typical-{total_worktrees}")),
             &cache,
             |b, &cache| {
-                let fixture = create_repo(&RepoConfig::typical(worktrees));
+                let fixture = FixtureRecipe::Typical { total_worktrees }.create();
 
                 let make_cmd = || {
                     let mut cmd = wt_command(binary, fixture.path(), None);
