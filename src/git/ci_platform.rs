@@ -448,7 +448,10 @@ mod tests {
                 ForgeKind::GitHub,
             ),
             ("https://mygithub.com/owner/repo.git", ForgeKind::GitHub),
-            ("git@github-mirror.example:owner/repo.git", ForgeKind::GitHub),
+            (
+                "git@github-mirror.example:owner/repo.git",
+                ForgeKind::GitHub,
+            ),
             (
                 "git@gitea-host.example.com:owner/repo.git",
                 ForgeKind::Gitea,
