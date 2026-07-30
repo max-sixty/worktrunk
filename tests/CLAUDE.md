@@ -31,10 +31,10 @@ The one setup script here, `build-bins`, is a build step rather than a behavior 
 ## Profiling the Suite
 
 ```bash
-task profile-tests   # CPU accounting, per-test timings, temp-leak check
+task profile-tests   # CPU accounting plus per-test timings
 ```
 
-The integration binary dominates: ~2,200 tests averaging ~0.6s, each spawning `wt` and `git` against a fresh fixture copy. Two thirds of the suite's CPU is kernel time, so the cost is process creation and filesystem churn rather than computation, and it sits in a broad middle rather than in a few outliers. Track `user`/`sys` from the `time` line; wall time is unreliable whenever a sibling worktree is building or testing, which on this project is most of the time. Per-test durations land in `target/nextest/perf/junit.xml`.
+The integration binary dominates: ~2,200 tests averaging ~0.6s, each spawning `wt` and `git` against a fresh fixture copy. Two thirds of the suite's CPU is kernel time, so the cost is process creation and filesystem churn rather than computation, and it sits in a broad middle rather than in a few outliers. Track `user`/`sys` from the `time` line; wall time is unreliable whenever a sibling worktree is building or testing, which on this project is most of the time. Per-test durations land in `target/nextest/default/junit.xml`.
 
 The fixtures put their temp directories under `test_temp_root()` (`$TMPDIR/wt`) rather than directly in the system temp dir, and `test_tempdir()` is the fixture-side replacement for `TempDir::new()`. Entries in the shared temp root are cheap to ignore but expensive to enumerate, and `git::recover::recover_from_path` reads every ancestor directory of a deleted CWD — its own unit test ran 14.2s against a temp root holding 454k entries and 0.06s rooted here. That root's short name is load-bearing: a unix socket path can't exceed 104 bytes on macOS, and `test_copy_ignored_skips_non_regular_files` binds one 89 bytes in.
 

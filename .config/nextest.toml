@@ -23,20 +23,6 @@ success-output = "never"
 [profile.default.junit]
 path = "junit.xml"
 
-# Profiling profile for `task profile-tests`. Drops slow-timeout to 1s purely
-# as a reporting threshold — no `terminate-after`, so nothing is killed — and
-# raises status-level so every test above it prints with its duration. The
-# suite's cost is a broad middle rather than a few outliers, so the per-test
-# numbers in `target/nextest/perf/junit.xml` matter more than this list; see
-# tests/CLAUDE.md → Profiling the Suite.
-[profile.perf]
-slow-timeout = { period = "1s" }
-status-level = "slow"
-success-output = "never"
-
-[profile.perf.junit]
-path = "junit.xml"
-
 # Build the `mock-stub` helper binary before any test runs.
 #
 # It lives in a separate workspace package so cargo-dist doesn't ship it
