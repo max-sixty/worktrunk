@@ -968,25 +968,6 @@ pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 
-/// Create a temporary file for legacy single-file directive output, in a
-/// directory of its own (see `directive_temp_dir` for why).
-///
-/// Used to test the legacy fallback path where an old shell wrapper sets
-/// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
-pub fn legacy_directive_file() -> (PathBuf, TempDir) {
-    let dir = directive_temp_dir();
-    let path = create_empty(dir.path().join("directive"));
-    (path, dir)
-}
-
-/// Configure a Command to use the legacy single-file directive protocol.
-///
-/// Sets `WORKTRUNK_DIRECTIVE_FILE` env var (no new vars) to simulate an
-/// outdated shell wrapper that hasn't been updated to the split protocol.
-pub fn configure_legacy_directive_file(cmd: &mut Command, path: &Path) {
-    cmd.env("WORKTRUNK_DIRECTIVE_FILE", path);
-}
-
 /// Set home environment variables for commands that rely on isolated temp homes.
 ///
 /// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables

@@ -754,6 +754,8 @@ fn try_forward_completion_to_custom(
     // work at best, the parent's trace lost at worst (the child's stderr is
     // discarded below, so it can't surface anything useful anyway).
     cmd.env_remove(crate::logging::VERBOSE_ENV);
+    // The retired single-file protocol is never delegated to child processes.
+    cmd.env_remove(worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR);
 
     // Capture the custom binary's stdout — it carries the forwarded completion
     // candidates. Uses `std::process::Command` rather than `shell_exec::Cmd`

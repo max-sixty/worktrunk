@@ -139,7 +139,7 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{CiPlatform, CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{CommandError, DefaultBranchName, ForgeKind, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -252,7 +252,7 @@ pub(super) struct RepoCache {
     /// `None` when unset or unrecognized; an unrecognized value warns once,
     /// deduplicating the warning across the many branches `wt list` probes.
     /// Resolved via [`Repository::ci_platform`].
-    pub(super) configured_ci_platform: OnceCell<Option<CiPlatform>>,
+    pub(super) configured_ci_platform: OnceCell<Option<ForgeKind>>,
     /// User config (raw, as loaded from disk).
     /// Populated by [`Repository::at`] from the
     /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise

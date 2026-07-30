@@ -2213,16 +2213,17 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
-        // Set WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active
+        // Set the cd directive file to simulate shell integration being active.
         cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
 
         assert_cmd_snapshot!(cmd);
     });
 }
 
-/// When shell integration is active at runtime (WORKTRUNK_DIRECTIVE_FILE set) but the
-/// init line is NOT in the scanned config file (e.g., sourced from another file), config
-/// show should report "Configured ... (not found in ...)" instead of "Not configured".
+/// When shell integration is active at runtime (`WORKTRUNK_DIRECTIVE_CD_FILE` set) but
+/// the init line is NOT in the scanned config file (e.g., sourced from another file),
+/// config show should report "Configured ... (not found in ...)" instead of
+/// "Not configured".
 /// Regression test for https://github.com/max-sixty/worktrunk/issues/1306
 #[rstest]
 fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp_home: TempDir) {

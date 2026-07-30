@@ -638,6 +638,13 @@ impl<'a> RelocationExecutor<'a> {
                 cwd_path,
             );
             crate::output::change_directory(cd_target)?;
+            if crate::output::retired_shell_wrapper_active() {
+                eprintln!(
+                    "{}",
+                    warning_message("Cannot change directory — shell wrapper is out of date")
+                );
+                crate::output::print_outdated_shell_wrapper_hint_once();
+            }
         }
 
         self.moved.insert(idx);

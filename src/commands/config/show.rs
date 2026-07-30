@@ -13,9 +13,11 @@ use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
-use worktrunk::git::{CiPlatform, ErrorExt, Repository};
+use worktrunk::git::{ErrorExt, ForgeKind, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
+use worktrunk::shell::{
+    FileDetectionResult, Shell, ZshStartupScope, probe_zsh_compdef, scan_for_detection_details,
+};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     FormattedMessage, error_message, format_bash_with_gutter, format_heading, format_toml,
@@ -260,88 +262,6 @@ pub(super) fn is_statusline_configured() -> bool {
         })
 }
 
-/// Get the git version string (e.g., "2.47.1")
-fn git_version() -> Option<String> {
-    let output = Cmd::new("git").arg("--version").run().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    // Parse "git version 2.47.1" -> "2.47.1"
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .trim()
-        .strip_prefix("git version ")
-        .map(|s| s.to_string())
-}
-
-/// Args for the interactive zsh compinit probe.
-///
-/// `+m` (disable job control) is load-bearing: without it the interactive
-/// `zsh -ic` grabs wt's controlling terminal and, if the timeout kills it
-/// first, leaves the pager to suspend with SIGTTOU. See `check_zsh_compinit_missing`
-/// and issue #3322.
-const ZSH_COMPINIT_PROBE_ARGS: [&str; 4] =
-    ["--no-globalrcs", "+m", "-ic", "(( $+functions[compdef] ))"];
-
-/// Check if zsh has compinit enabled by spawning an interactive shell
-///
-/// Returns true if compinit is NOT enabled (i.e., user needs to add it).
-/// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
-///
-// TODO(zsh-compinit-probe-unify): this duplicates `shell::detect_zsh_compinit`
-// — both spawn an interactive `zsh -ic` to probe for the `compdef` function, and
-// #3322 had to add the `+m` job-control fix to both. They diverge on purpose, so
-// folding them into one parameterized probe isn't a mechanical rename: this one
-// passes `--no-globalrcs` (checks the USER's config so we only nudge when *they*
-// haven't enabled compinit) while `detect_zsh_compinit` intentionally sources
-// global rcs (so shell setup won't re-add what /etc/zshrc already enables); they
-// also differ in result type (bool vs Option<bool>) and runner (`Cmd` vs raw
-// `Command`). Unify behind one `probe_zsh_compdef(no_globalrcs: bool)` helper.
-fn check_zsh_compinit_missing() -> bool {
-    // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
-    if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
-        return false; // Assume compinit is configured
-    }
-
-    // Force compinit to be missing (for tests that expect the warning)
-    if std::env::var("WORKTRUNK_TEST_COMPINIT_MISSING").is_ok() {
-        return true; // Force warning to appear
-    }
-
-    // Probe zsh to check if compdef function exists (indicates compinit has run)
-    // Use --no-globalrcs to skip system files (like /etc/zshrc on macOS which enables compinit)
-    // This ensures we're checking the USER's configuration, not system defaults
-    // Suppress stderr to avoid noise like "can't change option: zle"
-    // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
-    // Suppress zsh's "insecure directories" warning from compinit.
-    // See detailed rationale in shell::detect_zsh_compinit().
-    //
-    // Bound the probe with a timeout that kills the child on expiry — the same
-    // hardening detect_zsh_compinit() relies on. An interactive `zsh -ic` whose
-    // startup prompts on /dev/tty (compinit's insecure-directories prompt
-    // bypasses both the stdin=null default and the stderr suppression above)
-    // would otherwise hang `wt config show` indefinitely. On timeout run()
-    // returns Err, so the `else` below declines to warn rather than misreport.
-    // `+m` disables job control so this interactive probe doesn't grab wt's
-    // controlling terminal. An interactive zsh with job control on `tcsetpgrp`s
-    // to claim the terminal foreground; if the 2s timeout kills it before it
-    // restores that, wt is left in a background process group and the pager
-    // spawned moments later (config show always pages) raises SIGTTOU,
-    // suspending the command (`suspended (tty output)`). See issue #3322.
-    let Ok(output) = Cmd::new("zsh")
-        .args(ZSH_COMPINIT_PROBE_ARGS)
-        .env("ZSH_DISABLE_COMPFIX", "true")
-        .timeout(std::time::Duration::from_secs(2))
-        .run()
-    else {
-        return false; // Can't determine, don't warn
-    };
-
-    // compdef NOT found = need to warn
-    !output.status.success()
-}
-
 // ==================== Render Functions ====================
 
 /// Render CLAUDE CODE section (plugin and statusline status).
@@ -500,7 +420,7 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
         "{}",
         info_message(cformat!("{cmd}: <bold>{version}</>"))
     )?;
-    if let Some(git_version) = git_version() {
+    if let Ok(git_version) = crate::diagnostic::git_version() {
         writeln!(
             out,
             "{}",
@@ -532,7 +452,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     // Check the CI tool for this repo's platform (project config, else remote URL).
     let repo = Repository::current()?;
     match repo.ci_platform(None) {
-        Some(CiPlatform::GitHub) => {
+        Some(ForgeKind::GitHub) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -542,7 +462,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.gh_authenticated,
             )?;
         }
-        Some(CiPlatform::GitLab) => {
+        Some(ForgeKind::GitLab) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -552,7 +472,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.glab_authenticated,
             )?;
         }
-        Some(CiPlatform::Gitea) => {
+        Some(ForgeKind::Gitea) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -562,7 +482,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.tea_authenticated,
             )?;
         }
-        Some(CiPlatform::AzureDevOps) => {
+        Some(ForgeKind::AzureDevOps) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
                 out,
@@ -1001,7 +921,7 @@ fn render_fish_legacy_migration(
 /// Zsh-only: warn when compinit isn't enabled, since the integration
 /// installs completions but they won't load without compinit.
 fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
-    if !check_zsh_compinit_missing() {
+    if probe_zsh_compdef(ZshStartupScope::UserOnly) != Some(false) {
         return Ok(());
     }
     writeln!(
@@ -1644,17 +1564,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_git_version_returns_version() {
-        // In a normal environment with git installed, should return a version
-        let version = git_version();
-        assert!(version.is_some());
-        let version = version.unwrap();
-        // Version should look like a semver (e.g., "2.47.1")
-        assert!(version.chars().next().unwrap().is_ascii_digit());
-        assert!(version.contains('.'));
-    }
-
-    #[test]
     fn test_is_newer_version() {
         // Newer versions
         assert!(is_newer_version("0.24.0", "0.23.2"));
@@ -1672,25 +1581,6 @@ mod tests {
         // Invalid input
         assert!(!is_newer_version("invalid", "0.23.2"));
         assert!(!is_newer_version("0.23.2", "invalid"));
-    }
-
-    /// Regression guard for #3322: the interactive zsh compinit probe must
-    /// disable job control (`+m`). Without it, the probe grabs wt's controlling
-    /// terminal; a timeout-kill then leaves wt in a background process group and
-    /// the `wt config show` pager suspends with SIGTTOU (`suspended (tty output)`).
-    #[test]
-    fn test_compinit_probe_disables_job_control() {
-        assert!(
-            ZSH_COMPINIT_PROBE_ARGS.contains(&"+m"),
-            "compinit probe must pass +m to disable job control (#3322); got {ZSH_COMPINIT_PROBE_ARGS:?}"
-        );
-        // `+m` must precede `-ic` so it's parsed as an option, not a command arg.
-        let m = ZSH_COMPINIT_PROBE_ARGS.iter().position(|a| *a == "+m");
-        let ic = ZSH_COMPINIT_PROBE_ARGS.iter().position(|a| *a == "-ic");
-        assert!(
-            m < ic,
-            "+m must come before -ic: {ZSH_COMPINIT_PROBE_ARGS:?}"
-        );
     }
 
     #[test]

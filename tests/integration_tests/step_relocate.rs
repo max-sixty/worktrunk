@@ -1372,6 +1372,66 @@ fn test_relocate_preserves_subdir(repo: TestRepo) {
     );
 }
 
+/// A shell started before the split directive protocol cannot follow a
+/// relocated current worktree. The relocation still succeeds, but it must
+/// explain that the wrapper is stale and how to repair it rather than silently
+/// leaving the shell in the renamed-away directory.
+///
+/// Ignored on Windows for the same reason as the adjacent subdirectory test:
+/// relocating a worktree while this process holds its cwd there fails with a
+/// sharing violation before the directive-warning path is reachable.
+#[rstest]
+#[cfg_attr(windows, ignore)]
+fn test_relocate_current_with_retired_wrapper_warns(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    let directive_dir = tempfile::TempDir::new().unwrap();
+    let retired_path = directive_dir.path().join("directive");
+    fs::write(&retired_path, "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_DIRECTIVE_FILE", &retired_path)
+        .args(["step", "relocate"])
+        .current_dir(&wrong_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "relocation should still succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!wrong_path.exists(), "the old worktree path should be gone");
+    assert!(
+        parent.join("repo.feature").exists(),
+        "the worktree should reach its expected path"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell wrapper is out of date"),
+        "the stale wrapper must not fail silently:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt config shell install"),
+        "the warning must include the repair action:\n{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&retired_path).unwrap(),
+        "",
+        "wt must never write to the retired directive file"
+    );
+}
+
 /// An argument naming no worktree is an error. Matching it against branch names
 /// alone left a typo filtering everything out, and the empty result rendered as
 /// "All worktrees are at expected paths" — a success message for a no-op.

@@ -82,6 +82,65 @@ fn custom_subcommand_accepts_non_utf8_forwarded_arg() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "custom ran");
 }
 
+#[cfg(unix)]
+#[test]
+fn custom_subcommand_scrubs_retired_directive_and_preserves_split_files() {
+    use std::os::unix::fs::PermissionsExt;
+    use worktrunk::shell_exec::{
+        DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
+    };
+
+    let dir = TempDir::new().unwrap();
+    let retired_file = dir.path().join("retired");
+    let cd_file = dir.path().join("cd");
+    let exec_file = dir.path().join("exec");
+    std::fs::write(&retired_file, "").unwrap();
+    std::fs::write(&cd_file, "").unwrap();
+    std::fs::write(&exec_file, "").unwrap();
+
+    let script = dir.path().join("wt-wt-test-extcmd-directives");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+if [ -n "${WORKTRUNK_DIRECTIVE_FILE+x}" ]; then
+    printf 'retired write\n' >> "$WORKTRUNK_DIRECTIVE_FILE"
+fi
+printf 'retired=%s\ncd=%s\nexec=%s\n' "${WORKTRUNK_DIRECTIVE_FILE-unset}" "${WORKTRUNK_DIRECTIVE_CD_FILE-unset}" "${WORKTRUNK_DIRECTIVE_EXEC_FILE-unset}"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = wt_command();
+    prepend_path(&mut cmd, dir.path());
+    cmd.env(RETIRED_DIRECTIVE_FILE_ENV_VAR, &retired_file)
+        .env(DIRECTIVE_CD_FILE_ENV_VAR, &cd_file)
+        .env(DIRECTIVE_EXEC_FILE_ENV_VAR, &exec_file)
+        .arg("wt-test-extcmd-directives");
+
+    let output = cmd.output().expect("failed to run wt");
+    assert!(
+        output.status.success(),
+        "expected success, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("retired=unset"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("cd={}", cd_file.display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("exec={}", exec_file.display())),
+        "{stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&retired_file).unwrap(),
+        "",
+        "the retired directive file must remain untouched"
+    );
+}
+
 #[test]
 fn custom_subcommand_not_found_prints_clap_error() {
     let mut cmd = wt_command();

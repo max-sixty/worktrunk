@@ -189,8 +189,9 @@ pub enum BranchFate {
     /// The deletion ran and the branch is gone.
     Deleted,
     /// The deletion ran and the branch survives: SafeDelete declined an
-    /// unmerged branch, the CAS refused a moved ref, or the delete command
-    /// itself failed (already narrated at the site that observed it).
+    /// unmerged branch, a final topology check found a checkout, the CAS refused
+    /// a moved ref, or the delete command itself failed (already narrated at
+    /// the site that observed it).
     Retained,
     /// The deletion was handed to a detached background process (the legacy
     /// `git worktree remove` fallback) whose outcome this process never sees.
@@ -212,9 +213,9 @@ impl BranchFate {
                 BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
                     Self::Deleted
                 }
-                BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced => {
-                    Self::Retained
-                }
+                BranchDeletionOutcome::NotDeleted
+                | BranchDeletionOutcome::RetainedCheckedOut { .. }
+                | BranchDeletionOutcome::RetainedRaced => Self::Retained,
             },
             Some(Err(_)) => Self::Retained,
         }
@@ -233,8 +234,8 @@ impl BranchFate {
 ///
 /// Produced by the planner, executed by `output::handle_remove_output`. The
 /// deletion-relevant fields are intent, not fact: `deletion_mode` says what the
-/// executor should attempt, and the actual deletion re-decides against fresh
-/// refs (`delete_branch_if_safe`'s CAS).
+/// executor should attempt, and the actual safe deletion rechecks both worktree
+/// topology and fresh refs (`delete_branch_if_safe`'s guard + CAS).
 pub enum RemovalPlan {
     /// Remove a worktree, changing directory away from it first if it's current.
     Worktree {
@@ -278,9 +279,8 @@ pub enum RemovalPlan {
         /// `origin/main` when upstream is ahead) or the local default branch.
         /// `None` when no default branch is configured.
         target_branch: Option<String>,
-        /// Pre-computed integration reason. Branch-only removal has no
-        /// worktree-local `pre-remove` hook, so the integration decision can
-        /// be made during preparation.
+        /// Integration reason computed during preparation for display. The
+        /// executor still rechecks topology and ref state before safe deletion.
         integration_reason: Option<worktrunk::git::IntegrationReason>,
         /// A surviving checkout of `branch_name`, when one exists. Only reachable
         /// on a pruned removal — the target's directory was gone, but a sibling
@@ -303,8 +303,8 @@ impl RemovalPlan {
         }
     }
 
-    /// Branch name of the removed worktree, if known. `None` for detached-HEAD
-    /// worktrees and (structurally) for branch-only deletions.
+    /// Branch named by this plan. `None` only for a detached-HEAD worktree;
+    /// branch-only plans always return their branch.
     ///
     /// Only the `--reap` label needs this, which is Unix-only; gated to avoid a
     /// dead-code warning on Windows where nothing consumes it.
@@ -464,6 +464,12 @@ mod tests {
         );
         assert_eq!(
             fate(BranchDeletionOutcome::NotDeleted),
+            BranchFate::Retained
+        );
+        assert_eq!(
+            fate(BranchDeletionOutcome::RetainedCheckedOut {
+                path: PathBuf::from("/tmp/feature"),
+            }),
             BranchFate::Retained
         );
         assert_eq!(

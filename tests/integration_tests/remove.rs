@@ -229,7 +229,7 @@ fn test_remove_locked_detached_worktree(mut repo: TestRepo) {
     repo.lock_worktree("locked-detached", Some("Detached and locked"));
 
     // Try to remove from within the locked detached worktree - should fail
-    // This exercises the RemoveTarget::Current path for locked worktrees
+    // This exercises exact-path removal of the current locked worktree.
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
@@ -4304,6 +4304,47 @@ fn test_remove_last_live_checkout_deletes_branch(mut repo: TestRepo) {
         !stderr.contains("still checked out"),
         "a stale entry is not a checkout to retain the branch for\nstderr:\n{stderr}",
     );
+}
+
+/// Planning sees one checkout, then an approved `pre-remove` hook creates a
+/// duplicate. The final topology guard must retain the branch and report the
+/// actual checkout race, not mislabel it as ref movement or failed integration.
+#[rstest]
+fn test_pre_remove_hook_new_checkout_retains_branch(mut repo: TestRepo) {
+    let survivor = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.feature-hook-survivor");
+    let hook = "git worktree add --force ../repo.feature-hook-survivor feature-hook-checkout";
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = [{hook:?}]
+"#
+    ));
+    let removed = repo.add_worktree("feature-hook-checkout");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!(
+            "remove_pre_remove_hook_new_checkout_retains_branch",
+            make_snapshot_cmd(
+                &repo,
+                "remove",
+                &["--foreground", "feature-hook-checkout"],
+                None,
+            )
+        );
+    });
+
+    assert!(
+        !removed.exists(),
+        "the originally planned worktree is removed"
+    );
+    assert_branch_exists(&repo, "feature-hook-checkout", true, "snapshot above");
+    assert_not_orphaned(&repo, &survivor, "snapshot above");
 }
 
 /// Assert git still tracks `branch`'s worktree — that its `.git/worktrees/<id>`

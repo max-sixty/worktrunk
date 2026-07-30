@@ -36,12 +36,12 @@ use crate::styling::{
 
 /// Platform-specific reference type (PR vs MR).
 ///
-/// Used to unify error handling for GitHub PRs and GitLab MRs.
+/// Used to unify error handling across supported forges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefType {
-    /// GitHub Pull Request
+    /// Pull request (GitHub, Gitea, or Azure DevOps)
     Pr,
-    /// GitLab Merge Request
+    /// GitLab merge request
     Mr,
 }
 
@@ -84,25 +84,6 @@ impl RefType {
     pub fn display(self, number: u32) -> String {
         format!("{} {}{}", self.name(), self.symbol(), number)
     }
-}
-
-/// Common display fields for PR/MR context.
-///
-/// Implemented by both `PrInfo` and `MrInfo` to enable unified formatting.
-pub trait RefContext {
-    fn ref_type(&self) -> RefType;
-    fn number(&self) -> u32;
-    fn title(&self) -> &str;
-    fn author(&self) -> &str;
-    fn state(&self) -> &str;
-    fn draft(&self) -> bool;
-    fn url(&self) -> &str;
-
-    /// The source branch reference for display.
-    ///
-    /// For same-repo PRs/MRs: just the branch name (e.g., `feature-auth`)
-    /// For fork PRs/MRs: `owner:branch` format (e.g., `contributor:feature-fix`)
-    fn source_ref(&self) -> String;
 }
 
 /// Multi-line styled rendering for terminal display.

@@ -30,19 +30,15 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
     run_cli_api,
 };
-use crate::git::{RefType, Repository};
+use crate::git::{ForgeKind, Repository};
 
 /// GitLab Merge Request provider.
 #[derive(Debug, Clone, Copy)]
 pub struct GitLabProvider;
 
 impl RemoteRefProvider for GitLabProvider {
-    fn ref_type(&self) -> RefType {
-        RefType::Mr
-    }
-
-    fn platform_label(&self) -> &'static str {
-        "gitlab"
+    fn forge_kind(&self) -> ForgeKind {
+        ForgeKind::GitLab
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -99,7 +95,7 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
         // matching prose — and there is nothing to say afterwards that glab's own
         // line doesn't already: `glab: 401 Unauthorized (HTTP 401)`. Forward it.
         return Err(cli_api_error(
-            RefType::Mr,
+            ForgeKind::GitLab.ref_type(),
             format!("glab api failed for MR !{}", mr_number),
             &output,
         ));
@@ -137,7 +133,6 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
     // Use fetch_gitlab_project_urls() when URLs are actually needed.
 
     Ok(RemoteRefInfo {
-        ref_type: RefType::Mr,
         number: mr_number,
         title: response.title,
         author: response.author.username,
@@ -278,7 +273,7 @@ mod tests {
     #[test]
     fn test_ref_type() {
         let provider = GitLabProvider;
-        assert_eq!(provider.ref_type(), RefType::Mr);
+        assert_eq!(provider.ref_type(), crate::git::RefType::Mr);
     }
 
     #[test]
@@ -302,7 +297,6 @@ mod tests {
     #[test]
     fn test_fetch_gitlab_project_urls_rejects_github_ref() {
         let github_info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 123,
             title: "Test PR".to_string(),
             author: "user".to_string(),

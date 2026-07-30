@@ -71,22 +71,29 @@ impl Candidate {
     /// Always the path, because the scan already identified the exact worktree:
     /// naming it by branch instead re-resolves to git's first-listed checkout,
     /// which for a branch checked out twice is a different worktree — and for a
-    /// stale entry is the live one. `RemoveTarget::Path` degrades to branch-only
-    /// deletion when the directory is already gone, so a stale entry still
-    /// prunes.
+    /// stale entry is the live one. `RemoveTarget::WorktreePath` degrades to
+    /// branch-only deletion when the directory is already gone, so a stale
+    /// entry still prunes. A true orphan has no path and uses `BranchOnly`.
     ///
     /// Only a candidate that arrives without a scan-time plan reaches this, and
     /// `check_one` plans everything except `Prunable`, which always carries the
     /// stale worktree's path.
-    fn remove_target(&self) -> anyhow::Result<RemoveTarget<'_>> {
+    fn remove_target(&self) -> anyhow::Result<RemoveTarget> {
         match self.kind {
-            CandidateKind::Current => Ok(RemoveTarget::Current),
             CandidateKind::StaleDetached => Err(anyhow::anyhow!(
                 "stale detached candidate has no remove target"
             )),
-            CandidateKind::BranchOnly | CandidateKind::Other => Ok(RemoveTarget::Path(
+            CandidateKind::BranchOnly => match &self.path {
+                Some(path) => Ok(RemoveTarget::WorktreePath(path.clone())),
+                None => Ok(RemoveTarget::BranchOnly(
+                    self.branch
+                        .clone()
+                        .context("branch-only candidate has no branch")?,
+                )),
+            },
+            CandidateKind::Current | CandidateKind::Other => Ok(RemoveTarget::WorktreePath(
                 self.path
-                    .as_ref()
+                    .clone()
                     .context("candidate has no worktree path")?,
             )),
         }
@@ -237,6 +244,7 @@ fn prune_summary(candidates: &[Candidate]) -> String {
 /// reference.
 struct RemovalContext<'a> {
     repo: &'a Repository,
+    current_path: &'a Path,
     foreground: bool,
     hook_plan: &'a ApprovedHookPlan,
     worktrees: &'a [WorktreeInfo],
@@ -371,7 +379,7 @@ fn try_remove(
             candidate.remove_target()?,
             BranchDeletionMode::SafeDelete,
             false,
-            None,
+            ctx.current_path,
             Some(ctx.worktrees),
             Some(ctx.snapshot),
         ) {
@@ -456,6 +464,7 @@ fn check_one(
     snapshot: &RefSnapshot,
     integration_target: &str,
     worktrees: &[WorktreeInfo],
+    current_path: &Path,
     min_age_duration: Duration,
     now_secs: u64,
 ) -> anyhow::Result<CheckOutcome> {
@@ -476,10 +485,10 @@ fn check_one(
         CheckSource::Prunable { .. } => None,
         CheckSource::Orphan => repo
             .prepare_worktree_removal(
-                RemoveTarget::Branch(&item.integration_ref),
+                RemoveTarget::BranchOnly(item.integration_ref.clone()),
                 BranchDeletionMode::SafeDelete,
                 false,
-                None,
+                current_path,
                 Some(worktrees),
                 Some(snapshot),
             )
@@ -490,10 +499,10 @@ fn check_one(
                 // The scan already knows which worktree this is; naming it by
                 // branch would re-resolve to git's first-listed checkout, which
                 // for a duplicated branch is a different worktree.
-                RemoveTarget::Path(&wt.path),
+                RemoveTarget::WorktreePath(wt.path.clone()),
                 BranchDeletionMode::SafeDelete,
                 false,
-                None,
+                current_path,
                 Some(worktrees),
                 Some(snapshot),
             )
@@ -943,6 +952,7 @@ pub fn step_prune(
             let snapshot_ref = &snapshot;
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
+            let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
             s.spawn(move || {
                 check_items_ref
@@ -957,6 +967,7 @@ pub fn step_prune(
                                 snapshot_ref,
                                 integration_target_ref,
                                 worktrees,
+                                current_path_ref,
                                 min_age_duration,
                                 now_secs,
                             )
@@ -1089,6 +1100,7 @@ pub fn step_prune(
     let check_lock = RwLock::new(());
     let removal_ctx = RemovalContext {
         repo: &repo,
+        current_path: &current_root,
         foreground,
         hook_plan: &hook_plan,
         worktrees,
@@ -1118,6 +1130,7 @@ pub fn step_prune(
             let snapshot_ref = &snapshot;
             let check_items_ref = &check_items;
             let integration_target_ref = integration_target.as_str();
+            let current_path_ref = current_root.as_path();
             let check_lock_ref = &check_lock;
             s.spawn(move || {
                 check_items_ref
@@ -1132,6 +1145,7 @@ pub fn step_prune(
                                 snapshot_ref,
                                 integration_target_ref,
                                 worktrees,
+                                current_path_ref,
                                 min_age_duration,
                                 now_secs,
                             )

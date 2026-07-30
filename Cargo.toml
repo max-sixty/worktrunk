@@ -67,9 +67,8 @@ consolidate-commits = true
 
 [package.metadata.cargo-udeps.ignore]
 # `which` is used only on Windows (#[cfg(windows)] in src/shell_exec.rs).
-# `petname-macros` is not referenced in code — it's pinned only to constrain
-# the transitive resolution of `petname`'s proc-macro (see the dependency
-# comment above).
+# `petname-macros` is not referenced in code — its exact pin keeps the proc
+# macro version aligned with `petname` (see the dependency comment below).
 normal = ["which", "petname-macros"]
 
 [features]
@@ -97,7 +96,7 @@ cli = [
     "dep:tracing-log",
     "dep:tracing-subscriber",
 ]
-syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
+syntax-highlighting = ["dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
 # Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 shell-integration-tests = []
@@ -202,11 +201,10 @@ synoptic = "2"
 terminal_size = "0.4.3"
 toml = { version = "1.0", features = ["preserve_order"] }
 toml_edit = { version = "0.25", features = ["serde"] }
-# tree-sitter and tree-sitter-highlight should use matching versions.
-# tree-sitter-bash may lag behind (0.25.x works with tree-sitter 0.26.x).
+# tree-sitter-bash may lag behind tree-sitter-highlight (0.25.x works with
+# tree-sitter-highlight 0.26.x).
 # These are optional dependencies controlled by the "syntax-highlighting" feature.
 # To build without C compilation requirements, use: cargo install worktrunk --no-default-features --features cli
-tree-sitter = { version = "0.26", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-highlight = { version = "0.26", optional = true }
 unicode-width = "0.2.1"
@@ -248,17 +246,9 @@ sha2 = "0.11"
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
 petname = { version = "=3.1.0", default-features = false, features = ["default-words"] }
-# PINNED EXACT to match the `petname` pin above. `petname` 3.0.1 declares a
-# caret range (`petname-macros = "3.0.0"` => `^3.0.0`), but petname-macros is
-# SemVer-incompatible with petname across the line in BOTH directions: macros
-# 3.1.0 emits `petnames!`-macro references (`::petname::lang::…`) that newer
-# petname has, but 3.0.x petname doesn't (E0433); macros 3.0.0 is missing the
-# `english` module that petname 3.0.1 re-exports (`petname_macros::english`),
-# so it too fails to compile (E0432). Only an exact match works. The committed
-# lockfile keeps 3.0.1, but the nightly `minimal-versions` job re-resolves with
-# `cargo update` (pulling 3.0.0) and a plain `cargo update` would pull 3.1.0 —
-# both broken. This direct `=3.0.1` requirement unifies the shared resolution
-# to 3.0.1. Bump in lockstep whenever `petname` itself is bumped.
+# PINNED EXACT to match `petname`: its caret dependency otherwise permits a
+# different proc-macro version, but the generated code and runtime re-exports
+# require an exact match. Keep both pins in lockstep.
 petname-macros = "=3.1.0"
 
 tempfile = "3.27"

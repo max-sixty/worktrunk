@@ -29,10 +29,6 @@
 //! 4. **Filesystem layer**: OS enforces valid path characters (NUL is
 //!    universally invalid in paths).
 //!
-//! 5. **Legacy escaping** (compat path only): When the pre-split legacy
-//!    wrapper is active, paths use POSIX single-quote escaping (`'\''`),
-//!    which handles `$`, `` ` ``, `;`, `&`, `|`, spaces, etc.
-//!
 //! ## What These Tests Verify
 //!
 //! The CD file holds a raw path, so path-based shell injection is structurally

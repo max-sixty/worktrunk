@@ -7,9 +7,9 @@
 //! `tea api <path>` does support `{owner}` and `{repo}` placeholders, but their
 //! values come from `tea`'s own repo-context resolver, which depends on the
 //! local git remote being a Gitea-accessible URL and on the user having set up
-//! `tea login add` first. We resolve owner/repo from the primary remote URL
-//! ourselves and pass an already-expanded path so the call works regardless of
-//! how `tea` resolves its own context.
+//! `tea login add` first. We resolve owner/repo from a matching Gitea remote
+//! and pass an already-expanded path so the call works regardless of how `tea`
+//! resolves its own context.
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -18,19 +18,15 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error,
     extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{RefType, Repository};
+use crate::git::{ForgeKind, Repository};
 
 /// Gitea Pull Request provider.
 #[derive(Debug, Clone, Copy)]
 pub struct GiteaProvider;
 
 impl RemoteRefProvider for GiteaProvider {
-    fn ref_type(&self) -> RefType {
-        RefType::Pr
-    }
-
-    fn platform_label(&self) -> &'static str {
-        "gitea"
+    fn forge_kind(&self) -> ForgeKind {
+        ForgeKind::Gitea
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -124,7 +120,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     // stderr names which.
     if !output.status.success() {
         return Err(cli_api_error(
-            RefType::Pr,
+            ForgeKind::Gitea.ref_type(),
             format!("tea api failed for PR #{}", pr_number),
             &output,
         ));
@@ -200,7 +196,6 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
 
     Ok(RemoteRefInfo {
-        ref_type: RefType::Pr,
         number: pr_number,
         title: response.title,
         author: response.user.login,
@@ -360,7 +355,7 @@ mod tests {
     #[test]
     fn test_ref_type() {
         let provider = GiteaProvider;
-        assert_eq!(provider.ref_type(), RefType::Pr);
+        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
     }
 
     #[test]

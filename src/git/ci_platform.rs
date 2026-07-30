@@ -1,20 +1,21 @@
 //! CI platform identification.
 //!
-//! [`CiPlatform`] names the forge a repository's CI runs on (GitHub, GitLab,
+//! [`ForgeKind`] names the forge a repository's CI runs on (GitHub, GitLab,
 //! Gitea, or Azure DevOps). It comes from project config (`forge.platform`, or
 //! the deprecated `ci.platform`) when set, otherwise from the remote URL host —
 //! see [`Repository::ci_platform`].
 
-use crate::git::{GitRemoteUrl, Repository};
+use crate::git::{GitRemoteUrl, RefType, Repository};
 
-/// The forge a repository's CI runs on.
+/// A known forge.
 ///
-/// Resolved by [`Repository::ci_platform`]: project config (`forge.platform`,
-/// or the deprecated `ci.platform`) takes precedence, falling back to the
-/// remote URL host.
+/// This is the canonical identity shared by configuration, remote-host
+/// classification, remote-ref providers, and CI dispatch. Unknown hosts stay
+/// outside the enum as `None`; callers that expose an explicit `unknown` value
+/// add it only at that output boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
-pub enum CiPlatform {
+pub enum ForgeKind {
     GitHub,
     GitLab,
     /// Experimental — Gitea CI status via the `tea` CLI.
@@ -23,21 +24,71 @@ pub enum CiPlatform {
     AzureDevOps,
 }
 
+impl ForgeKind {
+    /// Classify a forge from a remote hostname.
+    ///
+    /// GitHub, GitLab, and Gitea self-hosted instances commonly put the forge
+    /// name in its own DNS label. Azure DevOps has fixed service domains, so it
+    /// uses domain-suffix matching and takes precedence over branded labels
+    /// inside those domains. Both rules respect label boundaries:
+    /// `github-mirror.example` and `dev.azure.com.attacker.example` are not
+    /// recognized. A branded hostname can opt in through `[forge].platform`.
+    pub fn from_host(host: &str) -> Option<Self> {
+        let host = normalized_hostname(host);
+        if normalized_host_is_within(&host, "dev.azure.com")
+            || normalized_host_is_within(&host, "visualstudio.com")
+        {
+            Some(Self::AzureDevOps)
+        } else if host_has_label(&host, "github") {
+            Some(Self::GitHub)
+        } else if host_has_label(&host, "gitlab") {
+            Some(Self::GitLab)
+        } else if host_has_label(&host, "gitea") {
+            Some(Self::Gitea)
+        } else {
+            None
+        }
+    }
+
+    /// PR/MR vocabulary for change requests on this forge.
+    pub const fn ref_type(self) -> RefType {
+        match self {
+            Self::GitLab => RefType::Mr,
+            Self::GitHub | Self::Gitea | Self::AzureDevOps => RefType::Pr,
+        }
+    }
+}
+
+/// Lowercase a hostname and remove transport-only syntax before classifying it.
+///
+/// `GitRemoteUrl` already strips ports from `ssh://` URLs, while HTTP(S) keeps
+/// the authority intact. Treat a numeric suffix as a port so both transports
+/// classify identically. A trailing DNS root dot is likewise identity-neutral.
+pub(super) fn normalized_hostname(host: &str) -> String {
+    let host = host.trim();
+    let host = host
+        .rsplit_once(':')
+        .filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+        .map_or(host, |(hostname, _)| hostname);
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn host_has_label(host: &str, label: &str) -> bool {
+    host.split('.').any(|candidate| candidate == label)
+}
+
+fn normalized_host_is_within(host: &str, domain: &str) -> bool {
+    host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
+}
+
+pub(super) fn host_is_within(host: &str, domain: &str) -> bool {
+    normalized_host_is_within(&normalized_hostname(host), domain)
+}
+
 /// Identify the CI platform from a remote URL host ("github" / "gitlab" /
 /// "gitea" / Azure DevOps).
-fn platform_from_url(url: &str) -> Option<CiPlatform> {
-    let parsed = GitRemoteUrl::parse(url)?;
-    if parsed.is_github() {
-        Some(CiPlatform::GitHub)
-    } else if parsed.is_gitlab() {
-        Some(CiPlatform::GitLab)
-    } else if parsed.is_gitea() {
-        Some(CiPlatform::Gitea)
-    } else if parsed.is_azure_devops() {
-        Some(CiPlatform::AzureDevOps)
-    } else {
-        None
-    }
+fn platform_from_url(url: &str) -> Option<ForgeKind> {
+    GitRemoteUrl::parse(url)?.forge_kind()
 }
 
 impl Repository {
@@ -51,7 +102,7 @@ impl Repository {
     /// For a remote branch, pass its remote as `remote_hint` so the right
     /// platform is picked in mixed-remote repos (e.g. GitHub + GitLab).
     /// Effective URLs are used so `url.insteadOf` aliases resolve.
-    pub fn ci_platform(&self, remote_hint: Option<&str>) -> Option<CiPlatform> {
+    pub fn ci_platform(&self, remote_hint: Option<&str>) -> Option<ForgeKind> {
         if let Some(platform) = self.configured_ci_platform() {
             return Some(platform);
         }
@@ -80,7 +131,7 @@ impl Repository {
     /// `None` when unset or unrecognized. Resolved once per repository handle,
     /// so an unrecognized value warns a single time rather than once per branch
     /// `wt list` probes.
-    fn configured_ci_platform(&self) -> Option<CiPlatform> {
+    fn configured_ci_platform(&self) -> Option<ForgeKind> {
         *self.cache.configured_ci_platform.get_or_init(|| {
             let raw = self
                 .project_config()
@@ -88,7 +139,7 @@ impl Repository {
                 .flatten()?
                 .forge_platform()
                 .map(str::to_string)?;
-            match raw.parse::<CiPlatform>() {
+            match raw.parse::<ForgeKind>() {
                 Ok(platform) => {
                     tracing::debug!(platform = %platform, "Using CI platform from config: {platform}");
                     Some(platform)
@@ -111,31 +162,26 @@ mod tests {
 
     #[test]
     fn test_ci_platform_string_roundtrip() {
-        assert_eq!(
-            "github".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::GitHub)
-        );
-        assert_eq!(
-            "gitlab".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::GitLab)
-        );
-        assert_eq!("gitea".parse::<CiPlatform>().ok(), Some(CiPlatform::Gitea));
+        for (forge, spelling) in [
+            (ForgeKind::GitHub, "github"),
+            (ForgeKind::GitLab, "gitlab"),
+            (ForgeKind::Gitea, "gitea"),
+            (ForgeKind::AzureDevOps, "azure-devops"),
+        ] {
+            assert_eq!(forge.to_string(), spelling);
+            assert_eq!(spelling.parse::<ForgeKind>().ok(), Some(forge));
+        }
+
         // Azure DevOps accepts both spellings; `azure-devops` is canonical.
         assert_eq!(
-            "azure-devops".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::AzureDevOps)
+            "azuredevops".parse::<ForgeKind>().ok(),
+            Some(ForgeKind::AzureDevOps)
         );
-        assert_eq!(
-            "azuredevops".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::AzureDevOps)
-        );
-        assert_eq!(CiPlatform::GitHub.to_string(), "github");
-        assert_eq!(CiPlatform::GitLab.to_string(), "gitlab");
 
         // Unrecognized values, including wrong case, must not parse.
-        assert!("invalid".parse::<CiPlatform>().is_err());
-        assert!("GITHUB".parse::<CiPlatform>().is_err());
-        assert!("GitHub".parse::<CiPlatform>().is_err());
+        assert!("invalid".parse::<ForgeKind>().is_err());
+        assert!("GITHUB".parse::<ForgeKind>().is_err());
+        assert!("GitHub".parse::<ForgeKind>().is_err());
     }
 
     #[test]
@@ -149,7 +195,7 @@ mod tests {
             "http://github.com/owner/repo.git",
             "git://github.com/owner/repo.git",
         ] {
-            assert_eq!(platform_from_url(url), Some(CiPlatform::GitHub), "{url}");
+            assert_eq!(platform_from_url(url), Some(ForgeKind::GitHub), "{url}");
         }
 
         // GitLab — various URL formats, plus self-hosted instances.
@@ -160,7 +206,7 @@ mod tests {
             "http://gitlab.example.com/owner/repo.git",
             "git://gitlab.mycompany.com/owner/repo.git",
         ] {
-            assert_eq!(platform_from_url(url), Some(CiPlatform::GitLab), "{url}");
+            assert_eq!(platform_from_url(url), Some(ForgeKind::GitLab), "{url}");
         }
 
         // Gitea — gitea.com and self-hosted instances with "gitea" in the host.
@@ -168,7 +214,7 @@ mod tests {
             "https://gitea.com/owner/repo.git",
             "git@gitea.example.com:owner/repo.git",
         ] {
-            assert_eq!(platform_from_url(url), Some(CiPlatform::Gitea), "{url}");
+            assert_eq!(platform_from_url(url), Some(ForgeKind::Gitea), "{url}");
         }
 
         // Azure DevOps — HTTPS, SSH, and the legacy visualstudio.com host.
@@ -179,7 +225,7 @@ mod tests {
         ] {
             assert_eq!(
                 platform_from_url(url),
-                Some(CiPlatform::AzureDevOps),
+                Some(ForgeKind::AzureDevOps),
                 "{url}"
             );
         }
@@ -194,5 +240,33 @@ mod tests {
             platform_from_url("https://codeberg.org/owner/repo.git"),
             None
         );
+    }
+
+    #[test]
+    fn test_platform_from_url_uses_network_host_after_userinfo() {
+        for url in [
+            "https://github.com@attacker.example/owner/repo.git",
+            "http://gitlab.com@attacker.example/owner/repo.git",
+            "git://gitea.com@attacker.example/owner/repo.git",
+            "ssh://dev.azure.com@attacker.example/owner/repo.git",
+        ] {
+            assert_eq!(platform_from_url(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn test_fixed_azure_domains_take_precedence_over_forge_labels() {
+        for host in [
+            "github.dev.azure.com",
+            "gitlab.visualstudio.com",
+            "gitea.visualstudio.com:443",
+            "GITHUB.DEV.AZURE.COM.",
+        ] {
+            assert_eq!(
+                ForgeKind::from_host(host),
+                Some(ForgeKind::AzureDevOps),
+                "{host}"
+            );
+        }
     }
 }

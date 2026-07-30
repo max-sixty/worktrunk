@@ -11,7 +11,7 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
     extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{RefType, Repository};
+use crate::git::{ForgeKind, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
@@ -19,12 +19,8 @@ use crate::shell_exec::Cmd;
 pub struct GitHubProvider;
 
 impl RemoteRefProvider for GitHubProvider {
-    fn ref_type(&self) -> RefType {
-        RefType::Pr
-    }
-
-    fn platform_label(&self) -> &'static str {
-        "github"
+    fn forge_kind(&self) -> ForgeKind {
+        ForgeKind::GitHub
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -168,14 +164,14 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
                  or configure a different primary remote."
             };
             return Err(cli_api_error(
-                RefType::Pr,
+                ForgeKind::GitHub.ref_type(),
                 format!("PR #{pr_number} not found on {owner}/{repo_name} ({source}). {hint}"),
                 &output,
             ));
         }
 
         return Err(cli_api_error(
-            RefType::Pr,
+            ForgeKind::GitHub.ref_type(),
             format!("gh api failed for PR #{}", pr_number),
             &output,
         ));
@@ -221,7 +217,6 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
 
     Ok(RemoteRefInfo {
-        ref_type: RefType::Pr,
         number: pr_number,
         title: response.title,
         author: response.user.login,
@@ -285,7 +280,7 @@ mod tests {
     #[test]
     fn test_ref_type() {
         let provider = GitHubProvider;
-        assert_eq!(provider.ref_type(), RefType::Pr);
+        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
     }
 
     #[test]
