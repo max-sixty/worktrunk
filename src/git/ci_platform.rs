@@ -24,69 +24,38 @@ pub enum ForgeKind {
     AzureDevOps,
 }
 
-/// A remote host that names a forge without classifying as one.
-///
-/// The former classifier matched a forge name anywhere in the hostname, so
-/// `github-personal`, `github-enterprise.acme.com`, and `mygithub.com` all
-/// resolved to GitHub. Classification now requires the name to be a whole DNS
-/// label — the boundary that rejects `evil-github.com` — which leaves those
-/// hosts without CI status until `forge.platform` names the forge.
-///
-/// This is diagnostic-only: callers can explain the compatibility change and
-/// suggest `forge.platform`, but must not use it to select a forge provider.
-/// Dispatch remains on [`ForgeKind::from_host`]'s exact-label boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LegacyForgeHost {
-    host: String,
-    platform: ForgeKind,
-}
-
-impl LegacyForgeHost {
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
-    pub fn platform(&self) -> ForgeKind {
-        self.platform
-    }
-
-    /// Recognize a host the former substring classifier matched and the
-    /// exact-label boundary no longer does.
-    ///
-    /// Every URL shape qualifies. The branded multi-account SSH alias
-    /// (`git@github-personal:owner/repo`) is one instance of the general case,
-    /// not a rule of its own: what the two shapes share is a hostname naming a
-    /// forge that nothing will dispatch to.
-    fn from_url(url: &str) -> Option<Self> {
-        let host = normalized_hostname(GitRemoteUrl::parse(url)?.host());
-        if ForgeKind::from_host(&host).is_some() {
-            return None;
-        }
-        let platform = branded_forge_name(&host)?;
-        Some(Self { host, platform })
-    }
-}
-
 impl ForgeKind {
     /// Classify a forge from a remote hostname.
     ///
-    /// GitHub, GitLab, and Gitea self-hosted instances commonly put the forge
-    /// name in its own DNS label. Azure DevOps has fixed service domains, so it
-    /// uses domain-suffix matching and takes precedence over branded labels
-    /// inside those domains. Both rules respect label boundaries:
-    /// `github-mirror.example` and `dev.azure.com.attacker.example` are not
-    /// recognized. A branded hostname can opt in through `[forge].platform`.
+    /// GitHub, GitLab, and Gitea are brand names, and a self-hosted instance
+    /// puts its brand in the hostname however it likes: `github.mycompany.com`,
+    /// `github-enterprise.acme.com`, `mygithub.com`, the `github-personal` SSH
+    /// alias. So any host carrying the name matches, first match winning. Azure
+    /// DevOps is not a brand in the hostname but two fixed service domains, so
+    /// it matches by domain suffix and takes precedence inside those domains —
+    /// `evil-visualstudio.com` and `dev.azure.com.attacker.example` are outside
+    /// them and do not match.
+    ///
+    /// Recall is what this optimizes, not resistance to a lookalike name. The
+    /// hostname comes out of the user's own `.git/config`, and whoever can put
+    /// a host there can put code there too, so the trust decision was made at
+    /// clone time; all this picks is which forge CLI runs against a remote the
+    /// user already builds from. A stricter name test would not hold anyway —
+    /// an attacker controls their own DNS, so `github.attacker.example`
+    /// satisfies one — while it does shut out the self-hoster who named a box
+    /// `github-enterprise.acme.com` years ago. `[forge].platform` overrides the
+    /// guess, and names the forge for a host that carries no brand at all.
     pub fn from_host(host: &str) -> Option<Self> {
         let host = normalized_hostname(host);
         if normalized_host_is_within(&host, "dev.azure.com")
             || normalized_host_is_within(&host, "visualstudio.com")
         {
             Some(Self::AzureDevOps)
-        } else if host_has_label(&host, "github") {
+        } else if host.contains("github") {
             Some(Self::GitHub)
-        } else if host_has_label(&host, "gitlab") {
+        } else if host.contains("gitlab") {
             Some(Self::GitLab)
-        } else if host_has_label(&host, "gitea") {
+        } else if host.contains("gitea") {
             Some(Self::Gitea)
         } else {
             None
@@ -114,37 +83,6 @@ pub(super) fn normalized_hostname(host: &str) -> String {
         .filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
         .map_or(host, |(hostname, _)| hostname);
     host.trim_end_matches('.').to_ascii_lowercase()
-}
-
-fn host_has_label(host: &str, label: &str) -> bool {
-    host.split('.').any(|candidate| candidate == label)
-}
-
-/// The forge whose name appears anywhere in `host`, in [`ForgeKind::from_host`]'s
-/// precedence order. `host` must already be [`normalized_hostname`]d, so these
-/// lowercase literals compare case-insensitively.
-///
-/// Diagnostic use only — this is deliberately the boundary
-/// [`ForgeKind::from_host`] does not draw.
-///
-/// Azure DevOps is absent, and the asymmetry is the point. A brand name is a
-/// naming convention — companies do run `github-enterprise.acme.com` — and no
-/// rule can tell that from `evil-github.com`, so classification declines both
-/// and this hint offers both the same opt-in. The two Azure service domains are
-/// matched by suffix instead, which is an ownership check: a host containing
-/// `dev.azure.com` or `visualstudio.com` without ending in one is outside those
-/// domains by construction, and Azure DevOps Server, the self-hosted edition,
-/// runs on corporate hostnames carrying neither string. Widening here would
-/// reach no real installation while telling the owner of a lookalike to
-/// configure it as a forge.
-fn branded_forge_name(host: &str) -> Option<ForgeKind> {
-    [
-        ("github", ForgeKind::GitHub),
-        ("gitlab", ForgeKind::GitLab),
-        ("gitea", ForgeKind::Gitea),
-    ]
-    .into_iter()
-    .find_map(|(name, platform)| host.contains(name).then_some(platform))
 }
 
 fn normalized_host_is_within(host: &str, domain: &str) -> bool {
@@ -194,20 +132,6 @@ impl Repository {
         }
 
         None
-    }
-
-    /// Return a diagnostic for a legacy forge host on the primary remote.
-    ///
-    /// A configured platform resolves the ambiguity and suppresses the
-    /// diagnostic. The returned value never participates in provider dispatch.
-    pub fn legacy_forge_host(&self) -> Option<LegacyForgeHost> {
-        if self.configured_ci_platform().is_some() {
-            return None;
-        }
-
-        let remote = self.primary_remote().ok()?;
-        let url = self.effective_remote_url(&remote)?;
-        LegacyForgeHost::from_url(&url)
     }
 
     /// The CI platform set in project config (`forge.platform` / `ci.platform`).
@@ -339,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fixed_azure_domains_take_precedence_over_forge_labels() {
+    fn test_fixed_azure_domains_take_precedence_over_brand_names() {
         for host in [
             "github.dev.azure.com",
             "gitlab.visualstudio.com",
@@ -355,102 +279,59 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_forge_host_covers_every_shape_the_substring_rule_matched() {
-        // The branded multi-account SSH alias, a hyphenated self-hosted
-        // instance, and a forge name buried in a label — one rule, every
-        // transport. The host is the one the message prints.
-        for (url, host, platform) in [
+    fn test_branded_hosts_classify_however_the_instance_is_named() {
+        // A self-hosted instance carries its brand wherever it likes: its own
+        // label, a hyphenated label, inside a word, or a single-label SSH
+        // alias. All of them resolve without config.
+        for (url, platform) in [
             (
-                "git@github-personal:owner/repo.git",
-                "github-personal",
+                "https://github-enterprise.acme.com/owner/repo.git",
                 ForgeKind::GitHub,
             ),
-            (
-                "ssh://git@gitlab-work/owner/repo.git",
-                "gitlab-work",
-                ForgeKind::GitLab,
-            ),
-            (
-                "git@gitea-local:owner/repo.git",
-                "gitea-local",
-                ForgeKind::Gitea,
-            ),
+            ("https://mygithub.com/owner/repo.git", ForgeKind::GitHub),
+            ("git@github-personal:owner/repo.git", ForgeKind::GitHub),
             (
                 "https://gitlab-internal.company.com/owner/repo.git",
-                "gitlab-internal.company.com",
                 ForgeKind::GitLab,
             ),
+            ("ssh://git@gitlab-work/owner/repo.git", ForgeKind::GitLab),
             (
                 "git@gitea-mirror.example.com:owner/repo.git",
-                "gitea-mirror.example.com",
                 ForgeKind::Gitea,
-            ),
-            (
-                "https://mygithub.com/owner/repo.git",
-                "mygithub.com",
-                ForgeKind::GitHub,
             ),
             // Case and port are normalized away before the name is read.
             (
                 "https://GitHub-Enterprise.ACME.com:8443/owner/repo.git",
-                "github-enterprise.acme.com",
-                ForgeKind::GitHub,
-            ),
-            // A lookalike gets the same hint. Nothing distinguishes it from a
-            // legitimately branded instance by name, and the hint only offers
-            // an opt-in the user must take deliberately.
-            (
-                "git@github-personal.attacker.example:owner/repo.git",
-                "github-personal.attacker.example",
                 ForgeKind::GitHub,
             ),
         ] {
-            let legacy = LegacyForgeHost::from_url(url).expect(url);
-            assert_eq!(legacy.host(), host, "{url}");
-            assert_eq!(legacy.platform(), platform, "{url}");
-            // Diagnostic only: the exact-label boundary still rejects the host.
-            assert_eq!(ForgeKind::from_host(legacy.host()), None, "{url}");
+            assert_eq!(platform_from_url(url), Some(platform), "{url}");
         }
-    }
 
-    #[test]
-    fn test_legacy_forge_host_is_silent_when_the_host_classifies_or_names_no_forge() {
+        // A host carrying no brand still needs `forge.platform`.
         for url in [
-            // Classifies on the exact label — there is nothing to explain.
-            "git@github.com:owner/repo.git",
-            "https://gitlab.example.com/owner/repo.git",
-            "https://myorg.visualstudio.com/proj/_git/repo",
-            // Names no forge at all.
-            "git@work:owner/repo.git",
             "https://bitbucket.org/owner/repo.git",
             "https://codeberg.org/owner/repo.git",
-            // Userinfo resolves to the network host, which names no forge.
-            "https://github.com@attacker.example/owner/repo.git",
-            // Azure DevOps stays out: a host carrying a service domain without
-            // ending in it is outside those domains, and the self-hosted
-            // edition carries neither string. See `branded_forge_name`.
-            "https://dev.azure.com.attacker.example/org/proj/_git/repo",
-            "https://tfs.contoso.com/DefaultCollection/proj/_git/repo",
-            // Not a remote URL — a local path naming a forge stays silent.
-            "/srv/git/github-mirror.git",
+            "https://git.example.com/owner/repo.git",
+            "git@work:owner/repo.git",
         ] {
-            assert_eq!(LegacyForgeHost::from_url(url), None, "{url}");
+            assert_eq!(platform_from_url(url), None, "{url}");
         }
     }
 
     #[test]
-    fn test_configured_platform_suppresses_legacy_forge_host_diagnostic() {
+    fn test_configured_platform_overrides_host_inference() {
+        // The remote's own name says GitLab; config says GitHub and wins.
         let test = crate::testing::TestRepo::new();
         test.run_git(&[
             "remote",
             "add",
             "origin",
-            "git@github-personal:owner/repo.git",
+            "https://gitlab-internal.company.com/owner/repo.git",
         ]);
         test.write_project_config("[forge]\nplatform = \"github\"\n");
 
         let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
         assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitHub));
-        assert_eq!(repo.legacy_forge_host(), None);
     }
 }

@@ -867,8 +867,14 @@ mod tests {
         assert_eq!(hostile_userinfo.host, "attacker.example");
         assert_eq!(hostile_userinfo.url, "https://attacker.example/owner/repo");
 
+        // A brand anywhere in the host classifies here too.
+        let branded = repo_info_from_ref_url("https://github-mirror.example/owner/repo/pull/1")
+            .expect("ref URL is structurally valid");
+        assert_eq!(branded.provider, GitRepoProvider::GitHub);
+
+        // The Azure service domains stay bounded by suffix, and a host outside
+        // them carries no brand to fall back on.
         for input in [
-            "https://github-mirror.example/owner/repo/pull/1",
             "https://dev.azure.com.attacker.example/org/project/_git/repo/pullrequest/9",
             "https://evil-visualstudio.com/org/project/_git/repo/pullrequest/9",
         ] {

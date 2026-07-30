@@ -71,7 +71,6 @@ pub(crate) use worktree::{
 pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
-use worktrunk::git::LegacyForgeHost;
 use worktrunk::styling::{eprintln, format_with_gutter};
 
 pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
@@ -80,20 +79,6 @@ pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
         (_, true) => Some(false),
         _ => None,
     }
-}
-
-/// Actionable compatibility diagnostic for a remote host that names a forge but
-/// no longer crosses the exact-label forge-classification boundary.
-///
-/// One wording covers every shape, from an SSH alias (`github-personal`) to a
-/// self-hosted hostname (`gitlab-internal.company.com`): both are the host of
-/// the primary remote, and both take the same remedy.
-pub(crate) fn legacy_forge_host_diagnostic(legacy: &LegacyForgeHost) -> String {
-    let platform = legacy.platform().to_string();
-    let host = legacy.host();
-    cformat!(
-        "Remote host <bold>{host}</> is not auto-detected as a forge; enable CI status and <bold>wt switch --prs</> with <bold>forge.platform = \"{platform}\"</> @ <bold>.config/wt.toml</>"
-    )
 }
 
 /// Format command execution label with optional command name.

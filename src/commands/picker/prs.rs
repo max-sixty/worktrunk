@@ -50,7 +50,6 @@ use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{ForgeKind, RefType, Repository};
 use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
 
-use super::super::legacy_forge_host_diagnostic;
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubComment, GitHubPrInfo, PrRef, PrStatus, ReviewState,
     non_interactive_cmd, tool_available,
@@ -641,9 +640,6 @@ fn fetch_open_prs(repo: &Repository) -> anyhow::Result<Vec<PrEntry>> {
             anyhow::bail!("--prs supports GitHub and GitLab; this repository's forge is {other}")
         }
         None => {
-            if let Some(legacy) = repo.legacy_forge_host() {
-                anyhow::bail!("{}", legacy_forge_host_diagnostic(&legacy));
-            }
             anyhow::bail!("--prs could not determine the forge from the remote URL")
         }
     }
@@ -1837,28 +1833,6 @@ mod tests {
             fetch_open_prs(&test.repo).expect_err("expected --prs to bail without a forge remote");
         assert!(
             err.to_string().contains("could not determine the forge"),
-            "unexpected error: {err:#}"
-        );
-    }
-
-    #[test]
-    fn fetch_open_prs_explains_legacy_forge_host_configuration() {
-        // A self-hosted instance carrying the forge name inside a label. The
-        // SSH-alias shape reaches the same bail; `switch_picker_dry_run` covers
-        // it end to end.
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        test.run_git(&[
-            "remote",
-            "add",
-            "origin",
-            "https://gitlab-internal.company.com/owner/repo.git",
-        ]);
-        let err = fetch_open_prs(&test.repo)
-            .expect_err("expected --prs to require explicit forge config");
-        let message = err.to_string();
-        assert!(
-            message.contains("gitlab-internal.company.com")
-                && message.contains("forge.platform = \"gitlab\""),
             "unexpected error: {err:#}"
         );
     }
