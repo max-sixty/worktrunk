@@ -1553,18 +1553,16 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
-/// A `Prunable` candidate (stale worktree entry, integrated branch) whose
-/// preparation fails at removal time is skipped silently and the run
-/// continues: `try_remove` treats a preparation error as "not selected", not
-/// a command failure. Preparing a stale entry prunes its metadata — the
-/// mutation that keeps `Prunable` candidates planning in `try_remove` rather
-/// than on the `--dry-run`-shared scan — and it names the entry (`git worktree remove`)
-/// rather than sweeping the repo, so a `git` shim failing `worktree remove` is
-/// the deterministic trigger. Unix-only for the same `CreateProcess` reason as
+/// A stale worktree entry whose metadata prune fails at execution surfaces
+/// the failure rather than pretending the candidate was removed: the scan
+/// records the prune in the plan (`prune_entry`), execution runs it before
+/// the branch deletion, and its error fails the run — the branch and the
+/// entry both survive intact. A `git` shim failing `worktree remove` is the
+/// deterministic trigger. Unix-only for the same `CreateProcess` reason as
 /// the canary shim above.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_skips_prunable_candidate_whose_preparation_fails(mut repo: TestRepo) {
+fn test_prune_surfaces_failing_metadata_prune(mut repo: TestRepo) {
     repo.commit("initial");
 
     // Integrated branch whose worktree directory is deleted out-of-band → a
@@ -1587,18 +1585,62 @@ fn test_prune_skips_prunable_candidate_whose_preparation_fails(mut repo: TestRep
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        output.status.success(),
-        "a failing candidate preparation must skip the candidate, not fail \
-         the run.\nstderr:\n{stderr}"
+        !output.status.success(),
+        "a failing metadata prune is a failed removal, not a silent skip.\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("stale-merged"),
+        "the error must name the failed candidate.\nstderr:\n{stderr}"
     );
     assert!(
         prune_failed_marker.exists(),
-        "the shim never fired — the candidate's preparation was not exercised"
+        "the shim never fired — the metadata prune was not exercised"
+    );
+    // Nothing half-done: the entry is still registered and the branch intact.
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        list.contains("prunable"),
+        "the failed prune must leave the entry registered; worktrees:\n{list}"
     );
     let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
     assert!(
         branches.lines().any(|branch| branch == "stale-merged"),
-        "the skipped candidate's branch must survive; branches:\n{branches}"
+        "the failed candidate's branch must survive; branches:\n{branches}"
+    );
+}
+
+/// `--dry-run` mutates nothing, even though the scan now plans stale entries
+/// through `prepare_worktree_removal` like every other source: planning is
+/// pure — the metadata prune rides the plan and only execution performs it.
+/// A regression here (a mutation creeping back into planning) would make the
+/// preview destructive.
+#[rstest]
+fn test_prune_dry_run_leaves_stale_entry_registered(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.add_worktree("stale-branch");
+    std::fs::remove_dir_all(repo.worktree_path("stale-branch")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--dry-run", "--min-age=0s"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("would be removed"),
+        "the stale entry must be previewed as a candidate:\n{stdout}"
+    );
+    let list = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        list.contains("prunable"),
+        "dry run must leave the stale entry registered; worktrees:\n{list}"
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|branch| branch == "stale-branch"),
+        "dry run must leave the branch; branches:\n{branches}"
     );
 }
 
@@ -1672,17 +1714,25 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
 /// The removals that unregister stale worktree metadata are on the read side
 /// too, not held back one at a time.
 ///
-/// Four stale entries: two carrying a branch (prune's plan-less `Prunable`
-/// candidates, which prune while planning) and two detached (`StaleDetached`,
-/// which prune in place of a removal). Each unregisters its own metadata with
+/// Four stale entries: two carrying a branch (`BranchOnly` plans whose
+/// `prune_entry` executes the prune) and two detached (`StaleDetached`, which
+/// prune in place of a removal). Each unregisters its own metadata with
 /// `git worktree remove <path>`, and the shim makes every one of them wait for
 /// all four to start before proceeding. Serialized, the first would wait out
 /// the shim's 15 s timeout and drop a sentinel file, which the test asserts
 /// absent. Unix-only for the same `CreateProcess` shim reason as the canary
 /// above.
+///
+/// `--foreground` runs both ways too. It reserves the write side for the TTY
+/// trash-cleanup spinner, which only a worktree removal paints; every candidate
+/// here plans a pure branch deletion or a bare prune, so the flag has no
+/// spinner to protect and must not serialize them.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_metadata_removals_run_concurrently(mut repo: TestRepo) {
+fn test_prune_metadata_removals_run_concurrently(
+    mut repo: TestRepo,
+    #[values(false, true)] foreground: bool,
+) {
     repo.commit("initial");
 
     // At main HEAD, so every entry is same-commit integrated.
@@ -1720,10 +1770,11 @@ fn test_prune_metadata_removals_run_concurrently(mut repo: TestRepo) {
     cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
     cmd.env("WT_TEST_BARRIER_COUNT", stale.len().to_string());
 
-    let output = cmd
-        .args(["step", "prune", "--yes", "--min-age=0s"])
-        .output()
-        .unwrap();
+    cmd.args(["step", "prune", "--yes", "--min-age=0s"]);
+    if foreground {
+        cmd.arg("--foreground");
+    }
+    let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "prune should succeed:\n{stderr}");
