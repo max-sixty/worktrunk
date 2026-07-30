@@ -19,9 +19,11 @@ tasks:
     cmds:
       # Build first so the measurement covers the test run alone.
       - cargo nextest run --no-run --features shell-integration-tests
-      # `time` is task's interpreter's own keyword (mvdan/sh), so no external
-      # binary is involved; `user`/`sys` include every child process.
-      - time cargo nextest run --features shell-integration-tests {{.CLI_ARGS}}
+      # bash's `time` keyword counts every reaped child. Task's own interpreter
+      # (mvdan/sh) parses `time` but reports user/sys as zero, and /usr/bin/time
+      # is an extra package on minimal Linux; bash is already required on every
+      # platform (see .config/nextest.toml's build-bins).
+      - bash -c 'time "$@"' bash cargo nextest run --features shell-integration-tests {{.CLI_ARGS}}
       - echo "per-test timings in target/nextest/default/junit.xml"
 
   setup-web:

@@ -593,7 +593,9 @@ mod tests {
         );
 
         // Ref should be gone.
-        let exit = std::process::Command::new("git")
+        let mut rev_parse = std::process::Command::new("git");
+        crate::testing::configure_git_cmd(&mut rev_parse);
+        let exit = rev_parse
             .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
             .current_dir(test.root_path())
             .status()
@@ -677,7 +679,9 @@ mod tests {
         );
 
         // Branch was deleted.
-        let exit = std::process::Command::new("git")
+        let mut rev_parse = std::process::Command::new("git");
+        crate::testing::configure_git_cmd(&mut rev_parse);
+        let exit = rev_parse
             .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
             .current_dir(test.root_path())
             .status()

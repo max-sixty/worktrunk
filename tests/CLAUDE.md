@@ -34,9 +34,9 @@ The one setup script here, `build-bins`, is a build step rather than a behavior 
 task profile-tests   # CPU accounting plus per-test timings
 ```
 
-The integration binary dominates: ~2,200 tests averaging ~0.6s, each spawning `wt` and `git` against a fresh fixture copy. Two thirds of the suite's CPU is kernel time, so the cost is process creation and filesystem churn rather than computation, and it sits in a broad middle rather than in a few outliers. Track `user`/`sys` from the `time` line; wall time is unreliable whenever a sibling worktree is building or testing, which on this project is most of the time. Per-test durations land in `target/nextest/default/junit.xml`.
+The integration binary dominates: ~2,200 tests averaging ~1s, each spawning `wt` and `git` against a fresh fixture copy. Two thirds of the suite's CPU is kernel time, so the cost is process creation and filesystem churn rather than computation, and it sits in a broad middle rather than in a few outliers. Track `user`/`sys` from the `time` line; wall time is unreliable whenever a sibling worktree is building or testing, which on this project is most of the time. Per-test durations land in `target/nextest/default/junit.xml`.
 
-The fixtures put their temp directories under `test_temp_root()` (`$TMPDIR/wt`) rather than directly in the system temp dir, and `test_tempdir()` is the fixture-side replacement for `TempDir::new()`. Entries in the shared temp root are cheap to ignore but expensive to enumerate, and `git::recover::recover_from_path` reads every ancestor directory of a deleted CWD — its own unit test ran 14.2s against a temp root holding 454k entries and 0.06s rooted here. That root's short name is load-bearing: a unix socket path can't exceed 104 bytes on macOS, and `test_copy_ignored_skips_non_regular_files` binds one 89 bytes in.
+The fixtures put their temp directories under `test_temp_root()` (`$TMPDIR/wt`) rather than directly in the system temp dir, and `test_tempdir()` is the fixture-side replacement for `TempDir::new()`. Entries in the shared temp root are cheap to ignore but expensive to enumerate, and `git::recover::recover_from_path` reads every ancestor directory of a deleted CWD — its own unit test ran 14.2s against a temp root holding 454k leaked entries, 0.06s once the leak stopped. That root's short name is load-bearing: a unix socket path can't exceed 104 bytes on macOS, and `test_copy_ignored_skips_non_regular_files` binds one 89 bytes in.
 
 Process-scoped scratch space belongs in a fixed directory, not a `TempDir` in a `static`: statics don't run destructors at process exit, so under nextest's process-per-test model that leaks one directory per test into a temp root nothing reliably sweeps (macOS clears it only at boot). To check for a recurrence, run the suite with `TMPDIR` pointed at a fresh directory and see what survives.
 
@@ -180,9 +180,9 @@ The harness applies the same floor at the spawn sites it does own:
 
 - `git_test_env` — reaching git through `configure_git_env` / `configure_git_cmd` (`TestRepo::git_command()`, `run_git()`, `run_git_in()`, `git_output()`, `commit_in()`) and a PTY child through `pty_env_vars` — adds the test identity, pinned dates, and locale; `configure_git_cmd` also applies the floor, since a plain `Command` child bypasses the `Cmd` latch.
 - `isolate_subprocess_env` scrubs every inherited `GIT_*` from `wt` children — a host-exported `GIT_CONFIG_*` included — then re-applies the floor explicitly, so a subprocess denies host config just as this process does.
-- `pty_env_vars` carries the floor across by hand, because a PTY child is `env_clear`ed and inherits nothing. `pty_env_vars_carry_the_git_config_floor` pins it: `useConfigOnly` fires only where an identity is missing, so no PTY assertion would notice it going missing.
+- a PTY child is `env_clear`ed and inherits nothing, so the floor is carried by hand at the PTY choke point every spawn routes through — `configure_pty_command` in `tests/common/mod.rs` — and again by `pty_env_vars`, whose vector declares a PTY `wt` child's complete environment. Each copy is pinned by its own test (`configure_pty_command_carries_the_git_config_floor`, `pty_env_vars_carry_the_git_config_floor`), because `useConfigOnly` fires only where an identity is missing — no PTY assertion would notice the floor going missing.
 
-**The floor carries two settings.** `user.useConfigOnly` is a backstop: denial alone leaves git *guessing* an identity from the OS username and hostname rather than failing, which is the one way a hermetic suite could still author a commit as the developer. Nothing exercises it, because every path sets an identity, and that is the reason to keep it — without it a future gap goes silent. `rerere.enabled = false` is *set* rather than left unset because git enables rerere on its own whenever `$GIT_DIR/rr-cache` exists, so leaving it unset makes the suite's rerere state depend on what a fixture happens to carry. `commit.gpgsign` is gone, since denial already leaves git on its own default, and so are `advice.mergeConflict` / `advice.resolveConflict`, which `tests/fixtures/template-repo/gitconfig` carries into the fixtures that need them.
+**The floor carries two settings.** `user.useConfigOnly` is a backstop: denial alone leaves git *guessing* an identity from the OS username and hostname rather than failing, which is the one way a hermetic suite could still author a commit as the developer. Nothing exercises it, because every path sets an identity, and that is the reason to keep it — without it a future gap goes silent. `rerere.enabled = false` is *set* rather than left unset because git enables rerere on its own whenever `$GIT_DIR/rr-cache` exists, so leaving it unset makes the suite's rerere state depend on what a fixture happens to carry. `commit.gpgsign` is gone, since denial already leaves git on its own default, and so are `advice.mergeConflict` / `advice.resolveConflict` — the snapshot layer strips gutter-prefixed `hint:` lines because they vary across git versions (the filter in `tests/common/mod.rs`), so nothing depends on quieting them at the source.
 
 **A local run can measure a stale fixture.** The standard fixture is built once into `target/debug/wt-test-fixtures/standard-v<N>/` and copied per test, so whatever a git-config change alters *during fixture construction* survives in that copy until the cache is rebuilt. A floor change can therefore pass locally and fail on CI, which always builds fresh. Removing `rerere.enabled` did exactly that: the cached fixture already held an `rr-cache` directory from when the floor enabled rerere, git turns rerere on whenever that directory exists, and so every local test kept the behavior the change had just removed. Before trusting a local measurement of a git-config change, delete `target/debug/wt-test-fixtures/` or bump `STANDARD_FIXTURE_VERSION`.
 
@@ -259,12 +259,13 @@ fall-through edits the config the developer is using. `approvals_path()` panics;
 while a best-effort read like `prewarm_user_config` simply preloads nothing.
 
 `#[cfg(test)]` makes both guards fire for `worktrunk` lib-crate tests only. A
-bin-crate test (anything under `src/commands/` or `src/output/`) links the lib
-in non-test mode, so the guard is compiled out there and a global read hits the
-real config silently: it passes wherever `$HOME` is writable and fails only in a
-sandbox that forbids it. Nothing exercises that today — 968 bin-crate tests
-create no config under a scratch `$HOME` — so it's a live requirement on new
-tests, not a known leak.
+bin-crate test (anything compiled into the `wt` binary — `src/commands/`,
+`src/output/`, and the other `main.rs` modules) links the lib in non-test mode,
+so the guard is compiled out there and a global read hits the real config
+silently: it passes wherever `$HOME` is writable and fails only in a sandbox
+that forbids it. Nothing exercises that today — no bin-crate test creates a
+config under a scratch `$HOME` — so it's a live requirement on new tests, not a
+known leak.
 
 `system_config_path()` is deliberately unguarded: it resolves a machine-wide
 file rather than the developer's own, and `config::deprecation`'s
@@ -591,7 +592,7 @@ settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
 
 The helper wraps the pattern in `(?:\x1b\[\d+m)*` brackets, which eat only the bold open/close immediately adjacent to the path — surrounding color spans (yellow warning, etc.) are preserved.
 
-Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_strip_filter` in `tests/common/mod.rs`): `[TEST_CONFIG]`, `[TEST_CONFIG_NEW]`, `[TEST_APPROVALS]`, `[TEST_GIT_CONFIG]`, `[PROJECT_ID]`, `[TEMP_HOME]`, `[TEMP]`. Placeholders that hold a real value (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) keep their bold codes so the snapshot still asserts the user-visible styling. The strip pass is invoked at the end of every `setup_*_snapshot_settings` helper, so the contract holds uniformly across `setup_snapshot_settings*`, `setup_home_snapshot_settings`, and `setup_temp_snapshot_settings`.
+Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_strip_filter` in `tests/common/mod.rs`): `[TEST_CONFIG]`, `[TEST_CONFIG_NEW]`, `[TEST_APPROVALS]`, `[PROJECT_ID]`, `[TEMP_HOME]`, `[TEMP]`. Placeholders that hold a real value (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) keep their bold codes so the snapshot still asserts the user-visible styling. The strip pass is invoked at the end of every `setup_*_snapshot_settings` helper, so the contract holds uniformly across `setup_snapshot_settings*`, `setup_home_snapshot_settings`, and `setup_temp_snapshot_settings`.
 
 ## Test Style
 

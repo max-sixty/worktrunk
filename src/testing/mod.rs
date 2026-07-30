@@ -678,10 +678,11 @@ pub fn scrub_git_path_vars(cmd: &mut Command) {
 /// the system temp dir rather than hundreds of siblings directly inside it.
 ///
 /// Entries in the shared temp root are cheap to ignore but expensive to *walk*,
-/// and `git::recover::recover_from_path` reads every ancestor directory of a
-/// deleted CWD looking for the repo a removed worktree belonged to. A fixture
-/// rooted directly in the shared dir pays for everything the machine has put
-/// there; rooted here it pays for the handful of fixtures currently alive.
+/// and `git::recover::recover_from_path` read_dirs every existing ancestor of a
+/// deleted CWD until a repo claims it — reaching the shared dir itself when
+/// nothing nearer does. This sub-root can't shorten that worst-case walk; what
+/// it does is keep the suite's own churn from growing the shared dir every
+/// run, the accumulation that made the walk slow (see `isolated_test_cwd`).
 ///
 /// Where that root sits carries no isolation weight: the fixtures read no
 /// git config outside themselves wherever they live, so a conditional
@@ -693,8 +694,8 @@ pub fn scrub_git_path_vars(cmd: &mut Command) {
 /// `$TMPDIR` is 56 canonicalized characters, and
 /// `test_copy_ignored_skips_non_regular_files` binds a listener at
 /// `<fixture>/repo/target/test.sock` — 89 bytes before this directory exists at
-/// all. Every character here comes out of the 14 that were spare;
-/// `worktrunk-tests` overflowed by one.
+/// all. The name and its slash come out of the 14 bytes that were spare;
+/// `worktrunk-tests` (16 with its slash) would overflow them by two.
 ///
 /// Created on first use and left in place; what goes inside it are `TempDir`s
 /// that remove themselves on drop, so it stays near-empty between runs.
@@ -729,8 +730,8 @@ pub fn test_tempdir() -> TempDir {
 /// into a temp root nothing reliably sweeps (macOS clears it only at boot).
 /// Hundreds of thousands of stale entries cost nothing to ignore but are
 /// expensive to enumerate, and `git::recover::recover_from_path` reads every
-/// ancestor directory of a deleted CWD: its own unit test went from 0.3s to
-/// 14-34s on a developer machine. One fixed directory never grows.
+/// ancestor directory of a deleted CWD — the measured cost is in
+/// `tests/CLAUDE.md` → Profiling the Suite. One fixed directory never grows.
 fn isolated_test_cwd() -> &'static Path {
     static ISOLATED_CWD: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
         let dir = test_temp_root().join("isolated-cwd");
@@ -3513,11 +3514,12 @@ mod tests {
     }
 
     /// A PTY child is the one transport that inherits nothing, so the floor
-    /// reaches it only because [`pty_env_vars`] copies it across. Losing that
-    /// copy would leave those children denying the host's config but carrying
-    /// none of the settings the denial is *for* — and no PTY assertion would
-    /// notice, since the settings only quiet advice and refuse a guessed
-    /// identity.
+    /// is carried by hand — by `configure_pty_command` (the PTY choke point in
+    /// `tests/common`, pinned by its own test there) and by this vector, which
+    /// declares a PTY `wt` child's complete environment and so carries the
+    /// floor itself rather than leaning on the transport. Losing the copy here
+    /// would break that contract silently: the settings only quiet advice and
+    /// refuse a guessed identity, so no PTY assertion would notice.
     #[test]
     fn pty_env_vars_carry_the_git_config_floor() {
         let dir = Path::new("/tmp");
@@ -3528,10 +3530,8 @@ mod tests {
         });
         let keys: Vec<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
 
-        // A PTY child is `env_clear`ed and never passes through the `Cmd`
-        // latch, so `pty_env_vars` is the floor's only route in — every
-        // member must be present, the numbered settings as much as the deny
-        // pair.
+        // The vector must be complete on its own — every member present,
+        // the numbered settings as much as the deny pair.
         for (var, _) in shell_exec::HERMETIC_TEST_GIT_ENV {
             assert!(keys.contains(&var), "{var} missing: {keys:?}");
         }
@@ -3641,26 +3641,24 @@ mod tests {
         // environment rather than a file on the host.
         let floor = repo
             .repo
-            .run_command(&["config", "--list", "--show-origin"])
+            .run_command(&["config", "--list", "--show-scope"])
             .unwrap();
         let from_env: Vec<&str> = floor
             .lines()
-            .filter(|line| line.starts_with("command line:"))
-            .map(|line| line.trim_start_matches("command line:").trim())
+            .filter_map(|line| line.strip_prefix("command\t"))
             .collect();
         insta::assert_snapshot!(from_env.join("\n"), @r"
         user.useconfigonly=true
         rerere.enabled=false
         ");
 
-        // Nothing outside the fixture contributes. Git reports the repo's own
-        // config at a path relative to it, so the only two origins a resolved
-        // setting may carry are the environment floor above and `.git/config`;
-        // a host `~/.gitconfig` reaching this git would name a third.
+        // Nothing outside the fixture contributes. The only scopes a resolved
+        // setting may carry are `command` (the environment floor above) and
+        // `local` (the fixture's own config); a host `~/.gitconfig` or a
+        // system file reaching this git would surface as `global` or `system`.
         let outside: Vec<&str> = floor
             .lines()
-            .filter(|line| !line.starts_with("command line:"))
-            .filter(|line| !line.starts_with("file:.git/config\t"))
+            .filter(|line| !line.starts_with("command\t") && !line.starts_with("local\t"))
             .collect();
         assert!(
             outside.is_empty(),
