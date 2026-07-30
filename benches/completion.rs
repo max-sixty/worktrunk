@@ -2,9 +2,9 @@
 //!
 //! This is the one wt path a user waits on with their finger still on Tab, so
 //! the number that matters is whole-process wall time. It runs the real binary
-//! the way a shell does — the completion handler returns from `parse_cli`
-//! before `main` builds the rayon pool or dispatches anything, so nothing here
-//! shares state with an ordinary `wt` invocation.
+//! the way a shell does — the completion handler answers and returns before
+//! `main` builds the rayon pool or parses a command, so nothing here shares
+//! state with an ordinary `wt` invocation.
 //!
 //! **One benchmark, on the `mixed` fixture `full` already uses.** Completion
 //! has no phases worth timing separately: it spawns, fills its caches on one

@@ -98,7 +98,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
 
     // Fill the git-discovery, git-config, and user-config caches on three
     // concurrent threads, exactly as `main` does before dispatching a command.
-    // Completion returns from `parse_cli` long before `main` reaches its
+    // Completion answers and returns long before `main` reaches its own
     // `Repository::prewarm` call, so without this every one of those reads is
     // a separate fork taken serially, on the one path where the user is
     // waiting with a finger on Tab: `completion_command`'s alias injection

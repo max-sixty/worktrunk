@@ -1102,7 +1102,7 @@ fn main() {
     } = cli;
     // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
     // raise but never lower (`max`). It also drives shell completion, which
-    // exits in `parse_cli` before reaching here — see
+    // answers and returns above, before `parse_cli` — see
     // `completion::maybe_handle_env_completion`.
     let verbose = verbose.max(logging::env_verbose_level());
     // Globals were already applied in `parse_cli` before help rendering;
