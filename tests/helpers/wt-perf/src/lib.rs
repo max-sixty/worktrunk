@@ -91,25 +91,33 @@ impl RepoConfig {
         }
     }
 
-    /// A long-lived clone's ref shape: a few dozen local branches against an
-    /// order of magnitude more remote-tracking refs.
+    /// A clone someone has worked in for months: 80 worktrees, 80 more local
+    /// branches without one, and 1400 remote-tracking refs.
     ///
-    /// This is the ratio that makes `refs/remotes/` the most expensive scan on
-    /// the completion path while contributing nothing to what the shell shows —
-    /// once the candidate total clears the 100-entry threshold in
-    /// `BranchCompleter`, every remote-only branch is dropped after being
-    /// scanned. `branches(N, _)` alone can't show it: those fixtures carry the
-    /// two remote refs `setup_fake_remote` writes.
-    pub const fn many_remote_refs(locals: usize, remote_refs: usize) -> Self {
+    /// Takes no parameters because there is nothing to vary — it exists to be
+    /// the one shape `benches/completion.rs` measures, sized from a real
+    /// reported repo (81 worktrees, 80 branches, 1382 remote refs).
+    ///
+    /// Big in the two dimensions completion actually pays for, and diverse
+    /// across the three categories `BranchCompleter` distinguishes: worktree
+    /// branches, local branches, and remote-only ones. History depth is
+    /// deliberately shallow — every scan reads one commit object per *ref*, so
+    /// deepening history costs fixture build time and measures nothing.
+    ///
+    /// The ratio matters as much as the size. At 160 local candidates the
+    /// completer is past its 100-entry threshold, so all 1400 remote-only
+    /// branches are dropped *after* being scanned — the case where the most
+    /// expensive call on the path contributes nothing to what the shell shows.
+    pub const fn long_lived_clone() -> Self {
         Self {
             commits_on_main: 20,
             files: 1,
-            branches: locals,
+            branches: 80,
             commits_per_branch: 0,
-            worktrees: 0,
+            worktrees: 80,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs,
+            remote_refs: 1400,
         }
     }
 
@@ -1497,7 +1505,7 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// - `typical-N` - typical repo with N worktrees
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
-/// - `remotes-L-R` - L local branches + R remote-tracking refs (completion workload)
+/// - `long-lived-clone` - worktrees + branches + many remote refs (completion workload)
 /// - `divergent` - many divergent branches (GH #461)
 /// - `mixed-W-B` - W worktrees + B branches in varied states
 /// - `prune-M-U` - M squash-merged candidates + U unmerged (prune workload)
@@ -1517,13 +1525,6 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
         return Some(SetupConfig::Flat(config));
     }
 
-    if let Some((locals, remote_refs)) = parse_pair(s, "remotes-") {
-        return Some(SetupConfig::Flat(RepoConfig::many_remote_refs(
-            locals,
-            remote_refs,
-        )));
-    }
-
     if let Some((worktrees, branches)) = parse_pair(s, "mixed-") {
         return Some(SetupConfig::Mixed {
             worktrees,
@@ -1536,6 +1537,7 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
     }
 
     match s {
+        "long-lived-clone" => Some(SetupConfig::Flat(RepoConfig::long_lived_clone())),
         "divergent" => Some(SetupConfig::Flat(RepoConfig::many_divergent_branches())),
         "picker-test" => Some(SetupConfig::Flat(RepoConfig::picker_test())),
         _ => None,

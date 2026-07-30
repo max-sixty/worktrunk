@@ -25,9 +25,9 @@
 //!
 //! `main` returns here before it builds the rayon pool, which this path never
 //! uses; see the call site. A change to any of this is measured against
-//! `benches/completion.rs`, whose `many_remote_refs` variant carries the ref
-//! shape that makes the difference visible — and *not* against a `-vv` trace,
-//! which silently disables prewarm (benches/CLAUDE.md, "Analyzing a trace").
+//! `benches/completion.rs`, which runs one repo big enough in every dimension
+//! to make the difference visible — and *not* against a `-vv` trace, which
+//! silently disables prewarm (benches/CLAUDE.md, "Analyzing a trace").
 
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
