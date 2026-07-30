@@ -26,7 +26,7 @@ use worktrunk::styling::{
 
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
-use crate::commands::legacy_forge_alias_diagnostic;
+use crate::commands::legacy_forge_host_diagnostic;
 use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
@@ -506,11 +506,11 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
             }
         }
         None => {
-            if let Some(alias) = repo.legacy_forge_alias() {
+            if let Some(legacy) = repo.legacy_forge_host() {
                 writeln!(
                     out,
                     "{}",
-                    warning_message(legacy_forge_alias_diagnostic(&alias))
+                    warning_message(legacy_forge_host_diagnostic(&legacy))
                 )?;
             } else {
                 writeln!(

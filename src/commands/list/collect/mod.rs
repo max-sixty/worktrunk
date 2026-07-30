@@ -2017,18 +2017,19 @@ pub fn collect(
         return Ok(None);
     }
 
-    // The old substring classifier treated branded SSH aliases such as
-    // `github-personal` as forges. Keep provider dispatch on the safer exact
-    // boundary, but explain the migration once when this collection actually
-    // requested CI. Do this after final table rendering so resolving the
-    // effective URL cannot add a git subprocess to the skeleton's critical
-    // path. Picker collections route through the warning stash; the statusline
-    // uses `populate_item`, not this path, and remains silent.
+    // The old substring classifier treated any host naming a forge — the SSH
+    // alias `github-personal`, the self-hosted `gitlab-internal.company.com` —
+    // as that forge. Keep provider dispatch on the safer exact boundary, but
+    // explain the migration once when this collection actually requested CI. Do
+    // this after final table rendering so resolving the effective URL cannot
+    // add a git subprocess to the skeleton's critical path. Picker collections
+    // route through the warning stash; the statusline uses `populate_item`, not
+    // this path, and remains silent.
     if collected.ci
-        && let Some(alias) = repo.legacy_forge_alias()
+        && let Some(legacy) = repo.legacy_forge_host()
     {
         emit_warning(
-            warning_message(crate::commands::legacy_forge_alias_diagnostic(&alias)).to_string(),
+            warning_message(crate::commands::legacy_forge_host_diagnostic(&legacy)).to_string(),
         );
     }
 

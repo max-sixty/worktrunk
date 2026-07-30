@@ -461,10 +461,10 @@ fn test_list_ci_legacy_forge_alias_diagnostic(mut repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let alias_lines = stderr
         .lines()
-        .filter(|line| line.contains("SSH host alias"))
+        .filter(|line| line.contains("Remote host"))
         .collect::<Vec<_>>()
         .join("\n");
-    assert_snapshot!(alias_lines, @r#"[33m▲[39m [33mSSH host alias [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
+    assert_snapshot!(alias_lines, @r#"[33m▲[39m [33mRemote host [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
 
     let statusline = repo
         .wt_command()
@@ -483,7 +483,7 @@ fn test_list_ci_legacy_forge_alias_diagnostic(mut repo: TestRepo) {
     assert!(configured.status.success());
     let configured_stderr = String::from_utf8_lossy(&configured.stderr);
     assert!(
-        !configured_stderr.contains("SSH host alias"),
+        !configured_stderr.contains("Remote host"),
         "explicit forge config should suppress the diagnostic:\n{configured_stderr}"
     );
 }

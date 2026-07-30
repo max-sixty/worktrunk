@@ -362,7 +362,7 @@ fn test_picker_dry_run_deduplicates_legacy_forge_alias_warning(repo: TestRepo) {
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_snapshot!(stderr.as_ref(), @r#"[33m▲[39m [33mSSH host alias [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
+    assert_snapshot!(stderr.as_ref(), @r#"[33m▲[39m [33mRemote host [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
 }
 
 /// Same as above but with `list.summary=true` and a strict fake LLM command,

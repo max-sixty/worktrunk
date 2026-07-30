@@ -1379,10 +1379,10 @@ fn test_config_show_full_legacy_forge_alias(mut repo: TestRepo, temp_home: TempD
     let stdout = String::from_utf8_lossy(&output.stdout);
     let alias_lines = stdout
         .lines()
-        .filter(|line| line.contains("SSH host alias"))
+        .filter(|line| line.contains("Remote host"))
         .collect::<Vec<_>>()
         .join("\n");
-    assert_snapshot!(alias_lines, @r#"[33m▲[39m [33mSSH host alias [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
+    assert_snapshot!(alias_lines, @r#"[33m▲[39m [33mRemote host [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
 }
 
 #[rstest]
