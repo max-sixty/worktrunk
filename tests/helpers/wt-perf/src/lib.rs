@@ -50,6 +50,14 @@ pub struct RepoConfig {
     pub worktree_commits_ahead: usize,
     /// Uncommitted files per worktree
     pub worktree_uncommitted_files: usize,
+    /// Remote-tracking refs under `refs/remotes/origin/`, beyond the
+    /// `origin/main` + `origin/HEAD` pair every fixture gets.
+    ///
+    /// A long-lived clone accumulates far more of these than it has local
+    /// branches — the refs a `git fetch` brings down and nothing prunes — and
+    /// they are what `for-each-ref refs/remotes/` pays for. Fixtures that
+    /// leave this at 0 measure a repo shape no real clone has.
+    pub remote_refs: usize,
 }
 
 impl RepoConfig {
@@ -65,6 +73,7 @@ impl RepoConfig {
             worktrees,
             worktree_commits_ahead: 10,
             worktree_uncommitted_files: 3,
+            remote_refs: 0,
         }
     }
 
@@ -78,6 +87,29 @@ impl RepoConfig {
             worktrees: 0,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
+            remote_refs: 0,
+        }
+    }
+
+    /// A long-lived clone's ref shape: a few dozen local branches against an
+    /// order of magnitude more remote-tracking refs.
+    ///
+    /// This is the ratio that makes `refs/remotes/` the most expensive scan on
+    /// the completion path while contributing nothing to what the shell shows —
+    /// once the candidate total clears the 100-entry threshold in
+    /// `BranchCompleter`, every remote-only branch is dropped after being
+    /// scanned. `branches(N, _)` alone can't show it: those fixtures carry the
+    /// two remote refs `setup_fake_remote` writes.
+    pub const fn many_remote_refs(locals: usize, remote_refs: usize) -> Self {
+        Self {
+            commits_on_main: 20,
+            files: 1,
+            branches: locals,
+            commits_per_branch: 0,
+            worktrees: 0,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+            remote_refs,
         }
     }
 
@@ -91,6 +123,7 @@ impl RepoConfig {
             worktrees: 0,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
+            remote_refs: 0,
         }
     }
 
@@ -104,6 +137,7 @@ impl RepoConfig {
             worktrees: 6,
             worktree_commits_ahead: 15, // feature worktree has many commits
             worktree_uncommitted_files: 1,
+            remote_refs: 0,
         }
     }
 }
@@ -395,6 +429,7 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
 
     // Set up fake remote for default branch detection
     setup_fake_remote(&repo_path);
+    add_remote_refs(config.remote_refs, &repo_path);
 
     // Pack objects and write the commit-graph once, after all refs
     // exist. Auto-maintenance is disabled (see above), so we do this
@@ -454,6 +489,55 @@ pub fn add_worktrees(config: &RepoConfig, repo_path: &Path) {
             std::fs::write(&file_path, "Uncommitted content\n").unwrap();
         }
     }
+}
+
+/// Create `count` remote-tracking refs under `refs/remotes/origin/`, on top of
+/// the `origin/main` + `origin/HEAD` pair [`setup_fake_remote`] writes.
+///
+/// The refs are spread round-robin over the commits already on `main` so they
+/// name distinct objects: the scan's cost is `%(committerdate)` reading one
+/// commit object per ref, and pointing them all at `HEAD` would collapse that
+/// to a single object read repeated, giving a misleadingly cheap number. Their
+/// timestamps are all `TEST_EPOCH` regardless — fixture commit dates are pinned
+/// — so the sort is not what this measures.
+///
+/// Names are `remote-only-<i>`, which no fixture uses locally, so every one of
+/// them survives `branches_for_completion`'s "skip remotes shadowed by a local
+/// branch" filter and reaches the candidate list.
+///
+/// One `update-ref --stdin` fork writes the whole batch; the per-ref
+/// alternative costs a fork each and dominates fixture build time at the
+/// four-digit counts this exists to model.
+fn add_remote_refs(count: usize, repo_path: &Path) {
+    if count == 0 {
+        return;
+    }
+
+    let commits: Vec<String> = capture_git(repo_path, &["rev-list", "HEAD"])
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(!commits.is_empty(), "fixture has no commits to point refs at");
+
+    let mut stdin = String::new();
+    for i in 0..count {
+        let sha = &commits[i % commits.len()];
+        stdin.push_str(&format!("create refs/remotes/origin/remote-only-{i} {sha}\n"));
+    }
+
+    let mut child = git_command()
+        .args(["update-ref", "--stdin"])
+        .current_dir(repo_path)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Take the handle so it drops (closing the pipe) before the wait —
+    // git reads to EOF, so holding it open here deadlocks.
+    let mut pipe = child.stdin.take().unwrap();
+    std::io::Write::write_all(&mut pipe, stdin.as_bytes()).unwrap();
+    drop(pipe);
+    let status = child.wait().unwrap();
+    assert!(status.success(), "git update-ref --stdin failed: {status}");
 }
 
 /// Set up a fake remote for default branch detection.
@@ -1121,6 +1205,7 @@ pub fn create_prune_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
         worktrees: 1,
         worktree_commits_ahead: 0,
         worktree_uncommitted_files: 0,
+        remote_refs: 0,
     };
     create_repo_at(&config, base_path);
     add_prune_populations(base_path, merged, unmerged);
@@ -1407,6 +1492,7 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// - `typical-N` - typical repo with N worktrees
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
+/// - `remotes-L-R` - L local branches + R remote-tracking refs (completion workload)
 /// - `divergent` - many divergent branches (GH #461)
 /// - `mixed-W-B` - W worktrees + B branches in varied states
 /// - `prune-M-U` - M squash-merged candidates + U unmerged (prune workload)
@@ -1424,6 +1510,13 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
             _ => return None,
         };
         return Some(SetupConfig::Flat(config));
+    }
+
+    if let Some((locals, remote_refs)) = parse_pair(s, "remotes-") {
+        return Some(SetupConfig::Flat(RepoConfig::many_remote_refs(
+            locals,
+            remote_refs,
+        )));
     }
 
     if let Some((worktrees, branches)) = parse_pair(s, "mixed-") {
@@ -1523,6 +1616,7 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
+            remote_refs: 0,
         });
         let repo_path = temp.path().join("repo");
 
@@ -1671,6 +1765,7 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
+            remote_refs: 0,
         });
         let repo_path = temp.path().join("repo");
 
@@ -1779,6 +1874,7 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
+            remote_refs: 0,
         });
         let repo_path = temp.path().join("repo");
 
@@ -1846,6 +1942,7 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
+            remote_refs: 0,
         });
         let repo = temp.path().join("repo");
         add_diverged_backdrop(&repo, 3, 4);
