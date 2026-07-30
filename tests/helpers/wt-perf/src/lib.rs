@@ -517,12 +517,17 @@ fn add_remote_refs(count: usize, repo_path: &Path) {
         .lines()
         .map(str::to_string)
         .collect();
-    assert!(!commits.is_empty(), "fixture has no commits to point refs at");
+    assert!(
+        !commits.is_empty(),
+        "fixture has no commits to point refs at"
+    );
 
     let mut stdin = String::new();
     for i in 0..count {
         let sha = &commits[i % commits.len()];
-        stdin.push_str(&format!("create refs/remotes/origin/remote-only-{i} {sha}\n"));
+        stdin.push_str(&format!(
+            "create refs/remotes/origin/remote-only-{i} {sha}\n"
+        ));
     }
 
     let mut child = git_command()
