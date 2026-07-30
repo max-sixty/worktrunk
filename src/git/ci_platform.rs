@@ -249,7 +249,7 @@ impl Repository {
         None
     }
 
-    /// Return a diagnostic for a legacy branded SSH alias on the primary remote.
+    /// Return a diagnostic for a legacy forge host on the primary remote.
     ///
     /// A configured platform resolves the ambiguity and suppresses the
     /// diagnostic. The returned value never participates in provider dispatch.
