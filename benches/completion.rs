@@ -6,25 +6,40 @@
 //! handler returns before `main` reaches `Repository::prewarm`, so nothing
 //! here shares state with an ordinary `wt` invocation.
 //!
-//! The variants differ only in repo shape, because shape is what decides how
-//! many refs the completer's git calls have to read:
+//! A completion runs in two waves: `Repository::prewarm` fills the discovery
+//! and config caches, then `branches_for_completion` scans refs and worktrees.
+//! Each wave's threads run concurrently, so a wave costs its slowest member,
+//! not its sum — and which member that is depends on the repo's shape. The
+//! variants are chosen so that each failure mode lands in a different one:
 //!
-//! - `branches_only` / `with_worktrees` — a small repo; wall time is
-//!   dominated by fork overhead, so these track the fixed cost of the call
-//!   sequence itself.
+//! - `subcommand_only` — `wt <Tab>`, which completes subcommand names and
+//!   reaches no branch code at all. It is the fixed floor every other variant
+//!   also pays: process spawn, prewarm, the clap tree, alias injection, the
+//!   PATH scan for `wt-*` binaries. Without it a startup regression and a
+//!   ref-scan regression look identical, because every other variant contains
+//!   both.
+//! - `branches_only` / `with_worktrees` — a small repo, where wave two is
+//!   dominated by fork overhead rather than by any ref count.
 //! - `many_remote_refs` — a long-lived clone: 80 local branches against 1400
-//!   remote-tracking refs. `refs/remotes/` is the most expensive scan on the
-//!   path, and at this shape every ref it reads is then discarded, because the
-//!   candidate total clears `BranchCompleter`'s 100-entry threshold and
-//!   remote-only branches are dropped. Regressions in how the completer
-//!   decides what to scan land here and nowhere else.
+//!   remote-tracking refs, which makes `for-each-ref refs/remotes/` the
+//!   slowest member of wave two. At this shape every ref it reads is then
+//!   discarded, because the candidate total clears `BranchCompleter`'s
+//!   100-entry threshold and remote-only branches are dropped. Regressions in
+//!   how the completer decides what to scan land here and nowhere else.
 //! - `remove_many_remote_refs` — the same repo through `wt remove <Tab>`,
-//!   whose completer never offers remote-only branches. It exists to hold the
-//!   contrast: this one must not pay for `refs/remotes/` at all.
+//!   whose completer never offers remote-only branches. It holds the
+//!   contrast: this one must not pay for `refs/remotes/` at all, so it should
+//!   stay near `branches_only` rather than near `many_remote_refs`.
+//! - `many_worktrees` — the other way wave two gets slow. 80 worktrees put the
+//!   cost in `worktree list --porcelain`, which walks `.git/worktrees` per
+//!   entry, with few enough refs that neither scan can hide it. A change that
+//!   speeds up ref scanning and slows worktree enumeration would look like a
+//!   win everywhere except here.
 //!
 //! ```bash
 //! cargo bench --bench completion                    # all variants
 //! cargo bench --bench completion many_remote_refs   # the long-lived-clone shape
+//! cargo bench --bench completion subcommand_only    # the fixed floor
 //! ```
 
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -49,6 +64,14 @@ fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
 fn bench_completion_switch(c: &mut Criterion) {
     let mut group = c.benchmark_group("completion_switch");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+
+    // The fixed floor: subcommand-name completion touches no branch code, so
+    // this is what every other variant pays before its first ref is read.
+    group.bench_function("subcommand_only", |b| {
+        let temp = create_repo(&RepoConfig::branches(50, 0));
+        let repo = temp.path().join("repo");
+        b.iter(|| run_completion(binary, &repo, &["wt", "sw"]));
+    });
 
     // Without worktrees: all branches are candidates
     group.bench_function("branches_only", |b| {
@@ -83,6 +106,20 @@ fn bench_completion_switch(c: &mut Criterion) {
     // cost less here than through `switch`.
     group.bench_function("remove_many_remote_refs", |b| {
         b.iter(|| run_completion(binary, &clone_shaped, &["wt", "remove", ""]));
+    });
+
+    // The worktree-heavy shape: enough worktrees that `worktree list
+    // --porcelain` — not either ref scan — is the slowest member of wave two.
+    // Minimal history keeps fixture setup near the `lean_worktrees` cost in
+    // benches/alias.rs; worktree *count* is the whole point here.
+    group.bench_function("many_worktrees", |b| {
+        let config = RepoConfig {
+            worktrees: 80,
+            ..RepoConfig::branches(0, 0)
+        };
+        let temp = create_repo(&config);
+        let repo = temp.path().join("repo");
+        b.iter(|| run_completion(binary, &repo, &["wt", "switch", ""]));
     });
 
     group.finish();
