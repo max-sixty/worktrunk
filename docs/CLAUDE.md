@@ -104,7 +104,7 @@ Help text renders in three contexts; check all three when editing:
 
 Because web docs concatenate everything, the `after_long_help` opener must not restate `about`/`subtitle` — start with new information (see "Command documentation structure" below for opener patterns). Link text must stand alone when the URL is stripped (terminal help drops the URL, keeping only the text): use `` [`wt foo`](...) `` for commands (the backticks signal a `--help` lookup) or a descriptive phrase for doc sections; avoid bare labels that match the destination's heading.
 
-After editing `after_long_help`, also refresh the help snapshots: `cargo insta test --accept -- --test integration "test_help"`.
+After editing `after_long_help`, also refresh the help snapshots: `cargo insta test --accept --test integration -- test_help`.
 
 ### Config doc TOML blocks
 

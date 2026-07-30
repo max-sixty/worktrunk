@@ -5,6 +5,8 @@
 ```bash
 cargo run -- hook pre-merge --yes                                  # all tests + lints
 pre-commit run --all-files                                         # lints only
+cargo nextest run --all-features                                   # full suite, fastest runner
+cargo nextest run --all-features -E 'test(/^integration_tests::list_layout::/)' # one module
 cargo test --lib --bins                                            # unit tests
 cargo test --test integration                                      # integration (no shell tests)
 cargo test --test integration --features shell-integration-tests   # + shell tests
@@ -20,7 +22,7 @@ A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` 
 
 ## Coverage Investigation
 
-`task coverage` runs the suite and writes an HTML report to `target/llvm-cov/html/index.html`. Both CI (the `coverage` workflow) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
+`task coverage` runs the suite through nextest and writes an HTML report to `target/llvm-cov/html/index.html`. Coverage uses the same process isolation as the regular suite: PTY tests must not share one crowded test process. Both CI (the `coverage` workflow) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
 
 When `codecov/patch` fails, investigate before declaring ready (the merge gate itself is in the root `CLAUDE.md` → Coverage):
 
@@ -360,105 +362,25 @@ fn test_fish_integration() {
 **Existing feature flags:**
 - `shell-integration-tests` — Tests requiring bash/zsh/fish shells and PTY
 
-## README Examples and Snapshot Testing
+## PTY Tests and README Examples
 
-### Problem: Separated stdout/stderr in Standard Snapshots
+Use `insta_cmd` by default. It is faster and lets a test assert stdout, stderr,
+and exit status separately. Use a PTY only when the contract actually depends
+on a terminal: interactive prompts, shell functions and directives, pager
+selection, or the temporal interleaving of stdout and stderr. A README label by
+itself is not a reason to use a PTY.
 
-README examples need to show output as users see it in their terminal - with stdout and stderr interleaved in the order they appear. However, the standard `insta_cmd` snapshot testing (used in most integration tests) separates stdout and stderr into different sections:
+For README output where interleaving matters, use `build_pty_command` with
+`exec_cmd_in_pty` (or `exec_cmd_in_pty_prompted` for prompt-driven input) from
+`tests/common/pty.rs`. These return the combined stream in terminal order. The
+shell-wrapper-specific equivalent is `exec_in_pty_interactive` in
+`shell_wrapper.rs`.
 
-```yaml
------ stdout -----
-🔄 Running pre-merge test:
-  uv run pytest
-
------ stderr -----
-============================= test session starts ==============================
-collected 18 items
-...
-```
-
-This makes snapshots **not directly copyable** into README.md because:
-1. The output is split into two sections
-2. We lose the temporal ordering (which output appeared first)
-3. Users never see this separation - their terminal shows combined output
-
-### Solution: Use PTY-based Testing for README Examples
-
-For tests that generate README examples, use the PTY-based execution pattern from `tests/integration_tests/shell_wrapper.rs`:
-
-**Key functions** in `tests/common/pty.rs`:
-- `build_pty_command()` — builds a `CommandBuilder` with standard PTY isolation
-- `exec_cmd_in_pty()` — executes in a PTY, writing all input immediately (non-interactive)
-- `exec_cmd_in_pty_prompted()` — executes in a PTY, waiting for prompts before sending input
-
-These use `portable_pty` to execute commands in a pseudo-terminal, returning
-combined stdout+stderr as a single `String` with ANSI color codes and proper
-temporal ordering.
-
-**Pattern to use:**
-
-```rust
-use crate::common::pty::{build_pty_command, exec_cmd_in_pty};
-
-let cmd = build_pty_command("wt", &["merge"], &repo_path, &env_vars, None);
-let (combined_output, exit_code) = exec_cmd_in_pty(cmd, "");
-assert_snapshot!("readme_example_name", combined_output);
-```
-
-**Benefits:**
-- Output is directly copyable to README.md
-- Shows actual user experience (interleaved stdout/stderr)
-- Preserves temporal ordering of output
-- No manual merging of stdout/stderr needed
-
-**Example:** See `tests/integration_tests/shell_wrapper.rs`:
-- `ShellOutput` struct with `combined: String`
-- `exec_in_pty_interactive()` — shell-wrapper-specific PTY helper
-
-### When to Use Each Approach
-
-**Use `insta_cmd` (standard snapshots):**
-- Unit and integration tests focused on correctness
-- Tests that need to verify stdout/stderr separately
-- Tests checking exit codes and specific error messages
-- Most tests in the codebase
-
-**Use PTY-based execution (PTY-based snapshots):**
-- Tests generating output for README.md examples
-- Tests verifying shell integration (`wt` function, directives)
-- Tests needing to verify complete user experience
-- Any test where temporal ordering of stdout/stderr matters
-
-### Current Status
-
-**README examples using PTY-based approach:**
-- Shell wrapper tests (all of `tests/integration_tests/shell_wrapper.rs`)
-
-**README examples using standard snapshots (working, but require manual editing):**
-- `test_readme_example_simple()` - Quick start merge example
-- `test_readme_example_complex()` - LLM commit example
-- `test_readme_example_hooks_pre_create()` - Pre-create hooks
-- `test_readme_example_hooks_pre_merge()` - Pre-merge hooks
-
-**Current workflow:** These tests work correctly and generate accurate snapshots. However, the snapshots separate stdout and stderr into different sections, which means they cannot be directly copied into README.md. Instead, the README examples are manually edited versions that merge stdout/stderr in the correct temporal order and remove ANSI codes.
-
-**Future improvement:** Migrate README example tests to use PTY execution so snapshots are directly copyable into README.md without manual editing. This is an enhancement for developer convenience, not a bug fix.
-
-### Migration Checklist
-
-When converting a README example test from `insta_cmd` to PTY-based:
-
-1. ✅ Import `portable_pty` dependencies
-2. ✅ Use `build_pty_command()` + `exec_cmd_in_pty()` from `tests/common/pty.rs`
-3. ✅ Replace `make_snapshot_cmd()` + `assert_cmd_snapshot!()` with PTY execution + `assert_snapshot!()`
-4. ✅ Ensure environment variables include `CLICOLOR_FORCE=1` for ANSI codes
-5. ✅ Update snapshot file format (file snapshot, not inline)
-6. ✅ Verify output matches expected README format
-7. ✅ Update README.md to reference new snapshot location
-
-### Implementation Note
-
-The PTY approach is specifically for **user-facing output documentation**. It's not a replacement for standard integration tests - both approaches serve different purposes and should coexist in the test suite.
+PTY tests are conformance tests for the shell boundary, not another place to
+retest every command. Keep one representative workflow per distinct shell
+implementation, then test command semantics through ordinary integration
+tests. Add a command × shell case only when that interaction is itself the
+contract.
 
 ## Coverage in PTY Tests
 
@@ -528,6 +450,31 @@ The helper wraps the pattern in `(?:\x1b\[\d+m)*` brackets, which eat only the b
 Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_strip_filter` in `tests/common/mod.rs`): `[TEST_CONFIG]`, `[TEST_CONFIG_NEW]`, `[TEST_APPROVALS]`, `[TEST_GIT_CONFIG]`, `[PROJECT_ID]`, `[TEMP_HOME]`, `[TEMP]`. Placeholders that hold a real value (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) keep their bold codes so the snapshot still asserts the user-visible styling. The strip pass is invoked at the end of every `setup_*_snapshot_settings` helper, so the contract holds uniformly across `setup_snapshot_settings*`, `setup_home_snapshot_settings`, and `setup_temp_snapshot_settings`.
 
 ## Test Style
+
+### Choose the cheapest boundary
+
+Put a belief at the lowest layer that can prove it:
+
+| Belief | Test boundary |
+|--------|---------------|
+| Parsing, formatting, allocation, state transitions | Direct unit/module test |
+| Git/filesystem/process wiring | Integration test with the smallest fitting fixture |
+| TTY behavior, shell syntax, stream interleaving | PTY or real-shell test |
+
+Exercise boundary values and input matrices exhaustively at the direct layer.
+Keep one representative integration case to prove the pieces are wired
+together. Do not repeat the same matrix end-to-end: a command × shell × width
+cross-product usually measures fixture and process setup, not another product
+behavior.
+
+Equivalent coverage or identical snapshots are useful duplication signals, not
+automatic deletion rules. Before removing a test, identify the belief it owns
+and make sure another test proves that belief at an equal or better boundary.
+
+Assert semantics through state, structured values, and exit status; snapshot
+the pragmatic user experience when the complete rendering is the contract. A
+custom verifier must fail for every violation it claims to check—diagnostic
+`println!` output is not an oracle.
 
 ### Snapshot env drift: cosmetic vs. a leak
 
@@ -611,7 +558,7 @@ To update existing file-based snapshots (e.g., after editing CLI help text),
 use `cargo insta test --accept`:
 
 ```bash
-cargo insta test --accept -- --test integration "test_help"
+cargo insta test --accept --test integration -- test_help
 ```
 
 Do not manually edit `.snap` files — they contain ANSI escape sequences that
@@ -623,6 +570,11 @@ Group related inputs into a single test when they verify the same belief about
 the code. A test named `test_wrap_text_at_width` that exercises short text, long
 text, single words, and edge cases is better than five separate test functions
 testing each input individually.
+
+Use the minimum sufficient contrasts: one anchor case, then one case that
+changes only the factor needed for each additional claim. A new test earns a
+separate function when it has a distinct setup, oracle, or failure diagnosis—
+not merely another input label or production branch.
 
 ```rust
 // ✅ GOOD: One test for the belief "wrapping respects word boundaries"

@@ -245,8 +245,6 @@ fn test_list_locked_no_reason(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-// Removed: test_list_long_branch_name - covered by spacing_edge_cases.rs
-
 #[rstest]
 fn test_list_long_commit_message(mut repo: TestRepo) {
     // Create commit with very long message
@@ -257,8 +255,6 @@ fn test_list_long_commit_message(mut repo: TestRepo) {
 
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
-
-// Removed: test_list_unicode_branch_name - covered by spacing_edge_cases.rs
 
 #[rstest]
 fn test_list_unicode_commit_message(mut repo: TestRepo) {

@@ -37,6 +37,11 @@ jobs:
         crate: cargo-llvm-cov
         version: "=0.8.7"
 
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-nextest
+        version: "=0.9.140"
+
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -57,7 +62,9 @@ jobs:
     - run: cargo llvm-cov clean --workspace
 
     - name: 📊 Generate coverage report
-      run: cargo llvm-cov --features shell-integration-tests --cobertura --output-path=cobertura.xml
+      # Match the regular suite's process isolation. Cargo's in-process runner
+      # lets one busy PTY test delay another before it can paint its prompt.
+      run: cargo llvm-cov nextest --features shell-integration-tests --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results
       uses: actions/upload-artifact@v7

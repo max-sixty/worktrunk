@@ -3,6 +3,6 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: "&output.combined"
 ---
 
-[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature/with-dashes_and_underscores[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-with-dashes_and_underscores[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [0m
