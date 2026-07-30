@@ -47,11 +47,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(unix)]
-use std::process::Command;
-#[cfg(unix)]
-use worktrunk::testing::isolate_subprocess_env;
-#[cfg(unix)]
-use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, setup_fake_remote};
+use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, wt_command};
 
 #[cfg(unix)]
 fn bench_picker_preview(c: &mut Criterion) {
@@ -66,41 +62,29 @@ fn bench_picker_preview(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(35));
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let worktrees = 8;
 
-    for worktrees in [8] {
-        for cold in [false, true] {
-            let label = if cold { "cold" } else { "warm" };
-            let config = RepoConfig::typical(worktrees);
+    for cache in CacheState::WARM_AND_COLD {
+        group.bench_with_input(
+            BenchmarkId::new(cache.label(), format!("typical-{worktrees}")),
+            &cache,
+            |b, &cache| {
+                let fixture = create_repo(&RepoConfig::typical(worktrees));
 
-            group.bench_with_input(
-                BenchmarkId::new(label, format!("typical-{worktrees}")),
-                &(config, cold),
-                |b, (config, cold)| {
-                    let temp = create_repo(config);
-                    let repo_path = temp.path().join("repo");
-                    setup_fake_remote(&repo_path);
+                let make_cmd = || {
+                    let mut cmd = wt_command(binary, fixture.path(), None);
+                    cmd.args(["switch", "--no-cd"])
+                        .env("WORKTRUNK_PREVIEW_BENCH", "1");
+                    cmd
+                };
 
-                    let make_cmd = || {
-                        let mut cmd = Command::new(binary);
-                        cmd.args(["switch", "--no-cd"]).current_dir(&repo_path);
-                        isolate_subprocess_env(&mut cmd, None);
-                        cmd.env("WORKTRUNK_PREVIEW_BENCH", "1");
-                        cmd
-                    };
-
-                    // Cold matters here: the picker writes to
-                    // `.git/wt/cache/picker-preview/` (Log / BranchDiff /
-                    // UpstreamDiff entries), so without invalidation iter 1
-                    // measures real cost and iter 2+ measure cache hits.
-                    let cache = if *cold {
-                        CacheState::Cold
-                    } else {
-                        CacheState::Warm
-                    };
-                    bench_wt(b, &repo_path, cache, make_cmd);
-                },
-            );
-        }
+                // Cold matters here: the picker writes to
+                // `.git/wt/cache/picker-preview/` (Log / BranchDiff /
+                // UpstreamDiff entries), so without invalidation iter 1
+                // measures real cost and iter 2+ measure cache hits.
+                bench_wt(b, fixture.path(), cache, make_cmd);
+            },
+        );
     }
 
     group.finish();

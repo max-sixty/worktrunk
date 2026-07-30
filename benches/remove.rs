@@ -13,39 +13,36 @@
 //   cargo bench --bench remove -- no_hooks  # Just no-hooks variant
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, run_git, run_git_ok, setup_fake_remote};
+use std::path::Path;
+use wt_perf::{
+    FixtureRepo, RepoConfig, create_repo, linked_worktree_path, run_and_check, run_git, run_git_ok,
+    wt_command,
+};
 
-/// Create a benchmark repo at a specific path with optional hooks.
-fn create_bench_repo(base_path: &Path, with_hooks: bool) -> PathBuf {
+/// Create an owned benchmark repo with optional hooks.
+fn create_bench_repo(with_hooks: bool) -> FixtureRepo {
     let config = RepoConfig::typical(2); // main + 1 feature worktree
-    wt_perf::create_repo_at(&config, base_path);
-    setup_fake_remote(base_path);
+    let fixture = create_repo(&config);
 
     if with_hooks {
         // Project config with post-remove hook
-        let config_dir = base_path.join(".config");
+        let config_dir = fixture.path().join(".config");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
             config_dir.join("wt.toml"),
             "[post-remove]\ndocs = \"echo post-remove-done\"\n",
         )
         .unwrap();
-        run_git(base_path, &["add", "."]);
-        run_git(base_path, &["commit", "-m", "Add project config"]);
+        run_git(fixture.path(), &["add", "."]);
+        run_git(fixture.path(), &["commit", "-m", "Add project config"]);
     }
 
-    base_path.to_path_buf()
+    fixture
 }
 
 /// Recreate the feature worktree after it was removed.
 fn recreate_worktree(repo_path: &Path) {
-    let wt_path = repo_path.parent().unwrap().join(format!(
-        "{}.feature-wt-1",
-        repo_path.file_name().unwrap().to_str().unwrap()
-    ));
+    let wt_path = linked_worktree_path(repo_path, "feature-wt-1");
 
     // Wait briefly for background removal to finish (sleep 1 + rm -rf in detached process).
     // Without this, the background rmdir/rm-rf races with worktree recreation.
@@ -84,47 +81,29 @@ fn bench_remove_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove_e2e");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    // Persistent temp dirs (kept alive for the benchmark group)
-    let temp_no_hooks = tempfile::tempdir().unwrap();
-    let temp_with_hooks = tempfile::tempdir().unwrap();
-
-    let repo_no_hooks = create_bench_repo(&temp_no_hooks.path().join("repo"), false);
-    let repo_with_hooks = create_bench_repo(&temp_with_hooks.path().join("repo"), true);
+    let repo_no_hooks = create_bench_repo(false);
+    let repo_with_hooks = create_bench_repo(true);
 
     // User config with post-switch hook (written beside repo)
-    let user_config_no_hooks = temp_no_hooks.path().join("config.toml");
+    let user_config_no_hooks = repo_no_hooks.root().join("config.toml");
     std::fs::write(&user_config_no_hooks, "").unwrap();
 
-    let user_config_with_hooks = temp_with_hooks.path().join("config.toml");
+    let user_config_with_hooks = repo_with_hooks.root().join("config.toml");
     std::fs::write(
         &user_config_with_hooks,
         "[hooks.post-switch]\nzellij-tab = \"echo post-switch-done\"\n",
     )
     .unwrap();
 
-    let wt_name = |repo: &Path| -> PathBuf {
-        repo.parent().unwrap().join(format!(
-            "{}.feature-wt-1",
-            repo.file_name().unwrap().to_str().unwrap()
-        ))
-    };
-
     // No hooks: --no-hooks (skip hook loading), run from feature worktree
     group.bench_function("no_hooks", |b| {
         b.iter_batched(
-            || recreate_worktree(&repo_no_hooks),
+            || recreate_worktree(repo_no_hooks.path()),
             |()| {
-                let wt_path = wt_name(&repo_no_hooks);
-                let mut cmd = Command::new(binary);
+                let wt_path = repo_no_hooks.worktree_path("feature-wt-1");
+                let mut cmd = wt_command(binary, &wt_path, Some(&user_config_no_hooks));
                 cmd.args(["remove", "--yes", "--no-hooks", "--force"]);
-                cmd.current_dir(&wt_path);
-                isolate_subprocess_env(&mut cmd, Some(&user_config_no_hooks));
-                let output = cmd.output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "no_hooks failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
+                run_and_check(&mut cmd);
             },
             criterion::BatchSize::PerIteration,
         );
@@ -133,19 +112,12 @@ fn bench_remove_e2e(c: &mut Criterion) {
     // With hooks: user post-switch + project post-remove
     group.bench_function("with_hooks", |b| {
         b.iter_batched(
-            || recreate_worktree(&repo_with_hooks),
+            || recreate_worktree(repo_with_hooks.path()),
             |()| {
-                let wt_path = wt_name(&repo_with_hooks);
-                let mut cmd = Command::new(binary);
+                let wt_path = repo_with_hooks.worktree_path("feature-wt-1");
+                let mut cmd = wt_command(binary, &wt_path, Some(&user_config_with_hooks));
                 cmd.args(["remove", "--yes", "--force"]);
-                cmd.current_dir(&wt_path);
-                isolate_subprocess_env(&mut cmd, Some(&user_config_with_hooks));
-                let output = cmd.output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "with_hooks failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
+                run_and_check(&mut cmd);
             },
             criterion::BatchSize::PerIteration,
         );

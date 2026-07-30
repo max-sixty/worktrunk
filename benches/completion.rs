@@ -34,21 +34,18 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
-use std::process::Command;
-use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::create_mixed_repo;
+use wt_perf::{create_mixed_repo, run_and_check, wt_command};
 
 fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
     let index = words.len().saturating_sub(1);
-    let mut cmd = Command::new(binary);
-    cmd.arg("--").args(words).current_dir(repo_path);
-    isolate_subprocess_env(&mut cmd, None);
+    let mut cmd = wt_command(binary, repo_path, None);
+    cmd.arg("--").args(words);
     cmd.env("COMPLETE", "bash")
         .env("_CLAP_COMPLETE_INDEX", index.to_string())
         .env("_CLAP_COMPLETE_COMP_TYPE", "9")
         .env("_CLAP_COMPLETE_SPACE", "true")
         .env("_CLAP_IFS", "\n");
-    cmd.output().unwrap();
+    run_and_check(&mut cmd);
 }
 
 fn bench_completion_switch(c: &mut Criterion) {
@@ -56,9 +53,8 @@ fn bench_completion_switch(c: &mut Criterion) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     group.bench_function("mixed", |b| {
-        let temp = create_mixed_repo(80, 80, 1400);
-        let repo = temp.path().join("repo");
-        b.iter(|| run_completion(binary, &repo, &["wt", "switch", ""]));
+        let fixture = create_mixed_repo(80, 80, 1400);
+        b.iter(|| run_completion(binary, fixture.path(), &["wt", "switch", ""]));
     });
 
     group.finish();
