@@ -972,13 +972,7 @@ fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf
     std::fs::create_dir_all(&project_root).unwrap();
     let git_dir = project_root.join(".git");
 
-    let gitconfig = tmp.path().join("test-gitconfig");
-    std::fs::write(
-        &gitconfig,
-        "[init]\n\tdefaultBranch = main\n[user]\n\tname = test\n\temail = test@test\n",
-    )
-    .unwrap();
-    let git = || crate::testing::configure_git_env(Cmd::new("git"), &gitconfig);
+    let git = || crate::testing::configure_git_env(Cmd::new("git"));
 
     let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
 
@@ -1142,10 +1136,8 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
     let tmp = tempfile::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap().join("normal");
     std::fs::create_dir_all(&root).unwrap();
-    let gitconfig = tmp.path().join("test-gitconfig");
-    std::fs::write(&gitconfig, "[init]\n\tdefaultBranch = main\n").unwrap();
 
-    let out = crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
+    let out = crate::testing::configure_git_env(Cmd::new("git"))
         .args(["init", "-b", "main", root.to_str().unwrap()])
         .run()
         .unwrap();
@@ -1366,17 +1358,8 @@ fn test_worktree_for_branch_dedups_duplicate_warning() {
     let tmp = tempfile::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap().join("repo");
     std::fs::create_dir_all(&root).unwrap();
-    let gitconfig = tmp.path().join("test-gitconfig");
-    std::fs::write(
-        &gitconfig,
-        "[user]\n\tname = t\n\temail = t@example.com\n[init]\n\tdefaultBranch = main\n",
-    )
-    .unwrap();
     let git = |args: &[&str], dir: &Path| {
-        let out = Cmd::new("git")
-            .env("GIT_CONFIG_GLOBAL", &gitconfig)
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("LC_ALL", "C")
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
             .args(args.iter().copied())
             .current_dir(dir)
             .run()

@@ -1,8 +1,8 @@
 use crate::common::{
     BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, canonicalize,
     configure_directive_files, configure_git_cmd, configure_git_env, directive_files, repo,
-    setup_temp_snapshot_settings, test_gitconfig_path, wait_for_file, wait_for_file_content,
-    wait_for_worktree_removed, wt_command,
+    setup_temp_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_worktree_removed,
+    wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -401,16 +401,12 @@ fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let temp_path = canonicalize(temp_dir.path()).unwrap();
 
-    // Isolated gitconfig (shared, read-only) so we don't leak the user's
-    // real git settings.
-    let git_config_path = test_gitconfig_path();
-
     // Layout: repo/.git (bare) + repo/main (linked worktree).
     let repo_dir = temp_path.join("repo");
     fs::create_dir(&repo_dir).unwrap();
     let bare_git = repo_dir.join(".git");
 
-    let git = |dir: &Path| configure_git_env(Cmd::new("git"), git_config_path).current_dir(dir);
+    let git = |dir: &Path| configure_git_env(Cmd::new("git")).current_dir(dir);
 
     git(&temp_path)
         .args(["init", "--bare", "--initial-branch", "main"])
@@ -463,7 +459,7 @@ fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
 
     // Shared wt env applied to both the direct and aliased invocations.
     let apply_wt_env = |cmd: &mut Command| {
-        configure_git_cmd(cmd, git_config_path);
+        configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &user_config)
             .env(
                 "WORKTRUNK_SYSTEM_CONFIG_PATH",
@@ -1477,11 +1473,7 @@ impl NestedBareRepoTest {
     }
 }
 
-impl TestRepoBase for NestedBareRepoTest {
-    fn git_config_path(&self) -> &Path {
-        test_gitconfig_path()
-    }
-}
+impl TestRepoBase for NestedBareRepoTest {}
 
 /// instead of project/.git/ (GitHub issue #313)
 #[test]
@@ -1679,12 +1671,11 @@ fn test_bare_repo_bootstrap_first_worktree() {
 #[test]
 fn test_clone_bare_repo_list_no_status_errors() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let git_config_path = test_gitconfig_path();
     let test_config_path = temp_dir.path().join("test-config.toml");
     fs::write(&test_config_path, "").unwrap();
 
     let run_git = |dir: &Path, args: &[&str]| {
-        let output = configure_git_env(Cmd::new("git"), git_config_path)
+        let output = configure_git_env(Cmd::new("git"))
             .args(args.iter().copied())
             .current_dir(dir)
             .run()
@@ -1734,7 +1725,7 @@ fn test_clone_bare_repo_list_no_status_errors() {
 
     // Run wt list from the bare repo directory (the reported scenario)
     let mut cmd = wt_command();
-    configure_git_cmd(&mut cmd, git_config_path);
+    configure_git_cmd(&mut cmd);
     cmd.env("WORKTRUNK_CONFIG_PATH", &test_config_path)
         .arg("list")
         .current_dir(&bare_path);
@@ -2012,7 +2003,7 @@ mod bare_repo_prompt_pty {
 
         // Declining records the opt-out as a hint (count 1), not under the legacy
         // top-level key — so it participates in `wt config state`.
-        let hint_value = configure_git_env(Cmd::new("git"), test.git_config_path())
+        let hint_value = configure_git_env(Cmd::new("git"))
             .args(["config", "worktrunk.hints.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
             .run()
@@ -2024,7 +2015,7 @@ mod bare_repo_prompt_pty {
         );
 
         // The legacy top-level key must not be written anymore.
-        let legacy_key = configure_git_env(Cmd::new("git"), test.git_config_path())
+        let legacy_key = configure_git_env(Cmd::new("git"))
             .args(["config", "worktrunk.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
             .run()

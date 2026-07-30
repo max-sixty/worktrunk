@@ -345,11 +345,11 @@ API authentication.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::testing::test_tempdir;
 
     #[test]
     fn test_mock_config_write() {
-        let temp = TempDir::new().unwrap();
+        let temp = test_tempdir();
         let bin_dir = temp.path();
 
         MockConfig::new("test-cmd")

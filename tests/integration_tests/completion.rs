@@ -587,7 +587,7 @@ fn test_complete_excludes_remote_branches(repo: TestRepo) {
     // Create a new bare repo to act as remote (fixture already has origin remote)
     let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
     repo.git_command()
-        .args(["init", "--bare", remote_dir.to_str().unwrap()])
+        .args(["init", "--bare", "-b", "main", remote_dir.to_str().unwrap()])
         .run()
         .unwrap();
 

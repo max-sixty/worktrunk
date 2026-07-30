@@ -3533,7 +3533,7 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
     // Create a local repo to use as a submodule source
     let sub_source = repo.root_path().parent().unwrap().join("sub-source");
     std::fs::create_dir_all(&sub_source).unwrap();
-    repo.run_git_in(&sub_source, &["init"]);
+    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
     std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
     repo.run_git_in(&sub_source, &["add", "sub.txt"]);
     repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
@@ -3614,7 +3614,7 @@ fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
     // Submodule source.
     let sub_source = repo.root_path().parent().unwrap().join("sub-source-dirty");
     std::fs::create_dir_all(&sub_source).unwrap();
-    repo.run_git_in(&sub_source, &["init"]);
+    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
     std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
     repo.run_git_in(&sub_source, &["add", "sub.txt"]);
     repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
