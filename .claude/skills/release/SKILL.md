@@ -41,8 +41,12 @@ metadata:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
     ```
-11. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree). `main` can advance during the CI wait; step 12 catches anything that lands before the tag.
-12. **Verify the changelog covers `main`, then tag and push**: the tag decides what ships — `release.yaml` builds the binaries and the GitHub release notes from the tree at the tag, so everything reachable from it is in the release. `/gpk` squash-merges onto whatever `main` tip exists at merge time, so a commit that lands during the PR's CI wait is already an ancestor of the release commit and ships whether or not the changelog mentions it (the easy miss is a follow-up that reworks a feature this release already documents). List what reached `main` since the cut-from tip (step 1):
+11. **Merge to main**: push the release branch, open a PR, wait for CI, and merge it. Keep the worktree — the remaining steps run from it. Then move the branch onto the merged tip:
+    ```bash
+    git fetch origin && git reset --keep origin/main
+    ```
+    The PR squash-merges, so the branch is no longer an ancestor of `main` and step 1's `--ff-only` can't advance it; `--keep` moves it across and still fails if anything is uncommitted. `main` can advance during the CI wait; step 12 catches anything that lands before the tag.
+12. **Verify the changelog covers `main`, then tag and push**: the tag decides what ships — `release.yaml` builds the binaries and the GitHub release notes from the tree at the tag, so everything reachable from it is in the release. The merge squashes onto whatever `main` tip exists at merge time, so a commit that lands during the PR's CI wait is already an ancestor of the release commit and ships whether or not the changelog mentions it (the easy miss is a follow-up that reworks a feature this release already documents). List what reached `main` since the cut-from tip (step 1):
     ```bash
     git fetch origin
     git log --oneline <cut-from-commit>..origin/main

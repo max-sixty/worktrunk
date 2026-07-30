@@ -9,6 +9,13 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
     GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -146,7 +153,8 @@ Output as JSON for scripting:
 
   Column                                  Shows                                 
  ──────── ───────────────────────────────────────────────────────────────────── 
- Branch   Branch name                                                           
+ Branch   Branch name; a detached worktree has none, so it shows its short hash 
+          in dim yellow                                                         
  Status   Compact symbols (see below)                                           
  HEAD±    Uncommitted changes: +added -deleted lines                            
  main↕    Commits ahead/behind default branch                                   
@@ -285,8 +293,10 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
       [2m"duplicate_branch"[0m             worktree, so [2mwt[0m resolves it to whichever   
                                      git lists first; every worktree on the     
                                      branch is flagged                          
- [2m[33m⚑[0m    [2mworktree.state[0m                 Branch name doesn't match the worktree     
-      [2m"branch_worktree_mismatch"[0m     path                                       
+ [2m[33m⚑[0m    [2mworktree.state[0m                 Worktree isn't at the path its branch      
+      [2m"branch_worktree_mismatch"[0m     implies — including a detached one, which  
+                                     has no branch to imply a path and so is    
+                                     never at home                              
  [2m/[0m    [2mkind[0m [2m"branch"[0m                  Branch without a worktree (no [2mworktree[0m     
                                      object)                                    
 

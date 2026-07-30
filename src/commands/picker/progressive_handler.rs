@@ -398,7 +398,11 @@ impl PickerProgressHandler for PickerHandler {
             // filters those (see
             // `folded_pr_reference_filters_under_skims_default_engine`).
             let gutter = item.kind.gutter_glyph();
-            let mut search_base = branch_name.clone();
+            // `display_name`, not `branch_name`: a detached row shows its
+            // abbreviated HEAD in the Branch column, so that's what the user
+            // reads and types. `branch_name`'s `"(detached)"` matches nothing
+            // on screen, and collapses every detached row onto one token.
+            let mut search_base = item.display_name().to_string();
             if !path_str.is_empty() {
                 search_base.push(' ');
                 search_base.push_str(&path_str);

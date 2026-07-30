@@ -825,7 +825,7 @@ $ wt list --format=json
 
 | Column | Shows |
 |--------|-------|
-| Branch | Branch name |
+| Branch | Branch name; a detached worktree has none, so it shows its short hash in dim yellow |
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
@@ -920,7 +920,7 @@ An in-progress git operation, a worktree-location attribute, or a branch with no
 | `⊟` | `worktree.state` `"prunable"` | Prunable (worktree directory missing) |
 | `⊞` | `worktree.state` `"locked"` | Locked worktree |
 | `⚑` | `worktree.state` `"duplicate_branch"` | Branch checked out in more than one worktree, so `wt` resolves it to whichever git lists first; every worktree on the branch is flagged |
-| `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Branch name doesn't match the worktree path |
+| `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Worktree isn't at the path its branch implies — including a detached one, which has no branch to imply a path and so is never at home |
 | `/` | `kind` `"branch"` | Branch without a worktree (no `worktree` object) |
 
 ### Default branch

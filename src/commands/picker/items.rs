@@ -445,8 +445,9 @@ pub(super) fn push_pr_search_tokens(
 /// without a re-send; the row may re-rank as that data streams in during the
 /// first frame.
 pub(super) struct PickerRow {
-    /// The stable, skeleton-time head of the matcher text: branch name plus —
-    /// for a worktree row — the distinct worktree path. The PR tokens and
+    /// The stable, skeleton-time head of the matcher text: the Branch column's
+    /// text — branch name, or the abbreviated HEAD for a detached worktree —
+    /// plus, for a worktree row, the distinct worktree path. The PR tokens and
     /// trailing gutter glyph are appended live in `text()`.
     pub search_base: String,
     /// Trailing gutter glyph (`@`/`^`/`+`/`/`/`|`, or `#` for a listed `--prs`

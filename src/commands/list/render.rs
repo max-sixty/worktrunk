@@ -1,7 +1,7 @@
 use crate::display::{format_relative_time_short, shorten_path, truncate_to_width};
 use anstyle::{Effects, Style};
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::StyledLine;
+use worktrunk::styling::{DETACHED, StyledLine};
 
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{
@@ -286,7 +286,7 @@ impl LayoutConfig {
     /// Used for both worktrees and branch-only items; branch-only rows render an empty path
     /// and a blank gutter placeholder. See [`Self::render_list_item_line`] for `placeholder` semantics.
     pub fn render_skeleton_row(&self, item: &ListItem, placeholder: &str) -> StyledLine {
-        let branch = item.branch_name();
+        let branch = item.display_name();
         let shortened_path = item
             .worktree_path()
             .map(|p| shorten_path(p, &self.main_worktree_path))
@@ -315,8 +315,15 @@ impl LayoutConfig {
                     }
                 }
                 ColumnKind::Branch => {
-                    // Show actual branch name (no dim - start normal, gray out later if removable)
-                    cell.push_raw(branch.to_string());
+                    // Show actual branch name (no dim - start normal, gray out later if removable).
+                    // A detached row shows its abbreviated HEAD in the settled
+                    // row's `DETACHED` style, so the cell doesn't restyle as
+                    // the row fills in.
+                    if item.branch.is_none() {
+                        cell.push_styled(branch.to_string(), DETACHED);
+                    } else {
+                        cell.push_raw(branch.to_string());
+                    }
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Path => {
@@ -326,9 +333,8 @@ impl LayoutConfig {
                 }
                 ColumnKind::Commit => {
                     // Show actual commit hash (empty for unborn branches with null OID)
-                    let head = item.head();
-                    if head != worktrunk::git::NULL_OID {
-                        let short_head = &head[..8.min(head.len())];
+                    let short_head = item.abbreviated_head();
+                    if !short_head.is_empty() {
                         cell.push_styled(short_head, dim);
                     }
                 }
@@ -458,8 +464,19 @@ impl ColumnLayout {
                 cell
             }
             ColumnKind::Branch => {
-                let text = item.branch.as_deref().unwrap_or("-");
-                self.render_text_cell(text, text_style)
+                // A detached worktree has no name for this cell, so it carries
+                // the abbreviated HEAD — the Commit column's value, repeated
+                // here because the column's question is "which ref is this?"
+                // and a SHA is the answer. `DETACHED` outranks `text_style`:
+                // the removable dim still reaches this row's Path and Message
+                // cells, while yellow keeps the SHA from reading as a branch
+                // that happens to be named like one.
+                let style = if item.branch.is_none() {
+                    Some(DETACHED)
+                } else {
+                    text_style
+                };
+                self.render_text_cell(item.display_name(), style)
             }
             ColumnKind::Status => {
                 // `render_with_mask` emits the placeholder glyph per
@@ -572,13 +589,11 @@ impl ColumnLayout {
                 }
             }
             ColumnKind::Commit => {
-                let head = item.head();
-                if head == worktrunk::git::NULL_OID {
-                    self.render_text_cell("", None)
-                } else {
-                    let short_head = &head[..8.min(head.len())];
-                    self.render_text_cell(short_head, Some(Style::new().dimmed()))
-                }
+                // Style only a real SHA: an empty cell (null OID) styled would
+                // render as bare escape codes around nothing.
+                let short_head = item.abbreviated_head();
+                let style = (!short_head.is_empty()).then(|| Style::new().dimmed());
+                self.render_text_cell(short_head, style)
             }
             ColumnKind::Summary => match &item.summary {
                 None => self.placeholder_cell(placeholder),

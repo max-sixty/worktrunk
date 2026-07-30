@@ -1186,7 +1186,21 @@ pub fn calculate_layout_with_width(
         .filter_map(|item| item.branch.as_deref())
         .max_by_key(|b| b.width());
 
-    let max_branch = longest_branch.map(|b| b.width()).unwrap_or(0);
+    // A detached row shows its abbreviated HEAD in this column
+    // (`ListItem::display_name`), so the column has to fit a SHA as well as the
+    // branch names — the same `COMMIT_HASH_WIDTH` the Commit column budgets for
+    // the identical string.
+    let detached_width = items
+        .iter()
+        .any(|item| item.branch.is_none())
+        .then_some(COMMIT_HASH_WIDTH);
+
+    let max_branch = longest_branch
+        .map(|b| b.width())
+        .into_iter()
+        .chain(detached_width)
+        .max()
+        .unwrap_or(0);
     let max_branch = fit_header(ColumnKind::Branch.header(), max_branch);
 
     let path_data_width = items
@@ -2081,6 +2095,40 @@ mod tests {
         assert!(
             find_column(&layout, ColumnKind::Custom(0)).is_some(),
             "custom columns append in the default (no-selection) set"
+        );
+    }
+
+    /// A detached row shows its abbreviated HEAD in the Branch column, so the
+    /// column has to fit a SHA even when every branch name is shorter than one.
+    /// Sized off the names alone it would truncate the hash mid-way.
+    #[test]
+    fn test_branch_column_fits_a_detached_rows_sha() {
+        let mut detached = make_test_item("main");
+        detached.branch = None;
+        let items = vec![make_test_item("main"), detached];
+
+        let layout = calculate_layout_with_width(
+            &items,
+            &non_full_run_tasks(),
+            Destination {
+                width: 200,
+                link_style: LinkStyle::Expanded,
+            },
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
+
+        let branch = find_column(&layout, ColumnKind::Branch).expect("Branch allocated");
+        assert_eq!(
+            branch.width, COMMIT_HASH_WIDTH,
+            "the Branch column fits the abbreviated HEAD a detached row renders, \
+             not just the branch names ({:?} wide)",
+            branch.width
         );
     }
 
