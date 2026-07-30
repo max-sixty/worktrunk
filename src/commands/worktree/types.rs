@@ -265,15 +265,20 @@ pub enum RemovalPlan {
         /// [`SharedBranchCheckout`].
         branch_checked_out_at: Option<SharedBranchCheckout>,
     },
-    /// Branch exists but has no worktree - attempt branch deletion only.
-    ///
-    /// `pruned` indicates whether the worktree was pruned (directory was missing).
-    /// When true, shows an info message instead of a warning.
+    /// Branch exists but has no worktree directory - attempt branch deletion
+    /// only, unregistering the stale worktree entry first when one remains.
     BranchOnly {
         branch_name: String,
         deletion_mode: BranchDeletionMode,
-        /// True if a stale worktree entry was pruned during planning.
-        pruned: bool,
+        /// Stale worktree entry to unregister, recorded when the plan fell
+        /// back from a worktree whose directory was missing. Planning never
+        /// mutates — execution performs the prune (`git worktree remove`,
+        /// which validates before touching anything, so a directory that
+        /// reappears at this path between planning and execution is handled
+        /// by git: a clean reconnected worktree is removed, a dirty or
+        /// foreign one refuses loudly). `None` when the branch has no
+        /// worktree entry at all.
+        prune_entry: Option<PathBuf>,
         /// Integration target for display. May be the effective target (e.g.,
         /// `origin/main` when upstream is ahead) or the local default branch.
         /// `None` when no default branch is configured.
@@ -369,13 +374,13 @@ impl RemovalPlan {
             }),
             RemovalPlan::BranchOnly {
                 branch_name,
-                pruned,
+                prune_entry,
                 branch_checked_out_at,
                 ..
             } => serde_json::json!({
                 "kind": "branch_only",
                 "branch": branch_name,
-                "pruned": pruned,
+                "pruned": prune_entry.is_some(),
                 "branch_deleted": branch_deleted,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
@@ -414,7 +419,7 @@ mod tests {
         let branch_only = RemovalPlan::BranchOnly {
             branch_name: "solo".to_string(),
             deletion_mode: BranchDeletionMode::default(),
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -561,7 +566,7 @@ mod tests {
         let result = RemovalPlan::BranchOnly {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -570,7 +575,7 @@ mod tests {
             RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
-                pruned,
+                prune_entry,
                 target_branch,
                 integration_reason,
                 branch_checked_out_at,
@@ -578,7 +583,7 @@ mod tests {
                 assert_eq!(branch_name, "stale-branch");
                 assert!(deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
-                assert!(!pruned);
+                assert!(prune_entry.is_none());
                 assert!(target_branch.is_none());
                 assert!(integration_reason.is_none());
                 assert!(branch_checked_out_at.is_none());
@@ -592,7 +597,7 @@ mod tests {
         let result = RemovalPlan::BranchOnly {
             branch_name: "pruned-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: true,
+            prune_entry: Some(PathBuf::from("/stale")),
             target_branch: Some("main".to_string()),
             integration_reason: None,
             branch_checked_out_at: None,
@@ -601,14 +606,14 @@ mod tests {
             RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
-                pruned,
+                prune_entry,
                 target_branch,
                 integration_reason,
                 branch_checked_out_at,
             } => {
                 assert_eq!(branch_name, "pruned-branch");
                 assert!(!deletion_mode.should_keep());
-                assert!(pruned);
+                assert_eq!(prune_entry.as_deref(), Some(Path::new("/stale")));
                 assert_eq!(target_branch.as_deref(), Some("main"));
                 assert!(integration_reason.is_none());
                 assert!(branch_checked_out_at.is_none());
