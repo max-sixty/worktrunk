@@ -6,33 +6,37 @@
 //! before `main` builds the rayon pool or dispatches anything, so nothing here
 //! shares state with an ordinary `wt` invocation.
 //!
-//! **One benchmark, on one big repo.** Completion has no phases worth timing
-//! separately: it spawns, fills its caches on one set of threads, scans refs
-//! and worktrees on another, prints, exits. Splitting that into a variant per
-//! dimension measures the same startup cost over and over and still can't say
-//! which call moved, because the calls within a wave overlap. Localizing a
-//! regression is a trace's job here, exactly as it is for `list`'s `full`
-//! group — see "Analyzing a trace" in benches/CLAUDE.md, and note that a `-vv`
-//! run has no prewarm and so is not the run users get.
+//! **One benchmark, on the `mixed` fixture `full` already uses.** Completion
+//! has no phases worth timing separately: it spawns, fills its caches on one
+//! set of threads, scans refs and worktrees on another, prints, exits.
+//! Splitting that into a variant per dimension re-measures the same startup
+//! over a series of deliberately lopsided repos and still can't say which call
+//! moved, because the calls within a wave overlap. Localizing a regression is a
+//! trace's job here, exactly as it is for `full` — see "Analyzing a trace" in
+//! benches/CLAUDE.md, and note that a `-vv` run has no prewarm and so is not
+//! the run users get.
 //!
-//! So the fixture carries every dimension at once, sized from a real reported
-//! repo: [`RepoConfig::long_lived_clone`] is 80 worktrees, 80 more local
-//! branches, and 1400 remote-tracking refs. That exercises all three of
-//! `BranchCompleter`'s categories, puts both candidate slow calls
-//! (`for-each-ref refs/remotes/` and `worktree list --porcelain`) in the same
-//! run at a size where each is expensive, and lands past the completer's
-//! 100-entry threshold — where the remote refs are scanned and then discarded.
+//! `mixed-80-80-1400` is that one repo: 80 worktrees in four states, 80 more
+//! branches forked across 200 commits of history, and 1400 remote-tracking
+//! refs. It covers all three categories `BranchCompleter` distinguishes, puts
+//! both candidate slow calls (`for-each-ref refs/remotes/` and `worktree list
+//! --porcelain`) in the same process at a size where each is expensive, and
+//! lands past the completer's 100-entry threshold — where the remote refs are
+//! scanned and then discarded, as they are on a real long-lived clone.
+//!
+//! The remote-ref count is what this bench adds to the shared fixture; `full`
+//! passes 0 and is unaffected.
 //!
 //! ```bash
 //! cargo bench --bench completion
-//! cargo run -p wt-perf -- setup long-lived-clone --path /tmp/clone   # same repo, by hand
+//! cargo run -p wt-perf -- setup mixed-80-80-1400 --path /tmp/clone   # same repo, by hand
 //! ```
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, create_repo};
+use wt_perf::create_mixed_repo;
 
 fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
     let index = words.len().saturating_sub(1);
@@ -51,8 +55,8 @@ fn bench_completion_switch(c: &mut Criterion) {
     let mut group = c.benchmark_group("completion_switch");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    group.bench_function("long_lived_clone", |b| {
-        let temp = create_repo(&RepoConfig::long_lived_clone());
+    group.bench_function("mixed", |b| {
+        let temp = create_mixed_repo(80, 80, 1400);
         let repo = temp.path().join("repo");
         b.iter(|| run_completion(binary, &repo, &["wt", "switch", ""]));
     });

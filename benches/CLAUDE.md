@@ -48,9 +48,8 @@ it runs on.
 |---|---|---|
 | `RepoConfig::typical(N)` | `typical-N` | `skeleton`, `worktree_scaling` (list.rs); `first_output` (time_to_first_output.rs); `picker_preview`; `remove_e2e` |
 | `RepoConfig::branches(N, M)` | `branches-N[-M]` | — (branch-scaling investigation only) |
-| `RepoConfig::long_lived_clone()` | `long-lived-clone` | `completion_switch` (completion.rs) |
 | `RepoConfig::many_divergent_branches()` | `divergent` | `divergent_branches` (list.rs) |
-| `create_mixed_repo(W, B)` | `mixed-W-B` | `full` (list.rs) |
+| `create_mixed_repo(W, B, R)` | `mixed-W-B[-R]` | `full` (list.rs); `completion_switch` (completion.rs) |
 | `create_prune_repo_at(M, U)` | `prune-M-U` | `prune_e2e` (prune.rs) |
 | `ensure_prune_real_repo(M, U)` | `prune-real[-M-U]` | `prune_real_repo` (prune.rs) |
 | rust-lang/rust clone (`clone_rust_repo`) | — | `real_repo`, `real_repo_many_branches` (list.rs) |
@@ -347,10 +346,9 @@ cargo run -p wt-perf -- setup typical-8
 #   typical-N       - 500 commits, 100 files, N worktrees
 #   branches-N      - N branches, 1 commit each
 #   branches-N-M    - N branches, M commits each
-#   long-lived-clone - 80 worktrees + 80 branches + 1400 remote-tracking
-#                     refs (the completion workload; takes no parameters)
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
-#   mixed-W-B       - W worktrees + B branches in varied states (the `full` fixture)
+#   mixed-W-B[-R]   - W worktrees + B branches in varied states, plus R
+#                     remote-tracking refs (the `full` and completion fixture)
 #   prune-M-U       - M squash-merged candidates + U two-sided-diverged
 #                     worktrees/branches (the `wt step prune` workload; see
 #                     benches/prune.rs)

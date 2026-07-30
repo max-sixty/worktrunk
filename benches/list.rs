@@ -353,7 +353,7 @@ fn bench_full(c: &mut Criterion) {
     for cold in [false, true] {
         let label = if cold { "cold" } else { "warm" };
         group.bench_function(label, |b| {
-            let temp = create_mixed_repo(worktrees, branches);
+            let temp = create_mixed_repo(worktrees, branches, 0);
             let repo_path = temp.path().join("repo");
             run_benchmark(
                 b,

@@ -50,14 +50,6 @@ pub struct RepoConfig {
     pub worktree_commits_ahead: usize,
     /// Uncommitted files per worktree
     pub worktree_uncommitted_files: usize,
-    /// Remote-tracking refs under `refs/remotes/origin/`, beyond the
-    /// `origin/main` + `origin/HEAD` pair every fixture gets.
-    ///
-    /// A long-lived clone accumulates far more of these than it has local
-    /// branches — the refs a `git fetch` brings down and nothing prunes — and
-    /// they are what `for-each-ref refs/remotes/` pays for. Fixtures that
-    /// leave this at 0 measure a repo shape no real clone has.
-    pub remote_refs: usize,
 }
 
 impl RepoConfig {
@@ -73,7 +65,6 @@ impl RepoConfig {
             worktrees,
             worktree_commits_ahead: 10,
             worktree_uncommitted_files: 3,
-            remote_refs: 0,
         }
     }
 
@@ -87,37 +78,6 @@ impl RepoConfig {
             worktrees: 0,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs: 0,
-        }
-    }
-
-    /// A clone someone has worked in for months: 80 worktrees, 80 more local
-    /// branches without one, and 1400 remote-tracking refs.
-    ///
-    /// Takes no parameters because there is nothing to vary — it exists to be
-    /// the one shape `benches/completion.rs` measures, sized from a real
-    /// reported repo (81 worktrees, 80 branches, 1382 remote refs).
-    ///
-    /// Big in the two dimensions completion actually pays for, and diverse
-    /// across the three categories `BranchCompleter` distinguishes: worktree
-    /// branches, local branches, and remote-only ones. History depth is
-    /// deliberately shallow — every scan reads one commit object per *ref*, so
-    /// deepening history costs fixture build time and measures nothing.
-    ///
-    /// The ratio matters as much as the size. At 160 local candidates the
-    /// completer is past its 100-entry threshold, so all 1400 remote-only
-    /// branches are dropped *after* being scanned — the case where the most
-    /// expensive call on the path contributes nothing to what the shell shows.
-    pub const fn long_lived_clone() -> Self {
-        Self {
-            commits_on_main: 20,
-            files: 1,
-            branches: 80,
-            commits_per_branch: 0,
-            worktrees: 80,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
-            remote_refs: 1400,
         }
     }
 
@@ -131,7 +91,6 @@ impl RepoConfig {
             worktrees: 0,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs: 0,
         }
     }
 
@@ -145,7 +104,6 @@ impl RepoConfig {
             worktrees: 6,
             worktree_commits_ahead: 15, // feature worktree has many commits
             worktree_uncommitted_files: 1,
-            remote_refs: 0,
         }
     }
 }
@@ -160,8 +118,15 @@ impl RepoConfig {
 /// [`ensure_prune_real_repo`].)
 pub enum SetupConfig {
     Flat(RepoConfig),
-    Mixed { worktrees: usize, branches: usize },
-    Prune { merged: usize, unmerged: usize },
+    Mixed {
+        worktrees: usize,
+        branches: usize,
+        remote_refs: usize,
+    },
+    Prune {
+        merged: usize,
+        unmerged: usize,
+    },
 }
 
 impl SetupConfig {
@@ -175,8 +140,9 @@ impl SetupConfig {
             SetupConfig::Mixed {
                 worktrees,
                 branches,
+                remote_refs,
             } => {
-                create_mixed_repo_at(*worktrees, *branches, base_path);
+                create_mixed_repo_at(*worktrees, *branches, *remote_refs, base_path);
                 (*worktrees, *branches)
             }
             SetupConfig::Prune { merged, unmerged } => {
@@ -437,7 +403,6 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
 
     // Set up fake remote for default branch detection
     setup_fake_remote(&repo_path);
-    add_remote_refs(config.remote_refs, &repo_path);
 
     // Pack objects and write the commit-graph once, after all refs
     // exist. Auto-maintenance is disabled (see above), so we do this
@@ -509,9 +474,9 @@ pub fn add_worktrees(config: &RepoConfig, repo_path: &Path) {
 /// timestamps are all `TEST_EPOCH` regardless — fixture commit dates are pinned
 /// — so the sort is not what this measures.
 ///
-/// Names are `remote-only-<i>`, which no fixture uses locally, so every one of
-/// them survives `branches_for_completion`'s "skip remotes shadowed by a local
-/// branch" filter and reaches the candidate list.
+/// Names are `remote-only-<i>`, which no fixture uses for a local branch, so
+/// every one of them survives the "skip remotes shadowed by a local branch"
+/// filter in `branches_for_completion` and reaches the candidate list.
 ///
 /// One `update-ref --stdin` fork writes the whole batch; the per-ref
 /// alternative costs a fork each and dominates fixture build time at the
@@ -1069,16 +1034,16 @@ fn append_line(path: &Path, rel: &str, line: &str) {
 /// 2. diverged: a short own-commit chain forked from an older checkpoint
 ///    while base advanced (deep two-sided divergence)
 /// 3. identical to the base tip (trees match — squash-merge shape)
-pub fn create_mixed_repo(worktrees: usize, branches: usize) -> TempDir {
+pub fn create_mixed_repo(worktrees: usize, branches: usize, remote_refs: usize) -> TempDir {
     let temp = tempfile::tempdir().unwrap();
-    create_mixed_repo_at(worktrees, branches, &temp.path().join("repo"));
+    create_mixed_repo_at(worktrees, branches, remote_refs, &temp.path().join("repo"));
     temp
 }
 
 /// [`create_mixed_repo`] at a caller-chosen path (used by `wt-perf setup
 /// mixed-W-B`). The main worktree is created at `repo`; linked worktrees are
 /// siblings.
-fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
+fn create_mixed_repo_at(worktrees: usize, branches: usize, remote_refs: usize, repo: &Path) {
     const FILES: usize = 50;
     // Deep enough that fork points spread across history give the
     // `%(ahead-behind)` walk real commits to traverse (GH #461 shape), while
@@ -1147,6 +1112,7 @@ fn create_mixed_repo_at(worktrees: usize, branches: usize, repo: &Path) {
     // loose refs and uncommitted state — realistic, and keeps gc away from the
     // dirty indexes below).
     setup_fake_remote(&repo);
+    add_remote_refs(remote_refs, &repo);
     run_git(&repo, &["gc", "-q"]);
 
     // Linked worktrees are siblings named `<repo-dir>.<branch>` (worktrunk
@@ -1218,7 +1184,6 @@ pub fn create_prune_repo_at(merged: usize, unmerged: usize, base_path: &Path) {
         worktrees: 1,
         worktree_commits_ahead: 0,
         worktree_uncommitted_files: 0,
-        remote_refs: 0,
     };
     create_repo_at(&config, base_path);
     add_prune_populations(base_path, merged, unmerged);
@@ -1505,9 +1470,8 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// - `typical-N` - typical repo with N worktrees
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
-/// - `long-lived-clone` - worktrees + branches + many remote refs (completion workload)
 /// - `divergent` - many divergent branches (GH #461)
-/// - `mixed-W-B` - W worktrees + B branches in varied states
+/// - `mixed-W-B[-R]` - W worktrees + B branches in varied states, plus R remote-tracking refs
 /// - `prune-M-U` - M squash-merged candidates + U unmerged (prune workload)
 /// - `picker-test` - config for wt switch interactive picker testing
 pub fn parse_config(s: &str) -> Option<SetupConfig> {
@@ -1525,11 +1489,20 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
         return Some(SetupConfig::Flat(config));
     }
 
-    if let Some((worktrees, branches)) = parse_pair(s, "mixed-") {
-        return Some(SetupConfig::Mixed {
-            worktrees,
-            branches,
-        });
+    if let Some(rest) = s.strip_prefix("mixed-") {
+        return match rest.split('-').collect::<Vec<_>>().as_slice() {
+            [w, b] => Some(SetupConfig::Mixed {
+                worktrees: w.parse().ok()?,
+                branches: b.parse().ok()?,
+                remote_refs: 0,
+            }),
+            [w, b, r] => Some(SetupConfig::Mixed {
+                worktrees: w.parse().ok()?,
+                branches: b.parse().ok()?,
+                remote_refs: r.parse().ok()?,
+            }),
+            _ => None,
+        };
     }
 
     if let Some((merged, unmerged)) = parse_pair(s, "prune-") {
@@ -1537,7 +1510,6 @@ pub fn parse_config(s: &str) -> Option<SetupConfig> {
     }
 
     match s {
-        "long-lived-clone" => Some(SetupConfig::Flat(RepoConfig::long_lived_clone())),
         "divergent" => Some(SetupConfig::Flat(RepoConfig::many_divergent_branches())),
         "picker-test" => Some(SetupConfig::Flat(RepoConfig::picker_test())),
         _ => None,
@@ -1623,7 +1595,6 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs: 0,
         });
         let repo_path = temp.path().join("repo");
 
@@ -1664,7 +1635,7 @@ mod tests {
         // Two full rotations of each 4-state cycle, so a state that collapsed
         // into its neighbour fails on both of its indices rather than one.
         const N: usize = 8;
-        let temp = create_mixed_repo(N, N);
+        let temp = create_mixed_repo(N, N, 0);
         let repo = temp.path().join("repo");
         let main = capture_git(&repo, &["rev-parse", "main"]);
 
@@ -1772,7 +1743,6 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs: 0,
         });
         let repo_path = temp.path().join("repo");
 
@@ -1881,7 +1851,6 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs: 0,
         });
         let repo_path = temp.path().join("repo");
 
@@ -1917,13 +1886,13 @@ mod tests {
 
         // The two dimensions share no state, so covering each zero once spans
         // the contract — a both-zero repo just skips both loops.
-        let temp = create_mixed_repo(3, 0);
+        let temp = create_mixed_repo(3, 0, 0);
         let repo = temp.path().join("repo");
         assert_eq!(refs(&repo, "refs/heads/br-*"), 0, "no branchless branches");
         assert_eq!(refs(&repo, "refs/heads/wt-*"), 3);
         assert_eq!(linked(&repo), 3);
 
-        let temp = create_mixed_repo(0, 3);
+        let temp = create_mixed_repo(0, 3, 0);
         let repo = temp.path().join("repo");
         assert_eq!(refs(&repo, "refs/heads/br-*"), 3);
         assert_eq!(refs(&repo, "refs/heads/wt-*"), 0, "no worktree branches");
@@ -1949,7 +1918,6 @@ mod tests {
             worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
-            remote_refs: 0,
         });
         let repo = temp.path().join("repo");
         add_diverged_backdrop(&repo, 3, 4);

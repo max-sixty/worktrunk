@@ -62,7 +62,6 @@ const fn lean_worktrees(worktrees: usize) -> RepoConfig {
         worktrees,
         worktree_commits_ahead: 0,
         worktree_uncommitted_files: 0,
-        remote_refs: 0,
     }
 }
 
