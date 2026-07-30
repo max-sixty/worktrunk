@@ -4081,22 +4081,37 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // the plugin root). The Claude hooks file sits at that same conventional
     // `hooks/hooks.json` (Claude's loader discovers it there — #3417), but the
     // inline Codex override means Codex never loads it, so the #3362 collision
-    // (Codex surfacing the *Claude* file's events) stays closed. Codex added a
-    // `Stop` turn-end event (post codex-cli 0.130.0), so 🤖 returns to 💬 at
-    // turn end. See CLAUDE.md → "Plugin Layout".
+    // (Codex surfacing the *Claude* file's events) stays closed. `Stop`
+    // returns 🤖 to 💬 at turn end, and `SessionEnd` clears the marker when
+    // the main thread ends. See CLAUDE.md → "Plugin Layout".
     let codex_hooks = plugin
         .get("hooks")
         .and_then(|h| h.get("hooks"))
         .expect("Codex manifest must carry an inline `hooks` object");
-    // Exactly the Codex-native events — no `Notification`/`SessionEnd`/
-    // `WorktreeCreate`/`WorktreeRemove`, which are Claude-only and would be
-    // silently dropped by Codex.
-    for event in ["UserPromptSubmit", "PermissionRequest", "Stop"] {
-        assert!(
-            codex_hooks.get(event).is_some(),
-            "Codex hooks must define the {event} event"
-        );
-    }
+    // Exactly the Codex-native events — no Claude-only `Notification`,
+    // `WorktreeCreate`, or `WorktreeRemove`.
+    let mut events = codex_hooks
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    events.sort_unstable();
+    assert_eq!(
+        events,
+        [
+            "PermissionRequest",
+            "SessionEnd",
+            "Stop",
+            "UserPromptSubmit"
+        ]
+    );
+    let session_end = &codex_hooks["SessionEnd"][0]["hooks"][0];
+    assert_eq!(
+        session_end["command"],
+        r#"bash "$PLUGIN_ROOT/hooks/wt.sh" config state marker clear || true"#
+    );
+    assert_eq!(session_end["timeout"], 3);
     // Commands use Codex's native `$PLUGIN_ROOT`, never the Claude-branded
     // `$CLAUDE_PLUGIN_ROOT` compat alias — nothing Claude-branded in a Codex
     // session (#3362).

@@ -41,6 +41,17 @@
             }
           ]
         }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"$PLUGIN_ROOT/hooks/wt.sh\" config state marker clear || true",
+              "timeout": 3
+            }
+          ]
+        }
       ]
     }
   },
