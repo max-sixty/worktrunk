@@ -2242,6 +2242,15 @@ mod tests {
         warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::RetainedRaced), false);
         warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::RetainedRaced), true);
 
+        // RetainedCheckedOut → surface the checkout path
+        warn_if_branch_retained(
+            "feature",
+            &ok(BranchDeletionOutcome::RetainedCheckedOut {
+                path: Path::new("/tmp/repo.feature-survivor").to_path_buf(),
+            }),
+            false,
+        );
+
         // Success arms → silent
         warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::ForceDeleted), false);
         warn_if_branch_retained(
