@@ -23,8 +23,8 @@ pub use paths::{
     line_based_config_paths, nushell_autoload_candidates,
 };
 pub use utils::{
-    AncestorShell, ancestor_shell, current_shell, current_shell_name, detect_zsh_compinit,
-    extract_filename_from_path,
+    AncestorShell, ZSH_PROBE_FLAGS, ancestor_shell, current_shell, current_shell_name,
+    detect_zsh_compinit, extract_filename_from_path,
 };
 
 /// Validate a command name before embedding it in shell syntax or shell-owned paths.

@@ -5,4 +5,4 @@ expression: list
 >
     Branch   Status        HEAD±    main↕     main…±  Remot
   @ main         ^
-> + feature      ↑                 ↑5        +5
+> + feature      ↑                 ↑1        +1   -1

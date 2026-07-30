@@ -365,11 +365,11 @@ impl From<&GitHubComment> for CommentEntry {
 /// - `StatusContext` (external CI like pre-commit.ci): has `state` only
 ///   ("SUCCESS", "FAILURE", "PENDING", "ERROR")
 ///
-/// We parse all three fields and check whichever is present. An alternative approach would be
-/// `gh pr checks <number> --json state` which returns a flat array with unified `state` field,
-/// but that requires a separate API call after finding the PR number. Since we also need
-/// `gh run list` for branch-based CI (branches without PRs), keeping the single-call approach
-/// here is simpler overall.
+/// We parse all three fields and check whichever is present. Using
+/// `gh pr checks <number> --json state` would require a second call after PR
+/// discovery, while `statusCheckRollup` returns PR metadata and CI status
+/// together. A branch without a PR has no rollup, so
+/// [`detect_github_commit_checks`] queries the commit's check-runs API separately.
 #[derive(Debug, Deserialize)]
 pub(crate) struct GitHubCheck {
     /// CheckRun only: "COMPLETED", "IN_PROGRESS", "QUEUED", etc.
@@ -538,157 +538,59 @@ mod tests {
 
     #[test]
     fn test_github_pr_info_ci_status() {
-        // No checks = NoCI
-        let pr = GitHubPrInfo {
-            number: None,
-            head_ref_oid: None,
-            merge_state_status: None,
-            status_check_rollup: None,
-            url: None,
-            head_repository_owner: None,
-            title: None,
-            body: None,
-            comments: Vec::new(),
-            review_decision: None,
-            is_draft: None,
-            updated_at: None,
-            author: None,
-        };
-        assert_eq!(pr.ci_status(), CiStatus::NoCI);
+        let cases = [
+            (r#"{}"#, CiStatus::NoCI),
+            (r#"{"statusCheckRollup":[]}"#, CiStatus::NoCI),
+            (
+                r#"{"statusCheckRollup":[{"status":"IN_PROGRESS"}]}"#,
+                CiStatus::Running,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"QUEUED"}]}"#,
+                CiStatus::Running,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"PENDING"}]}"#,
+                CiStatus::Running,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"EXPECTED"}]}"#,
+                CiStatus::Running,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"state":"PENDING"}]}"#,
+                CiStatus::Running,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}"#,
+                CiStatus::Failed,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"ERROR"}]}"#,
+                CiStatus::Failed,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"CANCELLED"}]}"#,
+                CiStatus::Failed,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"state":"FAILURE"}]}"#,
+                CiStatus::Failed,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"state":"ERROR"}]}"#,
+                CiStatus::Failed,
+            ),
+            (
+                r#"{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}"#,
+                CiStatus::Passed,
+            ),
+        ];
 
-        // Empty checks = NoCI
-        let pr = GitHubPrInfo {
-            number: None,
-            head_ref_oid: None,
-            merge_state_status: None,
-            status_check_rollup: Some(vec![]),
-            url: None,
-            head_repository_owner: None,
-            title: None,
-            body: None,
-            comments: Vec::new(),
-            review_decision: None,
-            is_draft: None,
-            updated_at: None,
-            author: None,
-        };
-        assert_eq!(pr.ci_status(), CiStatus::NoCI);
-
-        // CheckRun pending states
-        for status in ["IN_PROGRESS", "QUEUED", "PENDING", "EXPECTED"] {
-            let pr = GitHubPrInfo {
-                number: None,
-                head_ref_oid: None,
-                merge_state_status: None,
-                status_check_rollup: Some(vec![GitHubCheck {
-                    status: Some(status.into()),
-                    conclusion: None,
-                    state: None,
-                }]),
-                url: None,
-                head_repository_owner: None,
-                title: None,
-                body: None,
-                comments: Vec::new(),
-                review_decision: None,
-                is_draft: None,
-                updated_at: None,
-                author: None,
-            };
-            assert_eq!(pr.ci_status(), CiStatus::Running, "status={status}");
+        for (json, expected) in cases {
+            let pr: GitHubPrInfo = serde_json::from_str(json).expect("valid GitHub PR JSON");
+            assert_eq!(pr.ci_status(), expected, "json={json}");
         }
-
-        // StatusContext pending
-        let pr = GitHubPrInfo {
-            number: None,
-            head_ref_oid: None,
-            merge_state_status: None,
-            status_check_rollup: Some(vec![GitHubCheck {
-                status: None,
-                conclusion: None,
-                state: Some("PENDING".into()),
-            }]),
-            url: None,
-            head_repository_owner: None,
-            title: None,
-            body: None,
-            comments: Vec::new(),
-            review_decision: None,
-            is_draft: None,
-            updated_at: None,
-            author: None,
-        };
-        assert_eq!(pr.ci_status(), CiStatus::Running);
-
-        // CheckRun failures
-        for conclusion in ["FAILURE", "ERROR", "CANCELLED"] {
-            let pr = GitHubPrInfo {
-                number: None,
-                head_ref_oid: None,
-                merge_state_status: None,
-                status_check_rollup: Some(vec![GitHubCheck {
-                    status: Some("COMPLETED".into()),
-                    conclusion: Some(conclusion.into()),
-                    state: None,
-                }]),
-                url: None,
-                head_repository_owner: None,
-                title: None,
-                body: None,
-                comments: Vec::new(),
-                review_decision: None,
-                is_draft: None,
-                updated_at: None,
-                author: None,
-            };
-            assert_eq!(pr.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
-        }
-
-        // StatusContext failures
-        for state in ["FAILURE", "ERROR"] {
-            let pr = GitHubPrInfo {
-                number: None,
-                head_ref_oid: None,
-                merge_state_status: None,
-                status_check_rollup: Some(vec![GitHubCheck {
-                    status: None,
-                    conclusion: None,
-                    state: Some(state.into()),
-                }]),
-                url: None,
-                head_repository_owner: None,
-                title: None,
-                body: None,
-                comments: Vec::new(),
-                review_decision: None,
-                is_draft: None,
-                updated_at: None,
-                author: None,
-            };
-            assert_eq!(pr.ci_status(), CiStatus::Failed, "state={state}");
-        }
-
-        // Success
-        let pr = GitHubPrInfo {
-            number: None,
-            head_ref_oid: None,
-            merge_state_status: None,
-            status_check_rollup: Some(vec![GitHubCheck {
-                status: Some("COMPLETED".into()),
-                conclusion: Some("SUCCESS".into()),
-                state: None,
-            }]),
-            url: None,
-            head_repository_owner: None,
-            title: None,
-            body: None,
-            comments: Vec::new(),
-            review_decision: None,
-            is_draft: None,
-            updated_at: None,
-            author: None,
-        };
-        assert_eq!(pr.ci_status(), CiStatus::Passed);
     }
 
     #[test]
@@ -932,6 +834,17 @@ mod tests {
         let checks = vec![
             check("in_progress", None),
             check("completed", Some("failure")),
+        ];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Running);
+
+        // A pending StatusContext also takes priority over a successful CheckRun
+        let checks = vec![
+            check("completed", Some("success")),
+            GitHubCheck {
+                status: None,
+                conclusion: None,
+                state: Some("PENDING".into()),
+            },
         ];
         assert_eq!(aggregate_github_checks(&checks), CiStatus::Running);
 

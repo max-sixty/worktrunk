@@ -9,21 +9,65 @@
 //! Runs on every platform: the dry-run bypass is consulted before the
 //! interactive TTY path, so these exercise the picker pipeline on Windows too.
 
+use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
 use crate::common::{TEST_EPOCH, TestRepo, repo};
 use rstest::rstest;
 
-/// Runs the dry-run picker with summaries disabled (default). Covers the
-/// base cache-dump path and the `else` branch that inserts a config hint
-/// in place of real summaries.
+#[rstest::fixture]
+fn main_only_repo() -> TestRepo {
+    TestRepo::standard_main_only()
+}
+
+/// Install a strict fake summary command through TestRepo's cross-platform
+/// mock-PATH wiring. Tests observe its external call log to distinguish the
+/// generated-summary route from the static mode-5 config hint.
+fn install_summary_probe(repo: &mut TestRepo) {
+    repo.setup_mock_gh();
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_gh installs a mock bin");
+    MockConfig::new("summary-probe")
+        .command("_default", MockResponse::output("generated-summary-marker"))
+        .write(mock_bin);
+}
+
+/// Runs the dry-run picker with summaries disabled (default). Covers configured
+/// branch-only row collection, the base cache-dump path, and the `else` branch
+/// that inserts a config hint in place of real summaries.
 #[rstest]
-fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
+fn test_picker_dry_run_emits_configured_rows_and_cache_json(
+    #[from(main_only_repo)] mut repo: TestRepo,
+) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("active-worktree");
+    repo.run_git(&["branch", "orphan-branch"]);
+
+    let orphan_head = repo.git_output(&["rev-parse", "--verify", "refs/heads/orphan-branch"]);
+    assert_eq!(
+        orphan_head,
+        repo.git_output(&["rev-parse", "HEAD"]),
+        "orphan-branch must exist as a local branch ref"
+    );
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !worktrees
+            .lines()
+            .any(|line| line == "branch refs/heads/orphan-branch"),
+        "orphan-branch must not belong to a worktree:\n{worktrees}"
+    );
+
+    repo.write_test_config("[list]\nbranches = true\n");
+    install_summary_probe(&mut repo);
+    let call_log = tempfile::tempdir().unwrap();
 
     let output = repo
         .wt_command()
+        // No `--branches`: the config setting must drive branch collection.
         .args(["switch"])
         .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        // A configured generator must still stay off while list.summary=false.
+        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "summary-probe")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
 
@@ -35,6 +79,17 @@ fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
 
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let rows: Vec<&str> = parsed["rows"]
+        .as_array()
+        .expect("top-level `rows` array")
+        .iter()
+        .map(|row| row.as_str().expect("row is a string"))
+        .collect();
+    assert!(
+        rows.iter().any(|row| row.contains("/ orphan-branch")),
+        "configured branch-only row missing from structured rows: {rows:#?}"
+    );
+
     let entries = parsed["entries"]
         .as_array()
         .expect("top-level `entries` array");
@@ -48,10 +103,110 @@ fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
     // schema (not specific branches/modes) keeps the test robust to fixture
     // changes while still covering the dump format.
     for e in entries {
-        assert!(e["branch"].is_string(), "entry missing branch: {e}");
-        assert!(e["mode"].is_number(), "entry missing mode: {e}");
-        assert!(e["bytes"].is_number(), "entry missing bytes: {e}");
+        assert!(
+            e["branch"]
+                .as_str()
+                .is_some_and(|branch| !branch.is_empty()),
+            "entry missing nonempty branch: {e}"
+        );
+        assert!(
+            e["mode"]
+                .as_u64()
+                .is_some_and(|mode| u8::try_from(mode).is_ok()),
+            "entry mode is not a u8: {e}"
+        );
+        assert!(
+            e["bytes"]
+                .as_u64()
+                .is_some_and(|bytes| usize::try_from(bytes).is_ok()),
+            "entry bytes is not a usize: {e}"
+        );
     }
+
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["mode"] == 5 && e["bytes"].as_u64().is_some_and(|bytes| bytes > 0)),
+        "summaries are disabled, so the picker must seed a nonempty static config hint: {stdout}"
+    );
+    assert!(
+        mock_calls(call_log.path(), "summary-probe").is_empty(),
+        "a configured summary command must not run while list.summary=false"
+    );
+}
+
+/// `switch --prs` must select the GitLab subprocess route from the remote URL,
+/// not merely parse GitLab-shaped JSON after some caller has already selected
+/// the provider. A fresh null CI cache entry keeps the worktree-row CI task
+/// local, leaving only the `--prs` availability probe and list call observable.
+#[rstest]
+fn test_picker_dry_run_prs_routes_to_gitlab(#[from(main_only_repo)] mut repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let branch = repo.current_branch();
+    let head = repo.git_output(&["rev-parse", "HEAD"]);
+    let cache_dir = repo.path().join(".git/wt/cache/ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let entry = serde_json::json!({
+        "status": null,
+        "checked_at": TEST_EPOCH,
+        "head": head.trim(),
+        "branch": branch,
+    });
+    std::fs::write(cache_dir.join(format!("{branch}.json")), entry.to_string()).unwrap();
+
+    // Reuse TestRepo's cross-platform mock-PATH wiring, then replace both forge
+    // configs with strict route-specific mocks.
+    repo.setup_mock_gh();
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_gh installs a mock bin")
+        .to_path_buf();
+    MockConfig::new("glab")
+        .version("glab version 1.0.0 (mock)")
+        .command(
+            "mr list --per-page 50 --output json",
+            MockResponse::output("[]"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    MockConfig::new("gh")
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    // Keep observability outside the repository: writing the call log into the
+    // worktree would perturb the status being collected by the picker.
+    let call_log = tempfile::tempdir().unwrap();
+    let output = repo
+        .wt_command()
+        .args(["switch", "--prs"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "GitLab dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        mock_calls(call_log.path(), "glab"),
+        [
+            "--version".to_string(),
+            "mr list --per-page 50 --output json".to_string(),
+        ],
+        "GitLab routing must issue exactly the availability probe and MR list call"
+    );
+    assert!(
+        mock_calls(call_log.path(), "gh").is_empty(),
+        "a GitLab remote must not invoke the GitHub CLI"
+    );
 }
 
 /// A fresh cached CI status surfaces a PR number in picker rows without any
@@ -181,22 +336,21 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
     );
 }
 
-/// Same as above but with `list.summary=true` and a fake LLM command
-/// configured, to exercise the `spawn_summary` branch in `handle_picker`.
-/// Uses `cat` as the LLM: it reads stdin and writes it back, so the
-/// summary pipeline runs end-to-end without a real model. The command runs
-/// via the platform shell (`sh` on Unix, Git Bash on Windows), so the bare
-/// name resolves on PATH on both.
+/// Same as above but with `list.summary=true` and a strict fake LLM command,
+/// proving the configured generator runs before its result reaches mode 5.
 #[rstest]
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
+    install_summary_probe(&mut repo);
+    let call_log = tempfile::tempdir().unwrap();
 
     let output = repo
         .wt_command()
         .args(["switch"])
         .env("WORKTRUNK_PICKER_DRY_RUN", "1")
         .env("WORKTRUNK_LIST__SUMMARY", "true")
-        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "cat")
+        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "summary-probe")
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
         .output()
         .unwrap();
 
@@ -221,6 +375,10 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     assert!(
         entries.iter().any(|e| e["mode"] == 5),
         "expected at least one Summary entry, got: {stdout}"
+    );
+    assert!(
+        !mock_calls(call_log.path(), "summary-probe").is_empty(),
+        "list.summary=true must invoke the configured summary command"
     );
 }
 

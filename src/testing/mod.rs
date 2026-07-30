@@ -21,6 +21,8 @@
 //!   caller-specified path (e.g. the `project/.git` clone layout).
 //! - [`TestRepo::standard()`] — copies pre-built fixture with remote + worktrees.
 //!   For integration tests (used by the `repo()` rstest fixture).
+//! - [`TestRepo::standard_main_only()`] — copies the same pinned main history and
+//!   remote without linked worktrees. For tests that shape their own topology.
 //! - [`TestRepo::empty()`] — `git init` with no commits, no branches.
 //!
 //! ## Environment Isolation
@@ -86,6 +88,12 @@ use tempfile::TempDir;
 /// `target/` are abandoned rather than reused.
 const STANDARD_FIXTURE_VERSION: u32 = 1;
 
+/// Bump when the main-only transformation in
+/// [`build_standard_main_only_fixture`] changes. Its cache key also includes
+/// [`STANDARD_FIXTURE_VERSION`] because the derived template copies that
+/// fixture as its source.
+const STANDARD_MAIN_ONLY_FIXTURE_VERSION: u32 = 1;
+
 /// Timestamp for the template's commits, author and committer alike.
 ///
 /// The `-08:00` offset looks arbitrary but is load-bearing: commit SHAs
@@ -114,6 +122,25 @@ fn standard_fixture_template() -> PathBuf {
     let dir = fixtures.join(format!("standard-v{STANDARD_FIXTURE_VERSION}"));
     if !dir.exists() {
         claim_template(&fixtures, &dir, build_standard_fixture);
+    }
+    dir
+}
+
+/// Get-or-create the standard fixture's main-only topology.
+///
+/// Picker tests build every linked-worktree topology themselves. Copying this
+/// template avoids immediately tearing down the standard fixture's three
+/// linked worktrees with six serial Git subprocesses in every test.
+fn standard_main_only_fixture_template() -> PathBuf {
+    let mut base = std::env::current_exe().expect("failed to get test executable path");
+    base.pop(); // test binary name
+    base.pop(); // deps/
+    let fixtures = base.join("wt-test-fixtures");
+    let dir = fixtures.join(format!(
+        "standard-v{STANDARD_FIXTURE_VERSION}-main-only-v{STANDARD_MAIN_ONLY_FIXTURE_VERSION}"
+    ));
+    if !dir.exists() {
+        claim_template(&fixtures, &dir, build_standard_main_only_fixture);
     }
     dir
 }
@@ -206,28 +233,60 @@ fn build_standard_fixture(root: &Path) {
     }
 }
 
+/// Build the main-only template from the standard fixture once per target
+/// directory. Deriving it with real Git preserves the pinned commit, remote,
+/// tracking refs, attributes, and config while removing linked-worktree
+/// administration through Git's supported path.
+fn build_standard_main_only_fixture(root: &Path) {
+    let fixture = copy_standard_fixture(root);
+    let git =
+        |dir: &Path| configure_git_env(Cmd::new("git"), test_gitconfig_path()).current_dir(dir);
+    let run = |cmd: Cmd, what: &str| {
+        let output = cmd.run().unwrap();
+        check_git_status(&output, what);
+    };
+    let repo = root.join("repo");
+
+    for branch in ["feature-a", "feature-b", "feature-c"] {
+        let worktree = fixture
+            .worktrees
+            .get(branch)
+            .expect("standard fixture worktree");
+        let worktree = worktree.to_string_lossy();
+        run(
+            git(&repo).args(["worktree", "remove", "--force", worktree.as_ref()]),
+            "worktree remove",
+        );
+        run(
+            git(&repo).args(["branch", "-D", branch]),
+            "delete fixture branch",
+        );
+    }
+}
+
+/// Copy a directory tree without spawning a platform-specific copy command.
+fn copy_dir_recursive(src: &Path, dest: &Path) {
+    std::fs::create_dir_all(dest).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let file_type = entry.file_type().unwrap();
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path);
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dest_path).unwrap();
+        }
+        // Skip symlinks, sockets, etc (shouldn't be in fixtures).
+    }
+}
+
 /// Copy the standard fixture template to create a new test repo with
 /// worktrees and remote.
 ///
 /// Pure Rust recursive copy - 2.5x faster than spawning cp/robocopy.
 /// Benchmarked at 21ms vs 53ms per fixture copy on macOS.
 fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
-    fn copy_dir_recursive(src: &Path, dest: &Path) {
-        std::fs::create_dir_all(dest).unwrap();
-        for entry in std::fs::read_dir(src).unwrap() {
-            let entry = entry.unwrap();
-            let file_type = entry.file_type().unwrap();
-            let src_path = entry.path();
-            let dest_path = dest.join(entry.file_name());
-            if file_type.is_dir() {
-                copy_dir_recursive(&src_path, &dest_path);
-            } else if file_type.is_file() {
-                std::fs::copy(&src_path, &dest_path).unwrap();
-            }
-            // Skip symlinks, sockets, etc (shouldn't be in fixture)
-        }
-    }
-
     copy_dir_recursive(&standard_fixture_template(), dest);
 
     // Canonicalize dest for worktrees map (on macOS /var -> /private/var)
@@ -269,6 +328,12 @@ fn copy_standard_fixture(dest: &Path) -> FixtureWorktrees {
     let remote = canonical_dest.join("origin.git");
 
     FixtureWorktrees { worktrees, remote }
+}
+
+/// Copy the pinned standard history with only its primary worktree and remote.
+fn copy_standard_main_only_fixture(dest: &Path) -> PathBuf {
+    copy_dir_recursive(&standard_main_only_fixture_template(), dest);
+    canonicalize(dest).unwrap().join("origin.git")
 }
 
 /// The gitconfig that harness-built commands point `GIT_CONFIG_GLOBAL` at
@@ -1161,6 +1226,24 @@ impl TestRepo {
         repo
     }
 
+    /// Create a test repository with the standard fixture's pinned main
+    /// history and remote, but no linked worktrees.
+    ///
+    /// Use when a test constructs its own worktree topology. Unlike
+    /// [`standard()`](Self::standard), this does not install forge mocks:
+    /// callers that exercise forge commands should install strict mocks for
+    /// the route they expect.
+    pub fn standard_main_only() -> Self {
+        let temp_dir = TempDir::new().unwrap();
+        let remote = copy_standard_main_only_fixture(temp_dir.path());
+
+        let paths = TestConfigPaths::in_dir(temp_dir.path());
+        let root = temp_dir.path().join("repo");
+        let mut repo = Self::assemble(temp_dir, &root, paths);
+        repo.remote = Some(remote);
+        repo
+    }
+
     /// Create a repo at a caller-specified path with identity configured.
     ///
     /// Unlike [`new()`](Self::new), this does not own the repo's parent
@@ -1933,12 +2016,10 @@ impl TestRepo {
     /// The mock gh returns:
     /// - `gh auth status`: exits successfully (0)
     /// - `gh pr list`: returns empty JSON array (no PRs found)
-    /// - `gh run list`: returns empty JSON array (no runs found)
     ///
     /// This prevents CI detection from blocking tests with network calls.
     pub fn setup_mock_gh(&mut self) {
-        // Delegate to setup_mock_gh_with_ci_data with empty arrays
-        self.setup_mock_gh_with_ci_data("[]", "[]");
+        self.setup_mock_gh_with_ci_data("[]");
     }
 
     /// Setup mock `gh` and `glab` commands that show "installed but not authenticated"
@@ -2213,25 +2294,20 @@ impl TestRepo {
     /// Setup mock `gh` that returns configurable PR/CI data
     ///
     /// Use this for testing CI status parsing code. The mock returns JSON data
-    /// for `gh pr list` and `gh run list` commands.
+    /// for `gh pr list`.
     ///
     /// # Arguments
     /// * `pr_json` - JSON string to return for `gh pr list --json ...`
-    /// * `run_json` - JSON string to return for `gh run list --json ...`
-    pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str, run_json: &str) {
+    pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON data files
         std::fs::write(mock_bin.join("pr_data.json"), pr_json).unwrap();
-        std::fs::write(mock_bin.join("run_data.json"), run_json).unwrap();
 
-        // Configure gh mock
         MockConfig::new("gh")
             .version("gh version 2.0.0 (mock)")
             .command("auth", MockResponse::exit(0))
             .command("pr", MockResponse::file("pr_data.json"))
-            .command("run", MockResponse::file("run_data.json"))
             .write(&mock_bin);
 
         // Configure glab mock (fails - no GitLab support)
@@ -3375,29 +3451,45 @@ mod tests {
     #[test]
     fn test_standard_fixture_template_reproduces_pinned_shas() {
         let repo = standard_fixture_template().join("repo");
-        let rev_parse = |rev: &str| {
+        let rev_parse = |repo: &Path, rev: &str| {
             let output = configure_git_env(Cmd::new("git"), test_gitconfig_path())
                 .args(["rev-parse", rev])
-                .current_dir(&repo)
+                .current_dir(repo)
                 .run()
                 .unwrap();
             String::from_utf8(output.stdout).unwrap().trim().to_string()
         };
         assert_eq!(
-            rev_parse("main"),
+            rev_parse(&repo, "main"),
             "05a4a45d0b981dad5c27db59dca482836d59f89e"
         );
         assert_eq!(
-            rev_parse("feature-a"),
+            rev_parse(&repo, "feature-a"),
             "1b87d4731ea707905d15a726e193531c20affa14"
         );
         assert_eq!(
-            rev_parse("feature-b"),
+            rev_parse(&repo, "feature-b"),
             "f62940fcec424585adf98625e722fdf990810614"
         );
         assert_eq!(
-            rev_parse("feature-c"),
+            rev_parse(&repo, "feature-c"),
             "345c7c93ad7c3d8f5b08380898d78e024019599c"
+        );
+
+        let main_only = standard_main_only_fixture_template().join("repo");
+        assert_eq!(
+            rev_parse(&main_only, "main"),
+            "05a4a45d0b981dad5c27db59dca482836d59f89e"
+        );
+        let branches = configure_git_env(Cmd::new("git"), test_gitconfig_path())
+            .args(["branch", "--format=%(refname:short)"])
+            .current_dir(&main_only)
+            .run()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(branches.stdout).unwrap().trim(),
+            "main",
+            "main-only fixture must not retain the standard linked-worktree branches"
         );
     }
 

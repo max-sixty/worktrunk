@@ -308,7 +308,7 @@ fn process_name_and_ppid(_pid: u32) -> Option<(String, u32)> {
 /// `+m` (disable job control) is load-bearing — see the call site and issue
 /// #3322. It must precede `-ic` so zsh parses it as an option, not a command
 /// argument.
-const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
+pub const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
 
 /// Detect if user's zsh has compinit enabled by probing for the compdef function.
 ///
@@ -325,10 +325,9 @@ const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
 /// - `Some(false)` if compinit is NOT enabled
 /// - `None` if detection failed (zsh not installed, timeout, error)
 ///
-// TODO(zsh-compinit-probe-unify): see `config::show::check_zsh_compinit_missing`
-// for the matching probe and why the two haven't been merged (intentional
-// `--no-globalrcs` divergence, different result types and runners). #3322 had to
-// apply the `+m` job-control fix in both places.
+// Config show skips global rcs, reads the exit status, and uses `Cmd`; this
+// probe sources global rcs, reads marker output, and manages a raw `Command`.
+// Only the load-bearing zsh flags are shared.
 pub fn detect_zsh_compinit() -> Option<bool> {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
@@ -589,9 +588,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn test_probe_reports_invoked_name_for_sh() {
-        // Compound command so sh doesn't exec-replace itself with `sleep`.
+        // Block in a shell builtin so sh stays alive without spawning a child.
         let mut child = Command::new("/bin/sh")
-            .args(["-c", "sleep 30; true"])
+            .args(["-c", "read _"])
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()
             .expect("spawn sh");

@@ -908,9 +908,7 @@ mod tests {
     /// differ: an update for a row the cursor isn't on, while a diff tab shows,
     /// for an unchanged status, or for an `is_priming`-only flip (which the
     /// `pr` / `comments` panes don't draw) repaints the list (`Event::Render`)
-    /// but must not re-run the preview — a re-run resets its scroll. Fast
-    /// producer-site guard for that wiring; the end-to-end path is also covered
-    /// by the PTY test `test_switch_picker_pr_tab_auto_resolves_from_fetching`.
+    /// but must not re-run the preview — a re-run resets its scroll.
     #[test]
     fn on_update_pokes_run_preview_only_when_the_visible_pane_changes() {
         use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
@@ -1599,11 +1597,14 @@ mod tests {
 
         // Static Summary hint primed for every item at skeleton time.
         for branch in ["alpha", "beta", "gamma"] {
-            assert!(
-                handler
-                    .preview_cache
-                    .contains_key(&(branch.into(), PreviewMode::Summary)),
-                "Summary hint should be filled for {branch} at skeleton time"
+            let key = (branch.to_string(), PreviewMode::Summary);
+            let hint = handler.preview_cache.get(&key).unwrap_or_else(|| {
+                panic!("Summary hint should be filled for {branch} at skeleton time")
+            });
+            assert_eq!(
+                hint.value(),
+                "disabled",
+                "Summary cache should contain the selected hint for {branch}"
             );
         }
 

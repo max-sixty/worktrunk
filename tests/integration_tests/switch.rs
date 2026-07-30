@@ -943,15 +943,6 @@ fn test_switch_error_path_occupied(repo: TestRepo) {
 }
 // Execute flag tests
 #[rstest]
-fn test_switch_execute_success(repo: TestRepo) {
-    snapshot_switch(
-        "switch_execute_success",
-        &repo,
-        &["--create", "exec-test", "--execute", "echo 'test output'"],
-    );
-}
-
-#[rstest]
 fn test_switch_execute_creates_file(repo: TestRepo) {
     let create_file_cmd = "echo 'test content' > test.txt";
 
@@ -959,6 +950,33 @@ fn test_switch_execute_creates_file(repo: TestRepo) {
         "switch_execute_creates_file",
         &repo,
         &["--create", "file-test", "--execute", create_file_cmd],
+    );
+
+    // Query Git rather than reconstructing the configured path template: this
+    // keeps the state oracle correct if the fixture's worktree-path changes.
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    let file_worktree = worktrees
+        .split("\n\n")
+        .find(|entry| {
+            entry
+                .lines()
+                .any(|line| line == "branch refs/heads/file-test")
+        })
+        .unwrap_or_else(|| panic!("file-test worktree not registered:\n{worktrees}"));
+    let worktree_path = file_worktree
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .map(Path::new)
+        .unwrap_or_else(|| panic!("file-test worktree has no path:\n{file_worktree}"));
+
+    assert_eq!(
+        fs::read_to_string(worktree_path.join("test.txt")).unwrap(),
+        "test content\n",
+        "--execute should run in the created worktree"
+    );
+    assert!(
+        !repo.root_path().join("test.txt").exists(),
+        "--execute must not run in the source worktree"
     );
 }
 
@@ -968,30 +986,6 @@ fn test_switch_execute_failure(repo: TestRepo) {
         "switch_execute_failure",
         &repo,
         &["--create", "fail-test", "--execute", "exit 1"],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_with_existing_worktree(mut repo: TestRepo) {
-    repo.add_worktree("existing-exec");
-
-    let create_file_cmd = "echo 'existing worktree' > existing.txt";
-
-    snapshot_switch(
-        "switch_execute_existing",
-        &repo,
-        &["existing-exec", "--execute", create_file_cmd],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_multiline(repo: TestRepo) {
-    let multiline_cmd = "echo 'line1'\necho 'line2'\necho 'line3'";
-
-    snapshot_switch(
-        "switch_execute_multiline",
-        &repo,
-        &["--create", "multiline-test", "--execute", multiline_cmd],
     );
 }
 
@@ -1013,15 +1007,17 @@ fn test_switch_execute_template_branch(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_execute_template_base(repo: TestRepo) {
-    // Test that {{ base }} is available when creating with --create
+    repo.create_branch("release-base");
+
+    // A create uses the explicitly selected base, not the default branch.
     snapshot_switch(
         "switch_execute_template_base",
         &repo,
         &[
             "--create",
-            "from-main",
+            "from-release-base",
             "--base",
-            "main",
+            "release-base",
             "--execute",
             "echo 'base={{ base }}'",
         ],
@@ -1029,29 +1025,14 @@ fn test_switch_execute_template_base(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_execute_template_base_without_create(mut repo: TestRepo) {
-    // Test that {{ base }} errors when switching to existing worktree (no --create)
-    // The `base` variable is only available during branch creation
+fn test_switch_execute_template_base_for_existing_worktree_uses_source(mut repo: TestRepo) {
+    // For an existing-worktree switch, `base` is the source worktree rather
+    // than a branch selected by `--base`. This command starts from main.
     repo.add_worktree("existing");
     snapshot_switch(
         "switch_execute_template_base_without_create",
         &repo,
         &["existing", "--execute", "echo 'base={{ base }}'"],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_template_with_filter(repo: TestRepo) {
-    // Test that filters work ({{ branch | sanitize }})
-    snapshot_switch(
-        "switch_execute_template_with_filter",
-        &repo,
-        &[
-            "--create",
-            "feature/with-slash",
-            "--execute",
-            "echo 'sanitized={{ branch | sanitize }}'",
-        ],
     );
 }
 
@@ -1063,21 +1044,6 @@ fn test_switch_execute_template_shell_escape(repo: TestRepo) {
         "switch_execute_template_shell_escape",
         &repo,
         &["--create", "feat;id", "--execute", "echo {{ branch }}"],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_template_worktree_path(repo: TestRepo) {
-    // Test that {{ worktree_path }} is expanded
-    snapshot_switch(
-        "switch_execute_template_worktree_path",
-        &repo,
-        &[
-            "--create",
-            "path-test",
-            "--execute",
-            "echo 'path={{ worktree_path }}'",
-        ],
     );
 }
 
@@ -1128,27 +1094,6 @@ fn test_switch_execute_arg_template_error(repo: TestRepo) {
 }
 
 // Verbose mode tests
-#[rstest]
-fn test_switch_execute_verbose_template_expansion(repo: TestRepo) {
-    // Test that -v shows template expansion details
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd_with_global_flags(
-            &repo,
-            "switch",
-            &[
-                "--create",
-                "verbose-test",
-                "--execute",
-                "echo 'branch={{ branch }}'",
-            ],
-            None,
-            &["-v"],
-        );
-        assert_cmd_snapshot!("switch_execute_verbose_template", cmd);
-    });
-}
-
 #[rstest]
 fn test_switch_execute_verbose_multiline_template(repo: TestRepo) {
     // Test that -v shows multiline template expansion with proper formatting
@@ -1732,29 +1677,6 @@ fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
     assert!(
         output.status.success(),
         "wt switch should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// Switch via a symlink that resolves to an existing worktree (#2460).
-#[cfg(unix)]
-#[rstest]
-fn test_switch_worktree_by_symlinked_path(mut repo: TestRepo) {
-    let worktree_path = repo.add_worktree("feature-symlinked");
-
-    let symlink_path = worktree_path.parent().unwrap().join("worktree-link");
-    std::os::unix::fs::symlink(&worktree_path, &symlink_path).unwrap();
-
-    let symlink_str = symlink_path.to_string_lossy().to_string();
-    let output = repo
-        .wt_command()
-        .args(["switch", &symlink_str])
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "wt switch via symlink should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

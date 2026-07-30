@@ -119,7 +119,7 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
-use worktrunk::config::Approvals;
+use worktrunk::config::{Approvals, CommitGenerationConfig};
 use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, error_message, hint_message, info_message, warning_message};
@@ -145,14 +145,9 @@ use preview_orchestrator::PreviewOrchestrator;
 /// during the picker would corrupt skim's frame, so collect routes warnings
 /// through `PickerProgressHandler::stash_warning` and we emit them here.
 ///
-/// TODO(picker-feedback): the declined-removal diagnostics (the main-worktree /
-/// dirty / unmerged "can't remove this row" messages from the `alt-x` keep paths)
-/// only surface here, on exit — the user presses `alt-x`, the row visibly stays,
-/// and the reason scrolls past after they quit. Consider a short in-picker message
-/// at `alt-x` time so the *why* lands immediately. skim has no footer slot (see the
-/// dropped Stall-indicator work), so the realistic slot is the header line — swap
-/// it to a transient "main worktree can't be removed" for a beat, then restore. The
-/// stash stays the fallback for background failures that surface after exit.
+/// Declined removals also explain themselves immediately through
+/// [`items::HeaderFlash`]. The stash remains the durable exit-time copy and the
+/// fallback for background failures that surface after the picker frame.
 fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
     for line in stash.lock().unwrap().drain(..) {
         eprintln!("{line}");
@@ -1577,6 +1572,63 @@ impl PipelineFactory {
     }
 }
 
+/// Select the command or guidance shown by the picker's Summary tab.
+///
+/// The caller supplies the resolved display path so this decision stays pure:
+/// runtime config-path resolution remains at the command boundary, while direct
+/// tests can use an explicit isolated path.
+fn summary_command_and_hint(
+    summaries_enabled: bool,
+    commit_generation: &CommitGenerationConfig,
+    config_path: &str,
+) -> (Option<String>, Option<String>) {
+    let generation_configured = commit_generation.is_configured();
+    if summaries_enabled && generation_configured {
+        return (commit_generation.command.clone(), None);
+    }
+
+    // Keep every prose line short and put the resolved path on its own
+    // line. `render_summary` word-wraps prose to the preview width, and
+    // that width is a column narrower under Windows' PTY — so a sentence
+    // long enough to wrap lands its break on a different word there.
+    // A short lead line, the path alone (one unbreakable token, no wrap
+    // boundary to shift), and the fenced config block (code blocks are
+    // never wrapped) all render identically on every platform. The first
+    // line stays the bold H4 subject, which `render_summary` promotes and
+    // never wraps.
+    let hint = if generation_configured {
+        format!(
+            r#"Summaries off
+
+Enable summaries in:
+{config_path}
+
+```toml
+[list]
+summary = true
+```
+"#
+        )
+    } else {
+        format!(
+            r#"Summaries not configured
+
+Add a [commit.generation] command in:
+{config_path}
+
+```toml
+[commit.generation]
+command = "llm -m haiku"
+
+[list]
+summary = true
+```
+"#
+        )
+    };
+    (None, Some(hint))
+}
+
 pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
@@ -1766,57 +1818,17 @@ pub fn handle_picker(
             .dimensions_for(term_width, term_height, num_items_estimate);
     let preview_window_spec = state.initial_layout.spec_for(preview_dims);
 
-    // Summary hint: when summaries are disabled, prime the Summary cache
-    // with config guidance instead of showing a perpetual "Generating…"
-    // placeholder.
-    let (llm_command, summary_hint) =
-        if config.list.summary() && config.commit_generation.is_configured() {
-            (config.commit_generation.command.clone(), None)
-        } else {
-            // Point at the config file wt actually loads from, not a hardcoded
-            // default (resolution + fallback live in `config_path_for_display`).
-            let config_path = worktrunk::config::config_path_for_display();
-            // Keep every prose line short and put the resolved path on its own
-            // line. `render_summary` word-wraps prose to the preview width, and
-            // that width is a column narrower under Windows' PTY — so a sentence
-            // long enough to wrap lands its break on a different word there, and
-            // the single cross-platform snapshot can't match. A short lead line,
-            // the path alone (one unbreakable token, no wrap boundary to shift),
-            // and the fenced config block (code blocks are never wrapped) all
-            // render identically on every platform. The first line stays the bold
-            // H4 subject, which `render_summary` promotes and never wraps.
-            let hint = if !config.commit_generation.is_configured() {
-                format!(
-                    r#"Summaries not configured
-
-Add a [commit.generation] command in:
-{config_path}
-
-```toml
-[commit.generation]
-command = "llm -m haiku"
-
-[list]
-summary = true
-```
-"#
-                )
-            } else {
-                format!(
-                    r#"Summaries off
-
-Enable summaries in:
-{config_path}
-
-```toml
-[list]
-summary = true
-```
-"#
-                )
-            };
-            (None, Some(hint))
-        };
+    // When summary generation is unavailable, prime the Summary cache with
+    // config guidance instead of showing a perpetual "Generating…" placeholder.
+    // Point at the config file wt actually loads from, not a hardcoded default
+    // (resolution + fallback live in `config_path_for_display`). Resolve it at
+    // this runtime boundary rather than inside the pure decision helper.
+    let config_path = worktrunk::config::config_path_for_display();
+    let (llm_command, summary_hint) = summary_command_and_hint(
+        config.list.summary(),
+        &config.commit_generation,
+        &config_path,
+    );
 
     // The picker's full row list — header, worktree/branch rows, and (in `--prs`
     // mode) PR/MR rows. `on_skeleton` fills it with the header + worktree/branch
@@ -2520,17 +2532,70 @@ pub mod tests {
     use super::{
         AltXRemover, PickerAction, PickerRemovalTarget, RemovalEffect, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, picker_item_identifier,
-        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url, switch_pipeline_repo,
+        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url,
+        summary_command_and_hint, switch_pipeline_repo,
     };
     use crate::commands::list::model::{BranchScope, ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemovalPlan;
+    use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
     use std::fs;
     use std::path::Path;
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
-    use worktrunk::config::Approvals;
+    use worktrunk::config::{Approvals, CommitGenerationConfig};
     use worktrunk::git::BranchDeletionMode;
+
+    #[test]
+    fn summary_command_and_hint_covers_configuration_matrix() {
+        #[derive(serde::Serialize)]
+        struct Decision {
+            case: &'static str,
+            command: Option<String>,
+            hint: Option<String>,
+        }
+
+        let cases = [
+            ("summaries off + no command", false, None),
+            ("summaries on + no command", true, None),
+            ("summaries off + command", false, Some("llm -m haiku")),
+            ("summaries on + command", true, Some("llm -m haiku")),
+        ];
+        let decisions = cases
+            .into_iter()
+            .map(|(case, summaries_enabled, command)| {
+                let commit_generation = CommitGenerationConfig {
+                    command: command.map(str::to_string),
+                    ..Default::default()
+                };
+                let (command, hint) = summary_command_and_hint(
+                    summaries_enabled,
+                    &commit_generation,
+                    "[TEST_CONFIG]",
+                );
+                Decision {
+                    case,
+                    command,
+                    hint,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_yaml_snapshot!(decisions, @r#"
+        - case: summaries off + no command
+          command: ~
+          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = true\n```\n"
+        - case: summaries on + no command
+          command: ~
+          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = true\n```\n"
+        - case: summaries off + command
+          command: ~
+          hint: "Summaries off\n\nEnable summaries in:\n[TEST_CONFIG]\n\n```toml\n[list]\nsummary = true\n```\n"
+        - case: summaries on + command
+          command: llm -m haiku
+          hint: ~
+        "#);
+    }
 
     /// Empties the stash and emits each line. Verifies post-skim drain
     /// semantics without standing up a real picker.
@@ -4290,89 +4355,119 @@ pub mod tests {
         );
     }
 
-    /// `removal_targets_current_worktree` fires only for a `Worktree` whose
-    /// `changed_directory` flag is set (the worktree the picker was launched from);
-    /// a non-current worktree and any `BranchOnly` row read as `false`.
+    /// End-to-end through `apply`: alt-x on the worktree the picker was launched
+    /// from keeps its exact row in place and stashes the canonical explanation.
+    ///
+    /// The branch is deliberately unmerged. `prepare_removal` therefore proves
+    /// this is both the current worktree (`changed_directory`) and a kept-branch
+    /// worktree removal (`integration_reason == None`): without the current-row
+    /// guard, dispatch would enter the morph path and start background deletion.
+    /// `RemovalEffect::Kept` proves the synchronous guard wins instead, so the
+    /// immediate survival assertions do not race an asynchronous removal.
     #[test]
-    fn test_removal_targets_current_worktree() {
-        let path = std::path::PathBuf::from("/repo.feature");
-        let worktree = |changed_directory| RemovalPlan::Worktree {
-            main_path: std::path::PathBuf::from("/repo"),
-            worktree_path: path.clone(),
-            changed_directory,
-            branch_name: Some("feature".to_string()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some("main".to_string()),
-            integration_reason: None,
-            force_worktree: false,
-            removed_commit: None,
-            branch_checked_out_at: None,
-        };
-        assert!(
-            super::removal_targets_current_worktree(&worktree(true)),
-            "removing the worktree the picker was launched from"
-        );
-        assert!(
-            !super::removal_targets_current_worktree(&worktree(false)),
-            "removing some other worktree"
-        );
-        assert!(
-            !super::removal_targets_current_worktree(&RemovalPlan::BranchOnly {
-                branch_name: "feature".to_string(),
-                deletion_mode: BranchDeletionMode::SafeDelete,
-                pruned: false,
-                target_branch: None,
-                integration_reason: None,
-                branch_checked_out_at: None,
-            }),
-            "a branch-only row has no worktree to be standing in"
-        );
-    }
+    fn test_apply_keeps_current_worktree_row() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.add_worktree_with_commit("standing-here", "new.txt", "unmerged work", "unmerged work");
 
-    /// `keep_current_worktree_row` keeps the row in place and stashes the
-    /// can't-remove-current-worktree info + switch-away hint — alt-x on the current
-    /// worktree never removes it and never spawns a background removal.
-    #[test]
-    fn test_keep_current_worktree_row() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let main_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let reported_path = main_repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("standing-here"))
+            .map(|wt| wt.path.clone())
+            .expect("standing-here worktree is listed");
+        let repo = worktrunk::git::Repository::at(&reported_path).unwrap();
+        assert_eq!(
+            repo.current_worktree().root().unwrap(),
+            reported_path,
+            "the removal repository is genuinely anchored in the linked worktree"
+        );
 
-        let item = branched_picker_item("current", &test.path().join("current"));
+        let item = branched_picker_item("standing-here", &reported_path);
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let remover = test_remover(Arc::clone(&items), repo.clone());
 
-        remover.keep_current_worktree_row();
-
+        let target = PickerRemovalTarget::from_signal(&token).expect("worktree token parses");
+        let (planning_repo, plan) = remover.prepare_removal(&target).unwrap();
+        let RemovalPlan::Worktree {
+            worktree_path,
+            changed_directory,
+            branch_name,
+            integration_reason,
+            ..
+        } = &plan
+        else {
+            panic!("a linked-worktree token must prepare a worktree removal");
+        };
+        assert_eq!(worktree_path, &reported_path);
+        assert!(*changed_directory, "the target is the current worktree");
+        assert_eq!(branch_name.as_deref(), Some("standing-here"));
         assert_eq!(
-            items
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|item| item.output().into_owned())
-                .collect::<Vec<_>>(),
-            vec![token.clone()],
-            "the current worktree row is kept, not removed"
+            integration_reason, &None,
+            "the branch is unmerged and would be kept"
         );
+        assert_eq!(
+            super::worktree_removal_keeps_branch(&planning_repo, &plan).as_deref(),
+            Some("standing-here"),
+            "without the current-worktree guard, dispatch would enter the morph path"
+        );
+
+        let effect = remover.apply(token.clone());
+        assert!(
+            matches!(effect, RemovalEffect::Kept),
+            "the current-worktree guard is synchronous and starts no removal"
+        );
+
+        {
+            let rows = items.lock().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(
+                Arc::ptr_eq(&rows[0], &item),
+                "apply keeps the exact selected row"
+            );
+            assert_eq!(
+                rows[0].output().as_ref(),
+                token,
+                "the row's selection token is unchanged"
+            );
+        }
+        assert!(
+            reported_path.is_dir(),
+            "the synchronous keep guard preserves the worktree directory"
+        );
+        assert!(
+            repo.branch("standing-here").exists_locally().unwrap(),
+            "the synchronous keep guard preserves the branch"
+        );
+
         let warnings = remover.stashed_warnings.lock().unwrap().clone();
-        assert!(
-            warnings.iter().any(|w| w.contains("current worktree")),
-            "stashes the can't-remove-current-worktree info: {warnings:?}"
-        );
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("Switch to another worktree")),
-            "stashes the switch-away hint: {warnings:?}"
+        assert_eq!(
+            warnings,
+            vec![
+                worktrunk::styling::info_message(
+                    "Can't remove the current worktree from the picker"
+                )
+                .to_string(),
+                worktrunk::styling::hint_message("Switch to another worktree first").to_string(),
+            ],
+            "apply stashes the canonical current-worktree diagnostic and hint"
         );
 
-        // A second alt-x on the same kept row dedups — the stash doesn't grow.
-        remover.keep_current_worktree_row();
+        let second_effect = remover.apply(token.clone());
+        assert!(matches!(second_effect, RemovalEffect::Kept));
         assert_eq!(
-            remover.stashed_warnings.lock().unwrap().len(),
-            warnings.len(),
+            *remover.stashed_warnings.lock().unwrap(),
+            warnings,
             "repeated alt-x on the current worktree stashes the hint only once"
         );
+        let rows = items.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(Arc::ptr_eq(&rows[0], &item));
+        assert_eq!(rows[0].output().as_ref(), token);
+        assert!(reported_path.is_dir());
+        assert!(repo.branch("standing-here").exists_locally().unwrap());
     }
 
     /// The header flash a declined alt-x sets self-clears after the beat: the timer

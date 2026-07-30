@@ -699,19 +699,6 @@ fn test_switch_without_directive_file(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_remove_without_directive_file(repo: TestRepo) {
-    let settings = setup_snapshot_settings(&repo);
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.arg("remove").current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
 fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];

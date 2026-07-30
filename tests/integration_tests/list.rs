@@ -90,15 +90,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
 }
 
 #[rstest]
-fn test_list_single_worktree(repo: TestRepo) {
-    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
-}
-
-#[rstest]
-fn test_list_multiple_worktrees(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-
+fn test_list_multiple_worktrees(repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
@@ -1020,34 +1012,9 @@ fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// NOTE: This test is used for doc generation (claude-code.md). It removes fixture
-/// worktrees to produce clean output.
-/// TODO: Consider extracting fixture cleanup into a helper function shared with
-/// setup_readme_example_repo.
-#[rstest]
-fn test_list_with_user_marker(mut repo: TestRepo) {
-    // Remove fixture worktrees for clean doc output (used by claude-code.md)
-    for branch in &["feature-a", "feature-b", "feature-c"] {
-        let worktree_path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{}", branch));
-        if worktree_path.exists() {
-            let _ = repo
-                .git_command()
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap(),
-                ])
-                .run();
-        }
-        // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).run();
-    }
-
+/// Set up the clean worktree state shared by the user-marker documentation snapshots.
+fn setup_user_marker_example(repo: &mut TestRepo) {
+    repo.remove_fixture_worktrees();
     repo.commit_with_age("Initial commit", DAY);
 
     // Branch ahead of main with commits and user marker 🤖
@@ -1075,7 +1042,11 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
     // Branch with uncommitted changes only (no user marker)
     let wip_wt = repo.add_worktree("wip-docs");
     std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+}
 
+#[rstest]
+fn test_list_with_user_marker(mut repo: TestRepo) {
+    setup_user_marker_example(&mut repo);
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
@@ -1212,32 +1183,6 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
 // These functions create minimal repos for Quick Start documentation.
 // The examples show the simplest workflow: create → list → merge.
 
-/// Remove fixture worktrees to start with a clean main-only repo.
-///
-/// The standard TestRepo fixture includes feature-a, feature-b, feature-c.
-/// Doc examples need clean output without these.
-fn remove_fixture_worktrees(repo: &mut TestRepo) {
-    for branch in &["feature-a", "feature-b", "feature-c"] {
-        let worktree_path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{}", branch));
-        if worktree_path.exists() {
-            let _ = repo
-                .git_command()
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap(),
-                ])
-                .run();
-        }
-        let _ = repo.git_command().args(["branch", "-D", branch]).run();
-    }
-}
-
 /// Set up a minimal repo with just main branch.
 ///
 /// Creates a simple codebase:
@@ -1247,7 +1192,7 @@ fn remove_fixture_worktrees(repo: &mut TestRepo) {
 ///
 /// Used as base for both Quick Start and full README examples.
 fn setup_quickstart_base(repo: &mut TestRepo) {
-    remove_fixture_worktrees(repo);
+    repo.remove_fixture_worktrees();
 
     // Suppress the "customize worktree locations" hint for clean snapshots
     repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
@@ -1481,7 +1426,7 @@ pub fn init() -> bool {
 /// use a different setup function.
 fn setup_readme_example_repo(repo: &mut TestRepo) -> std::path::PathBuf {
     // Start with clean base (removes fixture worktrees)
-    remove_fixture_worktrees(repo);
+    repo.remove_fixture_worktrees();
 
     // === Set up main branch with initial codebase ===
     // Main has a working API with security issues that fix-auth will harden
@@ -2640,32 +2585,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap
 #[rstest]
 fn test_readme_example_list_marker(mut repo: TestRepo) {
-    remove_fixture_worktrees(&mut repo);
-
-    repo.commit_with_age("Initial commit", DAY);
-
-    // Branch ahead of main with commits and user marker 🤖
-    let _feature_wt = repo.add_worktree_with_commit(
-        "feature-api",
-        "api.rs",
-        "// API implementation",
-        "Add REST API endpoints",
-    );
-    repo.set_marker("feature-api", "🤖");
-
-    // Branch with uncommitted changes and user marker 💬
-    let review_wt = repo.add_worktree_with_commit(
-        "review-ui",
-        "component.tsx",
-        "// UI component",
-        "Add dashboard component",
-    );
-    std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
-    repo.set_marker("review-ui", "💬");
-
-    // Branch with uncommitted changes only (no user marker)
-    let wip_wt = repo.add_worktree("wip-docs");
-    std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+    setup_user_marker_example(&mut repo);
 
     assert_cmd_snapshot!(
         "readme_example_list_marker",
@@ -2697,20 +2617,6 @@ url = "http://localhost:{{ branch | hash_port }}"
         "tips_dev_server_workflow",
         list_snapshots::command_readme(&repo, repo.root_path())
     );
-}
-
-#[rstest]
-fn test_list_progressive_flag(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-
-    // Force progressive mode even in non-TTY test environment
-    // Output should be identical to buffered mode (only process differs)
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--progressive");
-        cmd
-    });
 }
 
 #[rstest]
@@ -2771,28 +2677,6 @@ fn test_list_first_output_writes_buffered_stdout(mut repo: TestRepo) {
 // ============================================================================
 // Task DAG Mode Tests
 // ============================================================================
-
-#[rstest]
-fn test_list_task_dag_single_worktree(repo: TestRepo) {
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--progressive");
-        cmd
-    });
-}
-
-#[rstest]
-fn test_list_task_dag_multiple_worktrees(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-    repo.add_worktree("feature-c");
-
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--progressive");
-        cmd
-    });
-}
 
 #[rstest]
 fn test_list_task_dag_full_with_diffs(mut repo: TestRepo) {

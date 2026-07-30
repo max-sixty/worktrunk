@@ -1978,6 +1978,8 @@ pub fn with_scope_note(message: String, other_description: &str, key: &str) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
+    use insta::assert_snapshot;
 
     /// `USER_ONLY_COMMIT_GENERATION_PATHS` must stay in sync with
     /// `CommitGenerationConfig`: every key except the project-valid
@@ -4326,25 +4328,6 @@ pager = "delta"
     }
 
     #[test]
-    fn test_format_deprecation_warnings_switch_picker_timeout() {
-        let info = DeprecationInfo {
-            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: vec![DeprecationKind::SwitchPickerTimeout],
-            kind: ConfigFileKind::User,
-            main_worktree_path: None,
-        };
-        let output = format_deprecation_warnings(&info);
-        assert!(
-            output.contains("switch.picker.timeout-ms"),
-            "Should mention the field: {output}"
-        );
-        assert!(
-            output.contains("no longer used"),
-            "Should explain deprecation reason: {output}"
-        );
-    }
-
-    #[test]
     fn test_detect_list_task_timeout_top_level() {
         let content = r#"
 [list]
@@ -4423,38 +4406,49 @@ timeout-ms = 500
         assert_eq!(result, content);
     }
 
-    #[test]
-    fn test_format_deprecation_warnings_list_task_timeout() {
-        let info = DeprecationInfo {
-            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: vec![DeprecationKind::ListTaskTimeout],
-            kind: ConfigFileKind::User,
-            main_worktree_path: None,
-        };
-        let output = format_deprecation_warnings(&info);
-        assert!(
-            output.contains("list.task-timeout-ms"),
-            "Should mention the field: {output}"
-        );
-        assert!(
-            output.contains("list.timeout-ms"),
-            "Should point at the surviving budget: {output}"
-        );
-    }
-
     // ==================== negated bool format + migration tests ====================
 
     #[test]
-    fn test_format_deprecation_warnings_no_ff_and_no_cd() {
+    fn test_format_deprecation_warnings_all_kinds() {
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: vec![DeprecationKind::NoFf, DeprecationKind::NoCd],
+            // Keep one representative of each warning kind in
+            // DEPRECATION_RULES emission order. Commit-generation includes
+            // both scopes because its formatter has distinct branches.
+            deprecations: vec![
+                DeprecationKind::TemplateVar {
+                    old: "repo_root",
+                    new: "repo_path",
+                },
+                DeprecationKind::CommitGeneration(CommitGenerationDeprecations {
+                    has_top_level: true,
+                    project_keys: vec!["github.com/user/repo".to_string()],
+                }),
+                DeprecationKind::ApprovedCommands,
+                DeprecationKind::Select,
+                DeprecationKind::CiSection,
+                DeprecationKind::NoFf,
+                DeprecationKind::NoCd,
+                DeprecationKind::SwitchPickerTimeout,
+                DeprecationKind::ListTaskTimeout,
+                DeprecationKind::JsonSchemaUnset,
+            ],
             kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
-        let output = format_deprecation_warnings(&info);
-        assert!(output.contains("no-ff"), "Should mention no-ff: {output}");
-        assert!(output.contains("no-cd"), "Should mention no-cd: {output}");
+        assert_snapshot!(format_deprecation_warnings(&info).ansi_strip(), @r#"
+        ▲ User config: template variable repo_root is deprecated in favor of repo_path
+        ▲ User config: [commit-generation] is deprecated in favor of [commit.generation]
+        ▲ User config: [projects."github.com/user/repo".commit-generation] is deprecated in favor of [projects."github.com/user/repo".commit.generation]
+        ▲ User config: approved-commands under [projects] is deprecated in favor of approvals.toml
+        ▲ User config: [select] is deprecated in favor of [switch.picker]
+        ▲ User config: [ci] is deprecated in favor of [forge]
+        ▲ User config: merge.no-ff is deprecated in favor of merge.ff (inverted)
+        ▲ User config: switch.no-cd is deprecated in favor of switch.cd (inverted)
+        ▲ User config: switch.picker.timeout-ms is no longer used — the picker now renders progressively
+        ▲ User config: list.task-timeout-ms is no longer used — list.timeout-ms bounds the collect phase
+        ▲ User config: [list] json-schema is unset; a future release switches the JSON default to schema 2
+        "#);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use worktrunk::config::{
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
 use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
+use worktrunk::shell::{FileDetectionResult, Shell, ZSH_PROBE_FLAGS, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     FormattedMessage, error_message, format_bash_with_gutter, format_heading, format_toml,
@@ -275,29 +275,14 @@ fn git_version() -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Args for the interactive zsh compinit probe.
-///
-/// `+m` (disable job control) is load-bearing: without it the interactive
-/// `zsh -ic` grabs wt's controlling terminal and, if the timeout kills it
-/// first, leaves the pager to suspend with SIGTTOU. See `check_zsh_compinit_missing`
-/// and issue #3322.
-const ZSH_COMPINIT_PROBE_ARGS: [&str; 4] =
-    ["--no-globalrcs", "+m", "-ic", "(( $+functions[compdef] ))"];
-
 /// Check if zsh has compinit enabled by spawning an interactive shell
 ///
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
 ///
-// TODO(zsh-compinit-probe-unify): this duplicates `shell::detect_zsh_compinit`
-// — both spawn an interactive `zsh -ic` to probe for the `compdef` function, and
-// #3322 had to add the `+m` job-control fix to both. They diverge on purpose, so
-// folding them into one parameterized probe isn't a mechanical rename: this one
-// passes `--no-globalrcs` (checks the USER's config so we only nudge when *they*
-// haven't enabled compinit) while `detect_zsh_compinit` intentionally sources
-// global rcs (so shell setup won't re-add what /etc/zshrc already enables); they
-// also differ in result type (bool vs Option<bool>) and runner (`Cmd` vs raw
-// `Command`). Unify behind one `probe_zsh_compdef(no_globalrcs: bool)` helper.
+// This remains separate from `shell::detect_zsh_compinit`: config show skips
+// global rcs, reads the exit status, and uses `Cmd`; shell setup sources global
+// rcs, reads marker output, and manages a raw `Command`.
 fn check_zsh_compinit_missing() -> bool {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
@@ -330,7 +315,9 @@ fn check_zsh_compinit_missing() -> bool {
     // spawned moments later (config show always pages) raises SIGTTOU,
     // suspending the command (`suspended (tty output)`). See issue #3322.
     let Ok(output) = Cmd::new("zsh")
-        .args(ZSH_COMPINIT_PROBE_ARGS)
+        .arg("--no-globalrcs")
+        .args(ZSH_PROBE_FLAGS)
+        .arg("(( $+functions[compdef] ))")
         .env("ZSH_DISABLE_COMPFIX", "true")
         .timeout(std::time::Duration::from_secs(2))
         .run()
@@ -1672,25 +1659,6 @@ mod tests {
         // Invalid input
         assert!(!is_newer_version("invalid", "0.23.2"));
         assert!(!is_newer_version("0.23.2", "invalid"));
-    }
-
-    /// Regression guard for #3322: the interactive zsh compinit probe must
-    /// disable job control (`+m`). Without it, the probe grabs wt's controlling
-    /// terminal; a timeout-kill then leaves wt in a background process group and
-    /// the `wt config show` pager suspends with SIGTTOU (`suspended (tty output)`).
-    #[test]
-    fn test_compinit_probe_disables_job_control() {
-        assert!(
-            ZSH_COMPINIT_PROBE_ARGS.contains(&"+m"),
-            "compinit probe must pass +m to disable job control (#3322); got {ZSH_COMPINIT_PROBE_ARGS:?}"
-        );
-        // `+m` must precede `-ic` so it's parsed as an option, not a command arg.
-        let m = ZSH_COMPINIT_PROBE_ARGS.iter().position(|a| *a == "+m");
-        let ic = ZSH_COMPINIT_PROBE_ARGS.iter().position(|a| *a == "-ic");
-        assert!(
-            m < ic,
-            "+m must come before -ic: {ZSH_COMPINIT_PROBE_ARGS:?}"
-        );
     }
 
     #[test]

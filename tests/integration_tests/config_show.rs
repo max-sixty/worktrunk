@@ -45,9 +45,7 @@ server = "npm run dev"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -73,9 +71,7 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -117,9 +113,7 @@ command = "company-llm-tool"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -540,9 +534,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -569,9 +561,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -608,40 +598,6 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     assert!(
         stderr.contains("has unknown field"),
         "Expected unknown field warning from system config load, got: {stderr}"
-    );
-}
-
-/// System config should use the same deprecation warning gate as user config.
-#[rstest]
-fn test_system_config_deprecation_warning_during_load(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
-    fs::write(
-        &system_config_path,
-        r#"[select]
-pager = "delta --paging=never"
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = repo.wt_command();
-    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
-    cmd.arg("list").current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "Command should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("System config") && stderr.contains("[select]"),
-        "Expected deprecation warning from system config load, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("[switch.picker]"),
-        "Expected replacement section in warning, got: {stderr}"
     );
 }
 
@@ -736,9 +692,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Force compinit warning for deterministic tests across environments
         cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
@@ -765,9 +719,7 @@ fn test_config_show_skipped_with_installed_binary(mut repo: TestRepo, temp_home:
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -808,9 +760,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -851,9 +801,7 @@ fn test_config_show_fish_with_completions(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -887,9 +835,7 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -924,9 +870,7 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -962,9 +906,7 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1001,9 +943,7 @@ eval "$(wt.exe config shell init bash)"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1052,9 +992,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1190,9 +1128,7 @@ fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1217,9 +1153,7 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1289,9 +1223,7 @@ fn test_config_show_suggests_user_config_for_commit_generation(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1317,9 +1249,7 @@ fn test_config_show_suggests_project_config_for_ci(mut repo: TestRepo, temp_home
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1343,9 +1273,7 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1374,9 +1302,7 @@ fn test_config_show_invalid_project_toml(mut repo: TestRepo, temp_home: TempDir)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1402,9 +1328,7 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1439,9 +1363,7 @@ command = "nonexistent-llm-command-12345 -m test-model"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1472,9 +1394,7 @@ fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Inject a higher version to trigger update-available message
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "99.0.0");
         cmd.arg("config")
@@ -1503,9 +1423,7 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Simulate a fetch failure
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "error");
         cmd.arg("config")
@@ -1545,9 +1463,7 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
             .arg("show")
@@ -1597,9 +1513,7 @@ fn test_config_show_full_azure_remote(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
             .arg("show")
@@ -1637,9 +1551,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1673,9 +1585,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1706,42 +1616,7 @@ fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
-fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home: TempDir) {
-    // Setup mock gh/glab for deterministic BINARIES output
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    // Create fake global config
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    // Create project config file with only whitespace
-    let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).unwrap();
-    fs::write(config_dir.join("wt.toml"), "   \n\t\n  ").unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1761,9 +1636,7 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1798,9 +1671,7 @@ alias wt="git worktree"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1840,9 +1711,7 @@ export WT_BIN="/c/Program Files/wt.exe"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1894,9 +1763,7 @@ alias wt="git worktree"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1982,35 +1849,27 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     });
 }
 
-/// When a migration file has already been written, subsequent `wt list` runs should:
-/// 1. Still show a brief deprecation warning
-/// 2. NOT write or overwrite the migration file (skip write since hint is set)
-///
-/// The file remains available for the user. If they want a fresh one, `wt config show` regenerates.
+/// Loading deprecated project config warns but leaves the config untouched.
+/// Materializing migrations is `wt config update`'s job.
 #[rstest]
 fn test_wt_list_never_writes_migration_file(repo: TestRepo, temp_home: TempDir) {
-    // Write project config with deprecated variables
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
-    let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+    let original = r#"pre-start = "echo {{ main_worktree }}"
 "#;
-    fs::write(&project_config_path, original).unwrap();
+    repo.write_project_config(original);
 
-    // `wt list` should emit a deprecation warning but never write a .new file
-    // or modify the config. Materializing migrations is `wt config update`'s job.
-    for _ in 0..2 {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "wt list should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "wt list should succeed: {stderr}");
+    assert!(
+        stderr.contains("Project config")
+            && stderr.contains("main_worktree")
+            && stderr.contains("is deprecated"),
+        "Expected the project-config template deprecation warning, got: {stderr}"
+    );
     assert!(
         !project_config_path.with_extension("toml.new").exists(),
         "wt list must not write a .new migration file"
@@ -2022,133 +1881,63 @@ fn test_wt_list_never_writes_migration_file(repo: TestRepo, temp_home: TempDir) 
     );
 }
 
-/// Fixing a deprecated config and later introducing a new one still shows a
-/// warning on the new deprecation — no stale state persists across process
-/// runs now that `.new` files are gone, so this just exercises the plain
-/// per-process warning path.
+/// A linked worktree loads its own project hooks, but suppresses project-config
+/// deprecation warnings because the migration is only actionable from the main
+/// worktree.
 #[rstest]
-fn test_fixing_deprecated_config_then_reintroducing_still_warns(
-    repo: TestRepo,
+fn test_deprecated_project_config_silent_in_linked_worktree(
+    mut repo: TestRepo,
     temp_home: TempDir,
 ) {
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
+    let linked_path = repo.add_worktree("feature");
+    let config_path = linked_path.join(".config").join("wt.toml");
+    let original = r#"pre-start = "echo linked-project-hook {{ main_worktree }}"
+"#;
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, original).unwrap();
 
-    fs::write(
-        &project_config_path,
-        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
-"#,
-    )
-    .unwrap();
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        assert!(cmd.output().unwrap().status.success());
-    }
-
-    fs::write(
-        &project_config_path,
-        r#"pre-start = "ln -sf {{ repo }}/node_modules"
-"#,
-    )
-    .unwrap();
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("deprecated"),
-            "No deprecation warning for clean config"
-        );
-    }
-
-    fs::write(
-        &project_config_path,
-        r#"pre-start = "cd {{ worktree }} && npm install"
-"#,
-    )
-    .unwrap();
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("is deprecated"),
-            "New deprecation should show warning, got: {stderr}"
-        );
-    }
-
+    // `hook show` loads and renders project config without globally
+    // suppressing warnings; only ProjectConfig's linked-worktree gate makes
+    // the deprecation silent.
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "show", "pre-start", "--format=json"])
+        .current_dir(&linked_path)
+        .env("NO_COLOR", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !project_config_path.with_extension("toml.new").exists(),
-        "wt list must never write a .new file"
+        output.status.success(),
+        "wt hook show from linked worktree should succeed: {stderr}"
     );
-}
 
-/// Deprecation warnings should only appear in the main worktree where the migration
-/// file can be applied. Running from a feature worktree should skip the warning entirely.
-#[rstest]
-fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, temp_home: TempDir) {
-    // Create a feature worktree first (before adding project config)
-    {
-        let mut cmd = repo.wt_command();
-        cmd.args(["switch", "--create", "feature"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "Creating feature worktree should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    // Get the feature worktree path
-    let feature_path = repo.root_path().parent().unwrap().join(format!(
-        "{}.feature",
-        repo.root_path().file_name().unwrap().to_string_lossy()
-    ));
-
-    // Write project config with deprecated variables IN THE FEATURE WORKTREE
-    // (project config is loaded from the current worktree root, not the main worktree)
-    let feature_config_dir = feature_path.join(".config");
-    fs::create_dir_all(&feature_config_dir).unwrap();
-    fs::write(
-        feature_config_dir.join("wt.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    // Run wt list from the feature worktree - should NOT show deprecation warning
-    // because warn_and_migrate is false for non-main worktrees
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(&feature_path);
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "wt list from feature worktree should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("deprecated template variables"),
-            "Deprecation warning should NOT appear in feature worktree, got: {stderr}"
-        );
-        assert!(
-            !stderr.contains("Wrote migrated"),
-            "Migration file should NOT be written from feature worktree, got: {stderr}"
-        );
-    }
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("hook show should emit valid JSON");
+    let project_hook = hooks
+        .as_array()
+        .expect("hook show should emit an array")
+        .iter()
+        .find(|hook| hook["source"] == "project" && hook["type"] == "pre-start")
+        .expect("linked-worktree project hook should be listed");
+    assert_eq!(
+        project_hook["template"],
+        "echo linked-project-hook {{ main_worktree }}"
+    );
+    assert!(
+        !(stderr.contains("Project config")
+            && stderr.contains("main_worktree")
+            && stderr.contains("deprecated")),
+        "Project-config deprecation warning should be silent in a linked worktree, got: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        original,
+        "loading linked-worktree project config must not modify it"
+    );
+    assert!(
+        !config_path.with_extension("toml.new").exists(),
+        "loading linked-worktree project config must not write a .new migration file"
+    );
 }
 
 /// `wt list` emits a user-config deprecation warning but never writes a
@@ -2207,9 +1996,7 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2244,9 +2031,7 @@ fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2278,9 +2063,7 @@ fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2308,9 +2091,7 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2340,9 +2121,7 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2370,9 +2149,7 @@ fn test_config_show_codex_available(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2403,9 +2180,7 @@ fn test_config_show_opencode_available_plugin_not_installed(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2434,9 +2209,7 @@ fn test_config_show_opencode_plugin_installed(mut repo: TestRepo, temp_home: Tem
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2473,9 +2246,7 @@ fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2506,9 +2277,7 @@ fn test_config_show_gemini_available_extension_not_installed(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2539,9 +2308,7 @@ fn test_config_show_gemini_extension_invalid_manifest(mut repo: TestRepo, temp_h
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2570,9 +2337,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2602,9 +2367,7 @@ fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDi
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2880,9 +2643,7 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
     // Collapse triple newlines that may result from stripping adjacent lines
     settings.add_filter(r"\n\n\n", "\n\n");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2918,9 +2679,7 @@ fn test_config_show_detected_shell_via_process_tree(mut repo: TestRepo, temp_hom
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2942,9 +2701,7 @@ fn test_config_show_detected_shell_via_process_tree(mut repo: TestRepo, temp_hom
 fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    repo.configure_mock_commands(&mut cmd);
+    let mut cmd = repo.wt_command();
     cmd.arg("config").arg("show").current_dir(repo.root_path());
     set_temp_home_env(&mut cmd, temp_home.path());
     set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3076,9 +2833,7 @@ pre-start = "ln -sf {{ repo_root }}/node_modules"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3129,9 +2884,7 @@ fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
     // Run wt config show from the linked worktree
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(&feature_path);
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3164,9 +2917,7 @@ command = "llm -m gpt-4"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3276,30 +3027,6 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     assert!(updated.contains("pre-start"));
     assert!(updated.contains("{{ repo }}"));
     assert!(!updated.contains("main_worktree"));
-}
-
-/// `wt config update` with a clean project config (no deprecations) treats
-/// the repo as nothing-to-do — covers the project-config path through
-/// `check_and_migrate` when it returns `info == None`.
-#[rstest]
-fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
-    repo.write_project_config(
-        r#"pre-start = "echo ready"
-"#,
-    );
-    repo.commit("Add clean project config");
-
-    let output = repo
-        .wt_command()
-        .args(["config", "update"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No deprecated settings found"),
-        "Expected no-op message, got: {stderr}"
-    );
 }
 
 /// `wt config update` from a linked worktree declines to mutate project
@@ -3524,48 +3251,6 @@ fn test_config_update_json_schema_adopt_defers_to_system_config(repo: TestRepo) 
     );
 }
 
-/// `wt config update --yes` applies template variable migration
-#[rstest]
-fn test_config_update_applies_template_var_migration(repo: TestRepo) {
-    let config_path = repo.test_config_path();
-    fs::write(
-        config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "update", "--yes"]);
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Config file should now contain the updated variables
-    let updated = fs::read_to_string(config_path).unwrap();
-    assert!(
-        updated.contains("{{ repo }}"),
-        "Should replace main_worktree with repo"
-    );
-    assert!(
-        updated.contains("{{ repo_path }}"),
-        "Should replace repo_root with repo_path"
-    );
-    assert!(
-        updated.contains("{{ worktree_path }}"),
-        "Should replace worktree with worktree_path"
-    );
-
-    // Migration .new file should be gone (renamed over original)
-    assert!(
-        !config_path.with_extension("toml.new").exists(),
-        ".new file should be consumed by the update"
-    );
-}
-
 /// `wt config update` migrates the deprecated `commits` squash-template
 /// variable to `commit_details` (see #2984). The rewrite is a plain identifier
 /// rename — the loop variable stays bare — because each `commit_details`
@@ -3611,171 +3296,6 @@ Combine {{ commits | length }} commits:
         !updated.contains("{{ commits"),
         "no deprecated commits reference should remain: {updated}"
     );
-}
-
-/// `wt config show` displays deprecation details for `[select]` → `[switch.picker]`.
-/// Uses user config so the warning label reads "User config".
-#[rstest]
-fn test_config_show_displays_select_section_deprecation(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(
-        &config_path,
-        r#"[select]
-pager = "delta --paging=never"
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config show` displays deprecation details for `[merge] no-ff` → `ff` (inverted).
-#[rstest]
-fn test_config_show_displays_no_ff_deprecation(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(
-        &config_path,
-        r#"[merge]
-no-ff = true
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config show` displays deprecation details for `[switch] no-cd` → `cd` (inverted).
-#[rstest]
-fn test_config_show_displays_no_cd_deprecation(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(
-        &config_path,
-        r#"[switch]
-no-cd = true
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config update --yes` applies commit-generation section rename
-#[rstest]
-fn test_config_update_applies_commit_generation_migration(repo: TestRepo) {
-    let config_path = repo.test_config_path();
-    fs::write(
-        config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[commit-generation]
-command = "llm"
-args = ["-m", "haiku"]
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "update", "--yes"]);
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Config file should have the renamed section and merged args
-    let updated = fs::read_to_string(config_path).unwrap();
-    assert!(
-        updated.contains("[commit.generation]"),
-        "Should rename section"
-    );
-    assert!(
-        updated.contains("command = \"llm -m haiku\""),
-        "Should merge args into command"
-    );
-    assert!(
-        !updated.contains("[commit-generation]"),
-        "Old section name should be gone"
-    );
-    assert!(!updated.contains("args ="), "Args field should be removed");
-}
-
-/// `wt config update --yes` handles approved-commands migration
-#[rstest]
-fn test_config_update_applies_approved_commands_migration(repo: TestRepo) {
-    let config_path = repo.test_config_path();
-    fs::write(
-        config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."github.com/user/repo"]
-approved-commands = ["npm install", "npm test"]
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "update", "--yes"]);
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Config should no longer have approved-commands
-    let updated = fs::read_to_string(config_path).unwrap();
-    assert!(
-        !updated.contains("approved-commands"),
-        "approved-commands should be removed from config"
-    );
-
-    // Approvals should be in approvals.toml
-    let approvals_file = config_path.with_file_name("approvals.toml");
-    assert!(approvals_file.exists(), "approvals.toml should exist");
-    let approvals = fs::read_to_string(&approvals_file).unwrap();
-    assert!(approvals.contains("npm install"));
-    assert!(approvals.contains("npm test"));
 }
 
 /// A relative `--config` resolves against `-C`, the way git resolves the path
@@ -3839,9 +3359,7 @@ fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3863,9 +3381,7 @@ fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_hom
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3882,9 +3398,7 @@ fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3915,9 +3429,7 @@ fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3934,9 +3446,7 @@ fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3954,9 +3464,7 @@ fn test_plugins_codex_install(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3986,9 +3494,7 @@ fn test_plugins_codex_uninstall(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4004,9 +3510,7 @@ fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempD
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4731,9 +4235,7 @@ fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4763,9 +4265,7 @@ fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4782,9 +4282,7 @@ fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());

@@ -387,13 +387,6 @@ impl RemovalPlan {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_switch_result_path_already_at() {
-        let path = PathBuf::from("/test/path");
-        let result = SwitchResult::AlreadyAt(path.clone());
-        assert_eq!(result.path(), &path);
-    }
-
     #[cfg(unix)]
     #[test]
     fn remove_result_branch_name_reads_both_variants() {
@@ -478,40 +471,51 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_result_path_existing() {
-        let path = PathBuf::from("/test/existing");
-        let result = SwitchResult::Existing { path: path.clone() };
-        assert_eq!(result.path(), &path);
-    }
+    fn test_switch_result_path() {
+        let cases = [
+            (
+                "already at worktree",
+                SwitchResult::AlreadyAt(PathBuf::from("/test/path")),
+                PathBuf::from("/test/path"),
+            ),
+            (
+                "existing worktree",
+                SwitchResult::Existing {
+                    path: PathBuf::from("/test/existing"),
+                },
+                PathBuf::from("/test/existing"),
+            ),
+            (
+                "created branch",
+                SwitchResult::Created {
+                    path: PathBuf::from("/test/created"),
+                    created_branch: true,
+                    base_branch: Some("main".to_string()),
+                    base_worktree_path: Some("/test/main".to_string()),
+                    from_remote: None,
+                    pr_number: None,
+                    pr_url: None,
+                },
+                PathBuf::from("/test/created"),
+            ),
+            (
+                "created from remote",
+                SwitchResult::Created {
+                    path: PathBuf::from("/test/remote"),
+                    created_branch: false,
+                    base_branch: None,
+                    base_worktree_path: None,
+                    from_remote: Some("origin/feature".to_string()),
+                    pr_number: None,
+                    pr_url: None,
+                },
+                PathBuf::from("/test/remote"),
+            ),
+        ];
 
-    #[test]
-    fn test_switch_result_path_created() {
-        let path = PathBuf::from("/test/created");
-        let result = SwitchResult::Created {
-            path: path.clone(),
-            created_branch: true,
-            base_branch: Some("main".to_string()),
-            base_worktree_path: Some("/test/main".to_string()),
-            from_remote: None,
-            pr_number: None,
-            pr_url: None,
-        };
-        assert_eq!(result.path(), &path);
-    }
-
-    #[test]
-    fn test_switch_result_created_with_remote() {
-        let path = PathBuf::from("/test/remote");
-        let result = SwitchResult::Created {
-            path: path.clone(),
-            created_branch: false,
-            base_branch: None,
-            base_worktree_path: None,
-            from_remote: Some("origin/feature".to_string()),
-            pr_number: None,
-            pr_url: None,
-        };
-        assert_eq!(result.path(), &path);
+        for (name, result, expected) in cases {
+            assert_eq!(result.path(), &expected, "{name}");
+        }
     }
 
     #[test]
