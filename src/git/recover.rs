@@ -216,12 +216,12 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::TestRepo;
+    use crate::testing::{TestRepo, test_tempdir};
     use ansi_str::AnsiStr;
 
     #[test]
     fn test_try_repo_at_rejects_git_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         // Create a .git file (not directory) — simulates a linked worktree
         std::fs::write(tmp.path().join(".git"), "gitdir: /some/path").unwrap();
         assert!(try_repo_at(tmp.path()).is_none());
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_paths_match_same_name_same_parent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         // Both paths share the same existing parent and same name
         let a = tmp.path().join("feature");
         let b = tmp.path().join("feature");
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_paths_match_different_parent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let dir_a = tmp.path().join("a");
         let dir_b = tmp.path().join("b");
         std::fs::create_dir(&dir_a).unwrap();
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_was_worktree_of_finds_existing_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let test = TestRepo::at(&base.join("repo"));
         test.commit("init");
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_finds_deleted_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let test = TestRepo::at(&base.join("repo"));
         test.commit("init");
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_returns_none_for_unrelated_path() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let test = TestRepo::at(&base.join("repo"));
         test.commit("init");
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_multi_repo_siblings() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
 
         // Create two sibling repos
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_nested_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
 
         let test = TestRepo::at(&base.join("myrepo"));
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_recover_from_path_deep_pwd() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let test = TestRepo::at(&base.join("repo"));
         test.commit("init");
@@ -445,7 +445,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_recover_from_path_symlinked_subdir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_tempdir();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let test = TestRepo::at(&base.join("repo"));
         test.commit("init");

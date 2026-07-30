@@ -42,7 +42,11 @@ pub trait RepositoryCliExt {
     /// names.
     ///
     /// Returns a `RemovalPlan` describing what will be removed. The actual
-    /// removal is performed by the output handler.
+    /// removal is performed by the output handler. Planning is a pure read —
+    /// every mutation, including unregistering a stale worktree entry
+    /// (`RemovalPlan::BranchOnly::prune_entry`), happens at execution — so
+    /// callers may plan speculatively: on a `--dry-run` scan, before an
+    /// approval prompt, or on the picker's event loop.
     ///
     /// `current_path` overrides process-CWD discovery for determining which
     /// worktree is "current". Pass `None` for normal CLI usage (discovers from
@@ -142,11 +146,12 @@ impl RepositoryCliExt for Repository {
                 is_current: bool,
             },
             BranchOnly {
-                /// Path of the stale worktree entry this fell back from, when
-                /// the fallback was a prune. `None` when the branch has no
-                /// worktree entry at all, which is also the only case with no
-                /// sibling to check — a branch that has one resolves to
-                /// `Worktree` above, or, named as a `Branch` target, errors.
+                /// Path of the stale worktree entry this fell back from,
+                /// carried into the plan for execution-time pruning. `None`
+                /// when the branch has no worktree entry at all, which is also
+                /// the only case with no sibling to check — a branch that has
+                /// one resolves to `Worktree` above, or, named as a `Branch`
+                /// target, errors.
                 pruned_from: Option<PathBuf>,
                 branch: String,
             },
@@ -224,22 +229,23 @@ impl RepositoryCliExt for Repository {
                     }
                     .into());
                 }
-                // Directory missing (e.g. external `rm -rf`): prune the stale
-                // metadata and fall back to branch-only deletion — the same
-                // handling the branch-targeted path applies. A detached
+                // Directory missing (e.g. external `rm -rf`): fall back to
+                // branch-only deletion, recording the stale entry in the plan
+                // so execution unregisters it — planning stays a pure read
+                // (`wt step prune`'s scan doubles as `--dry-run`, and `wt
+                // remove` plans before its approval prompt). A detached
                 // worktree has no branch to fall back to, so it proceeds and
                 // surfaces the removal error.
                 //
-                // The prune names this worktree rather than sweeping the repo,
-                // so a sibling whose directory is merely absent right now keeps
-                // its registration. `git worktree remove` refuses a locked
-                // worktree where a repo-wide prune ignored one, which needs no
-                // guard here: the lock check above already returned for every
-                // locked entry in this arm.
+                // The recorded prune names this worktree rather than sweeping
+                // the repo, so a sibling whose directory is merely absent
+                // right now keeps its registration. `git worktree remove`
+                // refuses a locked worktree where a repo-wide prune ignored
+                // one, which needs no guard here: the lock check above already
+                // returned for every locked entry in this arm.
                 if let Some(branch) = wt.branch.as_deref()
                     && !wt.path.exists()
                 {
-                    self.prune_worktree_entry(&wt.path)?;
                     Resolved::BranchOnly {
                         pruned_from: Some(wt.path.clone()),
                         branch: branch.to_string(),
@@ -291,7 +297,7 @@ impl RepositoryCliExt for Repository {
                     return Ok(RemovalPlan::BranchOnly {
                         branch_name: branch,
                         deletion_mode: BranchDeletionMode::Keep,
-                        pruned: true,
+                        prune_entry: pruned_from,
                         target_branch: None,
                         integration_reason: None,
                         branch_checked_out_at: Some(shared),
@@ -309,7 +315,7 @@ impl RepositoryCliExt for Repository {
                 return Ok(RemovalPlan::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
-                    pruned: pruned_from.is_some(),
+                    prune_entry: pruned_from,
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,

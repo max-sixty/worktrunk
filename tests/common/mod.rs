@@ -150,7 +150,7 @@ pub fn repo() -> TestRepo {
 /// ```
 #[rstest::fixture]
 pub fn temp_home() -> TempDir {
-    TempDir::new().unwrap()
+    test_tempdir()
 }
 
 /// Canonicalize a `temp_home` for use as a base when building paths that
@@ -414,7 +414,11 @@ pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
 ///    the Windows equivalents)
 /// 3. Applies the `STATIC_TEST_ENV_VARS` and `PTY_TEST_ENV_VARS` determinism
 ///    baselines
-/// 4. Passes through LLVM coverage profiling vars so subprocess coverage works
+/// 4. Applies the hermetic git floor (`HERMETIC_TEST_GIT_ENV`) — a PTY child
+///    never passes through the `Cmd` latch, and `HOME` here is the real one,
+///    so without the floor every git a PTY script runs would resolve the
+///    developer's `~/.gitconfig`
+/// 5. Passes through LLVM coverage profiling vars so subprocess coverage works
 ///
 /// It supplies no fixture paths, having no fixture to read them from; a caller
 /// with one adds `TestRepo::test_env_vars()` on top, which carries the
@@ -435,6 +439,14 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
         "WORKTRUNK_TEST_EPOCH",
         worktrunk::testing::TEST_EPOCH.to_string(),
     );
+
+    // The hermetic git floor, by hand: a PTY child is `env_clear`ed and never
+    // passes through the `Cmd` latch, and HOME below is the developer's real
+    // one — without the floor, every git a PTY script runs would resolve the
+    // real `~/.gitconfig`.
+    for (key, value) in worktrunk::shell_exec::HERMETIC_TEST_GIT_ENV {
+        cmd.env(key, value);
+    }
 
     // Minimal environment for shells/binaries to function
     let home_dir = home::home_dir().unwrap().to_string_lossy().to_string();
@@ -569,7 +581,6 @@ pub fn shell_command(
 /// These redact volatile metadata captured by insta-cmd in the `info` block.
 /// Called by all snapshot settings helpers for consistency.
 pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
-    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_SYSTEM_CONFIG_PATH", "[TEST_SYSTEM_CONFIG]");
     settings.add_redaction(
@@ -825,10 +836,6 @@ fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
         &format!(r"{TEST_PATH_PREFIX}test-approvals\.toml'?"),
         "[TEST_APPROVALS]",
     );
-    settings.add_filter(
-        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
-        "[TEST_GIT_CONFIG]",
-    );
 }
 
 /// Strip ANSI codes immediately wrapping a path-redaction placeholder so a
@@ -844,7 +851,7 @@ fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
 /// they must consume ANSI inline via [`add_path_placeholder_filter`].
 fn add_placeholder_ansi_strip_filter(settings: &mut insta::Settings) {
     settings.add_filter(
-        r"(?:\x1b\[\d+m)+(\[(?:TEST_(?:CONFIG(?:_NEW)?|APPROVALS|GIT_CONFIG)|PROJECT_ID|TEMP(?:_HOME)?)\])(?:\x1b\[\d+m)+",
+        r"(?:\x1b\[\d+m)+(\[(?:TEST_(?:CONFIG(?:_NEW)?|APPROVALS)|PROJECT_ID|TEMP(?:_HOME)?)\])(?:\x1b\[\d+m)+",
         "$1",
     );
 }
@@ -924,38 +931,38 @@ fn add_temp_home_filters(settings: &mut insta::Settings, temp_home: &Path) {
     );
 }
 
-/// Catch tempfile::tempdir() paths under non-standard OS temp directories.
+/// Catch temp paths under whichever roots the suite actually creates them in.
 ///
-/// `add_project_id_filters` has hardcoded patterns for standard temp locations
-/// (/tmp, /var/folders, C:/Users/.../AppData/Local/Temp). CI may use a different
-/// TEMP (e.g., D:\tmp for faster I/O on Windows). This filter uses the runtime
-/// temp directory to catch those paths.
+/// Two roots are live: the fixtures use [`test_temp_root`], and a test that
+/// reaches for `tempfile` directly lands in the OS temp dir — which CI may
+/// point somewhere non-standard (e.g. D:\tmp for faster I/O on Windows).
+/// Deriving both at runtime covers them without another hardcoded platform
+/// path; `add_project_id_filters` keeps the hardcoded set for paths that
+/// arrive from a subprocess whose temp dir isn't ours.
 fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
-    let temp_dir = std::env::temp_dir();
-    let temp_dir_str = temp_dir.to_string_lossy().replace('\\', "/");
-    let temp_dir_str = temp_dir_str.trim_end_matches('/');
+    for root in [std::env::temp_dir(), test_temp_root().to_path_buf()] {
+        let root_str = root.to_string_lossy().replace('\\', "/");
+        let root_str = root_str.trim_end_matches('/').to_string();
 
-    let canonical = canonicalize(&temp_dir).unwrap_or_else(|_| temp_dir.clone());
-    let canonical_str = canonical.to_string_lossy().replace('\\', "/");
-    let canonical_str = canonical_str.trim_end_matches('/');
+        let canonical = canonicalize(&root).unwrap_or_else(|_| root.clone());
+        let canonical_str = canonical.to_string_lossy().replace('\\', "/");
+        let canonical_str = canonical_str.trim_end_matches('/').to_string();
 
-    // Canonical (longer) path first so it matches before the shorter one
-    // (e.g., /private/var/folders/... before /var/folders/... on macOS).
-    settings.add_filter(
-        &format!(
-            r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+'?",
-            regex::escape(canonical_str)
-        ),
-        "[PROJECT_ID]",
-    );
-    if canonical_str != temp_dir_str {
+        // Canonical (longer) path first so it matches before the shorter one
+        // (e.g., /private/var/folders/... before /var/folders/... on macOS).
         settings.add_filter(
             &format!(
                 r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+'?",
-                regex::escape(temp_dir_str)
+                regex::escape(&canonical_str)
             ),
             "[PROJECT_ID]",
         );
+        if canonical_str != root_str {
+            settings.add_filter(
+                &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+'?", regex::escape(&root_str)),
+                "[PROJECT_ID]",
+            );
+        }
     }
 }
 
@@ -1331,6 +1338,25 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rstest::rstest;
+
+    /// Every PTY spawn routes through [`configure_pty_command`] (directly or
+    /// via `shell_command` / `build_pty_command`), and it is the only floor
+    /// the shell-wrapper suite gets: those call sites layer fixture paths and
+    /// an identity on top, never `pty_env_vars`. `useConfigOnly` fires only
+    /// where an identity is missing, so no wrapper assertion would notice the
+    /// floor going missing — this pins it instead.
+    #[test]
+    fn configure_pty_command_carries_the_git_config_floor() {
+        let mut cmd = portable_pty::CommandBuilder::new("true");
+        configure_pty_command(&mut cmd);
+        for (key, value) in worktrunk::shell_exec::HERMETIC_TEST_GIT_ENV {
+            assert_eq!(
+                cmd.get_env(key),
+                Some(std::ffi::OsStr::new(value)),
+                "{key} missing from configure_pty_command"
+            );
+        }
+    }
 
     #[rstest]
     fn test_commit_with_age(repo: TestRepo) {

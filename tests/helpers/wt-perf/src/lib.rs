@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::TempDir;
-use worktrunk::testing::{NULL_DEVICE, allow_network_transports, configure_git_cmd};
+use worktrunk::testing::{allow_network_transports, configure_git_cmd};
 
 /// Lazy-initialized rust repo path.
 static RUST_REPO: OnceLock<PathBuf> = OnceLock::new();
@@ -152,15 +152,15 @@ pub fn parse_pair(config: &str, prefix: &str) -> Option<(usize, usize)> {
     Some((a.parse().ok()?, b.parse().ok()?))
 }
 
-/// Build a `git` command isolated from host context, with config
-/// redirected to `NULL_DEVICE`. Thin call-site wrapper around
+/// Build a `git` command isolated from host context, with the host's
+/// config denied by the hermetic floor. Thin call-site wrapper around
 /// [`configure_git_cmd`] — every git invocation in this crate goes
 /// through here. Doesn't set `current_dir`; callers do that explicitly
 /// when they have a target. Network transports are denied; the upstream
 /// fixture clone re-permits them via [`allow_network_transports`].
 fn git_command() -> Command {
     let mut cmd = Command::new("git");
-    configure_git_cmd(&mut cmd, Path::new(NULL_DEVICE));
+    configure_git_cmd(&mut cmd);
     cmd
 }
 

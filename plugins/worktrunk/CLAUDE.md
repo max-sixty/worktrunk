@@ -126,7 +126,7 @@ The 💬 transitions overlap deliberately: `Notification` covers the documented 
 
 **Tracking**: [claude-code#9516](https://github.com/anthropics/claude-code/issues/9516)
 
-### Codex activity hooks (marker persists after session end)
+### Codex activity hooks
 
 Claude's hooks live in the standalone `hooks/hooks.json` its loader discovers by convention (see Directory Layout above); the Codex manifest carries `hooks` as an **inline object**, `{ "hooks": { … } }`, embedding a Codex-tailored hooks file directly. The inline form is deliberate:
 
@@ -136,10 +136,9 @@ Claude's hooks live in the standalone `hooks/hooks.json` its loader discovers by
 The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/config/src/hook_config.rs`):
 - `UserPromptSubmit` → 🤖 (working)
 - `PermissionRequest`, `Stop` → 💬 (waiting for input)
+- `SessionEnd` → clears the marker
 
-`Stop` fires at turn-end (Codex added it after codex-cli 0.130.0, which had no turn-end event), so 🤖 correctly returns to 💬 when a turn completes — the transition the earlier "no turn-end event" limitation lacked.
-
-**Limitation — marker persists after the session ends.** Codex's `HookEventsToml` has **no `SessionEnd`/session-exit event**, so there is no hook to *clear* the marker when a Codex session exits. The resting state after a normal exit is 💬 (set by the last `Stop`), which reads as "waiting for input" and lingers until the next session or a manual `wt config state marker clear`. This is the same class of limitation already documented above for Claude ("Status persists after user interrupt") — an accepted tradeoff, not a regression. If Codex later adds a session-exit event, add a `marker clear` handler for it here.
+`Stop` fires at turn-end, so 🤖 returns to 💬 when a turn completes. `SessionEnd` clears the marker when the main thread ends.
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 

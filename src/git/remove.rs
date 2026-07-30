@@ -632,7 +632,9 @@ mod tests {
         );
 
         // Ref should be gone.
-        let exit = std::process::Command::new("git")
+        let mut rev_parse = std::process::Command::new("git");
+        crate::testing::configure_git_cmd(&mut rev_parse);
+        let exit = rev_parse
             .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
             .current_dir(test.root_path())
             .status()
@@ -716,7 +718,9 @@ mod tests {
         );
 
         // Branch was deleted.
-        let exit = std::process::Command::new("git")
+        let mut rev_parse = std::process::Command::new("git");
+        crate::testing::configure_git_cmd(&mut rev_parse);
+        let exit = rev_parse
             .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
             .current_dir(test.root_path())
             .status()
@@ -806,15 +810,7 @@ mod tests {
         use crate::git::Repository;
 
         let tmp = tempfile::tempdir().unwrap();
-        let gitconfig = tmp.path().join("gitconfig");
-        std::fs::write(
-            &gitconfig,
-            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n",
-        )
-        .unwrap();
-        let git = |dir: &Path| {
-            crate::testing::configure_git_env(Cmd::new("git"), &gitconfig).current_dir(dir)
-        };
+        let git = |dir: &Path| crate::testing::configure_git_env(Cmd::new("git")).current_dir(dir);
 
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
@@ -864,15 +860,9 @@ mod tests {
         use crate::git::Repository;
 
         let tmp = tempfile::tempdir().unwrap();
-        let gitconfig = tmp.path().join("gitconfig");
-        std::fs::write(
-            &gitconfig,
-            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n",
-        )
-        .unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
-        crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
+        crate::testing::configure_git_env(Cmd::new("git"))
             .current_dir(&main)
             .args(["init", "-b", "main"])
             .run()
@@ -899,15 +889,9 @@ mod tests {
         use crate::git::Repository;
 
         let tmp = tempfile::tempdir().unwrap();
-        let gitconfig = tmp.path().join("gitconfig");
-        std::fs::write(
-            &gitconfig,
-            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n",
-        )
-        .unwrap();
         let main = tmp.path().join("repo");
         std::fs::create_dir(&main).unwrap();
-        crate::testing::configure_git_env(Cmd::new("git"), &gitconfig)
+        crate::testing::configure_git_env(Cmd::new("git"))
             .current_dir(&main)
             .args(["init", "-b", "main"])
             .run()

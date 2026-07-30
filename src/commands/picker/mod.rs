@@ -2880,7 +2880,7 @@ pub mod tests {
         let result = RemovalPlan::BranchOnly {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -2907,7 +2907,7 @@ pub mod tests {
         let result = RemovalPlan::BranchOnly {
             branch_name: "unmerged".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -3819,7 +3819,7 @@ pub mod tests {
         let branch_only = RemovalPlan::BranchOnly {
             branch_name: "orphan".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -4276,7 +4276,7 @@ pub mod tests {
         let present_branch = RemovalPlan::BranchOnly {
             branch_name: "live-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -4286,7 +4286,7 @@ pub mod tests {
         let gone_branch = RemovalPlan::BranchOnly {
             branch_name: "no-such-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
@@ -4307,7 +4307,7 @@ pub mod tests {
             RemovalPlan::BranchOnly {
                 branch_name: "b".to_string(),
                 deletion_mode: mode,
-                pruned: false,
+                prune_entry: None,
                 target_branch: None,
                 integration_reason: integration,
                 branch_checked_out_at: None,

@@ -37,6 +37,24 @@ pub fn is_config_path_explicit() -> bool {
 ///
 /// The first two are supplied by the user, so a relative one resolves against
 /// `-C` (see [`resolve_input_path`]). The third is an absolute XDG location.
+///
+/// Priority 3 is absent under `#[cfg(test)]`: it resolves the developer's own
+/// config, which callers both read (`prewarm_user_config`) and — via
+/// `set_skip_shell_integration_prompt` / `set_skip_commit_generation_prompt` —
+/// write. An in-process test has no way to set priority 2 for itself
+/// (`std::env::set_var` is `unsafe`, and this crate forbids `unsafe`), so a test
+/// that reaches here wanted an explicit path, not the developer's.
+///
+/// `None` rather than the `panic!` [`crate::config::approvals_path`] uses: that
+/// one guards a mutation target, where a silent absence would let a test believe
+/// it saved something. This is a lookup whose absent state is already meaningful
+/// and already handled — `require_config_path` turns it into an error, so a
+/// config *write* still fails loudly, while a best-effort *read* like the
+/// prewarm cache simply preloads nothing.
+///
+/// The guard fires for lib-crate tests only; a bin-crate test links this crate
+/// in non-test mode, so `src/commands/` and `src/output/` stay uncovered. See
+/// `tests/CLAUDE.md`.
 pub fn config_path() -> Option<PathBuf> {
     // Priority 1: CLI --config flag
     if let Some(path) = CONFIG_PATH.get() {
@@ -49,6 +67,10 @@ pub fn config_path() -> Option<PathBuf> {
     }
 
     // Priority 3: Platform-specific default location
+    #[cfg(test)]
+    return None;
+
+    #[cfg(not(test))]
     default_config_path()
 }
 
@@ -118,6 +140,12 @@ pub fn system_config_path() -> Option<PathBuf> {
     // Priority 2+3: Check XDG_CONFIG_DIRS (if set), otherwise platform defaults.
     // When XDG_CONFIG_DIRS is set, system_config_dirs() returns only those dirs
     // (per XDG spec, no fallback to platform defaults).
+    //
+    // Deliberately unguarded, unlike `config_path()`: this resolves a
+    // machine-wide file (`/etc/xdg`, `/Library/Application Support`) rather than
+    // the developer's own config, and `config::deprecation`'s `PendingDefault`
+    // rules genuinely need the lookup to decide whether the system layer already
+    // defines a key.
     for dir in &system_config_dirs() {
         let path = dir.join("worktrunk").join("config.toml");
         if path.exists() {

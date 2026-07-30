@@ -13,6 +13,19 @@ tasks:
     desc: Run tests with coverage report
     cmd: cargo llvm-cov nextest --html --features shell-integration-tests {{.CLI_ARGS}}
 
+  profile-tests:
+    desc: Run the suite under CPU accounting and report where the time goes
+    # tests/CLAUDE.md → Profiling the Suite covers how to read the numbers.
+    cmds:
+      # Build first so the measurement covers the test run alone.
+      - cargo nextest run --no-run --features shell-integration-tests
+      # bash's `time` keyword counts every reaped child. Task's own interpreter
+      # (mvdan/sh) parses `time` but reports user/sys as zero, and /usr/bin/time
+      # is an extra package on minimal Linux; bash is already required on every
+      # platform (see .config/nextest.toml's build-bins).
+      - bash -c 'time "$@"' bash cargo nextest run --features shell-integration-tests {{.CLI_ARGS}}
+      - echo "per-test timings in target/nextest/default/junit.xml"
+
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]

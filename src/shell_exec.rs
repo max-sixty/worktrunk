@@ -574,6 +574,53 @@ pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
     }
 }
 
+/// The hermetic git-config floor for test processes: the deny pair points
+/// global and system config at a path that does not exist (git reads a
+/// missing config file as empty), and `GIT_CONFIG_COUNT` with its numbered
+/// keys and values — git's environment spelling of `-c` — supplies the two
+/// settings the suite needs in the denied config's place. What each entry is
+/// for, and why `-c` precedence keeps this list short: `tests/CLAUDE.md` →
+/// Git Config Isolation.
+pub const HERMETIC_TEST_GIT_ENV: [(&str, &str); 7] = [
+    ("GIT_CONFIG_GLOBAL", "/nonexistent/wt/gitconfig"),
+    ("GIT_CONFIG_SYSTEM", "/nonexistent/wt/gitconfig"),
+    ("GIT_CONFIG_COUNT", "2"),
+    ("GIT_CONFIG_KEY_0", "user.useConfigOnly"),
+    ("GIT_CONFIG_VALUE_0", "true"),
+    ("GIT_CONFIG_KEY_1", "rerere.enabled"),
+    ("GIT_CONFIG_VALUE_1", "false"),
+];
+
+/// When latched, every child spawned through [`Cmd`] gets
+/// [`HERMETIC_TEST_GIT_ENV`] — including the git that *production* code
+/// spawns while a test drives it in-process, which no per-command harness
+/// hook can reach. The test harness latches it before the first fixture;
+/// production code never does. An in-process test cannot set its own
+/// environment instead — `std::env::set_var` races the other test threads —
+/// but an atomic latch is sound from any thread.
+///
+/// TODO(hermetic-env): a test-serving switch in production code, accepted as
+/// the pragmatic middle over its alternatives — a pre-`main` constructor
+/// crate every test target must link, or threading an explicit env value
+/// through `Repository`, which is the structural fix.
+static HERMETIC_TEST_ENV_LATCHED: AtomicBool = AtomicBool::new(false);
+
+/// Latch [`HERMETIC_TEST_GIT_ENV`] onto every future [`Cmd`] child in this
+/// process. Called by the `worktrunk::testing` harness; idempotent.
+pub fn enable_hermetic_test_env() {
+    HERMETIC_TEST_ENV_LATCHED.store(true, Ordering::Relaxed);
+}
+
+/// Apply [`HERMETIC_TEST_GIT_ENV`] to `cmd` if the latch is set. The unlatched
+/// path is production's: one relaxed load, no env writes.
+pub fn apply_hermetic_test_env(cmd: &mut std::process::Command) {
+    if HERMETIC_TEST_ENV_LATCHED.load(Ordering::Relaxed) {
+        for (key, val) in HERMETIC_TEST_GIT_ENV {
+            cmd.env(key, val);
+        }
+    }
+}
+
 // ============================================================================
 // Directive-Payload Shell Escaping
 // ============================================================================
@@ -1217,6 +1264,9 @@ impl Cmd {
         for (key, val) in inherited_git_env_overrides() {
             cmd.env(key, val);
         }
+
+        // Before `self.envs`, so a per-command env can override the floor.
+        apply_hermetic_test_env(cmd);
 
         for (key, val) in &self.envs {
             cmd.env(key, val);

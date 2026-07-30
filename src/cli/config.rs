@@ -305,7 +305,7 @@ $ wt config plugins claude install-statusline
 
     /// Codex plugin
     #[command(
-        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in `wt list` while a Codex session runs. Codex has no session-exit event, so a marker persists after a session ends.
+        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in `wt list` while a Codex session runs and clear the marker when it ends.
 
 ## Examples
 

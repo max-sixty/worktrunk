@@ -1127,14 +1127,14 @@ pub fn handle_remove_output(
         RemovalPlan::BranchOnly {
             branch_name,
             deletion_mode,
-            pruned,
+            prune_entry,
             target_branch,
             integration_reason,
             branch_checked_out_at,
         } => handle_branch_only_output(
             branch_name,
             *deletion_mode,
-            *pruned,
+            prune_entry.as_deref(),
             *integration_reason,
             target_branch.as_deref(),
             branch_checked_out_at.as_ref(),
@@ -1145,17 +1145,27 @@ pub fn handle_remove_output(
 
 /// Handle output for BranchOnly removal (branch exists but no worktree)
 ///
+/// `prune_entry` is the stale worktree entry the plan fell back from, if any;
+/// it is unregistered here, first — unconditionally, unlike the branch
+/// deletion the `should_keep`/CAS logic below may decline.
+///
 /// When `quiet` is true, suppresses the "No worktree found for branch X"
 /// info line for non-pruned cases (noise in prune/batch context).
 fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
-    pruned: bool,
+    prune_entry: Option<&Path>,
     integration_reason: Option<IntegrationReason>,
     target_branch: Option<&str>,
     branch_checked_out_at: Option<&SharedBranchCheckout>,
     quiet: bool,
 ) -> anyhow::Result<BranchFate> {
+    let pruned = if let Some(path) = prune_entry {
+        Repository::current()?.prune_worktree_entry(path)?;
+        true
+    } else {
+        false
+    };
     let branch_info = if pruned {
         cformat!("Worktree directory missing for <bold>{branch_name}</>; pruned")
     } else {
