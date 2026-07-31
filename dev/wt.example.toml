@@ -27,6 +27,8 @@
 # platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 # hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 #
+# When many repositories share one self-hosted host, set it once in the user-level `forge-hosts` (https://worktrunk.dev/config/#forge-hosts) map instead of repeating `[forge]` in each repo. A repository's own `[forge]` still overrides that map.
+#
 # ## Commit-message append [experimental]
 #
 # `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:

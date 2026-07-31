@@ -93,19 +93,14 @@ pub(super) fn host_is_within(host: &str, domain: &str) -> bool {
     normalized_host_is_within(&normalized_hostname(host), domain)
 }
 
-/// Identify the CI platform from a remote URL host ("github" / "gitlab" /
-/// "gitea" / Azure DevOps).
-fn platform_from_url(url: &str) -> Option<ForgeKind> {
-    GitRemoteUrl::parse(url)?.forge_kind()
-}
-
 impl Repository {
     /// The CI platform for this repository, or `None` if it can't be determined.
     ///
     /// Priority order:
     /// 1. Project config `forge.platform` (or the deprecated `ci.platform`)
-    /// 2. `remote_hint`'s effective URL host, when `remote_hint` is given
-    /// 3. The primary remote's effective URL host
+    /// 2. A remote's host, resolved against the user-level `[forge-hosts]`
+    ///    exact-hostname map, then built-in hostname inference — `remote_hint`
+    ///    first when given, otherwise the primary remote
     ///
     /// For a remote branch, pass its remote as `remote_hint` so the right
     /// platform is picked in mixed-remote repos (e.g. GitHub + GitLab).
@@ -117,7 +112,7 @@ impl Repository {
 
         if let Some(remote) = remote_hint
             && let Some(url) = self.effective_remote_url(remote)
-            && let Some(platform) = platform_from_url(&url)
+            && let Some(platform) = self.platform_from_remote_url(&url)
         {
             tracing::debug!(platform = %platform, remote = %remote, "Detected CI platform {platform} from remote '{remote}' (hint)");
             return Some(platform);
@@ -125,13 +120,64 @@ impl Repository {
 
         if let Ok(remote) = self.primary_remote()
             && let Some(url) = self.effective_remote_url(&remote)
-            && let Some(platform) = platform_from_url(&url)
+            && let Some(platform) = self.platform_from_remote_url(&url)
         {
             tracing::debug!(platform = %platform, remote = %remote, "Detected CI platform {platform} from remote '{remote}'");
             return Some(platform);
         }
 
         None
+    }
+
+    /// Resolve the forge for a remote URL: the user-level `[forge-hosts]` map
+    /// (exact normalized hostname) first, then built-in hostname inference.
+    ///
+    /// The map lets a self-hosted host whose name carries no forge brand (e.g.
+    /// `git.company.example`) resolve without a per-repository `[forge]` block.
+    /// It sits ahead of inference so an explicit mapping is authoritative for
+    /// its host; hosts absent from the map fall through to inference unchanged.
+    fn platform_from_remote_url(&self, url: &str) -> Option<ForgeKind> {
+        let parsed = GitRemoteUrl::parse(url)?;
+        if let Some(platform) = self
+            .forge_hosts()
+            .get(&normalized_hostname(parsed.host()))
+            .copied()
+        {
+            tracing::debug!(platform = %platform, host = %parsed.host(), "Using CI platform from [forge-hosts]: {platform}");
+            return Some(platform);
+        }
+        parsed.forge_kind()
+    }
+
+    /// The validated user-level `[forge-hosts]` map: normalized hostname →
+    /// [`ForgeKind`].
+    ///
+    /// Built once per repository handle from the user config. Entries with an
+    /// unrecognized platform string are dropped with a single warning, and
+    /// entries with no `platform` are skipped silently. Hostnames are
+    /// normalized (port/case/trailing-dot stripped) so lookups match remotes
+    /// regardless of transport syntax.
+    fn forge_hosts(&self) -> &std::collections::BTreeMap<String, ForgeKind> {
+        self.cache.forge_hosts.get_or_init(|| {
+            self.user_config()
+                .forge_hosts
+                .iter()
+                .filter_map(|(host, config)| {
+                    let raw = config.platform.as_deref()?;
+                    match raw.parse::<ForgeKind>() {
+                        Ok(platform) => Some((normalized_hostname(host), platform)),
+                        Err(_) => {
+                            tracing::warn!(
+                                host = %host,
+                                value = %raw,
+                                "Invalid forge platform in [forge-hosts.\"{host}\"]: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect()
+        })
     }
 
     /// The CI platform set in project config (`forge.platform` / `ci.platform`).
@@ -167,6 +213,14 @@ impl Repository {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Identify the CI platform from a remote URL host ("github" / "gitlab" /
+    /// "gitea" / Azure DevOps) via built-in inference alone — the fallback
+    /// [`Repository::platform_from_remote_url`] uses after the `[forge-hosts]`
+    /// map misses.
+    fn platform_from_url(url: &str) -> Option<ForgeKind> {
+        GitRemoteUrl::parse(url)?.forge_kind()
+    }
 
     #[test]
     fn test_ci_platform_string_roundtrip() {
@@ -333,5 +387,104 @@ mod tests {
 
         let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
         assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitHub));
+    }
+
+    /// Build a repo with the given remote URL and inject a user config carrying
+    /// the given `[forge-hosts]` entries (host, platform-string).
+    ///
+    /// Returns the `TestRepo` alongside the `Repository` so the caller keeps the
+    /// checkout's tempdir alive for the duration of the test.
+    fn repo_with_forge_hosts(
+        remote_url: &str,
+        entries: &[(&str, &str)],
+    ) -> (crate::testing::TestRepo, Repository) {
+        let test = crate::testing::TestRepo::new();
+        test.run_git(&["remote", "add", "origin", remote_url]);
+
+        let mut user_config = crate::config::UserConfig::default();
+        for (host, platform) in entries {
+            user_config.forge_hosts.insert(
+                (*host).to_string(),
+                crate::config::ForgeHostConfig {
+                    platform: Some((*platform).to_string()),
+                },
+            );
+        }
+
+        let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
+        repo.cache
+            .user_config
+            .set(user_config)
+            .expect("user config not yet initialized");
+        (test, repo)
+    }
+
+    #[test]
+    fn test_forge_hosts_maps_unbranded_host() {
+        // A host carrying no forge brand resolves via the user-level map, where
+        // built-in inference alone would give `None`.
+        let (_test, repo) = repo_with_forge_hosts(
+            "https://git.company.example/owner/repo.git",
+            &[("git.company.example", "gitlab")],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitLab));
+    }
+
+    #[test]
+    fn test_project_forge_overrides_forge_hosts() {
+        // Project `[forge]` stays authoritative over the user-level map.
+        let test = crate::testing::TestRepo::new();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://git.company.example/owner/repo.git",
+        ]);
+        test.write_project_config("[forge]\nplatform = \"github\"\n");
+
+        let mut user_config = crate::config::UserConfig::default();
+        user_config.forge_hosts.insert(
+            "git.company.example".to_string(),
+            crate::config::ForgeHostConfig {
+                platform: Some("gitlab".to_string()),
+            },
+        );
+
+        let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
+        repo.cache.user_config.set(user_config).unwrap();
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitHub));
+    }
+
+    #[test]
+    fn test_forge_hosts_normalizes_host() {
+        // A port on the remote and a bare hostname in the map still match:
+        // both normalize before lookup.
+        let (_test, repo) = repo_with_forge_hosts(
+            "https://git.company.example:8443/owner/repo.git",
+            &[("GIT.company.example.", "gitea")],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::Gitea));
+    }
+
+    #[test]
+    fn test_forge_hosts_falls_through_to_inference() {
+        // A host absent from the map falls through to built-in inference
+        // unchanged.
+        let (_test, repo) = repo_with_forge_hosts(
+            "https://gitlab.com/owner/repo.git",
+            &[("git.company.example", "github")],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitLab));
+    }
+
+    #[test]
+    fn test_forge_hosts_invalid_platform_dropped() {
+        // An unrecognized platform string is dropped (warned once), leaving the
+        // unbranded host unresolved rather than mapped to a bogus forge.
+        let (_test, repo) = repo_with_forge_hosts(
+            "https://git.company.example/owner/repo.git",
+            &[("git.company.example", "bitbucket")],
+        );
+        assert_eq!(repo.ci_platform(None), None);
     }
 }

@@ -253,6 +253,11 @@ pub(super) struct RepoCache {
     /// deduplicating the warning across the many branches `wt list` probes.
     /// Resolved via [`Repository::ci_platform`].
     pub(super) configured_ci_platform: OnceCell<Option<ForgeKind>>,
+    /// User-level `[forge-hosts]` mapping, validated once into normalized
+    /// hostname → [`ForgeKind`]. Invalid platform strings are dropped with a
+    /// single warning, deduplicated across the many branches `wt list` probes.
+    /// Resolved via [`Repository::ci_platform`].
+    pub(super) forge_hosts: OnceCell<std::collections::BTreeMap<String, ForgeKind>>,
     /// User config (raw, as loaded from disk).
     /// Populated by [`Repository::at`] from the
     /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise

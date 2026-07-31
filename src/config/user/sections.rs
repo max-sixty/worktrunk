@@ -518,6 +518,22 @@ impl Merge for CopyIgnoredConfig {
     }
 }
 
+/// A user-level `[forge-hosts."<host>"]` entry.
+///
+/// Names the forge for an exact remote hostname that carries no forge brand
+/// for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read (a
+/// self-hosted GitLab at `git.company.example`, a company git server). It is
+/// the user/organization-wide analogue of the per-repository `[forge]`
+/// override: one entry serves every checkout of that host instead of a
+/// repeated `[forge]` block in each repo's `.config/wt.toml`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct ForgeHostConfig {
+    /// Forge platform for this host. Values: "github", "gitlab",
+    /// "gitea" (experimental), or "azure-devops" (experimental).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+}
+
 /// Configuration for `wt step` subcommands.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct StepConfig {

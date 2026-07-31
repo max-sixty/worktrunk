@@ -386,6 +386,15 @@
 #
 # How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).
 #
+# ## Forge hosts
+#
+# Worktrunk reads the forge from the remote's hostname (any host carrying `github`, `gitlab`, or `gitea`, plus the Azure DevOps service domains). A self-hosted host that carries none of those — a GitLab at `git.company.example`, a company git server — needs the forge named explicitly. Setting it here, keyed by exact hostname, applies to every repository on that host, so it need not be repeated as a per-repository forge platform (https://worktrunk.dev/config/#forge-platform) block in each repo:
+#
+# [forge-hosts."git.company.example"]
+# platform = "gitlab"  # or "github", "gitea" (experimental), "azure-devops" (experimental)
+#
+# An organization can ship the same map in its system-wide config so every user inherits it. A repository's own `[forge]` overrides the map, and a host absent from it falls back to hostname inference. The map covers `platform` only; a host whose SSH alias differs from its API host still needs a per-repository `[forge].hostname`.
+#
 # ## Hooks
 #
 # See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.

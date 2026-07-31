@@ -505,6 +505,15 @@ Default template:
 
 How the fragment renders, and the project-config counterpart: the LLM commits guide.
 
+[1m[32mForge hosts[0m
+
+Worktrunk reads the forge from the remote's hostname (any host carrying [2mgithub[0m, [2mgitlab[0m, or [2mgitea[0m, plus the Azure DevOps service domains). A self-hosted host that carries none of those — a GitLab at [2mgit.company.example[0m, a company git server — needs the forge named explicitly. Setting it here, keyed by exact hostname, applies to every repository on that host, so it need not be repeated as a per-repository forge platform block in each repo:
+
+[107m [0m [2m[36m[forge-hosts."git.company.example"][0m
+[107m [0m [2mplatform = [0m[2m[32m"gitlab"[0m[2m  [0m[2m# or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
+
+An organization can ship the same map in its system-wide config so every user inherits it. A repository's own [2m[forge][0m overrides the map, and a host absent from it falls back to hostname inference. The map covers [2mplatform[0m only; a host whose SSH alias differs from its API host still needs a per-repository [2m[forge].hostname[0m.
+
 [1m[32mHooks[0m
 
 See [2mwt hook[0m for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks apply only to that repository.
@@ -536,6 +545,8 @@ The forge is read from the remote's hostname: any host carrying [2mgithub[0m, 
 [107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
+
+When many repositories share one self-hosted host, set it once in the user-level [2mforge-hosts[0m map instead of repeating [2m[forge][0m in each repo. A repository's own [2m[forge][0m still overrides that map.
 
 [1m[32mCommit-message append [experimental][0m
 

@@ -2095,7 +2095,7 @@ fn test_valid_user_config_keys_all_deserialize() {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
             "list" | "commit" | "merge" | "remove" | "switch" | "step" | "select"
-            | "commit-generation" | "aliases" => {
+            | "commit-generation" | "aliases" | "forge-hosts" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }

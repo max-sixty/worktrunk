@@ -50,8 +50,8 @@ pub use path::{
 pub use resolved::ResolvedConfig;
 pub use schema::valid_user_config_keys;
 pub use sections::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
-    MergeConfig, RemoveConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ForgeHostConfig, ListColumnConfig,
+    ListConfig, MergeConfig, RemoveConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
     UserProjectOverrides,
 };
 
@@ -330,6 +330,10 @@ fn load_config_file(
 /// [commit.generation]
 /// command = "llm -m claude-haiku-4.5"  # Shell command for generating commit messages
 ///
+/// # Forge platform for a self-hosted host whose name carries no forge brand
+/// [forge-hosts."git.company.example"]
+/// platform = "gitlab"
+///
 /// # Per-project configuration
 /// [projects."github.com/user/repo"]
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
@@ -348,6 +352,22 @@ pub struct UserConfig {
     /// Uses BTreeMap for deterministic serialization order and better diff readability
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
+
+    /// User-level forge platform mapping by exact remote hostname.
+    ///
+    /// Keyed by hostname (`[forge-hosts."git.company.example"]`), it names the
+    /// forge for a host whose name carries no forge brand for built-in
+    /// inference to read — the user/org-wide analogue of the per-repository
+    /// `[forge]` override. Consulted by [`Repository::ci_platform`] after the
+    /// project override and before built-in hostname inference. Because the
+    /// system-config layer shares this shape, an organization-wide mapping can
+    /// live in the system config and be inherited by every user.
+    #[serde(
+        rename = "forge-hosts",
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub forge_hosts: std::collections::BTreeMap<String, ForgeHostConfig>,
 
     /// Hooks configuration (top-level keys like pre-merge, post-switch, etc.)
     #[serde(flatten, default)]
