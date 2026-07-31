@@ -296,6 +296,7 @@ fn bench_full(c: &mut Criterion) {
             let fixture = FixtureRecipe::Mixed {
                 linked_worktrees,
                 branchless_branches,
+                remote_tracking_refs: 0,
             }
             .create();
             run_benchmark(

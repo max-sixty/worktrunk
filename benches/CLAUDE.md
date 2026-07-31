@@ -30,6 +30,9 @@ cargo bench --bench prune --features large-repository-benches prune_large_reposi
 # Picker preview pre-compute (wt switch preview workload)
 cargo bench --bench picker_preview               # all variants
 cargo bench --bench picker_preview warm          # warm only
+
+# Shell completion (COMPLETE=$SHELL wt -- wt switch <Tab>) — one variant, no filter
+cargo bench --bench completion
 ```
 
 ## Fixtures and Benches
@@ -41,19 +44,21 @@ example, `full` is a benchmark and `Mixed` is its repository state.
 | Fixture recipe | `wt-perf setup` | Bench group(s) |
 |---|---|---|
 | `Typical { total_worktrees: N }` | `setup typical N` | `skeleton`, `worktree_scaling` (list.rs); `first_output` (time_to_first_output.rs); `picker_preview`; `remove_e2e` |
-| `Minimal { branchless_branches: B, linked_worktrees: W }` | `setup minimal B W` | `dispatch` (alias.rs); `completion_switch` (completion.rs) |
+| `Minimal { branchless_branches: B, linked_worktrees: W }` | `setup minimal B W` | `dispatch` (alias.rs) |
 | `SyntheticDivergence` | `setup synthetic-divergence` | `divergent_branches` (list.rs) |
 | `LargeRepositoryWorktrees { total_worktrees: N }` | `setup large-repository-worktrees N` | `large_repository_worktrees` (list.rs) |
 | `LargeRepositoryHistorySpread { branchless_branches: B }` | `setup large-repository-history-spread B` | `large_repository_history_spread` (list.rs) |
-| `Mixed { linked_worktrees: W, branchless_branches: B }` | `setup mixed W B` | `full` (list.rs) |
+| `Mixed { linked_worktrees: W, branchless_branches: B, remote_tracking_refs: R }` | `setup mixed W B R` | `full` (list.rs); `completion_switch` (completion.rs) |
 | `Prune { candidate_pairs: M, backdrop_pairs: U }` | `setup prune M U` | `prune_e2e` (prune.rs) |
 | `Prune { candidate_pairs: M, backdrop_pairs: U }` acquired from the large-repository corpus | `setup prune M U --base large-repository` | `prune_large_repository` (prune.rs) |
 | `PickerTest` | `setup picker-test` | interactive picker debugging |
 
 `total_worktrees` includes the primary worktree. `linked_worktrees` excludes it.
-`branchless_branches` have no linked worktree. Each prune count is a pair: one
-linked worktree and one branchless branch. Large-repository history spread
-supports at most 5,000 branches, matching its sampled history window.
+`branchless_branches` have no linked worktree. `remote_tracking_refs` excludes
+the `origin/main` and `origin/HEAD` pair every synthetic fixture has. Each prune
+count is a pair: one linked worktree and one branchless branch.
+Large-repository history spread supports at most 5,000 branches, matching its
+sampled history window.
 
 Every ephemeral recipe returns `FixtureRepo`, the owner of the temporary root
 plus the canonical primary/linked-worktree paths. The cached mutable prune
@@ -324,6 +329,9 @@ Use `wt-perf` to set up benchmark repos and generate Chrome Trace Format for vis
 cargo run -p wt-perf -- setup typical 8
 
 # `wt-perf setup --help` lists every recipe and its semantic count names.
+# Reproduce the completion fixture, including its remote-tracking-ref population:
+cargo run -p wt-perf -- setup mixed 80 80 1400
+
 # Large-repository prune acquisition is managed and self-repairing:
 cargo run -p wt-perf -- setup prune 12 24 --base large-repository
 
@@ -388,6 +396,28 @@ For visual critical-path inspection — the one thing the aggregate report can't
 show — open the Chrome Trace JSON (`wt-perf timeline --chrome`, or `wt-perf
 trace` on an existing `trace.jsonl`) in <https://ui.perfetto.dev> or
 chrome://tracing.
+
+**A traced run has no prewarm, so it is not the run users get.** At `-vv`,
+`logging::init` opens the log sinks through `log_files::try_create`, which calls
+`Repository::current()` and so resolves the git common dir. `Repository::prewarm`
+treats a populated `GIT_COMMON_DIR_CACHE` as "prewarm already ran" and returns
+without doing anything — so in every `-vv` run (and therefore every
+`wt-perf timeline`), the rev-parse batch, the `git config --list -z` preload, and
+the user-config preload never happen concurrently. Their work still gets done, one
+serial on-demand fork at a time, which is what the trace shows.
+
+The trace is still right about what ran; it is wrong about what production
+overlaps. Two consequences when reading one:
+
+- Don't conclude a phase is serial because the trace shows it serial. Read
+  `prewarm` / `prewarm_rev_parse` / `prewarm_git_config` spans first: if they're
+  absent, the trace is a no-prewarm run and the startup calls are ordered
+  differently than in production.
+- Don't measure a startup change by trace alone. Time the real binary
+  (`hyperfine` on the shipped path) and, for a fork inventory that doesn't perturb
+  the run, put a logging shim named `git` at the front of `PATH` — a two-line
+  `sh` script that appends `"$*"` to a file and `exec`s the real git. That counts
+  every spawn with no verbosity flag set.
 
 ### Performance questions
 

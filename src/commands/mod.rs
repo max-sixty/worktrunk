@@ -71,7 +71,6 @@ pub(crate) use worktree::{
 pub(crate) use worktrunk::shell::Shell;
 
 use color_print::cformat;
-use worktrunk::git::LegacyForgeAlias;
 use worktrunk::styling::{eprintln, format_with_gutter};
 
 pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
@@ -80,16 +79,6 @@ pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
         (_, true) => Some(false),
         _ => None,
     }
-}
-
-/// Actionable compatibility diagnostic for branded SSH aliases that no longer
-/// cross the exact-label forge-classification boundary.
-pub(crate) fn legacy_forge_alias_diagnostic(alias: &LegacyForgeAlias) -> String {
-    let platform = alias.platform().to_string();
-    let host = alias.host();
-    cformat!(
-        "SSH host alias <bold>{host}</> is not auto-detected as a forge; enable CI status and <bold>wt switch --prs</> with <bold>forge.platform = \"{platform}\"</> @ <bold>.config/wt.toml</>"
-    )
 }
 
 /// Format command execution label with optional command name.

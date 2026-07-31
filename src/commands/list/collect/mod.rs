@@ -1375,7 +1375,7 @@ pub fn collect(
     // Create collection options from the planned task set. `integration_targets`
     // is patched in after the parallel phase below extracts it — at this
     // point we haven't yet resolved it, but task spawning doesn't happen
-    // until line 1090+ so late population is safe.
+    // until the work-item generation phase below, so late population is safe.
     let mut options = CollectOptions {
         tasks,
         url_template: url_template.clone(),
@@ -1685,10 +1685,9 @@ pub fn collect(
         });
     }
 
-    // No need to prime the ambient `cache.ahead_behind` here: the
-    // snapshot captured above carries the same batched data, and all
-    // tasks consume it by SHA. (Step 5 deletes `cache.ahead_behind`
-    // entirely.)
+    // No need to prime any ambient ahead/behind cache here: the snapshot
+    // captured above carries the same batched data, and all tasks consume
+    // it by SHA.
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
@@ -2016,21 +2015,6 @@ pub fn collect(
         && table_render.render()?
     {
         return Ok(None);
-    }
-
-    // The old substring classifier treated branded SSH aliases such as
-    // `github-personal` as forges. Keep provider dispatch on the safer exact
-    // boundary, but explain the migration once when this collection actually
-    // requested CI. Do this after final table rendering so resolving the
-    // effective URL cannot add a git subprocess to the skeleton's critical
-    // path. Picker collections route through the warning stash; the statusline
-    // uses `populate_item`, not this path, and remains silent.
-    if collected.ci
-        && let Some(alias) = repo.legacy_forge_alias()
-    {
-        emit_warning(
-            warning_message(crate::commands::legacy_forge_alias_diagnostic(&alias)).to_string(),
-        );
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed

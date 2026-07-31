@@ -748,11 +748,7 @@ fn init_rayon_thread_pool() {
         .build_global();
 }
 
-fn parse_cli() -> Option<Cli> {
-    if completion::maybe_handle_env_completion() {
-        return None;
-    }
-
+fn parse_cli() -> Cli {
     // Apply -C / --config before help handling so `wt -C other --help`
     // and `wt --config custom.toml step --help` resolve aliases against the
     // requested repo and user config (not the process cwd / default config).
@@ -777,7 +773,7 @@ fn parse_cli() -> Option<Cli> {
         .unwrap_or_else(|e| {
             enhance_and_exit_error(e);
         });
-    Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
+    Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
 fn apply_global_options(
@@ -1079,14 +1075,22 @@ fn main() {
     // wall-clock minus the sum of post-init spans.
     worktrunk::shell_exec::init_startup();
 
+    // Shell completion answers and exits without running a command, and no
+    // code it reaches uses rayon — so it returns before the pool below is
+    // built rather than after. That pool is `available_parallelism() * 2`
+    // OS threads (36 on an M-series Mac), spawned eagerly by `build_global`,
+    // and a completion is the one wt invocation a user waits on with a
+    // finger still on Tab.
+    if completion::maybe_handle_env_completion() {
+        return;
+    }
+
     init_rayon_thread_pool();
 
     // Tell crossterm to always emit ANSI sequences
     crossterm::style::force_color_output(true);
 
-    let Some(cli) = parse_cli() else {
-        return;
-    };
+    let cli = parse_cli();
 
     let Cli {
         directory,
@@ -1098,7 +1102,7 @@ fn main() {
     } = cli;
     // `WORKTRUNK_VERBOSE` provides a baseline verbosity the `-v`/`-vv` flags
     // raise but never lower (`max`). It also drives shell completion, which
-    // exits in `parse_cli` before reaching here — see
+    // answers and returns above, before `parse_cli` — see
     // `completion::maybe_handle_env_completion`.
     let verbose = verbose.max(logging::env_verbose_level());
     // Globals were already applied in `parse_cli` before help rendering;

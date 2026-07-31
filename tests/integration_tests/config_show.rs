@@ -3,7 +3,6 @@ use crate::common::{
     setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
     temp_home, wt_command,
 };
-use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -1341,48 +1340,6 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
 
         assert_cmd_snapshot!(cmd);
     });
-}
-
-#[rstest]
-fn test_config_show_full_legacy_forge_alias(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "git@github-personal:owner/repo.git",
-    ]);
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
-    )
-    .unwrap();
-
-    let mut cmd = repo.wt_command();
-    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
-    cmd.arg("config")
-        .arg("show")
-        .arg("--full")
-        .current_dir(repo.root_path());
-    set_temp_home_env(&mut cmd, temp_home.path());
-    set_xdg_config_path(&mut cmd, temp_home.path());
-
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "config show should succeed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let alias_lines = stdout
-        .lines()
-        .filter(|line| line.contains("SSH host alias"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert_snapshot!(alias_lines, @r#"[33m▲[39m [33mSSH host alias [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
 }
 
 #[rstest]

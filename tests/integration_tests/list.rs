@@ -2,7 +2,6 @@ use crate::common::{
     DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd, repo, repo_with_remote,
     setup_snapshot_settings_for_paths, wt_command,
 };
-use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -443,49 +442,49 @@ fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
     );
 }
 
-/// CI collection reports the intentional exact-label compatibility break once,
-/// while an explicit forge platform resolves and suppresses the diagnostic.
-/// The statusline takes its separate silent collection path.
+/// A self-hosted instance names its forge however it likes — its own label, a
+/// hyphenated one, inside a word, or a single-label SSH alias — and the
+/// provider follows the name with no config. The statusline stays silent.
 #[rstest]
-fn test_list_ci_legacy_forge_alias_diagnostic(mut repo: TestRepo) {
-    repo.setup_mock_gh();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "git@github-personal:owner/repo.git",
-    ]);
+fn test_list_json_provider_reads_branded_self_hosted_hosts(repo: TestRepo) {
+    for (remote, host, provider) in [
+        (
+            "https://github-enterprise.acme.com/owner/repo.git",
+            "github-enterprise.acme.com",
+            "github",
+        ),
+        (
+            "https://gitlab-internal.company.com/owner/repo.git",
+            "gitlab-internal.company.com",
+            "gitlab",
+        ),
+        (
+            "https://mygithub.com/owner/repo.git",
+            "mygithub.com",
+            "github",
+        ),
+        (
+            "git@github-personal:owner/repo.git",
+            "github-personal",
+            "github",
+        ),
+    ] {
+        repo.run_git(&["remote", "set-url", "origin", remote]);
+        let output = repo
+            .wt_command()
+            .args(["list", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt list should succeed for {remote}"
+        );
 
-    let output = repo.wt_command().args(["list", "--full"]).output().unwrap();
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let alias_lines = stderr
-        .lines()
-        .filter(|line| line.contains("SSH host alias"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert_snapshot!(alias_lines, @r#"[33m▲[39m [33mSSH host alias [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
-
-    let statusline = repo
-        .wt_command()
-        .args(["list", "statusline", "--format=json"])
-        .output()
-        .unwrap();
-    assert!(statusline.status.success());
-    let statusline_stderr = String::from_utf8_lossy(&statusline.stderr);
-    assert!(
-        statusline_stderr.is_empty(),
-        "statusline must remain silent:\n{statusline_stderr}"
-    );
-
-    repo.write_project_config("[forge]\nplatform = \"github\"\n");
-    let configured = repo.wt_command().args(["list", "--full"]).output().unwrap();
-    assert!(configured.status.success());
-    let configured_stderr = String::from_utf8_lossy(&configured.stderr);
-    assert!(
-        !configured_stderr.contains("SSH host alias"),
-        "explicit forge config should suppress the diagnostic:\n{configured_stderr}"
-    );
+        let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let row = json.first().expect("at least one row");
+        assert_eq!(row["repo"]["provider"].as_str(), Some(provider), "{remote}");
+        assert_eq!(row["repo"]["host"].as_str(), Some(host), "{remote}");
+    }
 }
 
 #[rstest]

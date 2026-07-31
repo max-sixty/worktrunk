@@ -41,6 +41,15 @@ pub const ADDITION: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Gr
 /// Deletion style for diffs (red) - used in table rendering
 pub const DELETION: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
 
+/// Detached-HEAD style (dim yellow) - used in table rendering
+///
+/// Marks the abbreviated HEAD a `wt list` Branch cell shows when the worktree
+/// has no branch. Yellow separates it from a branch literally named like a SHA;
+/// dim keeps a row that isn't on a branch from reading as loudly as one that is.
+pub const DETACHED: Style = Style::new()
+    .fg_color(Some(Color::Ansi(AnsiColor::Yellow)))
+    .dimmed();
+
 /// Gutter style for quoted content (commands, config, error details)
 ///
 /// We wanted the dimmest/most subtle background that works on both dark and light

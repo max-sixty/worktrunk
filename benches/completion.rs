@@ -1,3 +1,37 @@
+//! Shell-completion latency (`COMPLETE=$SHELL wt -- wt switch <Tab>`).
+//!
+//! This is the one wt path a user waits on with their finger still on Tab, so
+//! the number that matters is whole-process wall time. It runs the real binary
+//! the way a shell does — the completion handler answers and returns before
+//! `main` builds the rayon pool or parses a command, so nothing here shares
+//! state with an ordinary `wt` invocation.
+//!
+//! **One benchmark, on the `mixed` fixture `full` already uses.** Completion
+//! has no phases worth timing separately: it spawns, fills its caches on one
+//! set of threads, scans refs and worktrees on another, prints, exits.
+//! Splitting that into a variant per dimension re-measures the same startup
+//! over a series of deliberately lopsided repos and still can't say which call
+//! moved, because the calls within a wave overlap. Localizing a regression is a
+//! trace's job here, exactly as it is for `full` — see "Analyzing a trace" in
+//! benches/CLAUDE.md, and note that a `-vv` run has no prewarm and so is not
+//! the run users get.
+//!
+//! `mixed-80-80-1400` is that one repo: 80 worktrees in four states, 80 more
+//! branches forked across 200 commits of history, and 1400 remote-tracking
+//! refs. It covers all three categories `BranchCompleter` distinguishes, puts
+//! both candidate slow calls (`for-each-ref refs/remotes/` and `worktree list
+//! --porcelain`) in the same process at a size where each is expensive, and
+//! lands past the completer's 100-entry threshold — where the remote refs are
+//! scanned and then discarded, as they are on a real long-lived clone.
+//!
+//! The remote-ref count is what this bench adds to the shared fixture; `full`
+//! passes 0 and is unaffected.
+//!
+//! ```bash
+//! cargo bench --bench completion
+//! cargo run -p wt-perf -- setup mixed 80 80 1400 --path /tmp/clone
+//! ```
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -16,9 +50,10 @@ fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) -> Output {
     run_and_check(&mut cmd)
 }
 
-fn expected_branches(branchless_branches: usize) -> BTreeSet<String> {
+fn expected_branches(branchless_branches: usize, linked_worktrees: usize) -> BTreeSet<String> {
     std::iter::once("main".to_string())
-        .chain((0..branchless_branches).map(|i| format!("feature-{i:03}")))
+        .chain((0..branchless_branches).map(|i| format!("br-{i:04}")))
+        .chain((0..linked_worktrees).map(|i| format!("wt-{i:04}")))
         .collect()
 }
 
@@ -40,19 +75,16 @@ fn bench_completion_switch(c: &mut Criterion) {
     let mut group = c.benchmark_group("completion_switch");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    for (id, linked_worktrees) in [("branches_only", 0), ("with_worktrees", 9)] {
-        group.bench_function(id, |b| {
-            let fixture = FixtureRecipe::Minimal {
-                branchless_branches: 50,
-                linked_worktrees,
-            }
-            .create();
-            let mut expected = expected_branches(50);
-            expected.extend((1..=linked_worktrees).map(|i| format!("feature-wt-{i}")));
-            assert_completion_candidates(binary, fixture.path(), &expected);
-            b.iter(|| run_completion(binary, fixture.path(), &["wt", "switch", ""]));
-        });
-    }
+    group.bench_function("mixed", |b| {
+        let fixture = FixtureRecipe::Mixed {
+            linked_worktrees: 80,
+            branchless_branches: 80,
+            remote_tracking_refs: 1400,
+        }
+        .create();
+        assert_completion_candidates(binary, fixture.path(), &expected_branches(80, 80));
+        b.iter(|| run_completion(binary, fixture.path(), &["wt", "switch", ""]));
+    });
 
     group.finish();
 }

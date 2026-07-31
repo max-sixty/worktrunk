@@ -805,7 +805,8 @@ mod tests {
     }
 
     #[test]
-    fn forge_detection_respects_host_boundaries_and_ports() {
+    fn forge_detection_reads_the_brand_and_bounds_the_azure_domains() {
+        // A brand anywhere in the host classifies, ports included.
         let supported = [
             ("https://github.com:8443/owner/repo.git", ForgeKind::GitHub),
             (
@@ -814,6 +815,18 @@ mod tests {
             ),
             (
                 "https://gitea.example.com:8443/owner/repo.git",
+                ForgeKind::Gitea,
+            ),
+            (
+                "https://github-mirror.example/owner/repo.git",
+                ForgeKind::GitHub,
+            ),
+            (
+                "https://notgitlab.example/owner/repo.git",
+                ForgeKind::GitLab,
+            ),
+            (
+                "https://gitea-mirror.example/owner/repo.git",
                 ForgeKind::Gitea,
             ),
             (
@@ -826,15 +839,14 @@ mod tests {
             assert_eq!(parsed.forge_kind(), Some(expected), "{input}");
         }
 
-        let lookalikes = [
-            "https://github-mirror.example/owner/repo.git",
-            "https://notgitlab.example/owner/repo.git",
-            "https://gitea-mirror.example/owner/repo.git",
+        // The Azure service domains are matched by suffix, so a host merely
+        // containing one is outside them and carries no brand to fall back on.
+        let outside_the_azure_domains = [
             "https://dev.azure.com.attacker.example/org/project/_git/repo",
             "https://evil-visualstudio.com/org/project/_git/repo",
         ];
-        for input in lookalikes {
-            let parsed = GitRemoteUrl::parse(input).expect("lookalike URL is structurally valid");
+        for input in outside_the_azure_domains {
+            let parsed = GitRemoteUrl::parse(input).expect("URL is structurally valid");
             assert_eq!(parsed.forge_kind(), None, "{input}");
             assert_eq!(
                 parsed

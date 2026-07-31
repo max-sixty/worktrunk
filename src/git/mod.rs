@@ -39,7 +39,7 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
 // Re-exports from submodules
-pub use ci_platform::{ForgeKind, LegacyForgeAlias};
+pub use ci_platform::ForgeKind;
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{

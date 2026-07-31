@@ -1290,7 +1290,7 @@ impl TestRepo {
     /// callers that exercise forge commands should install strict mocks for
     /// the route they expect.
     pub fn standard_main_only() -> Self {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_tempdir();
         let remote = copy_standard_main_only_fixture(temp_dir.path());
 
         let paths = TestConfigPaths::in_dir(temp_dir.path());

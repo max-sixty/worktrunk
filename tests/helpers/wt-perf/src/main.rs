@@ -132,6 +132,9 @@ enum SetupRecipe {
         linked_worktrees: usize,
         /// Branches without linked worktrees
         branchless_branches: usize,
+        /// Additional remote-tracking refs
+        #[arg(default_value_t = 0)]
+        remote_tracking_refs: usize,
     },
     /// Squash-merged prune candidates plus an unintegrated backdrop
     Prune {
@@ -198,9 +201,11 @@ impl SetupRecipe {
             Self::Mixed {
                 linked_worktrees,
                 branchless_branches,
+                remote_tracking_refs,
             } => FixtureRecipe::Mixed {
                 linked_worktrees,
                 branchless_branches,
+                remote_tracking_refs,
             },
             Self::Prune {
                 candidate_pairs,
@@ -231,7 +236,10 @@ impl SetupRecipe {
             Self::Mixed {
                 linked_worktrees,
                 branchless_branches,
-            } => format!("mixed-{linked_worktrees}-{branchless_branches}"),
+                remote_tracking_refs,
+            } => {
+                format!("mixed-{linked_worktrees}-{branchless_branches}-{remote_tracking_refs}")
+            }
             Self::Prune {
                 candidate_pairs,
                 backdrop_pairs,
@@ -310,6 +318,12 @@ fn main() {
                 parts.push(format!(
                     "{} branchless branches",
                     summary.branchless_branches
+                ));
+            }
+            if summary.remote_tracking_refs > 0 {
+                parts.push(format!(
+                    "{} remote-tracking refs",
+                    summary.remote_tracking_refs
                 ));
             }
             eprintln!("Created: {}", parts.join(", "));

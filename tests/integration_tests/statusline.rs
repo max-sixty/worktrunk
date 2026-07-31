@@ -480,12 +480,16 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Verify statusline shows the detached marker, not the prior branch name.
+    // Verify the statusline names a detached worktree the way its `wt list`
+    // row does — by the abbreviated HEAD — and not by the prior branch name.
+    // The SHA also tells two detached worktrees apart, which one shared
+    // "(detached)" label cannot.
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    // In detached state we render "(detached)" in place of a branch name.
+    let head = repo.git_output(&["rev-parse", "HEAD"]);
+    let short_head = &head.trim()[..8];
     assert!(
-        output.contains("(detached)"),
-        "statusline should show '(detached)' for detached HEAD, got: {output}"
+        output.contains(short_head),
+        "statusline should show the abbreviated HEAD ({short_head}) for detached HEAD, got: {output}"
     );
     assert!(
         !output.contains("feature"),

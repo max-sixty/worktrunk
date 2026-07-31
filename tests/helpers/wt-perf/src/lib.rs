@@ -267,6 +267,7 @@ pub enum FixtureRecipe {
     Mixed {
         linked_worktrees: usize,
         branchless_branches: usize,
+        remote_tracking_refs: usize,
     },
     /// Prune candidates and the unintegrated scan backdrop.
     Prune {
@@ -282,6 +283,7 @@ pub enum FixtureRecipe {
 pub struct FixtureSummary {
     pub total_worktrees: usize,
     pub branchless_branches: usize,
+    pub remote_tracking_refs: usize,
 }
 
 impl FixtureRecipe {
@@ -301,6 +303,7 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees,
                     branchless_branches: 0,
+                    remote_tracking_refs: 0,
                 }
             }
             Self::Minimal {
@@ -314,6 +317,7 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees: linked_worktrees + 1,
                     branchless_branches,
+                    remote_tracking_refs: 0,
                 }
             }
             Self::SyntheticDivergence => {
@@ -322,6 +326,7 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees: config.total_worktrees,
                     branchless_branches: config.branchless_branches,
+                    remote_tracking_refs: 0,
                 }
             }
             Self::LargeRepositoryWorktrees { total_worktrees } => {
@@ -331,6 +336,7 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees,
                     branchless_branches: 0,
+                    remote_tracking_refs: 0,
                 }
             }
             Self::LargeRepositoryHistorySpread {
@@ -346,16 +352,24 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees: 1,
                     branchless_branches,
+                    remote_tracking_refs: 0,
                 }
             }
             Self::Mixed {
                 linked_worktrees,
                 branchless_branches,
+                remote_tracking_refs,
             } => {
-                build_mixed_repo_at(linked_worktrees, branchless_branches, base_path);
+                build_mixed_repo_at(
+                    linked_worktrees,
+                    branchless_branches,
+                    remote_tracking_refs,
+                    base_path,
+                );
                 FixtureSummary {
                     total_worktrees: linked_worktrees + 1,
                     branchless_branches,
+                    remote_tracking_refs,
                 }
             }
             Self::Prune {
@@ -366,6 +380,7 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees: candidate_pairs + backdrop_pairs + 1,
                     branchless_branches: candidate_pairs + backdrop_pairs,
+                    remote_tracking_refs: 0,
                 }
             }
             Self::PickerTest => {
@@ -374,6 +389,7 @@ impl FixtureRecipe {
                 FixtureSummary {
                     total_worktrees: config.total_worktrees,
                     branchless_branches: config.branchless_branches,
+                    remote_tracking_refs: 0,
                 }
             }
         }
@@ -778,6 +794,73 @@ fn add_flat_worktrees(config: &FlatRepoConfig, repo_path: &Path) {
             std::fs::write(&file_path, "Uncommitted content\n").unwrap();
         }
     }
+}
+
+/// Create `count` remote-tracking refs under `refs/remotes/origin/`, on top of
+/// the `origin/main` + `origin/HEAD` pair [`setup_fake_remote`] writes.
+///
+/// The refs are spread round-robin over the commits already on `main` rather
+/// than all pointing at `HEAD`, which would leave `%(committerdate)` re-reading
+/// one object and understate the scan. It does not reach one object per ref:
+/// the round-robin can only spread over the history it has, so at
+/// the mixed recipe's 200 commits, a four-digit ref count lands ~7 refs on
+/// each of ~200 distinct commits. Git parses a given object once and reuses it
+/// for the rest of the `for-each-ref`, so the scan pays ~200 parses plus a
+/// cheap iteration hit per ref, where a real long-lived clone — whose remote
+/// tips are mostly distinct commits — would pay a parse per ref.
+///
+/// So this under-weights object reads relative to the clone it models, and
+/// deliberately: closing the gap needs a history as deep as the ref count, and
+/// `BASE_COMMITS` is shared with `full`, so deepening it would slow that
+/// fixture and shift the repo `full` has been measured on for the sake of a
+/// per-object parse this bench is not primarily about. The ref-count dimension
+/// is what it exists to vary.
+///
+/// Timestamps are all `TEST_EPOCH` regardless — fixture commit dates are pinned
+/// — so the sort is not what this measures.
+///
+/// Names are `remote-only-<i>`, which no fixture uses for a local branch, so
+/// every one of them survives the "skip remotes shadowed by a local branch"
+/// filter in `branches_for_completion` and reaches the candidate list.
+///
+/// One `update-ref --stdin` fork writes the whole batch; the per-ref
+/// alternative costs a fork each and dominates fixture build time at the
+/// four-digit counts this exists to model.
+fn add_remote_tracking_refs(count: usize, repo_path: &Path) {
+    if count == 0 {
+        return;
+    }
+
+    let commits: Vec<String> = capture_git(repo_path, &["rev-list", "HEAD"])
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        !commits.is_empty(),
+        "fixture has no commits to point refs at"
+    );
+
+    let mut stdin = String::new();
+    for i in 0..count {
+        let sha = &commits[i % commits.len()];
+        stdin.push_str(&format!(
+            "create refs/remotes/origin/remote-only-{i} {sha}\n"
+        ));
+    }
+
+    let mut child = git_command()
+        .args(["update-ref", "--stdin"])
+        .current_dir(repo_path)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Take the handle so it drops (closing the pipe) before the wait —
+    // git reads to EOF, so holding it open here deadlocks.
+    let mut pipe = child.stdin.take().unwrap();
+    std::io::Write::write_all(&mut pipe, stdin.as_bytes()).unwrap();
+    drop(pipe);
+    let status = child.wait().unwrap();
+    assert!(status.success(), "git update-ref --stdin failed: {status}");
 }
 
 /// Set up a fake remote for default branch detection.
@@ -1393,9 +1476,8 @@ fn append_line(path: &Path, rel: &str, line: &str) {
     std::fs::write(&file, content).unwrap();
 }
 
-/// Create a repo with linked worktrees and branchless
-/// branches, each in a deterministic rotation of states, for the combined
-/// full-surface `wt list` benchmark (`full` in `benches/list.rs`).
+/// Create a repo with linked worktrees, branchless branches, and optional
+/// remote-tracking refs for the `full` list and shell-completion benchmarks.
 ///
 /// Unlike the flat recipes (every worktree/branch identical), this exercises the
 /// full spread of `wt list` gates and tasks at once — clean vs dirty working
@@ -1422,7 +1504,12 @@ fn append_line(path: &Path, rel: &str, line: &str) {
 /// 2. diverged: a short own-commit chain forked from an older checkpoint
 ///    while base advanced (deep two-sided divergence)
 /// 3. identical to the base tip (trees match — squash-merge shape)
-fn build_mixed_repo_at(linked_worktrees: usize, branchless_branches: usize, repo: &Path) {
+fn build_mixed_repo_at(
+    linked_worktrees: usize,
+    branchless_branches: usize,
+    remote_tracking_refs: usize,
+    repo: &Path,
+) {
     const FILES: usize = 50;
     // Deep enough that fork points spread across history give the
     // `%(ahead-behind)` walk real commits to traverse (GH #461 shape), while
@@ -1491,6 +1578,7 @@ fn build_mixed_repo_at(linked_worktrees: usize, branchless_branches: usize, repo
     // loose refs and uncommitted state — realistic, and keeps gc away from the
     // dirty indexes below).
     setup_fake_remote(&repo);
+    add_remote_tracking_refs(remote_tracking_refs, &repo);
     run_git(&repo, &["gc", "-q"]);
 
     // Linked worktrees are siblings named `<repo-dir>.<branch>` (worktrunk
@@ -2338,6 +2426,7 @@ mod tests {
         let fixture = FixtureRecipe::Mixed {
             linked_worktrees: N,
             branchless_branches: N,
+            remote_tracking_refs: 0,
         }
         .create();
         let repo = fixture.path().to_path_buf();
@@ -2635,16 +2724,11 @@ mod tests {
         .create_at(&root.path().join("repo"));
     }
 
-    /// The `mixed` fixture's second documented contract: either dimension may
-    /// be `0` (`wt-perf setup mixed 3 0` is a worktrees-only repo). The branch
-    /// loop divides by `branches` to fan fork points across history, so a zero
-    /// there is a divide-by-zero the instant the body runs — it is safe only
-    /// because `0..0` never enters, which is exactly the kind of guarantee a
-    /// later "defensive" `branches.max(1)` would quietly break. Assert the
-    /// resulting populations, not merely that nothing panicked, so such a fix
-    /// fails here instead of silently adding a branch nobody asked for.
+    /// The `mixed` fixture's population contract. Either local dimension may
+    /// be zero, and the requested remote-tracking refs are additive to the
+    /// `origin/main` and `origin/HEAD` pair every synthetic fixture carries.
     #[test]
-    fn mixed_fixture_allows_either_dimension_to_be_zero() {
+    fn mixed_fixture_preserves_each_population() {
         let refs = |repo: &Path, glob: &str| {
             capture_git(repo, &["for-each-ref", "--format=%(refname:short)", glob])
                 .lines()
@@ -2659,26 +2743,29 @@ mod tests {
                 - 1
         };
 
-        // The two dimensions share no state, so covering each zero once spans
-        // the contract — a both-zero repo just skips both loops.
+        // Cover each local zero once and add remote refs to one fixture.
         let fixture = FixtureRecipe::Mixed {
             linked_worktrees: 3,
             branchless_branches: 0,
+            remote_tracking_refs: 5,
         }
         .create();
         let repo = fixture.path().to_path_buf();
         assert_eq!(refs(&repo, "refs/heads/br-*"), 0, "no branchless branches");
         assert_eq!(refs(&repo, "refs/heads/wt-*"), 3);
+        assert_eq!(refs(&repo, "refs/remotes/origin/remote-only-*"), 5);
         assert_eq!(linked(&repo), 3);
 
         let fixture = FixtureRecipe::Mixed {
             linked_worktrees: 0,
             branchless_branches: 3,
+            remote_tracking_refs: 0,
         }
         .create();
         let repo = fixture.path().to_path_buf();
         assert_eq!(refs(&repo, "refs/heads/br-*"), 3);
         assert_eq!(refs(&repo, "refs/heads/wt-*"), 0, "no worktree branches");
+        assert_eq!(refs(&repo, "refs/remotes/origin/remote-only-*"), 0);
         assert_eq!(linked(&repo), 0);
     }
 

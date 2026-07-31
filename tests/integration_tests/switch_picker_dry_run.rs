@@ -11,7 +11,6 @@
 
 use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
 use crate::common::{TEST_EPOCH, TestRepo, repo};
-use insta::assert_snapshot;
 use rstest::rstest;
 
 #[rstest::fixture]
@@ -335,34 +334,6 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
         stderr.contains("wt config state default-branch clear"),
         "expected reset hint on stderr, got: {stderr}"
     );
-}
-
-/// The collect and `--prs` threads discover the same legacy alias
-/// independently. Their shared stash emits the actionable migration warning
-/// once after the picker releases the terminal.
-#[rstest]
-fn test_picker_dry_run_deduplicates_legacy_forge_alias_warning(repo: TestRepo) {
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "git@github-personal:owner/repo.git",
-    ]);
-
-    let output = repo
-        .wt_command()
-        .args(["switch", "--prs"])
-        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "dry-run should exit 0; stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_snapshot!(stderr.as_ref(), @r#"[33m▲[39m [33mSSH host alias [1mgithub-personal[22m is not auto-detected as a forge; enable CI status and [1mwt switch --prs[22m with [1mforge.platform = "github"[22m @ [1m.config/wt.toml[22m[39m"#);
 }
 
 /// Same as above but with `list.summary=true` and a strict fake LLM command,
