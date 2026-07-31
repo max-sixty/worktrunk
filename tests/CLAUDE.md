@@ -12,7 +12,7 @@ cargo test --test integration                                      # integration
 cargo test --test integration --features shell-integration-tests   # + shell tests
 ```
 
-A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
+A target filter (`--lib`, `--test integration`, …) never builds `mock-stub`, so the run gets whatever sits in `target/`: a fresh tree has none and panics with "mock-stub binary not found", and a warm one runs the tests against a stale stub, whose failures reflect the code it was built from rather than the change under test. Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
