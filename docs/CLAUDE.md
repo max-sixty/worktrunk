@@ -89,7 +89,7 @@ When adding new positioned elements:
 Three categories, kept in sync by `test_docs_are_in_sync` (run it after any doc change; it auto-updates out-of-sync pages):
 
 1. **Command pages** (config, hook, list, merge, remove, step, switch): `dev/*.example.toml` (via `include_str!`) → `src/cli/mod.rs` *(PRIMARY SOURCE)* → `docs/content/{command}.md` → `skills/worktrunk/reference/{command}.md`. Within `src/cli/mod.rs`, `after_long_help` carries the conceptual prose; clap attributes (`about`, `long_about`, doc comments on args) carry usage, options, and examples. Mechanism details: "Command page generation" below.
-2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk): `docs/content/*.md` is PRIMARY; edit it directly, the skill reference auto-syncs.
+2. **Non-command docs** (claude-code, code-signing, extending, faq, llm-commits, tips-patterns, worktrunk): `docs/content/*.md` is PRIMARY; edit it directly, the skill reference auto-syncs.
 3. **Skill-only files** (shell-integration.md, troubleshooting.md): edit `skills/worktrunk/reference/` directly, no docs equivalent. When adding one, also add a `linguist-generated=false` line to `.gitattributes` — the broad `skills/worktrunk/reference/*.md linguist-generated=true` rule otherwise marks it generated, collapsing real edits in GitHub PR diffs.
 
 Never hand-edit a generated mirror.
