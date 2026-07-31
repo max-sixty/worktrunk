@@ -1514,7 +1514,16 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
                     None => "none".to_string(),
                 };
                 let age = format_relative_time_short(cached.checked_at as i64);
-                let head: String = cached.head.chars().take(8).collect();
+                // The Head column is here to be eyeballed against the branch's
+                // current head, so it abbreviates the way every other head `wt`
+                // prints does — git's, honoring `core.abbrev`. A full-length SHA
+                // abbreviates whether or not its object survives, so the
+                // fallback is for a cached value that isn't one at all (a
+                // hand-written entry): printing it verbatim is the more useful
+                // thing for a diagnostic dump to say than slicing it.
+                let head = repo
+                    .short_sha(&cached.head)
+                    .unwrap_or_else(|_| cached.head.clone());
                 vec![cached.branch.clone(), status, age, head]
             })
             .collect();

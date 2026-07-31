@@ -263,6 +263,11 @@ pub(super) struct RepoCache {
     pub(super) resolved_config: OnceCell<ResolvedConfig>,
     /// Sparse checkout paths (empty if not a sparse checkout)
     pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
+    /// Width git abbreviates a SHA to here, resolved once via
+    /// [`Repository::abbrev_len`]. Repo-wide and settled for the process:
+    /// `core.abbrev` doesn't change mid-run, and the auto-scaled default only
+    /// moves as the object count crosses a power of two.
+    pub(super) abbrev_len: OnceCell<usize>,
     /// Merge-base cache: (sha1, sha2) -> merge_base_sha (None = no common ancestor).
     /// Keys are commit SHAs by contract — callers must resolve refs through
     /// a [`RefSnapshot`] before consulting. The key order is normalized
@@ -1648,11 +1653,39 @@ impl Repository {
     /// For batches (e.g., abbreviating many worktree heads at once), prefer
     /// folding `%h` into an existing `git log --format` call rather than
     /// looping this helper. See [`commit_details_many`](Self::commit_details_many).
+    /// A batch whose objects aren't local can't use `%h` either — abbreviate it
+    /// with [`abbrev_len`](Self::abbrev_len).
     pub fn short_sha(&self, sha: &str) -> anyhow::Result<String> {
         Ok(self
             .run_command(&["rev-parse", "--short", sha])?
             .trim()
             .to_string())
+    }
+
+    /// How many characters git abbreviates a SHA to in this repo — `core.abbrev`,
+    /// or the width git auto-scales from the object count.
+    ///
+    /// Prefer [`short_sha`](Self::short_sha), which asks git about one specific
+    /// commit and so extends past this width when the prefix is ambiguous. This
+    /// is the width alone, for the case `short_sha` can't serve: abbreviating
+    /// SHAs whose objects **aren't in the local store** — commits a forge API
+    /// named, which git has nothing to disambiguate against and would therefore
+    /// abbreviate to exactly this many characters apiece. `git rev-parse
+    /// --short` takes a single revision, so a list of them has no batched form;
+    /// this resolves the shared answer once instead.
+    ///
+    /// Probed with `HEAD` so the length matches the repo's object format (a
+    /// SHA-256 repo abbreviates from 64 hex digits, and a literal SHA-1-shaped
+    /// probe is not even a valid revision there) — a HEAD whose own prefix is
+    /// ambiguous therefore reports a character or two over the base width, which
+    /// costs a caller nothing but a slightly longer SHA. Falls back to 7 — git's
+    /// `MINIMUM_ABBREV`, and what git itself reports in an objectless repo — for
+    /// the one failure a working repo reaches, an unborn HEAD.
+    pub fn abbrev_len(&self) -> usize {
+        *self.cache.abbrev_len.get_or_init(|| {
+            self.short_sha("HEAD")
+                .map_or(7, |short| short.chars().count())
+        })
     }
 
     /// Delay before showing progress output for slow operations.

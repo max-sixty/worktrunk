@@ -934,9 +934,11 @@ fn fetch_forge_json(
 /// view <n> --json commits` (GitHub) or `glab api
 /// projects/:fullpath/merge_requests/<n>/commits` (GitLab). That path renders a
 /// flat `git log --oneline`-style list — no graph or merge-base coloring, since
-/// the objects aren't present to compute them. `glab`'s `--paginate` follows
-/// every page so a long PR isn't capped at GitLab's default page size, matching
-/// `gh`'s complete `--json` result.
+/// the objects aren't present to compute them. Their SHAs still read at the
+/// local repo's own abbreviation width ([`Repository::abbrev_len`]), so fetching
+/// the PR doesn't change how wide its commits print. `glab`'s `--paginate`
+/// follows every page so a long PR isn't capped at GitLab's default page size,
+/// matching `gh`'s complete `--json` result.
 fn compute_pr_log(
     repo: &Repository,
     kind: RefType,
@@ -960,10 +962,11 @@ fn compute_pr_log(
         &["pr", "view", &number, "--json", "commits"],
         &["api", "--paginate", &endpoint],
     )?;
-    match kind {
-        RefType::Pr => render_github_commits(&stdout, width),
-        RefType::Mr => render_gitlab_commits(&stdout, width),
-    }
+    let commits = match kind {
+        RefType::Pr => parse_github_commits(&stdout)?,
+        RefType::Mr => parse_gitlab_commits(&stdout)?,
+    };
+    Some(render_commit_lines(&commits, repo.abbrev_len(), width))
 }
 
 /// Render the local `git log` for `oid` when it's present in the object store,
@@ -1009,39 +1012,39 @@ struct GhCommit {
     message_headline: String,
 }
 
-/// Map `gh pr view <n> --json commits` to the `log` pane. gh returns commits
-/// oldest-first; the log reads newest-first like `git log`, so reverse.
-fn render_github_commits(stdout: &[u8], width: usize) -> Option<String> {
+/// Parse `gh pr view <n> --json commits` into the `log` pane's `(full SHA,
+/// subject)` pairs. gh returns commits oldest-first; the log reads newest-first
+/// like `git log`, so reverse.
+fn parse_github_commits(stdout: &[u8]) -> Option<Vec<(String, String)>> {
     let parsed: GhCommitsResponse = serde_json::from_slice(stdout).ok()?;
-    let lines: Vec<(String, String)> = parsed
-        .commits
-        .into_iter()
-        .rev()
-        .map(|c| (short_hash(&c.oid), c.message_headline))
-        .collect();
-    Some(render_commit_lines(&lines, width))
+    Some(
+        parsed
+            .commits
+            .into_iter()
+            .rev()
+            .map(|c| (c.oid, c.message_headline))
+            .collect(),
+    )
 }
 
 #[derive(Deserialize)]
 struct GlabCommit {
     #[serde(default)]
-    short_id: String,
+    id: String,
     #[serde(default)]
     title: String,
 }
 
-/// Map `glab api …/merge_requests/<n>/commits` to the `log` pane. GitLab's
-/// commits endpoint returns newest-first already, so keep the order.
-fn render_gitlab_commits(stdout: &[u8], width: usize) -> Option<String> {
+/// Parse `glab api …/merge_requests/<n>/commits` into the `log` pane's `(full
+/// SHA, subject)` pairs. GitLab's commits endpoint returns newest-first already,
+/// so keep the order. Each entry also carries a ready-abbreviated `short_id`,
+/// which this deliberately ignores in favor of `id`: that field is the
+/// *server's* abbreviation, blind to the reader's `core.abbrev`, and taking it
+/// would print a GitLab MR's commits at a different width from a GitHub PR's
+/// and from every other SHA `wt` renders.
+fn parse_gitlab_commits(stdout: &[u8]) -> Option<Vec<(String, String)>> {
     let commits: Vec<GlabCommit> = serde_json::from_slice(stdout).ok()?;
-    let lines: Vec<(String, String)> = commits.into_iter().map(|c| (c.short_id, c.title)).collect();
-    Some(render_commit_lines(&lines, width))
-}
-
-/// Abbreviate a full commit hash to the conventional short form. GitLab already
-/// supplies a `short_id`; GitHub's `oid` is the full SHA.
-fn short_hash(oid: &str) -> String {
-    oid.chars().take(8).collect()
+    Some(commits.into_iter().map(|c| (c.id, c.title)).collect())
 }
 
 /// Render a `git log --oneline`-style list for the `log` pane: a dim short hash,
@@ -1050,13 +1053,22 @@ fn short_hash(oid: &str) -> String {
 /// with no commits the API returned) renders an info line so `spawn_compute`
 /// caches a terminal value rather than leaving the slot empty (an empty string
 /// is skipped, which would keep the loading placeholder).
-fn render_commit_lines(commits: &[(String, String)], width: usize) -> String {
+///
+/// `commits` holds full SHAs — the forge's own — and `abbrev` is the local
+/// repo's abbreviation width from [`Repository::abbrev_len`], so the same commit
+/// reads at the same width here as in the rich local `log` tab this pane stands
+/// in for, in `wt list`, and in the statusline. Truncating is the whole of the
+/// abbreviation: this path runs precisely because the PR's head isn't in the
+/// local object store (see [`compute_pr_log`]), so there are no objects for git
+/// to abbreviate these commits against one by one.
+fn render_commit_lines(commits: &[(String, String)], abbrev: usize, width: usize) -> String {
     let reset = Reset;
     if commits.is_empty() {
         return cformat!("{INFO_SYMBOL}{reset} No commits\n");
     }
     let mut out = String::new();
-    for (short, headline) in commits {
+    for (oid, headline) in commits {
+        let short: String = oid.chars().take(abbrev).collect();
         let budget = width.saturating_sub(short.width() + 2).max(8);
         let headline = crate::display::truncate_to_width(headline, budget);
         out.push_str(&cformat!("<dim>{short}</>{reset}  {headline}\n"));
@@ -2012,51 +2024,82 @@ mod tests {
     }
 
     #[test]
-    fn render_github_commits_oneline_newest_first() {
+    fn parse_github_commits_is_newest_first() {
         // gh returns commits oldest-first; the `log` pane shows them
-        // newest-first like `git log`, with a dim 8-char short hash.
+        // newest-first like `git log`.
         let json = br#"{"commits":[
           {"oid":"aaaaaaaa0000000000000000000000000000aaaa","messageHeadline":"older change"},
           {"oid":"bbbbbbbb1111111111111111111111111111bbbb","messageHeadline":"newer change"}
         ]}"#;
-        let out = plain(&render_github_commits(json, 80).unwrap());
-        assert!(
-            out.find("bbbbbbbb").unwrap() < out.find("aaaaaaaa").unwrap(),
-            "newest-first: {out:?}"
+        let commits = parse_github_commits(json).unwrap();
+        assert_eq!(
+            commits,
+            vec![
+                (
+                    "bbbbbbbb1111111111111111111111111111bbbb".to_string(),
+                    "newer change".to_string()
+                ),
+                (
+                    "aaaaaaaa0000000000000000000000000000aaaa".to_string(),
+                    "older change".to_string()
+                ),
+            ]
         );
-        assert!(out.contains("newer change") && out.contains("older change"));
-        // Hash abbreviated to 8 chars, not the full 40.
-        assert!(!out.contains("bbbbbbbb1"), "short hash only: {out:?}");
     }
 
     #[test]
-    fn render_gitlab_commits_keeps_order_and_uses_short_id() {
-        // GitLab's commits endpoint returns newest-first already, and supplies a
-        // ready `short_id`, so the order is preserved as-is.
+    fn parse_gitlab_commits_keeps_order_and_takes_the_full_id() {
+        // GitLab's commits endpoint returns newest-first already, so the order
+        // is preserved as-is. Its ready-abbreviated `short_id` is the server's
+        // width, not the reader's, so the parse takes `id` — the full SHA — and
+        // leaves abbreviating to `render_commit_lines`.
         let json = br#"[
-          {"short_id":"deadbeef","title":"newer change"},
-          {"short_id":"cafef00d","title":"older change"}
+          {"id":"deadbeef2222222222222222222222222222dead","short_id":"deadbeef","title":"newer change"},
+          {"id":"cafef00d3333333333333333333333333333cafe","short_id":"cafef00d","title":"older change"}
         ]"#;
-        let out = plain(&render_gitlab_commits(json, 80).unwrap());
-        assert!(out.contains("deadbeef") && out.contains("newer change"));
-        assert!(
-            out.find("deadbeef").unwrap() < out.find("cafef00d").unwrap(),
-            "order preserved: {out:?}"
+        let commits = parse_gitlab_commits(json).unwrap();
+        assert_eq!(
+            commits,
+            vec![
+                (
+                    "deadbeef2222222222222222222222222222dead".to_string(),
+                    "newer change".to_string()
+                ),
+                (
+                    "cafef00d3333333333333333333333333333cafe".to_string(),
+                    "older change".to_string()
+                ),
+            ]
         );
+    }
+
+    #[test]
+    fn render_commits_abbreviates_to_the_given_width() {
+        // The pane prints the local repo's abbreviation width — whatever
+        // `Repository::abbrev_len` reported — not a width of its own choosing,
+        // so a fetched PR's commits don't change length under the user.
+        let commits = vec![(
+            "abc12345def67890000000000000000000000000".to_string(),
+            "Wrap the request in a retry".to_string(),
+        )];
+        for abbrev in [7, 12] {
+            let out = plain(&render_commit_lines(&commits, abbrev, 80));
+            let hash = out.split_whitespace().next().unwrap();
+            assert_eq!(hash.chars().count(), abbrev, "abbrev={abbrev}: {out:?}");
+            assert!(commits[0].0.starts_with(hash), "a prefix: {hash:?}");
+        }
     }
 
     #[test]
     fn render_commits_empty_and_truncation() {
         // A PR the API reports with no commits caches an info line (a terminal
         // value) rather than leaving the slot empty.
-        assert!(
-            plain(&render_github_commits(br#"{"commits":[]}"#, 80).unwrap()).contains("No commits")
-        );
+        assert!(plain(&render_commit_lines(&[], 7, 80)).contains("No commits"));
 
         // The preview doesn't wrap, so a long subject truncates to the pane
         // width (after the dim hash + two spaces) rather than clipping mid-escape.
         let commits = vec![("abc12345".to_string(), "subject-".repeat(20))];
-        let line = render_commit_lines(&commits, 40);
+        let line = render_commit_lines(&commits, 8, 40);
         let first = plain(&line);
         let first = first.lines().next().unwrap();
         assert!(first.width() <= 40, "within pane: {first:?}");
@@ -2064,12 +2107,12 @@ mod tests {
     }
 
     #[test]
-    fn render_commits_invalid_json_is_none() {
-        // A forge that returns junk yields `None` from the renderer; the deferred
+    fn parse_commits_invalid_json_is_none() {
+        // A forge that returns junk yields `None` from the parse; the deferred
         // closure maps that to a couldn't-load pane (`pr_unavailable_pane`) rather
         // than caching garbage.
-        assert!(render_github_commits(b"not json", 80).is_none());
-        assert!(render_gitlab_commits(b"not json", 80).is_none());
+        assert!(parse_github_commits(b"not json").is_none());
+        assert!(parse_gitlab_commits(b"not json").is_none());
     }
 
     #[test]
