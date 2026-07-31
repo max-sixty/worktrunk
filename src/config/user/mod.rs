@@ -358,7 +358,8 @@ pub struct UserConfig {
     /// Keyed by hostname (`[forge-hosts."git.company.example"]`), it names the
     /// forge for a host whose name carries no forge brand for built-in
     /// inference to read — the user/org-wide analogue of the per-repository
-    /// `[forge]` override. Consulted by [`Repository::ci_platform`] after the
+    /// `[forge]` override. Consulted by
+    /// [`Repository::ci_platform`](crate::git::Repository::ci_platform) after the
     /// project override and before built-in hostname inference. Because the
     /// system-config layer shares this shape, an organization-wide mapping can
     /// live in the system config and be inherited by every user.
