@@ -72,11 +72,15 @@
 //! unchunked form at roughly 3,000 SHAs.
 //!
 //! What each field feeds:
-//! - `%ct` — sort order on the skeleton. This is the *only* reason #6 is
-//!   pre-skeleton; the skeleton can't pick row order without it.
+//! - `%ct` — sort order on the skeleton. This is why #6 is pre-skeleton; the
+//!   skeleton can't pick row order without it.
 //! - `%ct` again, post-skeleton — Age column ("3 hours ago").
 //! - `%s` post-skeleton — Message column.
-//! - `%h` post-skeleton — abbreviated-SHA cell.
+//! - `%h` pre-skeleton — the abbreviated SHA every surface renders: the Commit
+//!   cell, a detached row's Branch cell, `--format=json`. Folded onto the rows
+//!   right after they're built, because both cells are identity columns (no
+//!   placeholder to fill in later) and the two columns size to the widths git
+//!   chose. It rides a fork `%ct` already paid for, so this costs nothing.
 //! - `%T` post-skeleton — primes the `commit_tree` cache so the per-row
 //!   `CommittedTreesMatch` / `WouldMergeAdd` tree lookups never fork
 //!   `git rev-parse <sha>^{tree}` (see [`Repository::commit_details_many`]).
@@ -1206,6 +1210,20 @@ pub fn collect(
             .map(|(name, sha)| ListItem::new_remote_branch(sha.clone(), name.clone())),
     );
 
+    // Abbreviated SHAs land here, before layout and the skeleton, rather than
+    // with the rest of the commit bundle below. The Commit cell and a detached
+    // row's Branch cell both render `short_sha`, and both are identity columns —
+    // they carry no placeholder and must not re-text as the row settles. Sizing
+    // those columns needs the width too, and layout runs a few lines down. The
+    // batch this reads was already on the pre-skeleton path for `%ct`, so the
+    // move costs no fork. Rows the batch didn't cover (unborn branches, a failed
+    // batch) keep the empty string and render an empty cell.
+    for item in &mut all_items {
+        if let Some((short_sha, _, _)) = commit_details_map.get(&item.head) {
+            item.short_sha = short_sha.clone();
+        }
+    }
+
     // Gate inputs for the task-planning decision below. `llm_command` also flows
     // into each `TaskContext` (the per-item SummaryGenerate guard) further down.
     let config = repo.config();
@@ -1666,19 +1684,18 @@ pub fn collect(
     // map. No per-SHA recovery — if the batch failed, the warning printed above
     // is the user-visible signal and Age/Message cells render their placeholder.
     //
-    // `short_sha` is populated for every row (including prunable), since it's a
-    // pure SHA derivation that doesn't need the worktree directory. The
-    // timestamp/message bundle is skipped for prunable rows to match the old
+    // The timestamp/message bundle is skipped for prunable rows to match the old
     // task-queue UX where probes against a missing worktree dir failed.
+    // `short_sha` came off the same map before the skeleton (see above) and
+    // covers prunable rows too, being a pure SHA derivation that never touches
+    // the worktree directory.
     for item in &mut all_items {
-        let Some((short_sha, timestamp, commit_message)) = commit_details_map.get(&item.head)
-        else {
-            continue;
-        };
-        item.short_sha = short_sha.clone();
         if item.worktree_data().is_some_and(|d| d.is_prunable()) {
             continue;
         }
+        let Some((_, timestamp, commit_message)) = commit_details_map.get(&item.head) else {
+            continue;
+        };
         item.commit = Some(CommitDetails {
             timestamp: *timestamp,
             commit_message: commit_message.clone(),

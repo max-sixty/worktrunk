@@ -236,6 +236,14 @@ pub struct ListItem {
     /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
     /// row, including prunable worktrees). Empty for null OIDs (unborn
     /// branches) or when the batch failed for this row.
+    ///
+    /// The only abbreviation of `head` anywhere: the Commit cell, a detached
+    /// row's Branch cell ([`Self::display_name`]), the statusline, and
+    /// `--format=json` all render this one string, so a commit reads the same
+    /// length wherever it appears. `collect()` folds it in *before* the
+    /// skeleton — the batch that carries it already gates the skeleton for
+    /// `%ct` — so those cells paint with the skeleton rather than filling in
+    /// late, and the Commit/Branch columns size to the width git chose.
     pub short_sha: String,
     /// Branch name - None for detached worktrees
     pub branch: Option<String>,
@@ -409,7 +417,7 @@ impl ListItem {
     }
 
     /// Short display name for this item — the branch if present, otherwise
-    /// the abbreviated HEAD. Use when reporting which item is pending, stuck, or
+    /// [`Self::short_sha`]. Use when reporting which item is pending, stuck, or
     /// missing: `branch_name()`'s `"(detached)"` fallback collapses distinct
     /// detached items into one label.
     ///
@@ -417,26 +425,7 @@ impl ListItem {
     /// there, so the column shows this instead (styled `DETACHED`, since a SHA
     /// is a legal branch name too).
     pub fn display_name(&self) -> &str {
-        self.branch
-            .as_deref()
-            .unwrap_or_else(|| self.abbreviated_head())
-    }
-
-    /// HEAD abbreviated for the table: a fixed 8-character prefix, empty for a
-    /// null OID (an unborn branch). The Commit cell of every row and the Branch
-    /// cell of a detached one both render this, so the row that shows both
-    /// prints the same commit the same way twice.
-    ///
-    /// Not [`Self::short_sha`] (`%h`, `core.abbrev`-aware, and what the JSON
-    /// output carries): it lands post-skeleton, so sourcing one of those cells
-    /// from each would give a row two lengths of the same SHA, and a detached
-    /// row a Branch cell that fills in late.
-    pub fn abbreviated_head(&self) -> &str {
-        if self.head == worktrunk::git::NULL_OID {
-            ""
-        } else {
-            &self.head[..8.min(self.head.len())]
-        }
+        self.branch.as_deref().unwrap_or(&self.short_sha)
     }
 
     pub fn is_main(&self) -> bool {
@@ -939,29 +928,18 @@ mod tests {
     }
 
     /// The Branch cell of a detached row renders `display_name`, and the Commit
-    /// cell of every row renders `abbreviated_head` — the same string, so the
-    /// row that shows both agrees with itself. Neither waits on the `%h` batch
-    /// that populates `short_sha` post-skeleton.
+    /// cell of every row renders `short_sha` — the same string, at the length
+    /// git chose, so the row that shows both agrees with itself and with
+    /// `--format=json`.
     #[test]
-    fn test_list_item_display_name_falls_back_to_abbreviated_head() {
+    fn test_list_item_display_name_falls_back_to_short_sha() {
         let head = "abc123def456abc123def456abc123def456abcd";
         let mut item = ListItem::new_branch(head.to_string(), "feature".to_string());
+        item.short_sha = "abc123d".to_string();
         assert_eq!(item.display_name(), "feature");
 
         item.branch = None; // Simulate detached
-        assert_eq!(item.display_name(), "abc123de");
-        assert_eq!(item.abbreviated_head(), "abc123de");
-
-        // `short_sha` lands later and is `core.abbrev`-aware; the cells keep
-        // the fixed prefix so the two never print at different lengths.
-        item.short_sha = "abc123d".to_string();
-        assert_eq!(item.display_name(), "abc123de");
-
-        // An unborn branch has no commit to abbreviate — the cell stays empty
-        // rather than rendering a row of zeros.
-        let unborn =
-            ListItem::new_branch(worktrunk::git::NULL_OID.to_string(), "unborn".to_string());
-        assert_eq!(unborn.abbreviated_head(), "");
+        assert_eq!(item.display_name(), "abc123d");
     }
 
     #[test]
