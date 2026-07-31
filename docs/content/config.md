@@ -142,6 +142,15 @@ Generate commit messages automatically during merge. Requires an external CLI to
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
 
+### MiniMax
+
+```toml
+[commit.generation]
+command = "ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic ANTHROPIC_AUTH_TOKEN=\"$MINIMAX_API_KEY\" ANTHROPIC_MODEL=MiniMax-M3 claude -p --no-session-persistence --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
+```
+
+Set MINIMAX_API_KEY in your shell environment. For users in China, replace https://api.minimax.io/anthropic with https://api.minimaxi.com/anthropic.
+
 ### Codex
 
 ```toml

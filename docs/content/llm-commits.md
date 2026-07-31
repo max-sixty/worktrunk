@@ -29,6 +29,15 @@ command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haik
 
 `--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. `--safe-mode` keeps the run hermetic — no hooks, plugins, MCP, skills, or CLAUDE.md — while leaving authentication working normally, so setups that authenticate via `apiKeyHelper` (not just OAuth or `ANTHROPIC_API_KEY`) still get a key. `--setting-sources='user'` scopes settings to your user config so a project `.claude/settings.json` can't override auth. The remaining flags disable tools, system prompt, and thinking for fast text-only output. `--safe-mode` requires Claude Code ≥ 2.1.169. See [Claude Code docs](https://code.claude.com/docs/en/setup) for installation.
 
+### MiniMax
+
+```toml
+[commit.generation]
+command = "ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic ANTHROPIC_AUTH_TOKEN=\"$MINIMAX_API_KEY\" ANTHROPIC_MODEL=MiniMax-M3 claude -p --no-session-persistence --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
+```
+
+Set `MINIMAX_API_KEY` in your shell environment. For users in China, replace `https://api.minimax.io/anthropic` with `https://api.minimaxi.com/anthropic`. See [MiniMax API docs](https://platform.minimax.io/docs/api-reference/api-overview).
+
 ### Codex
 
 ```toml

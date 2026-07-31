@@ -139,6 +139,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# ### MiniMax[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic ANTHROPIC_AUTH_TOKEN=\"$MINIMAX_API_KEY\" ANTHROPIC_MODEL=MiniMax-M3 claude -p --no-session-persistence --tools='' --safe-mode --setting-sources='user' --system-prompt=''"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Set MINIMAX_API_KEY in your shell environment. For users in China, replace https://api.minimax.io/anthropic with https://api.minimaxi.com/anthropic.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# ### Codex[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
