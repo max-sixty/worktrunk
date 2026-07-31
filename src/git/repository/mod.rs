@@ -1653,8 +1653,8 @@ impl Repository {
     /// For batches (e.g., abbreviating many worktree heads at once), prefer
     /// folding `%h` into an existing `git log --format` call rather than
     /// looping this helper. See [`commit_details_many`](Self::commit_details_many).
-    /// A batch whose objects aren't local can't use `%h` either — abbreviate it
-    /// with [`abbrev_len`](Self::abbrev_len).
+    /// Where that batch doesn't fit — the objects aren't local, or one bad ref
+    /// mustn't cost the rest — abbreviate to [`abbrev_len`](Self::abbrev_len).
     pub fn short_sha(&self, sha: &str) -> anyhow::Result<String> {
         Ok(self
             .run_command(&["rev-parse", "--short", sha])?
@@ -1663,16 +1663,23 @@ impl Repository {
     }
 
     /// How many characters git abbreviates a SHA to in this repo — `core.abbrev`,
-    /// or the width git auto-scales from the object count.
+    /// or the width git auto-scales from the object count. Resolved once per
+    /// repo and shared by every clone, so a caller pays one `git rev-parse` no
+    /// matter how many SHAs it goes on to abbreviate.
     ///
-    /// Prefer [`short_sha`](Self::short_sha), which asks git about one specific
-    /// commit and so extends past this width when the prefix is ambiguous. This
-    /// is the width alone, for the case `short_sha` can't serve: abbreviating
-    /// SHAs whose objects **aren't in the local store** — commits a forge API
-    /// named, which git has nothing to disambiguate against and would therefore
-    /// abbreviate to exactly this many characters apiece. `git rev-parse
-    /// --short` takes a single revision, so a list of them has no batched form;
-    /// this resolves the shared answer once instead.
+    /// This is the width for **a list of SHAs**; [`short_sha`](Self::short_sha)
+    /// is the answer for one. `git rev-parse --short` takes a single revision,
+    /// so a list has no batched form, and looping it is a fork per SHA — the
+    /// trade this exists to avoid. `%h` folded into an existing `git log` is
+    /// better still where it fits ([`commit_details_many`](Self::commit_details_many)),
+    /// but it needs the objects present and refuses the whole batch on one bad
+    /// ref, so it can't serve a list of forge-named commits or a cache of
+    /// historical heads.
+    ///
+    /// What that costs against `short_sha` is disambiguation: git extends a
+    /// prefix that collides with another object, and a plain width can't. Absent
+    /// objects have nothing to collide with, and a live collision at this width
+    /// is rare enough that a display column can wear it.
     ///
     /// Probed with `HEAD` so the length matches the repo's object format (a
     /// SHA-256 repo abbreviates from 64 hex digits, and a literal SHA-1-shaped

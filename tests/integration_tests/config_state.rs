@@ -1798,10 +1798,9 @@ fn test_state_get_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_with_ci_entries(repo: TestRepo) {
-    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots.
-    // The heads are placeholders that resolve to no object here, so the dump
-    // prints them verbatim and the snapshot stays fixed while the real
-    // abbreviation (git's, and so repo-dependent) is pinned separately by
+    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in
+    // snapshots. The heads are placeholders, so what the snapshot pins is the
+    // table's shape; that the width is git's own is pinned separately by
     // `test_state_get_ci_head_uses_git_abbreviation`.
     write_ci_cache(
         &repo,

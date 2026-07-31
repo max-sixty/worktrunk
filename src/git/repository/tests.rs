@@ -736,9 +736,9 @@ fn abbrev_len_follows_core_abbrev_and_covers_absent_objects() {
     let reread = Repository::at(test.path()).unwrap();
     assert_eq!(reread.abbrev_len(), 12);
 
-    // The case `short_sha` can't serve: a SHA whose object isn't in the store,
-    // as every commit the `--prs` log tab gets from a forge API is. git has
-    // nothing to disambiguate against, so this width is its complete answer.
+    // The case `short_sha` can't serve per-SHA: an object that isn't in the
+    // store, as every commit the `--prs` log tab gets from a forge API is. git
+    // has nothing to disambiguate against, so this width is its whole answer.
     let absent = "0".repeat(head_short.chars().count().max(40));
     assert_eq!(
         reread.short_sha(&absent).unwrap().chars().count(),

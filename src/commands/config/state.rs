@@ -1503,6 +1503,13 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
     } else if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(no entries)", None))?;
     } else {
+        // The Head column is here to be eyeballed against the branch's current
+        // head, so it abbreviates to the width git uses — `core.abbrev`, the
+        // same width `wt list`'s Commit cell and the statusline print. One
+        // probe covers every row: `short_sha` per entry would be a `git
+        // rev-parse` fork apiece, and a repo with a cache entry per branch
+        // turned this dump from 38 ms into 285 ms at 50 entries.
+        let abbrev = repo.abbrev_len();
         let rows: Vec<Vec<String>> = entries
             .iter()
             .map(|cached| {
@@ -1514,16 +1521,7 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
                     None => "none".to_string(),
                 };
                 let age = format_relative_time_short(cached.checked_at as i64);
-                // The Head column is here to be eyeballed against the branch's
-                // current head, so it abbreviates the way every other head `wt`
-                // prints does — git's, honoring `core.abbrev`. A full-length SHA
-                // abbreviates whether or not its object survives, so the
-                // fallback is for a cached value that isn't one at all (a
-                // hand-written entry): printing it verbatim is the more useful
-                // thing for a diagnostic dump to say than slicing it.
-                let head = repo
-                    .short_sha(&cached.head)
-                    .unwrap_or_else(|_| cached.head.clone());
+                let head: String = cached.head.chars().take(abbrev).collect();
                 vec![cached.branch.clone(), status, age, head]
             })
             .collect();
