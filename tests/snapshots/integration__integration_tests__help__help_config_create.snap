@@ -461,7 +461,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Forge hosts[0m
+[107m [0m [2m# ## Forge hosts [experimental][0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Worktrunk reads the forge from the remote's hostname (any host carrying `github`, `gitlab`, or `gitea`, plus the Azure DevOps service domains). A self-hosted host that carries none of those — a GitLab at `git.company.example`, a company git server — needs the forge named explicitly. Setting it here, keyed by exact hostname, applies to every repository on that host, so it need not be repeated as a per-repository forge platform (https://worktrunk.dev/config/#forge-platform) block in each repo:[0m
 [107m [0m [2m#[0m

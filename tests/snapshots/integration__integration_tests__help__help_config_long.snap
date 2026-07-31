@@ -505,7 +505,7 @@ Default template:
 
 How the fragment renders, and the project-config counterpart: the LLM commits guide.
 
-[1m[32mForge hosts[0m
+[1m[32mForge hosts [experimental][0m
 
 Worktrunk reads the forge from the remote's hostname (any host carrying [2mgithub[0m, [2mgitlab[0m, or [2mgitea[0m, plus the Azure DevOps service domains). A self-hosted host that carries none of those — a GitLab at [2mgit.company.example[0m, a company git server — needs the forge named explicitly. Setting it here, keyed by exact hostname, applies to every repository on that host, so it need not be repeated as a per-repository forge platform block in each repo:
 
