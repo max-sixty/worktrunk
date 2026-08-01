@@ -197,6 +197,69 @@ fn test_push_autostash_survives_concurrent_stash(mut repo: TestRepo) {
     );
 }
 
+/// A restore that genuinely can't replay — the stashed path is occupied again
+/// by the time the push finishes — must warn with a recoverable `git stash
+/// apply <sha>` rather than silently report success. Data-safety guard for
+/// #3683: the stash entry is left intact so the work is recoverable.
+#[cfg(unix)]
+#[rstest]
+fn test_push_autostash_restore_failure_warns(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Untracked, non-conflicting work in the target worktree (repo root).
+    std::fs::write(repo.root_path().join("notes.txt"), "USER-WORK").unwrap();
+
+    // A post-receive hook re-creates the stashed path with different content,
+    // so `git stash apply` can't restore the untracked file and the restore
+    // fails after the push has already landed.
+    let root = repo.root_path().to_path_buf();
+    let hook = root.join(".git/hooks/post-receive");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
+             printf 'HOOK-CONFLICT\\n' > '{root}/notes.txt'\n\
+             exit 0\n",
+            root = root.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let feature_wt = repo.add_feature();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+
+    // The push itself succeeded; only the restore couldn't replay.
+    assert!(
+        output.status.success(),
+        "push should still succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to restore stashed changes"),
+        "expected a restore-failure warning, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("git stash apply"),
+        "warning must name the recovery command: {stderr}"
+    );
+
+    // The stash entry survives for recovery — a failed apply does not drop it.
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
+    assert!(
+        String::from_utf8_lossy(&stash_list.stdout).contains("autostash"),
+        "the recoverable stash entry must remain"
+    );
+}
+
 #[rstest]
 fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     // Regression test: overlap detection must detect conflicts when a file is renamed
