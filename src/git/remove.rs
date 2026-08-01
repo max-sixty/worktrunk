@@ -35,6 +35,22 @@
 //!    - [`ForceDelete`](BranchDeletionMode::ForceDelete): run `branch -D`
 //!      without the integration check.
 //!
+//! # The dirty-worktree gate follows git
+//!
+//! Under `core.fsmonitor` the daemon answers step 1's `git status`, so a
+//! daemon returning a stale clean answer would let removal delete uncommitted
+//! work. That is git's own line, not a gap in `wt`: `git worktree remove`
+//! refuses a dirty worktree off the same daemon-served status, and on detected
+//! event loss the builtin daemon forces a client rescan or exits. A stale
+//! clean answer therefore requires an *undetected* loss, which lies to the
+//! user's own `git status` in that worktree just as readily.
+//!
+//! Matching git is the decision. Scoping `-c core.fsmonitor=` to that one call
+//! would make `wt` stricter than the command it replaces, and would restore
+//! the full re-stat the ordering above avoids — the dominant per-removal cost
+//! at rust-lang/rust scale. (`--no-optional-locks` is not that knob: it
+//! governs index-lock acquisition, and git still queries the daemon under it.)
+//!
 //! # Example
 //!
 //! ```no_run

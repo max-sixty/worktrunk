@@ -1711,25 +1711,29 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     }
 }
 
-/// The removals that unregister stale worktree metadata are on the read side
-/// too, not held back one at a time.
+/// The removals that unregister stale worktree metadata serialize behind
+/// `registry_lock` — one `git worktree remove` teardown at a time.
 ///
 /// Four stale entries: two carrying a branch (`BranchOnly` plans whose
 /// `prune_entry` executes the prune) and two detached (`StaleDetached`, which
 /// prune in place of a removal). Each unregisters its own metadata with
-/// `git worktree remove <path>`, and the shim makes every one of them wait for
-/// all four to start before proceeding. Serialized, the first would wait out
-/// the shim's 15 s timeout and drop a sentinel file, which the test asserts
-/// absent. Unix-only for the same `CreateProcess` shim reason as the canary
+/// `git worktree remove <path>`, which enumerates every sibling's `commondir`
+/// as it resolves its target — so two overlapping teardowns can read an entry
+/// another worker is mid-deleting and fail (issue #3661). The shim probes for
+/// that overlap with an atomic `mkdir` lock held across a fixed window around
+/// each teardown; serialized, no two ever hold it at once, so the test asserts
+/// no `overlap-` sentinel appears (and every entry still pruned). If the lock
+/// regressed, all four teardowns would fire at once and three would collide in
+/// the window. Unix-only for the same `CreateProcess` shim reason as the canary
 /// above.
 ///
-/// `--foreground` runs both ways too. It reserves the write side for the TTY
-/// trash-cleanup spinner, which only a worktree removal paints; every candidate
-/// here plans a pure branch deletion or a bare prune, so the flag has no
-/// spinner to protect and must not serialize them.
+/// `--foreground` runs both ways. It reserves `check_lock`'s write side for the
+/// TTY trash-cleanup spinner, which only a worktree removal paints; every
+/// candidate here plans a branch deletion or a bare prune, so the flag changes
+/// nothing — the registry teardowns serialize on `registry_lock` regardless.
 #[cfg(unix)]
 #[rstest]
-fn test_prune_metadata_removals_run_concurrently(
+fn test_prune_metadata_removals_serialize(
     mut repo: TestRepo,
     #[values(false, true)] foreground: bool,
 ) {
@@ -1758,17 +1762,16 @@ fn test_prune_metadata_removals_run_concurrently(
 
     let mut cmd = repo.wt_command();
     // The removal pool is sized from the rayon thread count; pin it to four so
-    // the barrier can resolve even on a single-core runner (the workers block
-    // in subprocess waits, so four threads don't need four CPUs).
+    // all four teardowns would run at once if `registry_lock` regressed (the
+    // workers block in subprocess waits, so four threads don't need four CPUs).
     cmd.env("RAYON_NUM_THREADS", "4");
     let git_wrapper_dir = repo.home_path().join("git-wrapper");
     std::fs::create_dir_all(&git_wrapper_dir).unwrap();
-    write_barrier_worktree_remove_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    write_overlap_probe_worktree_remove_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
     prepend_path(&mut cmd, &git_wrapper_dir);
     let barrier_dir = repo.home_path().join("barrier");
     std::fs::create_dir_all(&barrier_dir).unwrap();
     cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
-    cmd.env("WT_TEST_BARRIER_COUNT", stale.len().to_string());
 
     cmd.args(["step", "prune", "--yes", "--min-age=0s"]);
     if foreground {
@@ -1792,13 +1795,14 @@ fn test_prune_metadata_removals_run_concurrently(
         stale.len(),
         "every stale entry should have pruned its own metadata: {started:?}"
     );
-    let timeouts: Vec<&String> = sentinels
+    let overlaps: Vec<&String> = sentinels
         .iter()
-        .filter(|n| n.starts_with("timeout-"))
+        .filter(|n| n.starts_with("overlap-"))
         .collect();
     assert!(
-        timeouts.is_empty(),
-        "a metadata prune waited out the barrier — it ran on the write side: {timeouts:?}"
+        overlaps.is_empty(),
+        "two `git worktree remove` teardowns overlapped — `registry_lock` did \
+         not serialize them (issue #3661): {overlaps:?}"
     );
     let list = repo.git_output(&["worktree", "list", "--porcelain"]);
     assert!(
@@ -1981,12 +1985,15 @@ exit 1
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// A `git` shim whose `worktree remove` arms rendezvous with each other (see
-/// `test_prune_metadata_removals_run_concurrently`): each records that it
-/// started, then waits until `$WT_TEST_BARRIER_COUNT` of them have. Everything
-/// else passes through to the real git.
+/// A `git` shim whose `worktree remove` arms probe for overlap (see
+/// `test_prune_metadata_removals_serialize`): each records that it started,
+/// then takes an atomic `mkdir` lock for a fixed window. Under the registry
+/// serialization this is testing, no two teardowns ever hold it at once, so a
+/// failed `mkdir` — a concurrent teardown mid-window — drops an `overlap-`
+/// sentinel the test asserts absent. Everything else passes through to the real
+/// git.
 #[cfg(unix)]
-fn write_barrier_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+fn write_overlap_probe_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
 
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
@@ -1996,16 +2003,14 @@ case "$1 $2" in
   "worktree remove") ;;
   *) exec {real_git} "$@" ;;
 esac
-: > "$WT_TEST_BARRIER_DIR/started-$(basename "$3")"
-i=0
-while [ "$(ls "$WT_TEST_BARRIER_DIR" | grep -c '^started-')" -lt "$WT_TEST_BARRIER_COUNT" ]; do
-  i=$((i+1))
-  if [ "$i" -gt 300 ]; then
-    : > "$WT_TEST_BARRIER_DIR/timeout-$(basename "$3")"
-    break
-  fi
-  sleep 0.05
-done
+own=$(basename "$3")
+: > "$WT_TEST_BARRIER_DIR/started-$own"
+if mkdir "$WT_TEST_BARRIER_DIR/active" 2>/dev/null; then
+  sleep 0.2
+  rmdir "$WT_TEST_BARRIER_DIR/active"
+else
+  : > "$WT_TEST_BARRIER_DIR/overlap-$own"
+fi
 exec {real_git} "$@"
 "#
     );
