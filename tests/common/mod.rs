@@ -24,6 +24,30 @@ use tempfile::TempDir;
 use worktrunk::path::to_posix_path;
 
 // =============================================================================
+// Git hooks
+// =============================================================================
+
+/// Write `script` as a native git hook at `path` and make git willing to run it.
+///
+/// Git runs hooks through a shell it ships on every platform, so the script is
+/// `sh` regardless of host and the hook itself needs no platform gate. Only the
+/// executable bit does, since Windows has none to set. A path interpolated into
+/// the script needs forward slashes (`path_slash::PathExt::to_slash_lossy`), or
+/// a Windows path's separators reach `sh` as escapes.
+pub fn write_git_hook(path: &Path, script: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, script).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+// =============================================================================
 // Signal handling (for PTY tests)
 // =============================================================================
 
