@@ -73,6 +73,13 @@ pub struct PushResult {
     /// uncommitted changes are back in their worktree when they are still in a
     /// stash. The warning naming the recovery command is already printed, so
     /// the caller raises [`worktrunk::git::WorktrunkError::AlreadyDisplayed`].
+    ///
+    /// Diverging from git here is deliberate: `git rebase --autostash` exits 0
+    /// on the same failure. Its replay conflict leaves conflict markers in the
+    /// working tree, where the user meets them immediately; a failed `git stash
+    /// apply` can leave the worktree untouched instead — an untracked path
+    /// re-created underneath it, say — so nothing but the exit code outlives
+    /// the warning.
     pub stash_restore_failed: bool,
 }
 
