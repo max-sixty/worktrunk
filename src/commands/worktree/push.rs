@@ -74,6 +74,10 @@ pub struct PushResult {
     /// stash. The warning naming the recovery command is already printed, so
     /// the caller raises [`worktrunk::git::WorktrunkError::AlreadyDisplayed`].
     ///
+    /// The `--format=json` payloads carry this as `stash_restore_failed`. Both
+    /// output channels have to name the failure: a consumer reading stdout
+    /// would otherwise get a success-shaped object and never see the exit code.
+    ///
     /// Diverging from git here is deliberate: `git rebase --autostash` exits 0
     /// on the same failure. Its replay conflict leaves conflict markers in the
     /// working tree, where the user meets them immediately; a failed `git stash

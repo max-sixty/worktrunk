@@ -462,6 +462,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             "squashed": squashed,
             "rebased": rebased,
             "removed": removed,
+            // The exit code alone leaves a consumer that reads stdout seeing a
+            // success-shaped payload, so the failure is named on both channels.
+            "stash_restore_failed": stash_restore_failed,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     }

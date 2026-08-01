@@ -2050,7 +2050,14 @@ fn test_merge_autostash_restore_failure_exits_non_zero_after_cleanup(mut repo: T
     let target_before = repo.git_output(&["rev-parse", "main"]);
     let output = repo
         .wt_command()
-        .args(["merge", "main", "--no-commit", "--no-rebase", "--no-hooks"])
+        .args([
+            "merge",
+            "main",
+            "--no-commit",
+            "--no-rebase",
+            "--no-hooks",
+            "--format=json",
+        ])
         .current_dir(&feature_wt)
         .output()
         .unwrap();
@@ -2065,6 +2072,11 @@ fn test_merge_autostash_restore_failure_exits_non_zero_after_cleanup(mut repo: T
         stderr.contains("Failed to restore stashed changes"),
         "expected a restore-failure warning: {stderr}"
     );
+
+    // Every output channel names the failure. A consumer reading the payload
+    // rather than `$?` would otherwise see a success-shaped object.
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["stash_restore_failed"], true);
 
     // The merge landed and its cleanup ran — the exit code reports the restore,
     // not the merge.
@@ -4613,6 +4625,7 @@ fn test_merge_json(repo: TestRepo) {
       "rebased": false,
       "removed": true,
       "squashed": false,
+      "stash_restore_failed": false,
       "target": "main"
     }
     "#);

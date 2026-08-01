@@ -325,6 +325,10 @@ fn handle_step_command(
                         PushOutcome::MergeCommit { .. } => "merge_commit",
                     },
                     "commits": commit_count,
+                    // The exit code alone leaves a consumer that reads stdout
+                    // seeing a success-shaped payload, so the failure is named
+                    // on both channels.
+                    "stash_restore_failed": stash_restore_failed,
                 });
                 if let PushOutcome::MergeCommit { merge_sha } = outcome {
                     payload["merge_sha"] = serde_json::Value::String(merge_sha);
