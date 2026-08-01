@@ -6,8 +6,8 @@ use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::git::{
-    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
-    parse_porcelain_z, parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
+    WorktreeInfo, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -462,17 +462,30 @@ impl RepositoryCliExt for Repository {
         // Note: git stash push returns exit code 0 whether or not anything was stashed.
         wt.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
 
-        // Verify stash was created by checking the stash list for our entry.
-        let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
+        // Verify stash was created by checking the stash list for our entry, and
+        // capture its immutable commit SHA (`%H`) rather than the positional
+        // reflog selector (`%gd`, i.e. `stash@{0}`). The selector is a position:
+        // any stash pushed into the repo between now and the restore — a
+        // concurrent `wt merge`, an editor integration — shifts the indices, so
+        // popping `stash@{0}` later would restore (and drop) a different entry.
+        // The commit SHA is addressed by content and never moves.
+        let list_output = wt.run_command(&["stash", "list", "--format=%H%x00%gs%x00"])?;
         let mut parts = list_output.split('\0');
-        while let Some(id) = parts.next() {
-            if id.is_empty() {
+        while let Some(sha) = parts.next() {
+            // git separates stash-list records with `\n`, so every SHA after the
+            // first carries a leading newline; trim before use.
+            let sha = sha.trim();
+            if sha.is_empty() {
                 continue;
             }
             if let Some(message) = parts.next()
                 && (message == stash_name || message.ends_with(&stash_name))
             {
-                return Ok(Some(TargetWorktreeStash::new(wt_path, id.to_string())));
+                return Ok(Some(TargetWorktreeStash::new(
+                    wt_path,
+                    sha.to_string(),
+                    &stash_name,
+                )));
             }
         }
 
@@ -656,7 +669,12 @@ pub(crate) struct TargetWorktreeStash {
 
 struct StashData {
     path: PathBuf,
-    stash_ref: String,
+    /// Immutable commit SHA of the stash entry. Restored by content, so a stash
+    /// pushed into the repo since capture can't redirect the restore.
+    stash_sha: String,
+    /// The unique `-m` message recorded at capture. Used to re-locate the entry
+    /// in the (possibly reordered) stash list when dropping it after apply.
+    stash_name: String,
 }
 
 impl StashData {
@@ -670,26 +688,73 @@ impl StashData {
             ))
         );
 
-        // Don't use --quiet so git shows conflicts if any
-        let success = Repository::current()
-            .ok()
-            .and_then(|repo| {
-                repo.worktree_at(&self.path)
-                    .run_command(&["stash", "pop", &self.stash_ref])
-                    .ok()
-            })
-            .is_some();
-
-        if !success {
+        if let Err(e) = self.restore_inner() {
             eprintln!(
                 "{}",
                 warning_message(cformat!(
-                    "Failed to restore stash <bold>{stash_ref}</>; run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
-                    stash_ref = self.stash_ref,
+                    "Failed to restore stashed changes in <bold>{path}</>; run <bold>git stash apply {sha}</> there to recover ({err})",
+                    path = format_path_for_display(&self.path),
+                    sha = self.stash_sha,
+                    err = e,
+                ))
+            );
+        }
+    }
+
+    /// Apply the stash by its immutable commit SHA, then drop the entry.
+    ///
+    /// `git stash apply <sha>` is content-addressed, so it restores this exact
+    /// entry regardless of how the stash list has been reordered since capture —
+    /// unlike `git stash pop stash@{0}`, which would pop whatever now sits at
+    /// position 0. Because `apply` (unlike `pop`) leaves the entry in the list,
+    /// we then re-locate it by its unique message and drop it. A failed drop
+    /// only strands a stash entry — the working-tree content is already
+    /// restored — so it is not treated as a restore failure.
+    fn restore_inner(&self) -> anyhow::Result<()> {
+        let repo = Repository::current()?;
+        let wt = repo.worktree_at(&self.path);
+
+        // Don't use --quiet so git shows conflicts if any.
+        wt.run_command(&["stash", "apply", &self.stash_sha])?;
+
+        if let Some(selector) = Self::locate_by_message(&wt, &self.stash_name)?
+            && let Err(e) = wt.run_command(&["stash", "drop", &selector])
+        {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Restored changes but left the stash entry <bold>{selector}</> in <bold>{path}</>; drop it with <bold>git stash drop {selector}</> ({e})",
                     path = format_path_for_display(&self.path),
                 ))
             );
         }
+
+        Ok(())
+    }
+
+    /// Find the current `stash@{n}` selector for the entry with `stash_name`.
+    ///
+    /// The recorded selector from capture time is positional and may be stale by
+    /// restore time, so the entry is re-located by its unique message. `git
+    /// stash push -m X` records the subject as `On <branch>: X`, so both the
+    /// exact message and the `On …:`-prefixed form are accepted.
+    fn locate_by_message(wt: &WorkingTree, stash_name: &str) -> anyhow::Result<Option<String>> {
+        let list_output = wt.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
+        let mut parts = list_output.split('\0');
+        while let Some(selector) = parts.next() {
+            // git separates stash-list records with `\n`, so every selector
+            // after the first carries a leading newline; trim before use.
+            let selector = selector.trim();
+            if selector.is_empty() {
+                continue;
+            }
+            if let Some(message) = parts.next()
+                && (message == stash_name || message.ends_with(stash_name))
+            {
+                return Ok(Some(selector.to_string()));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -702,11 +767,12 @@ impl Drop for TargetWorktreeStash {
 }
 
 impl TargetWorktreeStash {
-    pub(crate) fn new(path: &Path, stash_ref: String) -> Self {
+    pub(crate) fn new(path: &Path, stash_sha: String, stash_name: &str) -> Self {
         Self {
             inner: Some(StashData {
                 path: path.to_path_buf(),
-                stash_ref,
+                stash_sha,
+                stash_name: stash_name.to_string(),
             }),
         }
     }
@@ -953,11 +1019,54 @@ mod tests {
         assert!(parse_untracked_files(" M file1.txt\0M  file2.txt\0").is_empty());
     }
 
+    /// `locate_by_message` re-finds a stash entry by its unique message so the
+    /// restore path never trusts a positional selector a concurrent stash could
+    /// have invalidated (#3683). It must find the entry after the list has been
+    /// reordered — matching the `On <branch>: <msg>` subject that `git stash
+    /// push -m` records — and report absence without matching an unrelated
+    /// entry.
+    #[test]
+    fn locate_by_message_finds_entry_after_reorder_and_reports_absence() {
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path();
+
+        // Two stashes with distinct messages. The second push lands at
+        // stash@{0}, pushing the first to stash@{1} — the reorder the fix must
+        // tolerate.
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        test.run_git(&["stash", "push", "-u", "-m", "worktrunk autostash::alpha"]);
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+        test.run_git(&["stash", "push", "-u", "-m", "worktrunk autostash::beta"]);
+
+        let repo = Repository::at(root).unwrap();
+        let wt = repo.worktree_at(root);
+
+        // The older entry is now at stash@{1}; located by message, not position.
+        assert_eq!(
+            StashData::locate_by_message(&wt, "worktrunk autostash::alpha")
+                .unwrap()
+                .as_deref(),
+            Some("stash@{1}"),
+        );
+
+        // A message with no match scans every entry — including the trailing
+        // record separator — and returns None rather than a false positive.
+        assert!(
+            StashData::locate_by_message(&wt, "worktrunk autostash::gamma")
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn test_stash_guard_restore_now_clears_inner() {
         // Create a guard - note: this doesn't actually create a stash since we're not
         // in a real git repo with that stash ref. We're just testing the state machine.
-        let mut guard = TargetWorktreeStash::new(std::path::Path::new("/tmp"), "stash@{0}".into());
+        let mut guard = TargetWorktreeStash::new(
+            std::path::Path::new("/tmp"),
+            "0000000000000000000000000000000000000000".into(),
+            "worktrunk autostash::test",
+        );
 
         // Inner should be populated
         assert!(guard.inner.is_some());
@@ -977,7 +1086,11 @@ mod tests {
     #[test]
     fn test_stash_guard_drop_clears_inner() {
         // Test that Drop also consumes the inner
-        let guard = TargetWorktreeStash::new(std::path::Path::new("/tmp"), "stash@{0}".into());
+        let guard = TargetWorktreeStash::new(
+            std::path::Path::new("/tmp"),
+            "0000000000000000000000000000000000000000".into(),
+            "worktrunk autostash::test",
+        );
 
         // Just drop it - the restore will fail (no real repo) but Drop shouldn't panic
         drop(guard);

@@ -716,6 +716,37 @@ fn commit_details_many_returns_subject_with_spaces() {
 }
 
 #[test]
+fn abbrev_len_follows_core_abbrev_and_covers_absent_objects() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    // The width git actually uses here — the same one `%h` and `short_sha`
+    // produce, which is the whole point of asking git rather than picking a
+    // number.
+    let head_short = test.repo.short_sha("HEAD").unwrap();
+    assert_eq!(test.repo.abbrev_len(), head_short.chars().count());
+
+    // `core.abbrev` reaches it. A fresh `Repository` because the width is
+    // resolved once per repo handle and cached for the process.
+    test.repo
+        .run_command(&["config", "core.abbrev", "12"])
+        .unwrap();
+    let reread = Repository::at(test.path()).unwrap();
+    assert_eq!(reread.abbrev_len(), 12);
+
+    // The case `short_sha` can't serve per-SHA: an object that isn't in the
+    // store, as every commit the `--prs` log tab gets from a forge API is. git
+    // has nothing to disambiguate against, so this width is its whole answer.
+    let absent = "0".repeat(head_short.chars().count().max(40));
+    assert_eq!(
+        reread.short_sha(&absent).unwrap().chars().count(),
+        reread.abbrev_len(),
+    );
+}
+
+#[test]
 fn commit_details_many_empty_input_is_noop() {
     use crate::testing::TestRepo;
 

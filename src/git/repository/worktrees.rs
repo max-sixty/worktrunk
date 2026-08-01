@@ -152,19 +152,27 @@ impl Repository {
     ///
     /// # Concurrent calls
     ///
-    /// `wt step prune` calls this from several removals at once. Each names one
-    /// entry, so no call deletes another's `.git/worktrees/<id>`. Git also
-    /// `rmdir`s the containing `.git/worktrees` once the last entry goes, but
-    /// that only succeeds on an already-empty directory: `git worktree remove`
-    /// enumerates the directory before deleting its own entry, and every
+    /// `wt step prune` removes several entries at once, but **serializes the
+    /// teardowns** — this and every other `git worktree remove` — behind
+    /// `RemovalContext::registry_lock` (see the `prune` module). It has to:
+    /// naming one entry bounds what a call *deletes*, not what it *reads*.
+    /// `git worktree remove` enumerates *every* sibling under `.git/worktrees/`
+    /// and reads each one's `commondir` while resolving its target, so a
+    /// teardown overlapping another worker's teardown — or a branch delete's
+    /// `list_worktrees` probe — can read an entry mid-deletion and fail
+    /// (`failed to read …/commondir` / `Invalid path …/.git/worktrees/<id>`).
+    /// That is git's own TOCTOU between the enumerator's `readdir` and its
+    /// `open`; it holds however wt schedules its removals, so wt closes the
+    /// window by not letting two registry mutations overlap (issue #3661).
+    ///
+    /// Git also `rmdir`s the containing `.git/worktrees` once the last entry
+    /// goes, but that only succeeds on an already-empty directory, and every
     /// per-worktree command in the removal chain (`git status`, the fsmonitor
     /// stop) runs while that worktree is still registered, so an emptied
-    /// directory has no in-flight reader left to strand.
-    ///
-    /// A `git worktree list` in another process is the one thing that
-    /// disappearing directory can still fail (`fatal: Invalid path
-    /// '…/.git/worktrees'`, between its readdir and its realpath). That is
-    /// git's own race, and it holds however wt schedules its removals.
+    /// directory has no in-flight reader left to strand. A `git worktree list`
+    /// in an *unrelated* process — outside wt's lock — remains exposed to the
+    /// same `Invalid path` race; wt's serialization only covers its own
+    /// removals.
     pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
         // Every caller's path came from `list_worktrees`, which parses git's
         // porcelain as UTF-8, so this only fires if that edge ever stops

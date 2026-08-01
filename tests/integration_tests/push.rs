@@ -125,6 +125,141 @@ fn test_push_dirty_target_autostash(mut repo: TestRepo) {
     );
 }
 
+/// Regression test for #3683: the autostash restore must not hinge on a
+/// positional `stash@{0}` selector. A stash pushed into the repo between the
+/// autostash and its restore — a concurrent `wt merge`, an editor integration —
+/// shifts the reflog indices, so restoring by position would pop (and drop) the
+/// interloper's entry and silently discard the user's uncommitted work.
+/// Restoring by the stash's immutable commit SHA is immune to the reorder.
+///
+/// A `post-receive` hook is the deterministic stand-in for the concurrent
+/// writer: it fires during `wt`'s own fast-forward `git push`, which is exactly
+/// the window between the autostash capture and its restore.
+#[cfg(unix)]
+#[rstest]
+fn test_push_autostash_survives_concurrent_stash(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Uncommitted, non-conflicting work in the target worktree (repo root).
+    let notes = repo.root_path().join("notes.txt");
+    std::fs::write(&notes, "PRECIOUS-USER-WORK").unwrap();
+
+    // A post-receive hook that pushes an unrelated stash during the push,
+    // shifting the reflog indices out from under the autostash entry.
+    let root = repo.root_path().to_path_buf();
+    let hook = root.join(".git/hooks/post-receive");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
+             printf 'interloper\\n' > '{root}/interloper.txt'\n\
+             git -C '{root}' -c user.email=i@i -c user.name=I \
+                 stash push --include-untracked -m INTERLOPER >/dev/null 2>&1\n\
+             exit 0\n",
+            root = root.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let feature_wt = repo.add_feature();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+    assert!(
+        output.status.success(),
+        "push failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The user's uncommitted work must survive — not the interloper's content.
+    assert_eq!(
+        std::fs::read_to_string(&notes).unwrap(),
+        "PRECIOUS-USER-WORK",
+        "autostash restored the wrong entry, discarding the user's work"
+    );
+
+    // The interloper's stash is untouched; the autostash entry is cleaned up.
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
+    let stash_list = String::from_utf8_lossy(&stash_list.stdout);
+    assert!(
+        stash_list.contains("INTERLOPER"),
+        "the concurrent writer's stash was dropped: {stash_list:?}"
+    );
+    assert!(
+        !stash_list.contains("autostash"),
+        "the autostash entry was left behind: {stash_list:?}"
+    );
+}
+
+/// A restore that genuinely can't replay — the stashed path is occupied again
+/// by the time the push finishes — must warn with a recoverable `git stash
+/// apply <sha>` rather than silently report success. Data-safety guard for
+/// #3683: the stash entry is left intact so the work is recoverable.
+#[cfg(unix)]
+#[rstest]
+fn test_push_autostash_restore_failure_warns(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Untracked, non-conflicting work in the target worktree (repo root).
+    std::fs::write(repo.root_path().join("notes.txt"), "USER-WORK").unwrap();
+
+    // A post-receive hook re-creates the stashed path with different content,
+    // so `git stash apply` can't restore the untracked file and the restore
+    // fails after the push has already landed.
+    let root = repo.root_path().to_path_buf();
+    let hook = root.join(".git/hooks/post-receive");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
+             printf 'HOOK-CONFLICT\\n' > '{root}/notes.txt'\n\
+             exit 0\n",
+            root = root.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let feature_wt = repo.add_feature();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+
+    // The push itself succeeded; only the restore couldn't replay.
+    assert!(
+        output.status.success(),
+        "push should still succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to restore stashed changes"),
+        "expected a restore-failure warning, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("git stash apply"),
+        "warning must name the recovery command: {stderr}"
+    );
+
+    // The stash entry survives for recovery — a failed apply does not drop it.
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
+    assert!(
+        String::from_utf8_lossy(&stash_list.stdout).contains("autostash"),
+        "the recoverable stash entry must remain"
+    );
+}
+
 #[rstest]
 fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     // Regression test: overlap detection must detect conflicts when a file is renamed

@@ -2446,7 +2446,7 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
 /// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
 /// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
 /// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
-/// end: `spawn_compute` → `compute_pr_log` → `render_github_commits` → cache.
+/// end: `spawn_compute` → `compute_pr_log` → `parse_github_commits` → cache.
 ///
 /// `headRefOid` here is a SHA that isn't in the test repo's object store, so
 /// `compute_pr_log`'s local-`git log` fast path misses and falls back to the
@@ -2713,19 +2713,19 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 /// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
 /// calls keyed by the row's `mr:{N}` token. Both `mode:2` (Log) and `mode:7`
 /// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
-/// `compute_pr_comments` → `render_gitlab_commits` / `render_gitlab_notes` →
+/// `compute_pr_comments` → `parse_gitlab_commits` / `render_gitlab_notes` →
 /// cache for the GitLab forge — the half the unit tests (canned JSON straight
 /// into the renderers) can't reach, pinning the endpoint/arg construction.
 ///
 /// Both `glab api …/commits` and `…/notes` match the mock's `api --paginate`
 /// compound key, so one canned response carries all fields each renderer reads
-/// (`short_id`/`title` for commits; `body`/`author`/`created_at`/`system` for
+/// (`id`/`title` for commits; `body`/`author`/`created_at`/`system` for
 /// notes) — serde ignores the rest.
 #[rstest]
 fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
     let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7"}]"#;
-    let api_json = r#"[{"short_id":"abc12345","title":"Cache deps between jobs","body":"Looks good.","author":{"username":"reviewer"},"created_at":"2024-12-01T00:00:00Z","system":false}]"#;
+    let api_json = r#"[{"id":"abc12345def678900000000000000000000000a","short_id":"abc12345","title":"Cache deps between jobs","body":"Looks good.","author":{"username":"reviewer"},"created_at":"2024-12-01T00:00:00Z","system":false}]"#;
 
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
