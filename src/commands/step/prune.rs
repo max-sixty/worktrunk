@@ -282,10 +282,14 @@ struct RemovalContext<'a> {
 /// a hook body nor a spinner, whatever selected it. `StaleDetached` never
 /// reaches here — [`try_remove`] prunes its entry and returns.
 ///
-/// Everything else fans out, including both mutations that unregister stale
-/// worktree metadata: `StaleDetached`'s prune, and the one a `BranchOnly`
-/// plan carries as `prune_entry`. Each names its own entry, so concurrent
-/// prunes are safe against each other and against the scan — see the
+/// Everything else fans out on the read side, including both mutations that
+/// unregister stale worktree metadata: `StaleDetached`'s prune, and the one a
+/// `BranchOnly` plan carries as `prune_entry`. Naming one entry bounds what
+/// each *deletes* but not what `git worktree remove` *reads* (it enumerates
+/// every sibling), so those teardowns are not safe to overlap — that is
+/// [`RemovalContext::registry_lock`]'s job, orthogonal to `check_lock`: they
+/// take its write side via [`removal_mutates_registry`] and so serialize
+/// against each other and against the scan's registry reads. See the
 /// concurrency section on
 /// [`prune_worktree_entry`](Repository::prune_worktree_entry).
 fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalContext<'_>) -> bool {
