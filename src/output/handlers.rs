@@ -29,7 +29,6 @@ use worktrunk::git::path_dir_name;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
     execute_branch_deletion, remove_worktree_with_cleanup, stage_worktree_removal,
-    stop_fsmonitor_daemon,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_stats_paren};
@@ -212,22 +211,13 @@ fn execute_instant_removal_or_fallback(
         planner_expected_retention,
     } = *removal;
 
-    if !force_worktree {
-        repo.worktree_at(worktree_path)
-            .ensure_clean("remove worktree", branch_name, true)?;
-    }
-
-    // Stop the fsmonitor daemon after the clean check (which it serves — a
-    // status right after the stop re-stats the whole tree) and before the
-    // rename (on Windows the daemon holds a handle on the worktree that would
-    // fail the rename, and git's graceful stop resolves the daemon by worktree
-    // path, unreachable once the path moves). Force-kills a wedged daemon so
-    // it can't leak once the worktree is gone.
-    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
-
-    // Fast path: rename worktree into .git/wt/trash/ (instant on same filesystem),
-    // prune git metadata, then background process just does `rm -rf`.
-    if let Some(staged_path) = stage_worktree_removal(repo, worktree_path) {
+    // Dirty-worktree gate, fsmonitor stop, then the rename into .git/wt/trash/
+    // (instant on same filesystem) — the same prelude the synchronous
+    // `remove_worktree_with_cleanup` runs. On the fast path the background
+    // process is then just an `rm -rf`.
+    if let Some(staged_path) =
+        stage_worktree_removal(repo, worktree_path, branch_name, force_worktree)?
+    {
         // Delete branch synchronously now that prune has removed the worktree metadata.
         // Fresh refs, not the pre-hook planning decision: hooks or concurrent
         // processes may have advanced the branch (`execute_branch_deletion`).

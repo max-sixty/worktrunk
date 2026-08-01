@@ -1,17 +1,31 @@
 //! Worktree removal with fast-path trash staging and safe branch deletion.
 //!
-//! This is the canonical removal flow used by `wt remove`, `wt merge --remove`,
-//! and the TUI picker. External tooling (e.g. `worktrunk-sync`) can call it via
-//! [`remove_worktree_with_cleanup`] to get the same semantics without
-//! reimplementing the fsmonitor cleanup, trash-path staging, and
-//! integration-check branch deletion.
+//! Two entry points:
+//!
+//! - [`stage_worktree_removal`] — the ordered prelude every removal path runs
+//!   in the foreground before the worktree directory stops existing: the
+//!   dirty-worktree gate, the fsmonitor stop, then the rename into trash. It
+//!   owns the gate, so it is the one place removal's data safety is decided.
+//! - [`remove_worktree_with_cleanup`] — that prelude, plus the direct-removal
+//!   fallback and branch deletion, run to completion synchronously.
+//!
+//! The split exists because the default path defers its deletion: `wt remove`
+//! and `wt merge --remove` stage the worktree here, then hand the `rm -rf` to
+//! a detached process so the command returns as soon as the workspace is
+//! clear. They build that tail themselves rather than calling
+//! [`remove_worktree_with_cleanup`]. The callers that run to completion —
+//! `--foreground` removals, the TUI picker, and external tooling (e.g.
+//! `worktrunk-sync`) — call it and get the fallback and integration-checked
+//! branch deletion for free.
 //!
 //! # What happens during removal
 //!
+//! Steps 1-3 are [`stage_worktree_removal`]; 4-5 are the rest of
+//! [`remove_worktree_with_cleanup`].
+//!
 //! 1. **Clean check** (skipped with [`RemoveOptions::force_worktree`]). The
-//!    final dirty-worktree gate, immediately before the mutation. It runs
-//!    while the fsmonitor daemon is still up, so the daemon serves the status
-//!    instead of the stop below forcing a full re-stat.
+//!    final dirty-worktree gate, immediately before the mutation. Why it
+//!    precedes the stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
@@ -115,13 +129,12 @@ const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 ///
 /// This is the single canonical fsmonitor-stop path. It runs **synchronously
 /// while the worktree path still exists** (the socket lives under the
-/// per-worktree git dir and is needed to resolve the owning PID), so every
-/// removal path — the library `remove_worktree_with_cleanup`, the foreground
-/// handler, and the background `spawn_background_removal` — calls it in the
-/// foreground before the directory is staged or pruned. The detached
-/// `rm -rf` background process never touches the daemon; keeping daemon
-/// management in the Rust foreground avoids reimplementing socket/PID
-/// resolution and signal escalation as a shell string.
+/// per-worktree git dir and is needed to resolve the owning PID), so its one
+/// caller is [`stage_worktree_removal`], which every removal path runs in the
+/// foreground before the directory is staged or pruned. The detached `rm -rf`
+/// background process never touches the daemon; keeping daemon management in
+/// the Rust foreground avoids reimplementing socket/PID resolution and signal
+/// escalation as a shell string.
 ///
 /// Best-effort and fail-open: every step is bounded by a timeout and every
 /// error is logged at debug level and swallowed. A failure here must never
@@ -354,28 +367,12 @@ pub fn remove_worktree_with_cleanup(
     worktree_path: &Path,
     options: RemoveOptions,
 ) -> anyhow::Result<RemovalOutput> {
-    // Final clean check, immediately before the rename. Runs while the
-    // fsmonitor daemon is still up (it serves this status; stopping it first
-    // would force a full re-stat) — the one dirty-worktree gate on this path.
-    if !options.force_worktree {
-        repo.worktree_at(worktree_path).ensure_clean(
-            "remove worktree",
-            options.branch.as_deref(),
-            true,
-        )?;
-    }
-
-    // Stop the fsmonitor daemon, force-killing a wedged one. Must happen after
-    // the clean check (above) and before the rename: on Windows the daemon
-    // holds a handle on the worktree that would fail the rename, and git's
-    // graceful stop resolves the daemon by worktree path, unreachable once
-    // the path moves.
-    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
-
-    // Fast path: rename into .git/wt/trash/ (instant on same filesystem),
-    // then prune git metadata. Falls back to `git worktree remove` if the
-    // rename fails (cross-filesystem, permissions, Windows file locking).
-    let staged_path = stage_worktree_removal(repo, worktree_path);
+    let staged_path = stage_worktree_removal(
+        repo,
+        worktree_path,
+        options.branch.as_deref(),
+        options.force_worktree,
+    )?;
     if staged_path.is_none() {
         repo.remove_worktree(worktree_path, options.force_worktree)?;
     }
@@ -402,22 +399,68 @@ pub fn remove_worktree_with_cleanup(
     })
 }
 
+/// Gate, stop the fsmonitor daemon, and stage a worktree for removal — steps
+/// 1-3 of the [module-level docs](self), in that order.
+///
+/// Every removal path runs this, in the foreground, before the worktree
+/// directory stops existing: the synchronous
+/// [`remove_worktree_with_cleanup`], and the default background path, which
+/// stages here and hands the `rm -rf` to a detached process. Keeping the three
+/// steps together is what makes the dirty-worktree gate a single decision
+/// rather than a sequence each caller re-assembles — the order below is easy
+/// to get subtly wrong, and getting it wrong destroys uncommitted work.
+///
+/// Returns `Some(staged_path)` when the worktree was renamed into
+/// `<git-common-dir>/wt/trash/`, `None` when the rename failed
+/// (cross-filesystem, permissions, Windows file locking) and the caller must
+/// fall back to a direct `git worktree remove`. Either way the caller owns the
+/// staged directory and must eventually delete it.
+///
+/// # Why this order
+///
+/// The gate runs **before** the daemon stop because the fsmonitor daemon
+/// serves its `git status`; stopping first would force a full re-stat, the
+/// dominant per-removal cost on a large repo. That the gate therefore trusts
+/// the daemon is a deliberate match to `git worktree remove`, whose own gate
+/// trusts it identically — see "The dirty-worktree gate follows git" in the
+/// [module-level docs](self) for why that is the decision and not a gap.
+///
+/// The daemon stop runs **before** the rename because on Windows the daemon
+/// holds a handle on the worktree that would fail it, and git's graceful stop
+/// resolves the daemon by worktree path — unreachable once the path moves.
+///
+/// # Errors
+///
+/// Only the dirty-worktree gate errors. A failed rename is reported as `None`,
+/// not an error, and the daemon stop is best-effort throughout.
+pub fn stage_worktree_removal(
+    repo: &Repository,
+    worktree_path: &Path,
+    branch: Option<&str>,
+    force_worktree: bool,
+) -> anyhow::Result<Option<PathBuf>> {
+    if !force_worktree {
+        repo.worktree_at(worktree_path)
+            .ensure_clean("remove worktree", branch, true)?;
+    }
+
+    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
+
+    Ok(rename_into_trash(repo, worktree_path))
+}
+
 /// Rename a worktree into `<git-common-dir>/wt/trash/` and prune git metadata.
 ///
-/// Returns `Some(staged_path)` on success, `None` if the rename failed (e.g.
-/// cross-filesystem, permissions, Windows file locking). Callers that see
-/// `None` should fall back to a direct `git worktree remove`.
-///
-/// This is a lower-level building block exposed for callers that want to
-/// stage the directory up-front and defer the `rm -rf` to a detached
-/// background process (the pattern `wt remove` uses internally).
+/// Returns `Some(staged_path)` on success, `None` if the rename failed. The
+/// unguarded mutation: [`stage_worktree_removal`] is the only caller, and it
+/// is what places the dirty-worktree gate ahead of this.
 ///
 /// The metadata cleanup names this worktree
 /// ([`prune_worktree_entry`](Repository::prune_worktree_entry)) rather than
 /// sweeping the repository, so a sibling worktree whose directory happens to
 /// be absent right now keeps its registration. A locked worktree never reaches
 /// here — `prepare_worktree_removal` rejects one before staging.
-pub fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option<PathBuf> {
+fn rename_into_trash(repo: &Repository, worktree_path: &Path) -> Option<PathBuf> {
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, worktree_path);

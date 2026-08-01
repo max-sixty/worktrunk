@@ -1836,8 +1836,21 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
+/// The final dirty-worktree gate holds on both execution paths.
+///
+/// Planning validates cleanliness before `pre-remove` runs, so a hook that
+/// dirties the worktree can only be caught by the gate immediately before the
+/// mutation — `stage_worktree_removal`'s, the one every path shares. The
+/// background case is the load-bearing one: it's the default for `wt remove`,
+/// and it stages the worktree by renaming it out from under the user, so a
+/// missing gate there destroys the hook's output rather than refusing.
 #[rstest]
-fn test_pre_remove_hook_dirtying_worktree_blocks_foreground_remove(mut repo: TestRepo) {
+#[case::foreground(&["--foreground"])]
+#[case::background(&[])]
+fn test_pre_remove_hook_dirtying_worktree_blocks_remove(
+    mut repo: TestRepo,
+    #[case] execution_args: &[&str],
+) {
     let hook = "echo dirty > hook-created.txt";
     repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
     repo.commit("Add config");
@@ -1850,7 +1863,9 @@ approved-commands = ["{hook}"]
     let worktree_path = repo.add_worktree("feature-hook-dirties");
     let output = repo
         .wt_command()
-        .args(["remove", "--foreground", "feature-hook-dirties"])
+        .arg("remove")
+        .args(execution_args)
+        .arg("feature-hook-dirties")
         .output()
         .unwrap();
 
