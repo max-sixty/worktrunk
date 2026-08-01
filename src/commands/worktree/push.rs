@@ -65,6 +65,15 @@ pub struct PushResult {
     pub target: String,
     pub commit_count: usize,
     pub outcome: PushOutcome,
+    /// The target worktree's autostash could not be replayed.
+    ///
+    /// The push itself landed, so the caller finishes its remaining work
+    /// (worktree removal, post-merge hooks, `--format=json` payload) and only
+    /// then exits non-zero. Reporting success here would say the user's
+    /// uncommitted changes are back in their worktree when they are still in a
+    /// stash. The warning naming the recovery command is already printed, so
+    /// the caller raises [`worktrunk::git::WorktrunkError::AlreadyDisplayed`].
+    pub stash_restore_failed: bool,
 }
 
 pub enum PushOutcome {
@@ -264,9 +273,13 @@ impl MergeContext {
     }
 
     /// Explicitly restore the stash guard (before success message).
-    fn restore_stash(&mut self) {
-        if let Some(guard) = self.stash_guard.as_mut() {
-            guard.restore_now();
+    ///
+    /// Returns whether the stashed content is back in the target worktree; a
+    /// push that stashed nothing reports success.
+    fn restore_stash(&mut self) -> bool {
+        match self.stash_guard.as_mut() {
+            Some(guard) => guard.restore_now(),
+            None => true,
         }
     }
 
@@ -374,7 +387,7 @@ pub fn handle_push(
             error: e.display_message(),
         })?;
 
-    ctx.restore_stash();
+    let stash_restore_failed = !ctx.restore_stash();
 
     let outcome = if ctx.commit_count > 0 {
         ctx.show_success(kind.verb_past(), "", "");
@@ -387,6 +400,7 @@ pub fn handle_push(
     Ok(PushResult {
         target: ctx.target_branch,
         commit_count: ctx.commit_count,
+        stash_restore_failed,
         outcome,
     })
 }
@@ -421,11 +435,17 @@ pub fn handle_no_ff_merge(
 
     ctx.show_progress("Merging", " (--no-ff)", operations)?;
 
-    if ctx.show_up_to_date_if_needed(operations) {
+    // A dirty target worktree is stashed even when there is nothing to merge,
+    // so this early return restores too — and, as in `handle_push`, before the
+    // "Already up to date" line.
+    if ctx.commit_count == 0 {
+        let stash_restore_failed = !ctx.restore_stash();
+        ctx.show_up_to_date_if_needed(operations);
         return Ok(PushResult {
             target: ctx.target_branch,
             commit_count: 0,
             outcome: PushOutcome::UpToDate,
+            stash_restore_failed,
         });
     }
 
@@ -497,7 +517,7 @@ pub fn handle_no_ff_merge(
         }
     }
 
-    ctx.restore_stash();
+    let stash_restore_failed = !ctx.restore_stash();
 
     // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
     let merge_sha_short = ctx.repo.short_sha(&merge_sha)?;
@@ -508,6 +528,7 @@ pub fn handle_no_ff_merge(
         target: ctx.target_branch,
         commit_count: ctx.commit_count,
         outcome: PushOutcome::MergeCommit { merge_sha },
+        stash_restore_failed,
     })
 }
 

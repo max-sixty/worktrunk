@@ -233,10 +233,12 @@ fn test_push_autostash_restore_failure_warns(mut repo: TestRepo) {
         .output()
         .expect("failed to run push");
 
-    // The push itself succeeded; only the restore couldn't replay.
-    assert!(
-        output.status.success(),
-        "push should still succeed: {}",
+    // Exit non-zero: the user's changes are in a stash rather than their
+    // worktree, so reporting success would misstate where their work is.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a restore that couldn't replay must not exit 0: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -247,6 +249,14 @@ fn test_push_autostash_restore_failure_warns(mut repo: TestRepo) {
     assert!(
         stderr.contains("git stash apply"),
         "warning must name the recovery command: {stderr}"
+    );
+
+    // The push itself landed — the non-zero exit reports the restore, not the
+    // push, so the target must still have advanced to the feature commit.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", "feature"]),
+        "the push must still have landed on the target"
     );
 
     // The stash entry survives for recovery — a failed apply does not drop it.

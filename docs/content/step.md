@@ -372,7 +372,7 @@ The target is a branch, and must already be an ancestor of the current branch. O
 
 ### Target worktree
 
-When the target branch has a worktree of its own, that worktree's files move to the new commits too. A fast-forward does both at once, pushing into this repository with `receive.denyCurrentBranch=updateInstead`; `--no-ff` moves the ref first and syncs the worktree after, warning rather than failing if that sync doesn't apply. Uncommitted changes in that worktree are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file.
+When the target branch has a worktree of its own, that worktree's files move to the new commits too. A fast-forward does both at once, pushing into this repository with `receive.denyCurrentBranch=updateInstead`; `--no-ff` moves the ref first and syncs the worktree after, warning rather than failing if that sync doesn't apply. Uncommitted changes in that worktree are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file. A restore that can't replay keeps the stash entry and exits non-zero, naming the `git stash apply` that recovers it — the push itself still stands.
 
 A worktree that is still registered but whose directory is gone is refused as well, since nothing can be synced into it — `git worktree prune` clears the registration.
 

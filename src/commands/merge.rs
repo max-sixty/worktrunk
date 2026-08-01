@@ -4,7 +4,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{MergeConfig, UserConfig};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_commit_template_append;
@@ -427,13 +427,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         squashed,
         rebased,
     });
-    if !ff {
+    let stash_restore_failed = if !ff {
         // Create a merge commit on the target branch via commit-tree + update-ref
-        let _ = handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
+        handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?.stash_restore_failed
     } else {
         // Fast-forward push to target branch
-        let _ = handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
-    }
+        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?
+            .stash_restore_failed
+    };
 
     let removed = finish_after_merge(
         repo,
@@ -463,6 +464,15 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             "removed": removed,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+
+    if stash_restore_failed {
+        // The merge landed and every follow-up ran; only the target worktree's
+        // autostash didn't replay, leaving the user's uncommitted changes in a
+        // stash instead of their worktree. `restore_stash` already warned with
+        // the recovery command, so this only makes the exit code say the
+        // command didn't finish what it set out to do.
+        return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
     }
 
     Ok(())

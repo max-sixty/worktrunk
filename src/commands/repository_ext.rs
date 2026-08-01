@@ -679,7 +679,12 @@ struct StashData {
 
 impl StashData {
     /// Restore the stash, printing progress and warning on failure.
-    fn restore(self) {
+    ///
+    /// Returns whether the stashed content made it back into the working tree.
+    /// The warning is printed here, so a caller only needs the outcome — to
+    /// finish its remaining work and then exit non-zero rather than reporting
+    /// success while the user's changes sit in a stash.
+    fn restore(self) -> bool {
         eprintln!(
             "{}",
             progress_message(cformat!(
@@ -688,17 +693,20 @@ impl StashData {
             ))
         );
 
-        if let Err(e) = self.restore_inner() {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "Failed to restore stashed changes in <bold>{path}</>; run <bold>git stash apply {sha}</> there to recover ({err})",
-                    path = format_path_for_display(&self.path),
-                    sha = self.stash_sha,
-                    err = e,
-                ))
-            );
-        }
+        let Err(e) = self.restore_inner() else {
+            return true;
+        };
+
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Failed to restore stashed changes in <bold>{path}</>; run <bold>git stash apply {sha}</> there to recover ({err})",
+                path = format_path_for_display(&self.path),
+                sha = self.stash_sha,
+                err = e,
+            ))
+        );
+        false
     }
 
     /// Apply the stash by its immutable commit SHA, then drop the entry.
@@ -761,6 +769,10 @@ impl StashData {
 impl Drop for TargetWorktreeStash {
     fn drop(&mut self) {
         if let Some(data) = self.inner.take() {
+            // `Drop` can't report the outcome, and doesn't need to: the guard
+            // only reaches here still armed on a path that is already returning
+            // an error, which exits non-zero on its own. The success path calls
+            // `restore_now` and acts on what it returns.
             data.restore();
         }
     }
@@ -781,9 +793,13 @@ impl TargetWorktreeStash {
     ///
     /// Use this when you need the restore to happen at a specific point
     /// (e.g., before a success message). Drop handles errors/early returns.
-    pub(crate) fn restore_now(&mut self) {
-        if let Some(data) = self.inner.take() {
-            data.restore();
+    ///
+    /// Returns whether the stashed content is back in the working tree; an
+    /// already-restored (or disarmed) guard reports success.
+    pub(crate) fn restore_now(&mut self) -> bool {
+        match self.inner.take() {
+            Some(data) => data.restore(),
+            None => true,
         }
     }
 }

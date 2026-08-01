@@ -2014,6 +2014,78 @@ git update-ref refs/heads/main "$concurrent" "$target"
     );
 }
 
+/// A merge whose target autostash can't replay finishes everything it started —
+/// the ref advances and the source worktree is removed — and only then exits
+/// non-zero. Exiting 0 would report the user's uncommitted changes as back in
+/// their worktree while they sit in a stash; aborting mid-flow would instead
+/// leave a landed merge with its cleanup half-done.
+#[rstest]
+fn test_merge_autostash_restore_failure_exits_non_zero_after_cleanup(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature-restore-fail",
+        "feature.txt",
+        "feature content",
+        "Add feature",
+    );
+
+    // Untracked work in the target worktree, plus a post-receive hook that
+    // re-creates that path during the push, so `git stash apply` can't put the
+    // untracked file back and the restore fails after the merge has landed.
+    fs::write(repo.root_path().join("notes.txt"), "USER-WORK").unwrap();
+    let git_common_dir =
+        repo.git_output(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    write_git_hook(
+        &PathBuf::from(git_common_dir)
+            .join("hooks")
+            .join("post-receive"),
+        &format!(
+            "#!/bin/sh\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
+             printf 'HOOK-CONFLICT\\n' > '{root}/notes.txt'\n\
+             exit 0\n",
+            root = repo.root_path().to_slash_lossy(),
+        ),
+    );
+
+    let target_before = repo.git_output(&["rev-parse", "main"]);
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-commit", "--no-rebase", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an autostash that couldn't replay must not exit 0: {stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to restore stashed changes"),
+        "expected a restore-failure warning: {stderr}"
+    );
+
+    // The merge landed and its cleanup ran — the exit code reports the restore,
+    // not the merge.
+    assert_ne!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_before,
+        "the merge must still have landed: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["show", "main:feature.txt"]),
+        "feature content"
+    );
+    wait_for_worktree_removed(&feature_wt);
+
+    // The user's work stays recoverable from the surviving stash entry.
+    assert!(
+        repo.git_output(&["stash", "list"]).contains("autostash"),
+        "the recoverable stash entry must remain"
+    );
+}
+
 #[rstest]
 fn test_merge_primary_on_different_branch(mut repo: TestRepo) {
     repo.switch_primary_to("develop");
