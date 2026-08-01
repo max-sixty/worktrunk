@@ -124,7 +124,9 @@ pub fn step_relocate(
             all_skipped.extend(validation_skipped);
             print_relocate_json(&[], &all_skipped, false)?;
         } else {
-            show_all_skipped(validation_skipped.len());
+            // Include template-error branches — the JSON path folds them into
+            // `all_skipped`, so the human count must match.
+            show_all_skipped(validation_skipped.len() + template_skips.len());
         }
         return Ok(());
     }
@@ -149,7 +151,10 @@ pub fn step_relocate(
         all_skipped.extend(executor.skipped_entries);
         print_relocate_json(&relocated_views, &all_skipped, false)?;
     } else {
-        let total_skipped = validation_skipped.len() + executor.skipped_count();
+        // Template-error branches count as skips too — the JSON path folds
+        // them into `all_skipped`, so keep the human total consistent.
+        let total_skipped =
+            template_skips.len() + validation_skipped.len() + executor.skipped_count();
         show_summary(executor.relocated_count(), total_skipped);
     }
 
