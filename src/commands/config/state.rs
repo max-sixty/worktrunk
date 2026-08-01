@@ -1508,7 +1508,7 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
         // same width `wt list`'s Commit cell and the statusline print. One
         // probe covers every row: `short_sha` per entry would be a `git
         // rev-parse` fork apiece, and a repo with a cache entry per branch
-        // turned this dump from 38 ms into 285 ms at 50 entries.
+        // turned this dump from 26 ms into 267 ms at 50 entries.
         let abbrev = repo.abbrev_len();
         let rows: Vec<Vec<String>> = entries
             .iter()
