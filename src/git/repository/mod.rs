@@ -1686,8 +1686,8 @@ impl Repository {
     /// probe is not even a valid revision there) — a HEAD whose own prefix is
     /// ambiguous therefore reports a character or two over the base width, which
     /// costs a caller nothing but a slightly longer SHA. Falls back to 7 — git's
-    /// `MINIMUM_ABBREV`, and what git itself reports in an objectless repo — for
-    /// the one failure a working repo reaches, an unborn HEAD.
+    /// default auto-abbreviation length, and what it reports in an objectless
+    /// repo — for the one failure a working repo reaches, an unborn HEAD.
     pub fn abbrev_len(&self) -> usize {
         *self.cache.abbrev_len.get_or_init(|| {
             self.short_sha("HEAD")
