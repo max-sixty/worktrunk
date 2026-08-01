@@ -1019,6 +1019,45 @@ mod tests {
         assert!(parse_untracked_files(" M file1.txt\0M  file2.txt\0").is_empty());
     }
 
+    /// `locate_by_message` re-finds a stash entry by its unique message so the
+    /// restore path never trusts a positional selector a concurrent stash could
+    /// have invalidated (#3683). It must find the entry after the list has been
+    /// reordered — matching the `On <branch>: <msg>` subject that `git stash
+    /// push -m` records — and report absence without matching an unrelated
+    /// entry.
+    #[test]
+    fn locate_by_message_finds_entry_after_reorder_and_reports_absence() {
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path();
+
+        // Two stashes with distinct messages. The second push lands at
+        // stash@{0}, pushing the first to stash@{1} — the reorder the fix must
+        // tolerate.
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        test.run_git(&["stash", "push", "-u", "-m", "worktrunk autostash::alpha"]);
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+        test.run_git(&["stash", "push", "-u", "-m", "worktrunk autostash::beta"]);
+
+        let repo = Repository::at(root).unwrap();
+        let wt = repo.worktree_at(root);
+
+        // The older entry is now at stash@{1}; located by message, not position.
+        assert_eq!(
+            StashData::locate_by_message(&wt, "worktrunk autostash::alpha")
+                .unwrap()
+                .as_deref(),
+            Some("stash@{1}"),
+        );
+
+        // A message with no match scans every entry — including the trailing
+        // record separator — and returns None rather than a false positive.
+        assert!(
+            StashData::locate_by_message(&wt, "worktrunk autostash::gamma")
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn test_stash_guard_restore_now_clears_inner() {
         // Create a guard - note: this doesn't actually create a stash since we're not
