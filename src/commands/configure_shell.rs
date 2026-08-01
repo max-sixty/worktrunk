@@ -300,7 +300,7 @@ fn cleanup_stranded_nushell(
 /// removing them, so a `--dry-run` preview and the install confirmation can name
 /// the deletions before they happen (issue #3644). With `dry_run` false, removes
 /// them and returns what was removed.
-fn collect_legacy_cleanups(
+pub(crate) fn collect_legacy_cleanups(
     configured: &[ConfigureResult],
     cmd: &str,
     dry_run: bool,
