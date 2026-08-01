@@ -3,7 +3,7 @@ use crate::common::{
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_main_worktree, repo_with_multi_commit_feature,
     repo_with_remote, setup_snapshot_settings, wait_for_file, wait_for_file_content,
-    wait_for_worktree_removed,
+    wait_for_worktree_removed, write_git_hook,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -1941,11 +1941,8 @@ post-merge = "touch {{ repo_path }}/post-merge-race-ran"
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 fn test_merge_target_diverges_during_receive_restores_autostash(mut repo: TestRepo) {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let feature_wt = repo.add_worktree_with_commit(
         "feature-receive-race",
         "feature.txt",
@@ -1956,11 +1953,10 @@ fn test_merge_target_diverges_during_receive_restores_autostash(mut repo: TestRe
 
     let git_common_dir =
         repo.git_output(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    let hooks_dir = PathBuf::from(git_common_dir).join("hooks");
-    fs::create_dir_all(&hooks_dir).unwrap();
-    let hook_path = hooks_dir.join("pre-receive");
-    fs::write(
-        &hook_path,
+    write_git_hook(
+        &PathBuf::from(git_common_dir)
+            .join("hooks")
+            .join("pre-receive"),
         r#"#!/bin/sh
 set -eu
 unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
@@ -1969,9 +1965,7 @@ tree=$(git rev-parse "${target}^{tree}")
 concurrent=$(printf 'concurrent target\n' | git commit-tree "$tree" -p "$target")
 git update-ref refs/heads/main "$concurrent" "$target"
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let target_before = repo.git_output(&["rev-parse", "main"]);
     let source_tip = repo.git_output(&["rev-parse", "feature-receive-race"]);

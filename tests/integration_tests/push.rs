@@ -1,9 +1,32 @@
 use crate::common::{
     TestRepo, make_snapshot_cmd, repo, repo_with_feature_worktree, repo_with_remote,
-    setup_snapshot_settings,
+    setup_snapshot_settings, write_git_hook,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+
+/// Install a `post-receive` hook whose body `build_body` composes from the repo
+/// root, passed in forward-slashed form.
+///
+/// The hook fires during `wt`'s own `git push`, which is the window between the
+/// autostash capture and its restore. Git runs hooks through a shell it
+/// provides on every platform, so the script is `sh` either way, and the root
+/// is forward-slashed for the same reason — a Windows path's backslashes would
+/// otherwise reach `sh` as escapes.
+fn install_post_receive_hook(root: &std::path::Path, build_body: impl FnOnce(&str) -> String) {
+    use path_slash::PathExt as _;
+
+    let body = build_body(&root.to_slash_lossy());
+    write_git_hook(
+        &root.join(".git/hooks/post-receive"),
+        &format!(
+            "#!/bin/sh\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
+             {body}\n\
+             exit 0\n"
+        ),
+    );
+}
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_push(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
@@ -135,33 +158,21 @@ fn test_push_dirty_target_autostash(mut repo: TestRepo) {
 /// A `post-receive` hook is the deterministic stand-in for the concurrent
 /// writer: it fires during `wt`'s own fast-forward `git push`, which is exactly
 /// the window between the autostash capture and its restore.
-#[cfg(unix)]
 #[rstest]
 fn test_push_autostash_survives_concurrent_stash(mut repo: TestRepo) {
-    use std::os::unix::fs::PermissionsExt;
-
     // Uncommitted, non-conflicting work in the target worktree (repo root).
     let notes = repo.root_path().join("notes.txt");
     std::fs::write(&notes, "PRECIOUS-USER-WORK").unwrap();
 
     // A post-receive hook that pushes an unrelated stash during the push,
     // shifting the reflog indices out from under the autostash entry.
-    let root = repo.root_path().to_path_buf();
-    let hook = root.join(".git/hooks/post-receive");
-    std::fs::write(
-        &hook,
+    install_post_receive_hook(repo.root_path(), |root| {
         format!(
-            "#!/bin/sh\n\
-             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
-             printf 'interloper\\n' > '{root}/interloper.txt'\n\
+            "printf 'interloper\\n' > '{root}/interloper.txt'\n\
              git -C '{root}' -c user.email=i@i -c user.name=I \
-                 stash push --include-untracked -m INTERLOPER >/dev/null 2>&1\n\
-             exit 0\n",
-            root = root.display(),
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+                 stash push --include-untracked -m INTERLOPER >/dev/null 2>&1"
+        )
+    });
 
     let feature_wt = repo.add_feature();
 
@@ -201,31 +212,17 @@ fn test_push_autostash_survives_concurrent_stash(mut repo: TestRepo) {
 /// by the time the push finishes — must warn with a recoverable `git stash
 /// apply <sha>` rather than silently report success. Data-safety guard for
 /// #3683: the stash entry is left intact so the work is recoverable.
-#[cfg(unix)]
 #[rstest]
 fn test_push_autostash_restore_failure_warns(mut repo: TestRepo) {
-    use std::os::unix::fs::PermissionsExt;
-
     // Untracked, non-conflicting work in the target worktree (repo root).
     std::fs::write(repo.root_path().join("notes.txt"), "USER-WORK").unwrap();
 
     // A post-receive hook re-creates the stashed path with different content,
     // so `git stash apply` can't restore the untracked file and the restore
     // fails after the push has already landed.
-    let root = repo.root_path().to_path_buf();
-    let hook = root.join(".git/hooks/post-receive");
-    std::fs::write(
-        &hook,
-        format!(
-            "#!/bin/sh\n\
-             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
-             printf 'HOOK-CONFLICT\\n' > '{root}/notes.txt'\n\
-             exit 0\n",
-            root = root.display(),
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    install_post_receive_hook(repo.root_path(), |root| {
+        format!("printf 'HOOK-CONFLICT\\n' > '{root}/notes.txt'")
+    });
 
     let feature_wt = repo.add_feature();
 
