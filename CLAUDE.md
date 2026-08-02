@@ -101,6 +101,10 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 
 When no structured alternative exists, document the fragility inline.
 
+### Immutable Ids Over List Positions
+
+`stash@{0}` names a position in a list any process can reorder, so a handle captured before a mutation window and used after it can resolve to a different object — restoring the target worktree's autostash by position after `git push` silently restored a concurrent writer's entry and reported success. Capture the immutable id instead (`git stash list --format=%H`, `git stash create`, `rev-parse`) and act on that; where an operation accepts only a positional selector, re-derive it from something stable immediately beforehand, as `StashData::locate_by_message` does before dropping the entry. An index into a collection `wt` owns is a different thing — this is about namespaces other processes can mutate.
+
 ### Network Access
 
 worktrunk is local-first: the network is touched only when the user asked for it, and only where reaching the wire directly serves that request. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. The query is bounded by `REMOTE_DETECTION_TIMEOUT` — nothing in git bounds it, and an unreachable host costs ~127 s per address on Linux — and a query that hits the bound falls back to local inference *without* caching it, so an outage can't make a guess permanent. No other detection helper may add a similar fallback.
