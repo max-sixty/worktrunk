@@ -13,8 +13,8 @@
 //! over a series of deliberately lopsided repos and still can't say which call
 //! moved, because the calls within a wave overlap. Localizing a regression is a
 //! trace's job here, exactly as it is for `full` — see "Analyzing a trace" in
-//! benches/CLAUDE.md, and note that a `-vv` run has no prewarm and so is not
-//! the run users get.
+//! benches/CLAUDE.md, and note that a `-vv` run skips prewarm's rev-parse
+//! batch and so is not quite the run users get.
 //!
 //! `mixed-80-80-1400` is that one repo: 80 worktrees in four states, 80 more
 //! branches forked across 200 commits of history, and 1400 remote-tracking

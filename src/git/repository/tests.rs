@@ -541,8 +541,10 @@ fn parse_git_bool_variants() {
 fn worktree_config_enabled_detects_extension() {
     // The detector keys on the lowercased canonical form that git emits in
     // `--list -z` output. Both git-bool truthy spellings and the absent/
-    // explicitly-false cases must classify correctly — getting either wrong
-    // breaks the prewarm-skip in `prewarm_git_config` (see issue #2779).
+    // explicitly-false cases must classify correctly. A false truthy costs
+    // one extra prewarm fork (the common-dir post-pass caches the same map);
+    // a false falsy caches the incomplete linked-worktree map and
+    // reintroduces the #2779 `is_bare=false` bug.
     use indexmap::IndexMap;
 
     let mut empty: IndexMap<String, Vec<String>> = IndexMap::new();
@@ -1101,9 +1103,9 @@ fn prewarm_from_linked_worktree_under_worktree_config_preserves_is_bare() {
     // `all_config()` with the stale value, and `is_bare()` returned
     // `false` from the linked worktree.
     //
-    // After the fix, the prewarm detects `extensions.worktreeconfig=true`
-    // and skips the preload — `all_config()` re-forks from
-    // `git_common_dir`, which sees the merged set.
+    // The prewarm detects `extensions.worktreeconfig=true`, declines the
+    // discovery-path map, and preloads the `git_common_dir` read instead —
+    // the merged set `all_config()` would fork for on demand.
     use super::Repository;
 
     let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
@@ -1139,28 +1141,145 @@ fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
 }
 
 #[test]
-fn prewarm_skips_preload_when_worktree_config_enabled() {
-    // Direct test of the prewarm skip: with the extension on, the preload
-    // map for the linked worktree must stay empty so `all_config()`
-    // re-forks from `git_common_dir` instead of consuming a stale map.
+fn prewarm_partial_warm_runs_only_the_cold_threads() {
+    // The gates are per-cache: with the git-config preload already present
+    // (and the process-wide user-config preload latched) but no resolved
+    // common dir, prewarm still runs the rev-parse thread, and neither the
+    // config thread nor the post-pass touches the existing preload.
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let init_repo = |name: &str| {
+        let root = canonicalize(tmp.path()).unwrap().join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
+            .args(["init", "-b", "main", root.to_str().unwrap()])
+            .run()
+            .unwrap();
+        assert!(out.status.success(), "git init failed");
+        root
+    };
+
+    // A full prewarm on one repo latches the process-wide user-config
+    // preload (OnceLock), whichever test runs first.
+    super::Repository::prewarm_at(&init_repo("first"));
+    assert!(super::WORKTRUNK_USER_CONFIG_PRELOAD.get().is_some());
+
+    // Second repo: hand-populate the config preload, then prewarm. Only
+    // the rev-parse cache is cold.
+    let second = init_repo("second");
+    let sentinel: indexmap::IndexMap<String, Vec<String>> =
+        [("wt.sentinel".to_string(), vec!["1".to_string()])]
+            .into_iter()
+            .collect();
+    super::GIT_CONFIG_PRELOAD.insert(second.clone(), sentinel);
+
+    super::Repository::prewarm_at(&second);
+
+    assert!(
+        super::GIT_COMMON_DIR_CACHE.contains_key(&second),
+        "rev-parse thread must run when only its cache is cold"
+    );
+    let sentinel_value = |path: &std::path::Path| {
+        super::GIT_CONFIG_PRELOAD
+            .get(path)
+            .and_then(|e| e.value().get("wt.sentinel").and_then(|v| v.last()).cloned())
+    };
+    assert_eq!(
+        sentinel_value(&second),
+        Some("1".to_string()),
+        "an existing preload must not be re-read or overwritten"
+    );
+
+    // Fully warm: every gate is satisfied, so a repeat call early-returns
+    // without spawning anything or touching the preload.
+    super::Repository::prewarm_at(&second);
+    assert_eq!(sentinel_value(&second), Some("1".to_string()));
+}
+
+#[test]
+fn prewarm_post_pass_swallows_common_dir_read_failures() {
+    // Best-effort contract: when the declined preload's common-dir re-read
+    // fails — the directory is gone, or its config is corrupt — the post-pass
+    // leaves the preload empty and the on-demand `all_config()` surfaces the
+    // error. The rev-parse thread is skipped (its cache is hand-populated),
+    // so the bogus common-dir entries survive to the post-pass.
     let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
 
+    // Spawn failure: the cached common dir does not exist.
+    let missing = linked.join("no-such-dir");
+    super::GIT_COMMON_DIR_CACHE.insert(linked.clone(), missing);
     super::Repository::prewarm_at(&linked);
     assert!(
         super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
-        "prewarm must skip GIT_CONFIG_PRELOAD when extensions.worktreeConfig=true"
+        "a failed spawn must not populate the preload"
+    );
+
+    // Non-zero exit: the cached common dir is a git dir with corrupt config.
+    let (_tmp2, project2, _main2, linked2) = build_worktree_config_bare_layout();
+    let corrupt = project2.join("corrupt.git");
+    let out = crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"))
+        .args(["init", "--bare", corrupt.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init --bare failed");
+    std::fs::write(corrupt.join("config"), "[core\ngarbage").unwrap();
+    super::GIT_COMMON_DIR_CACHE.insert(linked2.clone(), corrupt);
+    super::Repository::prewarm_at(&linked2);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked2).is_none(),
+        "a non-zero config read must not populate the preload"
+    );
+}
+
+#[test]
+fn all_config_without_prewarm_reads_common_dir_under_worktree_config() {
+    // The on-demand branch: a `Repository::at` with no prewarm (a non-base
+    // discovery path in production) gets no preload, so `all_config()` forks
+    // — and it must fork from `git_common_dir`, not the discovery path, or
+    // the linked worktree's partial config map reintroduces the #2779
+    // `is_bare=false` bug. The prewarm post-pass caches the same read, so
+    // only this prewarm-less construction still exercises the fork.
+    use super::Repository;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    let repo = Repository::at(&linked).unwrap();
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
+        "test setup: no preload may exist for this path"
+    );
+    assert!(
+        repo.is_bare().unwrap(),
+        "on-demand all_config must read core.bare=true from the common dir"
+    );
+}
+
+#[test]
+fn prewarm_preload_under_worktree_config_holds_common_dir_map() {
+    // With the extension on, the discovery-path read is declined (it misses
+    // the main worktree's `config.worktree`) and the post-pass re-reads from
+    // `git_common_dir`. The preload must land, and it must be the merged
+    // common-dir map — `core.bare = true` from `.git/config.worktree` is the
+    // #2779 poison pin: the declined linked-worktree read would say `false`.
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    super::Repository::prewarm_at(&linked);
+    let entry = super::GIT_CONFIG_PRELOAD
+        .get(&linked)
+        .expect("prewarm must preload the common-dir map under extensions.worktreeConfig");
+    assert_eq!(
+        entry.value().get("core.bare").and_then(|v| v.last()),
+        Some(&"true".to_string()),
+        "the preload must hold the merged common-dir map, not the linked worktree's partial one"
     );
 }
 
 #[test]
 fn prewarm_still_caches_preload_when_worktree_config_disabled() {
-    // The skip is targeted: normal repos (no worktreeConfig extension)
-    // still benefit from the prewarm preload. This guards against
-    // regressing the optimization for the common case while fixing #2779.
-    //
-    // Build a fresh repo directly (bypass `TestRepo`, whose constructor
-    // calls `Repository::at` and populates `GIT_COMMON_DIR_CACHE` — that
-    // short-circuits `prewarm_at` before it can run the config preload).
+    // The #2779 decline is targeted: normal repos (no worktreeConfig
+    // extension) get the preload from the discovery-path read alone.
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
@@ -1178,6 +1297,42 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
     assert!(
         super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
         "prewarm should preload normal repos (no extensions.worktreeConfig)"
+    );
+}
+
+#[test]
+fn prewarm_after_early_repository_still_preloads_config() {
+    // A `Repository` constructed before prewarm — the `-vv` log-file sinks
+    // in `log_files::init` do this during `logging::init` — populates
+    // `GIT_COMMON_DIR_CACHE` on its own. Prewarm used to fast-path on that
+    // one key and silently skip the config preloads, so every `-vv` run
+    // lost them and its trace overstated the `git config --list -z` forks
+    // of a normal run. Each prewarm thread now gates on the cache it
+    // populates: the config preload must land even when the common dir is
+    // already resolved.
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap().join("early");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let out = crate::testing::configure_git_env(Cmd::new("git"))
+        .args(["init", "-b", "main", root.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init failed");
+
+    super::Repository::at(&root).unwrap();
+    assert!(
+        super::GIT_COMMON_DIR_CACHE.contains_key(&root),
+        "Repository::at should have resolved the common dir"
+    );
+
+    super::Repository::prewarm_at(&root);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
+        "prewarm must still preload git config when GIT_COMMON_DIR_CACHE was populated first"
     );
 }
 

@@ -1,32 +1,9 @@
 use crate::common::{
     TestRepo, make_snapshot_cmd, repo, repo_with_feature_worktree, repo_with_remote,
-    setup_snapshot_settings, write_git_hook,
+    setup_snapshot_settings,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-
-/// Install a `post-receive` hook whose body `build_body` composes from the repo
-/// root, passed in forward-slashed form.
-///
-/// The hook fires during `wt`'s own `git push`, which is the window between the
-/// autostash capture and its restore. Git runs hooks through a shell it
-/// provides on every platform, so the script is `sh` either way, and the root
-/// is forward-slashed for the same reason — a Windows path's backslashes would
-/// otherwise reach `sh` as escapes.
-fn install_post_receive_hook(root: &std::path::Path, build_body: impl FnOnce(&str) -> String) {
-    use path_slash::PathExt as _;
-
-    let body = build_body(&root.to_slash_lossy());
-    write_git_hook(
-        &root.join(".git/hooks/post-receive"),
-        &format!(
-            "#!/bin/sh\n\
-             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_QUARANTINE_PATH\n\
-             {body}\n\
-             exit 0\n"
-        ),
-    );
-}
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_push(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
@@ -120,150 +97,66 @@ fn test_push_with_dirty_target(mut repo: TestRepo) {
     );
 }
 
+/// Uncommitted changes in the target worktree that don't overlap the push
+/// range never move: the two-tree merge carries them in place — an unstaged
+/// edit stays unstaged, a staged entry stays staged, an untracked file stays
+/// untracked. The stash list stays empty throughout, so nothing `wt` does can
+/// collide with another process's stash operations (#3683's whole class).
 #[rstest]
-fn test_push_dirty_target_autostash(mut repo: TestRepo) {
-    // Make main worktree (repo root) dirty with a non-conflicting file
-    std::fs::write(repo.root_path().join("notes.txt"), "temporary notes").unwrap();
+fn test_push_dirty_target_changes_stay_in_place(mut repo: TestRepo) {
+    // A tracked file committed to main before the feature branches, so the
+    // push range doesn't touch it.
+    let root = repo.root_path().to_path_buf();
+    std::fs::write(root.join("tracked.txt"), "base").unwrap();
+    repo.run_git(&["add", "tracked.txt"]);
+    repo.run_git(&["commit", "-m", "Add tracked file"]);
+
+    // Non-overlapping uncommitted state in the target worktree (repo root).
+    std::fs::write(root.join("tracked.txt"), "unstaged-edit").unwrap();
+    std::fs::write(root.join("staged.txt"), "staged").unwrap();
+    repo.run_git(&["add", "staged.txt"]);
+    std::fs::write(root.join("untracked.txt"), "untracked").unwrap();
 
     let feature_wt = repo.add_feature();
 
-    // Push should succeed by auto-stashing the non-conflicting target changes
     snapshot_push(
-        "push_dirty_target_autostash",
+        "push_dirty_target_carried",
         &repo,
         &["main"],
         Some(&feature_wt),
     );
 
-    // Ensure the target worktree content is restored
-    let notes = std::fs::read_to_string(repo.root_path().join("notes.txt")).unwrap();
-    assert_eq!(notes, "temporary notes");
+    // The push landed and every uncommitted change sits exactly where it was.
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", "feature"])
+    );
+    assert_eq!(
+        repo.git_output(&["diff", "--name-only"]),
+        "tracked.txt",
+        "the unstaged edit must stay unstaged"
+    );
+    assert_eq!(
+        repo.git_output(&["diff", "--cached", "--name-only"]),
+        "staged.txt",
+        "the staged entry must stay staged"
+    );
+    assert_eq!(
+        repo.git_output(&["ls-files", "--others", "--exclude-standard"]),
+        "untracked.txt",
+        "the untracked file must stay untracked"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("tracked.txt")).unwrap(),
+        "unstaged-edit"
+    );
 
-    // Autostash should clean up after itself
+    // Nothing wt does touches the stash list.
     let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
             .is_empty()
-    );
-}
-
-/// Regression test for #3683: the autostash restore must not hinge on a
-/// positional `stash@{0}` selector. A stash pushed into the repo between the
-/// autostash and its restore — a concurrent `wt merge`, an editor integration —
-/// shifts the reflog indices, so restoring by position would pop (and drop) the
-/// interloper's entry and silently discard the user's uncommitted work.
-/// Restoring by the stash's immutable commit SHA is immune to the reorder.
-///
-/// A `post-receive` hook is the deterministic stand-in for the concurrent
-/// writer: it fires during `wt`'s own fast-forward `git push`, which is exactly
-/// the window between the autostash capture and its restore.
-#[rstest]
-fn test_push_autostash_survives_concurrent_stash(mut repo: TestRepo) {
-    // Uncommitted, non-conflicting work in the target worktree (repo root).
-    let notes = repo.root_path().join("notes.txt");
-    std::fs::write(&notes, "PRECIOUS-USER-WORK").unwrap();
-
-    // A post-receive hook that pushes an unrelated stash during the push,
-    // shifting the reflog indices out from under the autostash entry.
-    install_post_receive_hook(repo.root_path(), |root| {
-        format!(
-            "printf 'interloper\\n' > '{root}/interloper.txt'\n\
-             git -C '{root}' -c user.email=i@i -c user.name=I \
-                 stash push --include-untracked -m INTERLOPER >/dev/null 2>&1"
-        )
-    });
-
-    let feature_wt = repo.add_feature();
-
-    let output = repo
-        .wt_command()
-        .args(["step", "push", "main"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("failed to run push");
-    assert!(
-        output.status.success(),
-        "push failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // The user's uncommitted work must survive — not the interloper's content.
-    assert_eq!(
-        std::fs::read_to_string(&notes).unwrap(),
-        "PRECIOUS-USER-WORK",
-        "autostash restored the wrong entry, discarding the user's work"
-    );
-
-    // The interloper's stash is untouched; the autostash entry is cleaned up.
-    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
-    let stash_list = String::from_utf8_lossy(&stash_list.stdout);
-    assert!(
-        stash_list.contains("INTERLOPER"),
-        "the concurrent writer's stash was dropped: {stash_list:?}"
-    );
-    assert!(
-        !stash_list.contains("autostash"),
-        "the autostash entry was left behind: {stash_list:?}"
-    );
-}
-
-/// A restore that genuinely can't replay — the stashed path is occupied again
-/// by the time the push finishes — must warn with a recoverable `git stash
-/// apply <sha>` rather than silently report success. Data-safety guard for
-/// #3683: the stash entry is left intact so the work is recoverable.
-#[rstest]
-fn test_push_autostash_restore_failure_warns(mut repo: TestRepo) {
-    // Untracked, non-conflicting work in the target worktree (repo root).
-    std::fs::write(repo.root_path().join("notes.txt"), "USER-WORK").unwrap();
-
-    // A post-receive hook re-creates the stashed path with different content,
-    // so `git stash apply` can't restore the untracked file and the restore
-    // fails after the push has already landed.
-    install_post_receive_hook(repo.root_path(), |root| {
-        format!("printf 'HOOK-CONFLICT\\n' > '{root}/notes.txt'")
-    });
-
-    let feature_wt = repo.add_feature();
-
-    let output = repo
-        .wt_command()
-        .args(["step", "push", "main"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("failed to run push");
-
-    // Exit non-zero: the user's changes are in a stash rather than their
-    // worktree, so reporting success would misstate where their work is.
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "a restore that couldn't replay must not exit 0: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Failed to restore stashed changes"),
-        "expected a restore-failure warning, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("git stash apply"),
-        "warning must name the recovery command: {stderr}"
-    );
-
-    // The push itself landed — the non-zero exit reports the restore, not the
-    // push, so the target must still have advanced to the feature commit.
-    assert_eq!(
-        repo.git_output(&["rev-parse", "main"]),
-        repo.git_output(&["rev-parse", "feature"]),
-        "the push must still have landed on the target"
-    );
-
-    // The stash entry survives for recovery — a failed apply does not drop it.
-    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
-    assert!(
-        String::from_utf8_lossy(&stash_list.stdout).contains("autostash"),
-        "the recoverable stash entry must remain"
     );
 }
 
@@ -407,9 +300,10 @@ fn test_push_no_ff(mut repo: TestRepo) {
 
 #[rstest]
 fn test_push_with_submodule_recurse_config(mut repo: TestRepo) {
-    // Regression test for https://github.com/max-sixty/worktrunk/issues/1604
-    // When submodule.recurse=true is set, git push tries to recurse into
-    // submodules which fails for local worktree-to-worktree pushes.
+    // Regression test for https://github.com/max-sixty/worktrunk/issues/1604:
+    // submodule.recurse=true once broke the push stage. The update is now
+    // plumbing (`update-ref` + `read-tree`) the setting can't reach; this
+    // pins that hostile config stays harmless.
     repo.run_git(&["config", "submodule.recurse", "true"]);
 
     repo.add_main_worktree();
@@ -445,13 +339,138 @@ fn test_push_no_ff_with_submodule_recurse_config(mut repo: TestRepo) {
     );
 }
 
+/// An ignored file at a path the push range tracks is silently overwritten —
+/// the documented Data Safety carve-out (module spec: the same split a
+/// `git merge` run in the target would produce). Pinned here because
+/// read-tree's deprecated `--exclude-per-directory` help text suggests the
+/// opposite; modern git applies the standard excludes during the sync by
+/// default.
+#[rstest]
+fn test_push_overwrites_ignored_file_at_tracked_path(mut repo: TestRepo) {
+    let root = repo.root_path().to_path_buf();
+    std::fs::write(root.join(".gitignore"), "dist.txt\n").unwrap();
+    repo.run_git(&["add", ".gitignore"]);
+    repo.run_git(&["commit", "-m", "Add gitignore"]);
+
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::write(feature_wt.join("dist.txt"), "tracked").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "-f", "dist.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Track dist.txt"]);
+
+    // Ignored file in the target worktree at the path the push now tracks.
+    std::fs::write(root.join("dist.txt"), "IGNORED-LOCAL").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+    assert!(
+        output.status.success(),
+        "push must overwrite the ignored file, matching git: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("dist.txt")).unwrap(),
+        "tracked"
+    );
+}
+
+/// An untracked file nested in an untracked directory still gets the upfront
+/// named refusal. The overlap check lists untracked files individually
+/// (`-uall`); default porcelain collapses the directory to a single `dir/`
+/// entry, which can never match a file path in the push range — the refusal
+/// would then come from the sync backstop, without naming the file.
+#[rstest]
+fn test_push_dirty_target_overlap_in_untracked_dir(mut repo: TestRepo) {
+    let root = repo.root_path().to_path_buf();
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::create_dir_all(feature_wt.join("docs/api")).unwrap();
+    std::fs::write(feature_wt.join("docs/api/index.md"), "tracked").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "docs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add docs"]);
+
+    // The same path, untracked inside an untracked directory, in the target.
+    std::fs::create_dir_all(root.join("docs/api")).unwrap();
+    std::fs::write(root.join("docs/api/index.md"), "LOCAL").unwrap();
+
+    let target_before = repo.git_output(&["rev-parse", "main"]);
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+
+    assert!(
+        !output.status.success(),
+        "an overlapping untracked file must refuse the push: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("docs/api/index.md"),
+        "the refusal must name the conflicting file: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_before,
+        "the ref must not move"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("docs/api/index.md")).unwrap(),
+        "LOCAL"
+    );
+}
+
+/// A fast-forward whose target-worktree sync fails is rolled back whole.
+///
+/// A locked index in the target worktree stands in for a sync failure in the
+/// window after the upfront conflict check. The ref update is rolled back and
+/// the command exits non-zero — the fast-forward path's version of the
+/// rollback `test_merge_no_ff_sync_failure_rolls_back` proves for `--no-ff`.
+#[rstest]
+fn test_push_sync_failure_rolls_back(mut repo: TestRepo) {
+    // The repo root is main's worktree in this fixture; its `.git` is a real
+    // directory, so the index lock can be planted directly.
+    let feature_wt = repo.add_feature();
+
+    let target_before = repo.git_output(&["rev-parse", "main"]);
+    let index_lock = repo.root_path().join(".git/index.lock");
+    std::fs::write(&index_lock, "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+
+    assert!(
+        !output.status.success(),
+        "a push whose worktree sync fails must fail whole: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("rolled back"),
+        "the error must say the ref change was rolled back: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_before,
+        "the ref update must be rolled back"
+    );
+
+    let _ = std::fs::remove_file(&index_lock);
+}
+
 /// A registered target worktree whose directory is gone stops both strategies.
 ///
-/// The fast-forward pushes with `receive.denyCurrentBranch=updateInstead`, whose
-/// receive-pack cd's into that directory and died in git plumbing
-/// (`exec 'update-index': cd to '…' failed`) with the ref untouched. `--no-ff`
-/// updates the ref with plumbing of its own and skipped the sync, so it
-/// succeeded over the same broken registration — one command, two answers.
+/// Nothing can be synced into a missing directory — git dies trying to cd
+/// into it — so `MergeContext::prepare` refuses upfront with the ref
+/// untouched, naming the `git worktree prune` that clears the registration.
 #[rstest]
 fn test_push_target_worktree_missing(mut repo: TestRepo) {
     let main_wt = repo.add_main_worktree();

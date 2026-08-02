@@ -426,22 +426,24 @@ show — open the Chrome Trace JSON (`wt-perf timeline --chrome`, or `wt-perf
 trace` on an existing `trace.jsonl`) in <https://ui.perfetto.dev> or
 chrome://tracing.
 
-**A traced run has no prewarm, so it is not the run users get.** At `-vv`,
-`logging::init` opens the log sinks through `log_files::try_create`, which calls
-`Repository::current()` and so resolves the git common dir. `Repository::prewarm`
-treats a populated `GIT_COMMON_DIR_CACHE` as "prewarm already ran" and returns
-without doing anything — so in every `-vv` run (and therefore every
-`wt-perf timeline`), the rev-parse batch, the `git config --list -z` preload, and
-the user-config preload never happen concurrently. Their work still gets done, one
-serial on-demand fork at a time, which is what the trace shows.
+**A traced run skips prewarm's rev-parse batch, so its startup ordering is
+not quite the run users get.** At `-vv`, `logging::init` opens the log sinks
+through `log_files::try_create`, which calls `Repository::current()` and so
+resolves the git common dir in a fork the trace never sees (the subscriber
+isn't installed yet). `Repository::prewarm` gates each of its threads on the
+cache it populates: the git-config and user-config preloads still run — their
+spans appear in the trace — but the rev-parse batch is skipped because its
+product is already cached, so the per-worktree discovery (`WORKTREE_ROOTS`,
+`GIT_DIRS`, `CURRENT_BRANCHES`) happens on demand via `prewarm_info` instead
+of overlapped at startup.
 
-The trace is still right about what ran; it is wrong about what production
-overlaps. Two consequences when reading one:
+Three consequences when reading one:
 
-- Don't conclude a phase is serial because the trace shows it serial. Read
-  `prewarm` / `prewarm_rev_parse` / `prewarm_git_config` spans first: if they're
-  absent, the trace is a no-prewarm run and the startup calls are ordered
-  differently than in production.
+- The run's first fork (the common-dir rev-parse) is invisible — it lands in
+  the untraced gap before the first span.
+- Don't conclude the per-worktree discovery is on-demand in production because
+  the trace shows a `prewarm_info` refork mid-command; in production the
+  rev-parse batch covers it at startup.
 - Don't measure a startup change by trace alone. Time the real binary
   (`hyperfine` on the shipped path) and, for a fork inventory that doesn't perturb
   the run, put a logging shim named `git` at the front of `PATH` — a two-line

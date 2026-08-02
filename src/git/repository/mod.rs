@@ -430,11 +430,13 @@ pub(super) static CURRENT_BRANCHES: LazyLock<DashMap<PathBuf, Option<String>>> =
 /// discovery path passed to [`Repository::prewarm`].
 ///
 /// Populated on the cold path by the `git config --list -z` thread spawned
-/// from [`Repository::prewarm_at`]; consumed by [`Repository::at`] when it
-/// builds a fresh `RepoCache` for that discovery path. The point is to
-/// overlap the rev-parse and config reads — the two big git invocations on
-/// the alias-dispatch critical path — so a plain `wt <alias>` pays for one
-/// git startup instead of two in series.
+/// from [`Repository::prewarm_at`] (or, when that read declines under
+/// `extensions.worktreeConfig`, by the common-dir post-pass that follows
+/// it); consumed by [`Repository::at`] when it builds a fresh `RepoCache`
+/// for that discovery path. The point is to overlap the rev-parse and
+/// config reads — the two big git invocations on the alias-dispatch
+/// critical path — so a plain `wt <alias>` pays for one git startup
+/// instead of two in series.
 ///
 /// Best-effort, like the rest of `prewarm`. A failed read leaves the entry
 /// empty and the on-demand path inside [`Repository::all_config`] re-forks
@@ -726,7 +728,10 @@ impl Repository {
     /// (`WORKTRUNK_USER_CONFIG_PRELOAD`) for the configured base path.
     ///
     /// Called once from `main` after the logger is registered, before
-    /// `init_command_log` and alias dispatch. Three threads run concurrently:
+    /// `init_command_log` and alias dispatch. Three threads run concurrently,
+    /// each gated on the cache it populates (a `Repository` constructed
+    /// before prewarm fills `GIT_COMMON_DIR_CACHE` but must not suppress the
+    /// config preloads — see `prewarm_at`):
     ///
     /// - **rev-parse thread**: a single `git rev-parse` fork that folds the
     ///   two cold-path rev-parses (`--git-common-dir` from
@@ -734,7 +739,9 @@ impl Repository {
     ///   [`Repository::project_config_path`]) into one.
     /// - **git-config thread**: a single `git config --list -z` fork that the
     ///   bulk config map (`Repository::all_config`) would otherwise spawn
-    ///   on first read.
+    ///   on first read. When it declines (`extensions.worktreeConfig`), a
+    ///   post-pass after the threads join re-reads from the resolved
+    ///   `git_common_dir` so the preload still lands.
     /// - **user-config thread**: pure file I/O on `$WORKTRUNK_CONFIG_PATH` /
     ///   XDG paths, parsing worktrunk's user `wt.toml`. No git or
     ///   `Repository` involvement, so it overlaps cleanly with both git
@@ -782,16 +789,19 @@ impl Repository {
     /// drive prewarm against a specific repo without mutating the global
     /// `BASE_PATH` `OnceLock`.
     pub(super) fn prewarm_at(discovery_path: &Path) {
-        // Fast path: another caller already ran prewarm (or `Repository::at`
-        // populated GIT_COMMON_DIR_CACHE via the on-demand path). Skip the
-        // fork — the per-worktree maps either have what we need from a prior
-        // prewarm/prewarm_info run, or `prewarm_info` will refork on first use.
-        // The config preloads are gated on the same key: if the rev-parse
-        // result is already cached, the git-config read either ran in a prior
-        // prewarm or will be re-forked on first `all_config` access, and the
-        // user-config preload either landed in a prior prewarm or
-        // `Repository::user_config` will reload it on demand.
-        if GIT_COMMON_DIR_CACHE.contains_key(discovery_path) {
+        // Each thread is gated on the cache it populates, not on a shared
+        // key. A `Repository` constructed before prewarm (the `-vv` log-file
+        // sinks in `log_files::init` resolve one during `logging::init`)
+        // fills `GIT_COMMON_DIR_CACHE` without touching the config preloads;
+        // gating everything on that one key would silently skip them and
+        // every later construction would re-fork `git config --list -z` —
+        // which also made `-vv` traces overstate the fork pattern of a
+        // normal run. A skipped rev-parse leaves the per-worktree maps to
+        // `prewarm_info`, which reforks on first use.
+        let need_rev_parse = !GIT_COMMON_DIR_CACHE.contains_key(discovery_path);
+        let need_git_config = !GIT_CONFIG_PRELOAD.contains_key(discovery_path);
+        let need_user_config = WORKTRUNK_USER_CONFIG_PRELOAD.get().is_none();
+        if !need_rev_parse && !need_git_config && !need_user_config {
             return;
         }
 
@@ -807,19 +817,43 @@ impl Repository {
         // caches empty and the on-demand callers re-fork — same
         // best-effort contract `prewarm` always had.
         std::thread::scope(|s| {
-            s.spawn(|| {
-                let _span = crate::trace::Span::new("prewarm_rev_parse");
-                Self::prewarm_rev_parse(discovery_path);
-            });
-            s.spawn(|| {
-                let _span = crate::trace::Span::new("prewarm_git_config");
-                Self::prewarm_git_config(discovery_path);
-            });
-            s.spawn(|| {
-                let _span = crate::trace::Span::new("prewarm_user_config");
-                Self::prewarm_user_config();
-            });
+            if need_rev_parse {
+                s.spawn(|| {
+                    let _span = crate::trace::Span::new("prewarm_rev_parse");
+                    Self::prewarm_rev_parse(discovery_path);
+                });
+            }
+            if need_git_config {
+                s.spawn(|| {
+                    let _span = crate::trace::Span::new("prewarm_git_config");
+                    Self::prewarm_git_config(discovery_path);
+                });
+            }
+            if need_user_config {
+                s.spawn(|| {
+                    let _span = crate::trace::Span::new("prewarm_user_config");
+                    Self::prewarm_user_config();
+                });
+            }
         });
+
+        // `prewarm_git_config` declines the preload under
+        // `extensions.worktreeConfig` because its discovery-path read misses
+        // the main worktree's `config.worktree` overrides ([#2779]). Now that
+        // the rev-parse thread has landed the common dir, run the read
+        // [`Repository::all_config`] would otherwise fork on first access —
+        // `git config --list -z` from `git_common_dir` — and preload that
+        // merged map, so those repos get the same memory-hit constructions
+        // as everyone else. One serialized fork here replaces the on-demand
+        // one; a repo whose rev-parse failed (not a repo at all) skips this.
+        if !GIT_CONFIG_PRELOAD.contains_key(discovery_path)
+            && let Some(common_dir) = GIT_COMMON_DIR_CACHE
+                .get(discovery_path)
+                .map(|entry| entry.value().clone())
+        {
+            let _span = crate::trace::Span::new("prewarm_git_config_common_dir");
+            Self::prewarm_git_config_from_common_dir(discovery_path, &common_dir);
+        }
     }
 
     /// Rev-parse half of [`Self::prewarm_at`] — populates
@@ -943,11 +977,11 @@ impl Repository {
     /// bare-style `myproject/.git + sibling worktrees` layout. Caching that
     /// incomplete map would cause `is_bare()` to read `false`, and the
     /// `repo_path()` fallback would walk one level too high. So when the
-    /// parsed map contains `extensions.worktreeconfig=true`, we skip the
-    /// preload entirely — [`Repository::all_config`] re-forks from
-    /// `git_common_dir`, which sees the full merged set (one extra
-    /// subprocess in this layout; the prewarm benefit is preserved for all
-    /// other repos).
+    /// parsed map contains `extensions.worktreeconfig=true`, we decline the
+    /// preload here; the post-pass in [`Repository::prewarm_at`] re-reads
+    /// from `git_common_dir` — which sees the full merged set — via
+    /// [`Repository::prewarm_git_config_from_common_dir`] once the
+    /// rev-parse thread has resolved it.
     ///
     /// Failures (non-repo directory, corrupted config) are swallowed; the
     /// on-demand path inside `all_config` re-forks the same subprocess and
@@ -970,6 +1004,34 @@ impl Repository {
         if worktree_config_enabled(&parsed) {
             return;
         }
+        GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
+    }
+
+    /// Fallback half of the git-config preload: `git config --list -z` run
+    /// from `git_common_dir` — byte-for-byte the invocation
+    /// [`Repository::all_config`] forks on first access — parsed and stashed
+    /// under `discovery_path` for [`Repository::at`] to consume. Called from
+    /// the [`Repository::prewarm_at`] post-pass when
+    /// [`Repository::prewarm_git_config`] declined (the
+    /// `extensions.worktreeConfig` case, or a failed discovery-path read in
+    /// a repo the rev-parse thread still resolved). The common-dir read is
+    /// safe to cache in both cases because it produces exactly the map the
+    /// on-demand path would at this moment — like every preload it is a
+    /// startup snapshot, never invalidated by later `set_config` writes
+    /// (which update only the writing instance's `cache.all_config`).
+    fn prewarm_git_config_from_common_dir(discovery_path: &Path, common_dir: &Path) {
+        let Ok(output) = Cmd::new("git")
+            .args(["config", "--list", "-z"])
+            .current_dir(common_dir)
+            .context(path_to_logging_context(common_dir))
+            .run()
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let parsed = parse_config_list_z(&output.stdout);
         GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
     }
 
