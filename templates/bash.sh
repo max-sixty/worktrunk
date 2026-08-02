@@ -56,7 +56,7 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             fi
         fi
 
-        rm -f "$cd_file" "$exec_file"
+        command rm -f "$cd_file" "$exec_file"
         return "$exit_code"
     }
 
