@@ -18,7 +18,7 @@ use crate::commands::process::{
 };
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{
-    BranchFate, RemovalPlan, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
+    BranchFate, RemovalPlan, RetainedReason, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
 };
 use worktrunk::config::UserConfig;
 use worktrunk::git::ErrorExt;
@@ -317,7 +317,10 @@ fn execute_instant_removal_or_fallback(
                             }),
                             planner_expected_retention,
                         );
-                        BranchFate::Retained
+                        // Same `NotDeleted` the warning was built from: the
+                        // foreground check declined, so the branch survives
+                        // unmerged as far as anything downstream can tell.
+                        BranchFate::Retained(RetainedReason::Unmerged)
                     }
                 };
                 (
@@ -1344,14 +1347,7 @@ fn handle_branch_only_output(
     }
 
     stderr().flush()?;
-    Ok(match deletion.result.outcome {
-        BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
-            BranchFate::Deleted
-        }
-        BranchDeletionOutcome::NotDeleted
-        | BranchDeletionOutcome::RetainedCheckedOut { .. }
-        | BranchDeletionOutcome::RetainedRaced => BranchFate::Retained,
-    })
+    Ok(BranchFate::from_outcome(&deletion.result.outcome))
 }
 
 /// Register post-remove and post-switch hooks after worktree removal onto the

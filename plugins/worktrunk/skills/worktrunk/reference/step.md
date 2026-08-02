@@ -972,6 +972,10 @@ $ wt step prune --min-age=0s     # no age guard
 $ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 ```
 
+### JSON output
+
+`--format=json` prints one object per candidate to stdout. The two modes report different things, and name their fields accordingly: a live run reports `branch_outcome`, the executed outcome, using the vocabulary [`wt remove`](https://worktrunk.dev/remove/#json-output) documents; `--dry-run` reports `branch_deleted`, its prediction of whether the removal would take the branch, since it runs nothing to have an outcome. A dry run also carries `reason` and `target` (why the candidate qualifies, and what it was measured against).
+
 ### Examples
 
 Preview what would be removed:

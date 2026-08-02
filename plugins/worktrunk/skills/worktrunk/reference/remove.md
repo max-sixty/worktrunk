@@ -98,6 +98,22 @@ To avoid killing work the user did not mean to kill, two guards keep `--reap` co
 
 Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
 
+## JSON output
+
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal.
+
+`branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
+
+| Value | Meaning |
+|-------|---------|
+| `deleted` | The branch is gone |
+| `deferred` | Handed to the detached background process, whose result this run never sees. `--foreground` never reports it |
+| `not_attempted` | No deletion was tried: a detached worktree, a sibling checkout, or `--no-delete-branch` |
+| `retained_unmerged` | Declined: the branch was not integrated into the target |
+| `retained_checked_out` | Declined: the final topology read found a live worktree with it checked out |
+| `retained_raced` | Refused by the compare-and-swap — the branch moved between the integration check and the delete. Re-read the ref and retry |
+| `retained_failed` | The delete command itself failed |
+
 ## Hooks
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](https://worktrunk.dev/hook/) for configuration.

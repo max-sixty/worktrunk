@@ -3868,15 +3868,17 @@ fn test_remove_json_multi_with_current(mut repo: TestRepo) {
     assert_eq!(items[1]["kind"], "worktree");
 }
 
-/// `branch_deleted` reports what execution did, not what the plan intended.
+/// `branch_outcome` reports what execution did, not what the plan intended,
+/// and names *why* the branch survived.
 ///
 /// The planner sees `feature` at main's tip and intends to delete it. A
 /// `pre-remove` hook then commits on the branch, so the SafeDelete's re-check
 /// against fresh refs finds it unmerged and declines — the worktree goes, the
 /// branch stays. Reporting the plan here would tell a script the branch was
-/// deleted while it is still on disk.
+/// deleted while it is still on disk, and reporting a bare `false` would leave
+/// it unable to tell this from a retention it asked for.
 #[rstest]
-fn test_remove_json_branch_deleted_reflects_execution(mut repo: TestRepo) {
+fn test_remove_json_branch_outcome_reflects_execution(mut repo: TestRepo) {
     use crate::common::wait_for_worktree_removed;
 
     repo.commit("initial");
@@ -3906,8 +3908,8 @@ fn test_remove_json_branch_deleted_reflects_execution(mut repo: TestRepo) {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["branch"], "feature");
     assert_eq!(
-        items[0]["branch_deleted"], false,
-        "branch_deleted must report the declined deletion, not the plan's intent:\n{stderr}",
+        items[0]["branch_outcome"], "retained_unmerged",
+        "branch_outcome must report the declined deletion and its reason, not the plan's intent:\n{stderr}",
     );
 
     wait_for_worktree_removed(&feature_wt);
@@ -3922,6 +3924,48 @@ fn test_remove_json_branch_deleted_reflects_execution(mut repo: TestRepo) {
         stderr.contains("Removed worktree but kept branch feature (not integrated)"),
         "the surviving branch must be surfaced, not left silent:\n{stderr}",
     );
+}
+
+/// A retention the caller asked for reads differently from one a guard forced.
+///
+/// This is the contrast the old `branch_deleted` boolean could not draw: both
+/// this run and the declined deletion above left the branch standing and
+/// reported `false`, so an orchestrator could not tell "I asked you to keep
+/// it" from "I could not safely delete it". `--no-delete-branch` never
+/// attempts a deletion, so nothing is retained — there is no outcome to name.
+#[rstest]
+fn test_remove_json_branch_outcome_distinguishes_requested_retention(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "feature",
+            "--no-delete-branch",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "feature");
+    assert_eq!(
+        items[0]["branch_outcome"], "not_attempted",
+        "a retention the caller asked for is not a deletion that was refused:\n{stderr}",
+    );
+
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature"]);
 }
 
 /// The detached legacy fallback also corrects a broken deletion promise.
@@ -3978,8 +4022,8 @@ fn test_remove_fallback_warns_when_no_cas_tail(mut repo: TestRepo) {
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
     assert_eq!(
-        json.as_array().unwrap()[0]["branch_deleted"],
-        false,
+        json.as_array().unwrap()[0]["branch_outcome"],
+        "retained_unmerged",
         "a survival known in the foreground is not a deferral:\n{stderr}",
     );
     // The branch survives with the hook's commit as its tip; the worktree

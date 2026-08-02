@@ -43,7 +43,7 @@ use worktrunk::trace::Span;
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use super::super::worktree::RemovalPlan;
+use super::super::worktree::{BranchFate, RemovalPlan};
 use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
@@ -66,13 +66,26 @@ struct Candidate {
     /// reports a branch the run deliberately kept.
     ///
     /// Starts as the scan's prediction (what the dry run prints); on the live
-    /// path [`try_remove`] overwrites it with the executed
-    /// [`BranchFate`](crate::commands::worktree::BranchFate), so a deletion
-    /// the CAS refused mid-run is counted as retained, not as the plan hoped.
+    /// path [`record_fate`](Self::record_fate) replaces it with the executed
+    /// [`BranchFate`], so a deletion the CAS refused mid-run is counted as
+    /// retained, not as the plan hoped.
     deletes_branch: bool,
+    /// The executed fate, kept whole for `--format=json`'s `branch_outcome`.
+    /// `None` on the dry-run path, which runs no removal to have an outcome —
+    /// that path reports `branch_deleted`, its prediction, instead.
+    fate: Option<BranchFate>,
 }
 
 impl Candidate {
+    /// Record what a removal actually did to the branch, replacing the scan's
+    /// prediction. Both fields move together — `deletes_branch` is what the
+    /// summary counts, `fate` what `--format=json` names — so they are set
+    /// here rather than at each call site.
+    fn record_fate(&mut self, fate: BranchFate) {
+        self.deletes_branch = fate.deleted();
+        self.fate = Some(fate);
+    }
+
     /// Error context for `try_remove` failures: distinguishes branch-only
     /// removals (no worktree exists) from worktree removals.
     fn removal_context(&self) -> String {
@@ -328,22 +341,23 @@ fn removal_mutates_registry(plan: &RemovalPlan) -> bool {
     }
 }
 
-/// Try to remove a candidate immediately. Returns `Ok(Some(branch_deleted))`
-/// if removed — the executed outcome the summary counts — `Ok(None)` if the
-/// removal turned out to be a no-op, `Err` on execution error.
+/// Try to remove a candidate immediately. Returns `Ok(Some(fate))` if removed
+/// — the executed outcome the summary counts and `--format=json` names —
+/// `Ok(None)` if the removal turned out to be a no-op, `Err` on execution
+/// error.
 ///
 /// `plan` is the scan-time `prepare_worktree_removal` result from
 /// [`check_one`]; only `StaleDetached` candidates arrive without one (their
 /// entry is pruned directly here — there is nothing to plan). Scan-time plans
 /// may be stale by execution; the pre-rename `ensure_clean` and the
 /// branch-delete CAS re-validate what matters — and the returned
-/// [`BranchFate`](crate::commands::worktree::BranchFate) is how a CAS
+/// [`BranchFate`] is how a CAS
 /// refusal reaches the summary.
 fn try_remove(
     candidate: &Candidate,
     plan: Option<RemovalPlan>,
     ctx: &RemovalContext<'_>,
-) -> anyhow::Result<Option<bool>> {
+) -> anyhow::Result<Option<BranchFate>> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
 
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
@@ -366,7 +380,7 @@ fn try_remove(
             .context("stale detached candidate has no worktree path")?;
         ctx.repo.prune_worktree_entry(path)?;
         // A stale detached entry has no branch to delete.
-        return Ok(Some(false));
+        return Ok(Some(BranchFate::NotAttempted));
     }
 
     let plan = plan.context("candidate arrived without a removal plan")?;
@@ -429,7 +443,7 @@ fn try_remove(
     {
         return Ok(None);
     }
-    Ok(Some(branch_deleted))
+    Ok(Some(fate))
 }
 
 /// One candidate skipped because its project hooks aren't yet approved.
@@ -1023,6 +1037,7 @@ pub fn step_prune(
                         path,
                         kind,
                         deletes_branch: outcome.deletes_branch,
+                        fate: None,
                     },
                     DryRunInfo {
                         reason_desc: reason.description().to_string(),
@@ -1180,7 +1195,8 @@ pub fn step_prune(
             // closes once every worker has drained the job queue and exited,
             // so draining it below also waits out all in-flight printing.
             let (job_tx, job_rx) = chan::unbounded::<RemovalJob>();
-            let (done_tx, done_rx) = chan::unbounded::<(Candidate, anyhow::Result<Option<bool>>)>();
+            let (done_tx, done_rx) =
+                chan::unbounded::<(Candidate, anyhow::Result<Option<BranchFate>>)>();
             let abort_ref = &abort;
             let removal_ctx_ref = &removal_ctx;
             // Empty check_items → zero workers, correctly: no jobs can queue.
@@ -1287,6 +1303,7 @@ pub fn step_prune(
                     path,
                     kind,
                     deletes_branch: outcome.deletes_branch,
+                    fate: None,
                 };
                 if matches!(candidate.kind, CandidateKind::Current) {
                     deferred_current = Some((candidate, outcome.plan));
@@ -1305,8 +1322,8 @@ pub fn step_prune(
                 match result {
                     // Record the executed outcome, not the scan's prediction —
                     // what the summary and `--format=json` report.
-                    Ok(Some(branch_deleted)) => {
-                        candidate.deletes_branch = branch_deleted;
+                    Ok(Some(fate)) => {
+                        candidate.record_fate(fate);
                         removed.push(candidate);
                     }
                     Ok(None) => {}
@@ -1338,10 +1355,10 @@ pub fn step_prune(
     removed.sort_by_key(|c| c.check_idx);
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some((mut current, plan)) = deferred_current
-        && let Some(branch_deleted) =
+        && let Some(fate) =
             try_remove(&current, plan, &removal_ctx).with_context(|| current.removal_context())?
     {
-        current.deletes_branch = branch_deleted;
+        current.record_fate(fate);
         removed.push(current);
     }
 
@@ -1353,7 +1370,7 @@ pub fn step_prune(
                     "branch": c.branch,
                     "path": c.path,
                     "kind": c.kind.as_str(),
-                    "branch_deleted": c.deletes_branch,
+                    "branch_outcome": c.fate.map(|f| f.json_outcome()),
                 })
             })
             .collect();
@@ -1459,6 +1476,7 @@ mod tests {
             path: None,
             kind,
             deletes_branch: !matches!(kind, CandidateKind::StaleDetached),
+            fate: None,
         }
     }
 

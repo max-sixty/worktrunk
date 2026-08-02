@@ -188,11 +188,8 @@ pub enum BranchFate {
     NotAttempted,
     /// The deletion ran and the branch is gone.
     Deleted,
-    /// The deletion ran and the branch survives: SafeDelete declined an
-    /// unmerged branch, a final topology check found a checkout, the CAS refused
-    /// a moved ref, or the delete command itself failed (already narrated at
-    /// the site that observed it).
-    Retained,
+    /// The deletion ran and the branch survives, for the carried reason.
+    Retained(RetainedReason),
     /// The deletion was handed to a detached background process (the legacy
     /// `git worktree remove` fallback) whose outcome this process never sees.
     ///
@@ -203,21 +200,53 @@ pub enum BranchFate {
     Deferred,
 }
 
+/// Why a deletion attempt left the branch in place.
+///
+/// The distinctions matter to whoever is told about them: `Raced` is the one
+/// an automated caller retries (re-read the ref and try again), `Unmerged` the
+/// one a user resolves with `-D`, and the other two report state that has to
+/// change elsewhere first. Collapsing them loses the retry signal: the
+/// fail-closed compare-and-swap in `delete_branch_if_safe` detects a moved ref
+/// precisely so the caller can act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetainedReason {
+    /// Not integrated into the target, and deletion wasn't forced.
+    Unmerged,
+    /// The final topology read found a live worktree with it checked out.
+    CheckedOut,
+    /// The compare-and-swap was refused: the ref moved between the integration
+    /// check and the delete.
+    Raced,
+    /// The delete command itself failed (already narrated at the site that
+    /// observed it).
+    Failed,
+}
+
 impl BranchFate {
     /// Map a synchronous deletion attempt's result. `None` means no attempt
     /// was made.
     pub fn from_result(result: Option<&anyhow::Result<BranchDeletionResult>>) -> Self {
         match result {
             None => Self::NotAttempted,
-            Some(Ok(r)) => match r.outcome {
-                BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
-                    Self::Deleted
-                }
-                BranchDeletionOutcome::NotDeleted
-                | BranchDeletionOutcome::RetainedCheckedOut { .. }
-                | BranchDeletionOutcome::RetainedRaced => Self::Retained,
-            },
-            Some(Err(_)) => Self::Retained,
+            Some(Ok(r)) => Self::from_outcome(&r.outcome),
+            Some(Err(_)) => Self::Retained(RetainedReason::Failed),
+        }
+    }
+
+    /// Map a completed deletion's outcome. The one place the mapping lives, so
+    /// the paths that hold an outcome without a `Result` around it
+    /// (the background fast path's post-execution read) can't classify it
+    /// differently from [`from_result`](Self::from_result).
+    pub fn from_outcome(outcome: &BranchDeletionOutcome) -> Self {
+        match outcome {
+            BranchDeletionOutcome::Integrated(_) | BranchDeletionOutcome::ForceDeleted => {
+                Self::Deleted
+            }
+            BranchDeletionOutcome::NotDeleted => Self::Retained(RetainedReason::Unmerged),
+            BranchDeletionOutcome::RetainedCheckedOut { .. } => {
+                Self::Retained(RetainedReason::CheckedOut)
+            }
+            BranchDeletionOutcome::RetainedRaced => Self::Retained(RetainedReason::Raced),
         }
     }
 
@@ -226,6 +255,23 @@ impl BranchFate {
     /// deletion — see the variant doc).
     pub fn deleted(&self) -> bool {
         matches!(self, Self::Deleted | Self::Deferred)
+    }
+
+    /// The `branch_outcome` value in `--format=json`.
+    ///
+    /// Names the observed outcome rather than summarising it as a boolean, so
+    /// a caller can tell a race it should retry from a retention it asked for,
+    /// and can tell a detached deletion nobody watched from a confirmed one.
+    pub fn json_outcome(&self) -> &'static str {
+        match self {
+            Self::NotAttempted => "not_attempted",
+            Self::Deleted => "deleted",
+            Self::Deferred => "deferred",
+            Self::Retained(RetainedReason::Unmerged) => "retained_unmerged",
+            Self::Retained(RetainedReason::CheckedOut) => "retained_checked_out",
+            Self::Retained(RetainedReason::Raced) => "retained_raced",
+            Self::Retained(RetainedReason::Failed) => "retained_failed",
+        }
     }
 }
 
@@ -354,11 +400,14 @@ impl RemovalPlan {
 
     /// Convert to a JSON value for structured output.
     ///
-    /// `fate` is what execution reported back; `branch_deleted` is derived
-    /// from it (via [`BranchFate::deleted`]) so the payload states what
-    /// happened, not what the plan hoped.
+    /// `fate` is what execution reported back, and `branch_outcome` names it
+    /// directly (via [`BranchFate::json_outcome`]) so the payload states what
+    /// happened rather than what the plan hoped. It replaced a
+    /// `branch_deleted` boolean, which could not distinguish a CAS the ref
+    /// moved under from a retention the caller asked for, and reported a
+    /// detached deletion nobody watched as an accomplished one.
     pub fn to_json(&self, fate: BranchFate) -> serde_json::Value {
-        let branch_deleted = fate.deleted();
+        let branch_outcome = fate.json_outcome();
         match self {
             RemovalPlan::Worktree {
                 worktree_path,
@@ -369,7 +418,7 @@ impl RemovalPlan {
                 "kind": "worktree",
                 "branch": branch_name,
                 "path": worktree_path,
-                "branch_deleted": branch_deleted,
+                "branch_outcome": branch_outcome,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
             RemovalPlan::BranchOnly {
@@ -381,7 +430,7 @@ impl RemovalPlan {
                 "kind": "branch_only",
                 "branch": branch_name,
                 "pruned": prune_entry.is_some(),
-                "branch_deleted": branch_deleted,
+                "branch_outcome": branch_outcome,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),
         }
@@ -430,7 +479,7 @@ mod tests {
         let cases = [
             (BranchFate::Deleted, true),
             (BranchFate::Deferred, true),
-            (BranchFate::Retained, false),
+            (BranchFate::Retained(RetainedReason::Raced), false),
             (BranchFate::NotAttempted, false),
         ];
         for (fate, deleted) in cases {
@@ -438,8 +487,43 @@ mod tests {
         }
     }
 
-    /// Synchronous deletion results map onto fates: deletions count, refusals
-    /// and errors read as the branch surviving, absence as never attempted.
+    /// The `--format=json` vocabulary, which external callers branch on. Every
+    /// fate gets its own value: a race the caller should retry never reads as
+    /// a retention it asked for, and a detached deletion nobody watched never
+    /// reads as a confirmed one.
+    #[test]
+    fn branch_fate_json_outcome_is_distinct_per_fate() {
+        let cases = [
+            (BranchFate::NotAttempted, "not_attempted"),
+            (BranchFate::Deleted, "deleted"),
+            (BranchFate::Deferred, "deferred"),
+            (
+                BranchFate::Retained(RetainedReason::Unmerged),
+                "retained_unmerged",
+            ),
+            (
+                BranchFate::Retained(RetainedReason::CheckedOut),
+                "retained_checked_out",
+            ),
+            (
+                BranchFate::Retained(RetainedReason::Raced),
+                "retained_raced",
+            ),
+            (
+                BranchFate::Retained(RetainedReason::Failed),
+                "retained_failed",
+            ),
+        ];
+        for (fate, expected) in cases {
+            assert_eq!(fate.json_outcome(), expected, "{fate:?}");
+        }
+        let names: std::collections::BTreeSet<_> = cases.iter().map(|(_, name)| *name).collect();
+        assert_eq!(names.len(), cases.len(), "outcome names must be distinct");
+    }
+
+    /// Synchronous deletion results map onto fates: deletions count, each
+    /// refusal keeps the reason that distinguishes it, an error reads as the
+    /// delete having failed, and absence as never attempted.
     #[test]
     fn branch_fate_from_result_mapping() {
         use worktrunk::git::IntegrationReason;
@@ -462,21 +546,21 @@ mod tests {
         );
         assert_eq!(
             fate(BranchDeletionOutcome::NotDeleted),
-            BranchFate::Retained
+            BranchFate::Retained(RetainedReason::Unmerged)
         );
         assert_eq!(
             fate(BranchDeletionOutcome::RetainedCheckedOut {
                 path: PathBuf::from("/tmp/feature"),
             }),
-            BranchFate::Retained
+            BranchFate::Retained(RetainedReason::CheckedOut)
         );
         assert_eq!(
             fate(BranchDeletionOutcome::RetainedRaced),
-            BranchFate::Retained
+            BranchFate::Retained(RetainedReason::Raced)
         );
         assert_eq!(
             BranchFate::from_result(Some(&Err(anyhow::anyhow!("boom")))),
-            BranchFate::Retained
+            BranchFate::Retained(RetainedReason::Failed)
         );
         assert_eq!(BranchFate::from_result(None), BranchFate::NotAttempted);
     }
