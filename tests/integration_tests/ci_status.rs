@@ -1276,6 +1276,41 @@ fn test_list_full_with_gitea_commit_status_error_body(mut repo: TestRepo) {
     );
 }
 
+/// A 500 the message of which Gitea blanked still reaches the cell as an error.
+/// The status is the whole basis: the body says nothing, so the text sniff that
+/// used to decide had nothing to match and painted the same blank cell as a
+/// healthy branch with no CI.
+#[rstest]
+fn test_list_full_with_gitea_blanked_500(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_blanked_500",
+        &head_sha,
+        ("500 Internal Server Error", GITEA_BLANK_ERROR_BODY),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
+    );
+}
+
+/// A 404 is the other half of that: also an error, also carrying no useful
+/// text, but nothing a later `wt list` would answer differently — so the cell
+/// stays blank rather than showing an indicator that never clears. Pairs with
+/// the 500 above; between them the status is doing the deciding, not the body.
+#[rstest]
+fn test_list_full_with_gitea_not_found(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_not_found",
+        &head_sha,
+        (
+            "404 Not Found",
+            r#"{"message":"user redirect does not exist [name: owner]"}"#,
+        ),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
+    );
+}
+
 /// Run `wt list --full` against the given `tea api .../pulls` response — an
 /// `(HTTP status, body)` pair — and return stderr.
 ///

@@ -1,11 +1,11 @@
 //! Gitea PR provider.
 //!
 //! Implements `RemoteRefProvider` for Gitea Pull Requests using the `tea` CLI,
-//! and hosts the `tea`-facing helpers other modules share: [`api_status`] and
-//! [`api_error_message`] (how every caller separates a failed request from a
-//! resource, and what it says about one), [`is_authed_for`], and
-//! [`has_any_login`] — read by the switch dispatcher and the CI-status backend,
-//! so a change to one of them is not local.
+//! and hosts the `tea`-facing helpers other modules share: [`api_status`] (how
+//! every caller separates a failed request from a resource, and decides whether
+//! a retry could help), [`is_authed_for`], and [`has_any_login`] — read by the
+//! switch dispatcher and the CI-status backend, so a change to one of them is
+//! not local.
 //!
 //! ## Reading the HTTP status
 //!
@@ -102,8 +102,8 @@ pub fn api_status(stderr: &[u8]) -> Option<u16> {
 /// in place of the resource.
 ///
 /// Read only after [`api_status`] has said the request failed, so this decides
-/// nothing. It reports three states, and a caller with prose to write needs all
-/// three:
+/// nothing. It reports three states, and [`fetch_pr_info`] — which does have
+/// prose to write — says something different for each:
 ///
 /// - `Some(message)` — Gitea said what went wrong.
 /// - `Some("")` — Gitea's envelope with nothing in it. Production blanks a 5xx
@@ -113,7 +113,11 @@ pub fn api_status(stderr: &[u8]) -> Option<u16> {
 /// - `None` — not an `APIError` at all, so the body didn't come from Gitea's
 ///   API layer: a reverse proxy's HTML error page, or a shape Gitea doesn't
 ///   send today.
-pub fn api_error_message(stdout: &[u8]) -> Option<String> {
+///
+/// Local to this module: the CI-status backend reads only [`api_status`], since
+/// a CI cell has no room for the text and the status already decides what the
+/// cell shows.
+fn api_error_message(stdout: &[u8]) -> Option<String> {
     serde_json::from_slice::<TeaApiErrorResponse>(stdout)
         .ok()
         .map(|error| error.message.trim().to_string())
