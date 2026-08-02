@@ -58,4 +58,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mInvalid forge.platform value `bitbucket`; expected one of: github, gitlab, gitea, azure-devops[39m
+[31m✗[39m [31mInvalid forge.platform value `bitbucket` (from `[forge]` in project config or a `[projects]` entry in user config); expected one of: github, gitlab, gitea, azure-devops[39m

@@ -1825,10 +1825,12 @@ pub fn nested_key_belongs_in<C: WorktrunkConfig>(path: &str) -> Option<&'static 
         .then(C::Other::description)
 }
 
-/// Note appended to a "belongs in user config" warning: a key placed in
-/// project config that really lives in user config is usually an attempt to
-/// scope a personal setting to one repo, which the `[projects."<id>"]` table
-/// in user config does directly. Returns `None` for any other destination.
+/// Note appended to a "belongs in the other config" warning when the
+/// misplaced key also has a `[projects."<id>"]` form in user config, which is
+/// usually what the user was reaching for. A user key in project config is an
+/// attempt to scope a personal setting to one repo; a project key in user
+/// config (`forge`) is an attempt to set it without touching the repo's
+/// committed file. The `[projects."<id>"]` table does both directly.
 ///
 /// `key` is the misplaced key (`worktree-path`, or a dotted path like
 /// `list.columns`); the note only fires when its top-level segment is a field
@@ -1843,9 +1845,19 @@ pub fn nested_key_belongs_in<C: WorktrunkConfig>(path: &str) -> Option<&'static 
 /// hold only the `other_description` string, not the config type.
 pub fn scope_to_repo_note(other_description: &str, key: &str) -> Option<&'static str> {
     let top_level = key.split('.').next().unwrap_or(key);
-    (other_description == crate::config::UserConfig::description()
-        && crate::config::is_user_project_override_key(top_level))
-    .then_some(r#"to scope it to this repo, add it under [projects."<id>"] in user config"#)
+    if !crate::config::is_user_project_override_key(top_level) {
+        return None;
+    }
+    if other_description == crate::config::UserConfig::description() {
+        return Some(r#"to scope it to this repo, add it under [projects."<id>"] in user config"#);
+    }
+    // The reverse redirect — a project-config key found in user config — earns
+    // the note only for a whole top-level table (`forge`): its
+    // `[projects."<id>"]` field has the same shape, so the move is valid as
+    // written. A nested path (`list.url`) names a field the projects-entry
+    // type doesn't have, and its correct home really is project config.
+    (other_description == crate::config::ProjectConfig::description() && !key.contains('.'))
+        .then_some(r#"to set it from user config, add it under [projects."<id>"]"#)
 }
 
 /// Classification of an unknown config key for warning purposes.
@@ -4716,12 +4728,18 @@ ff = true
     }
 
     #[test]
-    fn test_scope_to_repo_note_only_for_user_config() {
-        // The note fires for user-config destinations whose top-level key is a
-        // `[projects."<id>"]` field, and nothing else.
+    fn test_scope_to_repo_note_destinations() {
+        // Toward user config, the note fires for any misplaced key whose
+        // top-level segment is a `[projects."<id>"]` field.
         assert!(scope_to_repo_note("user config", "list.columns").is_some());
         assert!(scope_to_repo_note("user config", "worktree-path").is_some());
+
+        // Toward project config, only a whole top-level table (`forge`) earns
+        // it: the projects-entry `list` is the user type, which has no `url`,
+        // so that advice would be wrong.
+        assert!(scope_to_repo_note("project config", "forge").is_some());
         assert!(scope_to_repo_note("project config", "list.url").is_none());
+        assert!(scope_to_repo_note("project config", "forge.platform").is_none());
 
         // Root-only user scalars have no `[projects."<id>"]` form, so following
         // the note would just yield a fresh "unknown field" — no note.

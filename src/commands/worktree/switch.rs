@@ -107,7 +107,8 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRe
                 bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
             }
             Err(_) => bail!(
-                "Invalid forge.platform value `{platform_raw}`; \
+                "Invalid forge.platform value `{platform_raw}` (from `[forge]` in project \
+                 config or a `[projects]` entry in user config); \
                  expected one of: github, gitlab, gitea, azure-devops"
             ),
         }

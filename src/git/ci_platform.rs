@@ -159,7 +159,7 @@ impl Repository {
                 Err(_) => {
                     tracing::warn!(
                         value = %raw,
-                        "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
+                        "Invalid CI platform '{raw}' (from `[forge]` in project config or a `[projects]` entry in user config). Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
                     );
                     None
                 }

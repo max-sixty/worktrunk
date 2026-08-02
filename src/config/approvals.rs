@@ -227,9 +227,9 @@ impl Approvals {
     ///
     /// A `*` pattern key approves its commands for every project it matches,
     /// the same keys `[projects."…"]` settings use. Only a hand-written entry
-    /// is ever a pattern: `wt config approvals add` and the interactive prompt
-    /// record under the exact project identifier, so approving a command in
-    /// one repository never widens to another.
+    /// is ever a pattern: [`Self::approve_commands`] records under the exact
+    /// project identifier and refuses one that contains `*`, so approving a
+    /// command in one repository never widens to another.
     pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
         let normalized_command = normalize_template_vars(command);
         crate::config::matching_project_keys(&self.projects, project)
@@ -340,34 +340,36 @@ impl Approvals {
         Ok(approvals)
     }
 
-    /// Add an approved command and save.
+    /// Add an approved command and save. See [`Self::approve_commands`].
     pub fn approve_command(
         &mut self,
         project: String,
         command: String,
         approvals_path: &Path,
     ) -> Result<(), ConfigError> {
-        self.with_locked_mutation(approvals_path, |approvals| {
-            if approvals.is_command_approved(&project, &command) {
-                return false;
-            }
-            approvals
-                .projects
-                .entry(project)
-                .or_default()
-                .approved_commands
-                .push(command);
-            true
-        })
+        self.approve_commands(project, vec![command], approvals_path)
     }
 
     /// Add multiple approved commands in a single locked operation.
+    ///
+    /// Refuses a `project` containing `*`: reads treat such a key as a pattern
+    /// (see `config::user::project_match`), so a persisted entry would approve
+    /// the commands for every repository the pattern matches. Refusing here is
+    /// what makes pattern entries hand-written only — the guarantee
+    /// [`Self::is_command_approved`] documents. The caller's approval still
+    /// covers the current run; it just isn't remembered.
     pub fn approve_commands(
         &mut self,
         project: String,
         commands: Vec<String>,
         approvals_path: &Path,
     ) -> Result<(), ConfigError> {
+        if project.contains('*') {
+            return Err(ConfigError(format!(
+                "Cannot save approvals for `{project}`: `*` in the identifier reads as a \
+                 pattern, so the entry would apply to every repository it matches"
+            )));
+        }
         self.with_locked_mutation(approvals_path, |approvals| {
             let entry = approvals.projects.entry(project).or_default();
             let mut changed = false;
@@ -528,6 +530,31 @@ approved-commands = ["npm install"]
         );
         assert!(!approvals.is_command_approved("github.com/owner/repo", "npm install"));
         assert!(!approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+    }
+
+    #[test]
+    fn test_approving_a_starred_identifier_is_refused() {
+        // An identifier can itself contain `*` (a remote URL or no-remote
+        // path-fallback with a star in it). Persisting it verbatim would
+        // create an entry reads treat as a pattern — approving the command
+        // for every repository the star matches — so the write is refused
+        // and the caller's approval covers the current run only.
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+
+        let err = approvals
+            .approve_commands(
+                "git.company.example/owner/re*po".to_string(),
+                vec!["npm install".to_string()],
+                &path,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("pattern"), "got: {err}");
+        assert!(
+            !approvals.is_command_approved("git.company.example/owner/re*po", "npm install"),
+            "nothing may be recorded in memory"
+        );
+        assert!(!path.exists(), "nothing may be written to disk");
     }
 
     #[test]

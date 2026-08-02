@@ -616,10 +616,10 @@ pub struct UserProjectOverrides {
 
     /// Forge platform and API hostname for the matched repositories.
     ///
-    /// Same shape as the repository's own `[forge]` block, which stays
-    /// authoritative where both are set. Both fields describe the host rather
-    /// than the repository, so a `*` pattern keyed to a hostname is the usual
-    /// way to write them.
+    /// Same shape as the repository's own `[forge]` block, which wins field by
+    /// field where both are set. Both fields describe the host rather than the
+    /// repository, so a `*` pattern keyed to a hostname is the usual way to
+    /// write them.
     #[serde(default, skip_serializing_if = "is_default")]
     pub forge: crate::config::ProjectForgeConfig,
 
