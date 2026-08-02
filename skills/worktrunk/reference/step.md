@@ -556,7 +556,7 @@ exclude = [".cache/", ".turbo/"]
 To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
 
 ```bash
-wt step copy-ignored --require-include
+$ wt step copy-ignored --require-include
 ```
 
 Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
