@@ -25,8 +25,11 @@ Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 
 ## Environment protection
 
-`AUR_SSH_PRIVATE_KEY` is in a protected GitHub Environment (`release`) requiring
-deployment approval from `@max-sixty`, restricted to `v*` tags.
+The `release` environment holds the credentials only a release build needs —
+`AUR_SSH_PRIVATE_KEY` and `SIGNPATH_API_TOKEN` — so no other workflow the repo
+runs can read them. Its one protection rule restricts deployments to `v*` tags;
+there is no reviewer gate, so adding `environment: release` to a job costs no
+approval step.
 
 crates.io publishing holds no stored token — it uses Trusted Publishing.
 crates.io mints a short-lived one only for an OIDC claim from `release.yaml`

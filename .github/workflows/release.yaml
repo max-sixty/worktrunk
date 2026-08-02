@@ -115,6 +115,12 @@ jobs:
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container && matrix.container.image || null }}
+    # This job doesn't deploy anything; the environment scopes
+    # SIGNPATH_API_TOKEN so it isn't readable by every workflow the repo runs.
+    # The environment restricts deployments to `v*` tags, so setting
+    # `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub reject
+    # this job on a PR ref.
+    environment: release
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
