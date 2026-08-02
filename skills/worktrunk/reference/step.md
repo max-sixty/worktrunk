@@ -379,7 +379,7 @@ $ wt step push --no-ff     # Merge commit instead of a fast-forward
 
 ### Target worktree
 
-When the target branch has a worktree of its own, that worktree's files move to the new commits too. A fast-forward does both at once, pushing into this repository with `receive.denyCurrentBranch=updateInstead`; `--no-ff` moves the ref first and syncs the worktree after, warning rather than failing if that sync doesn't apply. Uncommitted changes in that worktree are stashed for the duration and restored afterward; one touching a file the push also changes is refused instead, naming the file. A restore that can't replay keeps the stash entry and exits non-zero, naming the `git stash apply` that recovers it — the push itself still stands.
+When the target branch has a worktree of its own, that worktree's files move to the new commits too. Uncommitted changes there never move: the update carries any file the push doesn't touch — staged or not — exactly where it is, and a change touching a file the push does change is refused upfront, naming the file. If the sync can't be applied for any reason — a conflicting file appearing in the race window after the check, or a busy index — the update is rolled back whole, leaving branch and worktree as they were.
 
 A worktree that is still registered but whose directory is gone is refused as well, since nothing can be synced into it — `git worktree prune` clears the registration.
 

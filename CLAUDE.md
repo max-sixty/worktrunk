@@ -103,7 +103,7 @@ When no structured alternative exists, document the fragility inline.
 
 ### Immutable Ids Over List Positions
 
-`stash@{0}` names a position in a list any process can reorder, so a handle captured before a mutation window and used after it can resolve to a different object — restoring the target worktree's autostash by position after `git push` silently restored a concurrent writer's entry and reported success. Capture the immutable id instead (`git stash list --format=%H`, `git stash create`, `rev-parse`) and act on that; where an operation accepts only a positional selector, re-derive it from something stable immediately beforehand, as `StashData::locate_by_message` does before dropping the entry. An index into a collection `wt` owns is a different thing — this is about namespaces other processes can mutate.
+`stash@{0}` names a position in a list any process can reorder, so a handle captured before a mutation window and used after it can resolve to a different object — restoring the target worktree's autostash by position after `git push` silently restored a concurrent writer's entry and reported success. Capture the immutable id instead (`git stash list --format=%H`, `git stash create`, `rev-parse`) and act on that; where an operation accepts only a positional selector, re-derive it from something stable immediately beforehand. An index into a collection `wt` owns is a different thing — this is about namespaces other processes can mutate. The strongest form is not to enter the shared namespace at all: the autostash this rule came from was later deleted outright, replaced by a two-tree merge that leaves the target worktree's changes in place (`advance_target` in `src/commands/worktree/push.rs`).
 
 ### Network Access
 

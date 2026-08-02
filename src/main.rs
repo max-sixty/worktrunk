@@ -309,13 +309,11 @@ fn handle_step_command(
             } else {
                 handle_push(target.as_deref(), PushKind::Standalone, None)?
             };
-            let stash_restore_failed = result.stash_restore_failed;
             if format == SwitchFormat::Json {
                 let PushResult {
                     target,
                     commit_count,
                     outcome,
-                    ..
                 } = result;
                 let mut payload = serde_json::json!({
                     "target": target,
@@ -325,21 +323,11 @@ fn handle_step_command(
                         PushOutcome::MergeCommit { .. } => "merge_commit",
                     },
                     "commits": commit_count,
-                    // The exit code alone leaves a consumer that reads stdout
-                    // seeing a success-shaped payload, so the failure is named
-                    // on both channels.
-                    "stash_restore_failed": stash_restore_failed,
                 });
                 if let PushOutcome::MergeCommit { merge_sha } = outcome {
                     payload["merge_sha"] = serde_json::Value::String(merge_sha);
                 }
                 println!("{}", serde_json::to_string_pretty(&payload)?);
-            }
-            if stash_restore_failed {
-                // The push landed; the target worktree's autostash didn't
-                // replay. `restore_stash` already warned with the recovery
-                // command, so this only sets the exit code.
-                return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
             }
             Ok(())
         }
