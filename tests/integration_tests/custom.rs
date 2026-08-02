@@ -276,7 +276,7 @@ fn custom_subcommand_respects_global_dash_c_flag() {
 #[test]
 fn custom_subcommand_passes_help_flag_through() {
     // `wt foo --help` should hand `--help` to `wt-foo`, not to wt itself.
-    // The mock-stub has no built-in `--help` handler, so if `--help` reaches
+    // The mock playback has no built-in `--help` handler, so if `--help` reaches
     // it the mock falls through to `_default` (which we set to exit 0).
     let dir = mock_bin_dir(
         "wt-wt-test-extcmd-help",

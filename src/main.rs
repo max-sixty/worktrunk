@@ -1061,6 +1061,12 @@ fn print_help_to_stderr() {
 }
 
 fn main() {
+    // Mock-command playback for the test suite: when the harness linked this
+    // binary onto PATH under another name (`gh`, `glab`, …), play back the
+    // mock config and exit instead of running wt. Inert without
+    // WORKTRUNK_TEST_MOCK_CONFIG_DIR; see `worktrunk::testing::mock_stub`.
+    worktrunk::testing::mock_stub::maybe_run();
+
     // Capture startup state before anything else: the working directory
     // (used by shell_exec to resolve relative `GIT_*` path variables
     // inherited from a parent `git` — e.g. when invoked via `git wt ...`

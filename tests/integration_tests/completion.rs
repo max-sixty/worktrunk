@@ -2178,9 +2178,9 @@ fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
 
     repo.commit("initial");
 
-    // Create a real shell script that outputs completions (not mock-stub, which
-    // needs WORKTRUNK_TEST_MOCK_CONFIG_DIR and doesn't know about COMPLETE env
-    // var).
+    // Create a real shell script that outputs completions (not a mock_commands
+    // mock, which needs WORKTRUNK_TEST_MOCK_CONFIG_DIR and plays back its config
+    // instead of answering the COMPLETE env var).
     let ext_dir = tempfile::tempdir().unwrap();
     let retired_file = ext_dir.path().join("retired");
     std::fs::write(&retired_file, "").unwrap();

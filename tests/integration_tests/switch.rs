@@ -2828,7 +2828,6 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
-    // Copy mock-stub binary as "gh"
     copy_mock_binary(&mock_bin, "gh");
 
     // Write PR response file if provided
@@ -2847,7 +2846,7 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
 
 /// Configure command environment for any mock CLI installed in `mock_bin`.
 ///
-/// Sets `WORKTRUNK_TEST_MOCK_CONFIG_DIR` (so mock-stub finds its config) and
+/// Sets `WORKTRUNK_TEST_MOCK_CONFIG_DIR` (so the mock playback finds its config) and
 /// prepends `mock_bin` to `PATH` (so the mock binary is found before any real
 /// CLI).
 fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
@@ -3566,7 +3565,6 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
-    // Copy mock-stub binary as "gh"
     copy_mock_binary(&mock_bin, "gh");
 
     // Configure gh api to return error for PR not found (JSON on stdout, human-readable on stderr)
@@ -6165,7 +6163,6 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
-    // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
     // Write MR response file if provided
@@ -6428,7 +6425,6 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
-    // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
     // Configure glab api to return 404 error (JSON on stdout, human-readable on
@@ -6600,7 +6596,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     ]);
 
     // Set up mock glab with separate responses for MR API and project APIs.
-    // The mock-stub supports compound keys like "api projects/456" to match
+    // Mock playback supports compound keys like "api projects/456" to match
     // different API paths.
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();

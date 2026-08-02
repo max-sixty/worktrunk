@@ -53,6 +53,7 @@
 //! terminal width, all per command — no test mutates process-global state.
 
 pub mod mock_commands;
+pub mod mock_stub;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -67,39 +68,23 @@ use self::mock_commands::{MockConfig, MockResponse};
 
 /// Path to the `wt` binary built by Cargo.
 ///
-/// Tries compile-time `option_env!()` first (works for unit tests in this
-/// crate), then falls back to runtime `std::env::var()` (works for
-/// integration tests that import via `worktrunk::testing`).
+/// Resolved at runtime from `CARGO_BIN_EXE_wt`, which cargo and nextest both
+/// provide to integration-test processes, naming the binary the same
+/// invocation just built — so the path can never be stale. Unit-test targets
+/// get neither this variable nor a compile-time `option_env!` value (cargo
+/// sets `CARGO_BIN_EXE_<name>` only for integration tests and benches), so
+/// code that spawns `wt` — `mock_commands` included — belongs in integration
+/// tests.
 ///
-/// Panics if neither is available (only set during `cargo test`).
+/// Panics when the variable is absent (the test binary run outside a cargo
+/// runner) rather than deriving a path that could name a stale binary.
 pub fn wt_bin() -> PathBuf {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_wt") {
-        return PathBuf::from(path);
-    }
     PathBuf::from(
         std::env::var("CARGO_BIN_EXE_wt")
             .expect("CARGO_BIN_EXE_wt not set — only available during `cargo test`"),
     )
 }
 
-/// Path to a workspace member binary (`mock-stub`).
-///
-/// Binaries from other workspace packages (not the main `wt` crate) have no
-/// `CARGO_BIN_EXE_<name>` in the main crate's tests. Derives the path from
-/// the test executable's location in `target/debug/deps/`.
-pub fn workspace_bin(name: &str) -> PathBuf {
-    let mut path = std::env::current_exe().expect("failed to get test executable path");
-    path.pop(); // Remove test binary name
-    path.pop(); // Remove deps/
-
-    #[cfg(windows)]
-    path.push(format!("{name}.exe"));
-
-    #[cfg(not(windows))]
-    path.push(name);
-
-    path
-}
 use tempfile::TempDir;
 
 /// Bump when [`build_standard_fixture`] changes, so stale templates under
@@ -617,8 +602,7 @@ pub const COVERAGE_ENV_VARS: &[&str] = &["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGE
 /// Returns the inherited value when the parent is running under
 /// `cargo llvm-cov` (so coverage data lands where the runner expects). When
 /// nothing is inherited, returns a per-binary, per-pid path under the system
-/// temp dir so an instrumented child (e.g. a stale `mock-stub` left
-/// instrumented by an earlier coverage build) can't fall back to writing
+/// temp dir so an instrumented child can't fall back to writing
 /// `default_<hash>_<pid>.profraw` into the subprocess's cwd. That cwd is the
 /// test worktree for any `wt list` snapshot that spawns a mock, and a stray
 /// profraw there flips `wt list` to "1 with changes" and flakes the snapshot.
@@ -2415,7 +2399,7 @@ impl TestRepo {
             .command("mr list", MockResponse::file("mr_list_data.json"));
 
         // Parse MR array and create iid-specific view commands
-        // Triple match: "mr view 1" matches before "mr view" (see mock-stub)
+        // Triple match: "mr view 1" matches before "mr view" (see `mock_stub`)
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(mr_json)
             && let Some(arr) = parsed.as_array()
         {
@@ -2437,7 +2421,7 @@ impl TestRepo {
         };
 
         // Configure glab mock with compound command matching
-        // "mr view <iid>" is matched before "mr view" (see mock-stub triple matching)
+        // "mr view <iid>" is matched before "mr view" (see `mock_stub` triple matching)
         mock_config
             .command("repo", MockResponse::output(&project_id_response))
             .command("ci", MockResponse::output("[]"))
@@ -2636,7 +2620,7 @@ impl TestRepo {
     /// - `tea api repos/{owner}/{repo}/pulls?state=open` → `pulls_json`
     /// - `tea api repos/{owner}/{repo}/commits/{head_sha}/status` → `status_json`
     ///
-    /// `owner`/`repo_name`/`head_sha` are needed because mock-stub matches the
+    /// `owner`/`repo_name`/`head_sha` are needed because the mock playback matches the
     /// invocation's leading arguments verbatim, and `tea api <path>` passes the
     /// whole API path as a single argument — so the exact path string must be
     /// registered.
@@ -2751,14 +2735,14 @@ impl TestRepo {
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
     /// so gh/glab commands are intercepted.
     ///
-    /// On Windows, the mock commands have .exe files (via mock-stub) so they're
+    /// On Windows, the mock commands have .exe files (see `mock_commands`) so they're
     /// found directly by CreateProcessW without needing PATHEXT manipulation.
     ///
     /// Metadata redactions keep PATH private in snapshots, so we can reuse the
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
         if let Some(mock_bin) = &self.mock_bin_path {
-            // Tell mock-stub where to find config files directly, avoiding PATH search
+            // Tell the mock playback where to find config files directly, avoiding PATH search
             cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin);
 
             // On Windows, env vars are case-insensitive but Rust stores them

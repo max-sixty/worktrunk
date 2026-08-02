@@ -2,12 +2,6 @@
 //!
 //! These tests verify that the CI status parsing code correctly handles
 //! JSON responses from GitHub (gh) and GitLab (glab) CLI tools.
-//!
-//! ## Windows support
-//!
-//! On Windows, mock-stub.exe sets MOCK_SCRIPT_DIR so the mock gh script can
-//! reliably locate its JSON data files. Use MOCK_DEBUG=1 to troubleshoot
-//! path issues.
 
 use crate::common::{
     TestRepo, make_snapshot_cmd,

@@ -1457,7 +1457,7 @@ fn test_prune_summary_counts_declined_deletion_as_worktree_only(mut repo: TestRe
 /// for it rather than racing ahead. The shim is Unix-only because Rust's
 /// `Command` resolves a bare program name through `CreateProcess`, which
 /// appends only `.exe` and never finds a `git.cmd`/`git.bat` — the same
-/// reason `mock_commands` ships a real `mock-stub.exe` on Windows. Windows
+/// reason `mock_commands` links a real `.exe` mock on Windows. Windows
 /// still exercises the fallback (the pre-blocked staged path) and the
 /// synchronous-completion assertion.
 #[rstest]
