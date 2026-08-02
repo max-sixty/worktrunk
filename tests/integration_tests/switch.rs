@@ -4057,7 +4057,7 @@ fn test_switch_base_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
             &["--create", "feat/follow-up", "--base", "mr:101", "--no-cd"],
             None,
         );
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_mr_same_repo", cmd);
     });
 }
@@ -6145,30 +6145,6 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::
     mock_bin
 }
 
-/// Configure command environment for mock glab.
-fn configure_mock_glab_env(cmd: &mut std::process::Command, mock_bin: &Path) {
-    // Tell mock-stub where to find config files
-    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin);
-
-    // Build PATH with mock binary first
-    let (path_var_name, current_path) = std::env::vars_os()
-        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
-        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
-        .unwrap_or(("PATH".to_string(), None));
-
-    let mut paths: Vec<std::path::PathBuf> = current_path
-        .as_deref()
-        .map(|p| std::env::split_paths(p).collect())
-        .unwrap_or_default();
-    paths.insert(0, mock_bin.to_path_buf());
-    let new_path = std::env::join_paths(&paths)
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
-
-    cmd.env(path_var_name, new_path);
-}
-
 /// Test that --create flag conflicts with mr: syntax
 #[rstest]
 fn test_switch_mr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
@@ -6189,7 +6165,7 @@ fn test_switch_mr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_create_conflict", cmd);
     });
 }
@@ -6254,7 +6230,7 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo", cmd);
     });
 }
@@ -6319,7 +6295,7 @@ fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo_limited_refspec", cmd);
     });
 }
@@ -6356,7 +6332,7 @@ fn test_switch_mr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo_no_remote", cmd);
     });
 }
@@ -6380,7 +6356,7 @@ fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo:
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_malformed_web_url", cmd);
     });
 }
@@ -6404,7 +6380,7 @@ fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: T
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_malformed_web_url_no_project", cmd);
     });
 }
@@ -6434,7 +6410,7 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:9999"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_not_found", cmd);
     });
 }
@@ -6463,7 +6439,7 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_not_authenticated", cmd);
     });
 }
@@ -6486,7 +6462,7 @@ fn test_switch_mr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_invalid_json", cmd);
     });
 }
@@ -6520,7 +6496,7 @@ fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_empty_branch", cmd);
     });
 }
@@ -6640,7 +6616,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork", cmd);
     });
 }
@@ -6722,7 +6698,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_mr", cmd);
     });
 }
@@ -6772,7 +6748,7 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_different", cmd);
     });
 }
@@ -6809,7 +6785,7 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_no_tracking", cmd);
     });
 }
@@ -6836,7 +6812,7 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_unknown_error", cmd);
     });
 }
