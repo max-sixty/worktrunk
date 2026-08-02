@@ -117,9 +117,8 @@ jobs:
     container: ${{ matrix.container && matrix.container.image || null }}
     # This job doesn't deploy anything; the environment scopes
     # SIGNPATH_API_TOKEN so it isn't readable by every workflow the repo runs.
-    # `signing` holds that one token rather than `release` holding it alongside
-    # the publish credentials, which this job has no business reading. The
-    # environment restricts deployments to `v*` tags, so setting
+    # It is deliberately not `release`, which also holds the publish
+    # credentials — see .github/CLAUDE.md. The `v*` tag policy means setting
     # `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub reject
     # this job on a PR ref.
     environment: signing
