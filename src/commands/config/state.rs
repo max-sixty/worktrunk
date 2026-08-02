@@ -804,7 +804,7 @@ pub fn handle_state_get(
                 .and_then(|ci_branch| PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha));
 
             if format == SwitchFormat::Json {
-                let ci_provider_override = repo.forge_platform_override();
+                let ci_provider_override = repo.configured_forge_platform();
                 let output = pr_status.as_ref().map(|pr| {
                     super::super::list::json_output::JsonCi::from_pr_status(
                         pr,

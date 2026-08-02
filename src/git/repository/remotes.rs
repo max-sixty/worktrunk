@@ -267,33 +267,69 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
-    /// Configured `[forge].platform` override, if any.
+    /// Configured forge platform: the repository's `[forge].platform` (or the
+    /// deprecated `ci.platform`), else a user-config `[projects."…"].forge`
+    /// entry matching this repository.
     ///
-    /// Local-only: reads (and may cache) project config. Every structured-output
-    /// path that derives a forge provider feeds this into the URL parser so a
-    /// self-hosted instance whose host can't be auto-detected reports the
-    /// configured provider instead of `unknown`. Centralized here so the three
-    /// call sites (`wt list`, `wt list statusline`, `wt config state ci-status`)
-    /// can't drift — see `repo_info` and `json_output::JsonCi`.
-    pub fn forge_platform_override(&self) -> Option<String> {
-        self.project_config()
+    /// Local-only: reads (and may cache) project and user config. Every path
+    /// that derives a forge provider resolves it here — `wt list` and its
+    /// statusline via `repo_info`, `wt switch pr:` when picking a provider,
+    /// and CI-platform detection via `Repository::ci_platform` — so a
+    /// self-hosted instance whose host carries no forge brand answers the same
+    /// way everywhere instead of resolving in one command and reading
+    /// `unknown` in the next.
+    ///
+    /// The repository's own block wins over a user entry: a
+    /// `[projects."git.company.example/*"]` entry states what a host is, and a
+    /// repository that names something else knows better.
+    pub fn configured_forge_platform(&self) -> Option<String> {
+        if let Some(platform) = self
+            .project_config()
             .ok()
             .flatten()
             .and_then(|config| config.forge_platform().map(str::to_string))
+        {
+            return Some(platform);
+        }
+        let project_id = self.project_identifier().ok()?;
+        self.user_config()
+            .forge_platform(Some(&project_id))
+            .map(str::to_string)
+    }
+
+    /// The forge API hostname for GitHub Enterprise or self-hosted GitLab.
+    ///
+    /// The repository's `[forge].hostname`, else a matching user-config
+    /// `[projects."…"].forge.hostname`. Passed to the forge CLI as
+    /// `--hostname` when the remote's own host isn't the API server — an SSH
+    /// alias, or an API on a different name.
+    pub fn forge_hostname(&self) -> Option<String> {
+        if let Some(hostname) = self
+            .project_config()
+            .ok()
+            .flatten()
+            .and_then(|config| config.forge_hostname().map(str::to_string))
+        {
+            return Some(hostname);
+        }
+        let project_id = self.project_identifier().ok()?;
+        self.user_config()
+            .forge_hostname(Some(&project_id))
+            .map(str::to_string)
     }
 
     /// Repository metadata derived from the primary remote.
     ///
-    /// Local-only: built from the cached primary remote URL and optional
-    /// `[forge].platform`, with no network access. This may load/cache project
-    /// config to inspect the configured forge platform. The returned
+    /// Local-only: built from the cached primary remote URL and the configured
+    /// forge platform, with no network access. This may load/cache project and
+    /// user config to resolve that platform. The returned
     /// [`GitRepoInfo::remote`] names which local remote was used, so structured
     /// JSON can report it.
     pub fn repo_info(&self) -> Option<GitRepoInfo> {
         let remote = self.primary_remote().ok()?;
         let url = self.remote_url(&remote)?;
         let parsed = GitRemoteUrl::parse(&url)?;
-        let provider_override = self.forge_platform_override();
+        let provider_override = self.configured_forge_platform();
         let mut info = parsed.repo_info(provider_override.as_deref())?;
         info.remote = Some(remote);
         Some(info)

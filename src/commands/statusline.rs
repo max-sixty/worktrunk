@@ -964,7 +964,7 @@ fn run_json() -> Result<()> {
     }
     // No custom columns: the statusline path never expands `[list.custom-columns]`
     // (prompt hot path; its compact format has no column grid).
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
 
     // Output follows `wt list --format=json`: schema 1 is a bare
     // single-item array, schema 2 a single-item envelope.

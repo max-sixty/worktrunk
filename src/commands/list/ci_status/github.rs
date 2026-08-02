@@ -206,11 +206,7 @@ pub(super) fn detect_github_commit_checks(
     let (owner, repo_name) = branch_owner_repo(repo, branch)?;
 
     // Only pass --hostname when explicitly configured (for GHE / self-hosted)
-    let hostname = repo
-        .load_project_config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.forge_hostname().map(String::from));
+    let hostname = repo.forge_hostname();
 
     // Use GitHub's check-runs API to get all checks for this commit
     let api_path = format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs");

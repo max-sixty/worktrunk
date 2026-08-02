@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::HooksConfig;
+use crate::config::commands::CommandConfig;
 use crate::git::HookType;
 use crate::testing::TestRepo;
 
@@ -3687,4 +3688,137 @@ fn test_with_locked_mutation_propagates_save_error() {
         msg.contains("Failed to read config file"),
         "expected save-side read error, got: {msg}"
     );
+}
+
+#[test]
+fn test_pattern_project_key_applies_to_every_repo_on_a_host() {
+    let config = UserConfig::load_from_str(
+        r#"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+[projects."git.company.example/*"]
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+
+[projects."git.company.example/*".forge]
+platform = "gitlab"
+"#,
+    )
+    .unwrap();
+
+    for project in [
+        "git.company.example/owner/repo",
+        "git.company.example/group/team/repo",
+    ] {
+        assert_eq!(
+            config.worktree_path_for_project(project),
+            ".worktrees/{{ branch | sanitize }}"
+        );
+        assert!(config.has_project_worktree_path(project));
+        assert_eq!(config.forge_platform(Some(project)), Some("gitlab"));
+    }
+
+    // A repo on another host takes the global settings.
+    assert_eq!(
+        config.worktree_path_for_project("github.com/owner/repo"),
+        "../{{ repo }}.{{ branch | sanitize }}"
+    );
+    assert_eq!(config.forge_platform(Some("github.com/owner/repo")), None);
+}
+
+#[test]
+fn test_exact_project_key_wins_over_a_pattern_that_also_matches() {
+    let config = UserConfig::load_from_str(
+        r#"
+[projects."git.company.example/*"]
+worktree-path = "host"
+
+[projects."git.company.example/team/*"]
+worktree-path = "team"
+
+[projects."git.company.example/team/repo"]
+worktree-path = "exact"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.worktree_path_for_project("git.company.example/team/repo"),
+        "exact"
+    );
+    assert_eq!(
+        config.worktree_path_for_project("git.company.example/team/other"),
+        "team"
+    );
+    assert_eq!(
+        config.worktree_path_for_project("git.company.example/ops/thing"),
+        "host"
+    );
+}
+
+#[test]
+fn test_pattern_and_exact_entries_layer_field_by_field() {
+    // Each entry contributes the fields it sets; the more specific one wins
+    // only where the two collide.
+    let config = UserConfig::load_from_str(
+        r#"
+[projects."git.company.example/*".list]
+full = true
+branches = true
+
+[projects."git.company.example/owner/repo".list]
+branches = false
+"#,
+    )
+    .unwrap();
+
+    let list = config.list(Some("git.company.example/owner/repo"));
+    assert_eq!(list.full, Some(true), "kept from the host-wide entry");
+    assert_eq!(list.branches, Some(false), "overridden by the exact entry");
+}
+
+#[test]
+fn test_pattern_and_exact_hooks_both_run() {
+    // Hooks append rather than override, so a host-wide hook and a
+    // repository-specific one both run, host-wide first.
+    let config = UserConfig::load_from_str(
+        r#"
+[projects."git.company.example/*"]
+post-switch = "host-setup"
+
+[projects."git.company.example/owner/repo"]
+post-switch = "repo-setup"
+"#,
+    )
+    .unwrap();
+
+    let hooks = config.hooks(Some("git.company.example/owner/repo"));
+    let commands: Vec<&str> = hooks
+        .post_switch
+        .iter()
+        .flat_map(CommandConfig::commands)
+        .map(|c| c.template.as_str())
+        .collect();
+    assert_eq!(commands, vec!["host-setup", "repo-setup"]);
+}
+
+#[test]
+fn test_forge_hostname_from_a_pattern_entry() {
+    let config = UserConfig::load_from_str(
+        r#"
+[projects."work/*".forge]
+platform = "github"
+hostname = "github.company.example"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.forge_platform(Some("work/owner/repo")),
+        Some("github")
+    );
+    assert_eq!(
+        config.forge_hostname(Some("work/owner/repo")),
+        Some("github.company.example")
+    );
+    assert_eq!(config.forge_hostname(None), None);
 }

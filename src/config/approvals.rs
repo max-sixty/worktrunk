@@ -224,16 +224,21 @@ impl Approvals {
     ///
     /// Normalizes template variables before comparing, so approvals match
     /// regardless of whether they were saved with deprecated variable names.
+    ///
+    /// A `*` pattern key approves its commands for every project it matches,
+    /// the same keys `[projects."…"]` settings use. Only a hand-written entry
+    /// is ever a pattern: `wt config approvals add` and the interactive prompt
+    /// record under the exact project identifier, so approving a command in
+    /// one repository never widens to another.
     pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
         let normalized_command = normalize_template_vars(command);
-        self.projects
-            .get(project)
-            .map(|p| {
+        crate::config::matching_project_keys(&self.projects, project)
+            .into_iter()
+            .any(|p| {
                 p.approved_commands
                     .iter()
                     .any(|c| normalize_template_vars(c) == normalized_command)
             })
-            .unwrap_or(false)
     }
 
     /// Iterate over projects and their approved commands.
@@ -246,6 +251,12 @@ impl Approvals {
     /// Approved commands for `project` that match none of `templates` (after
     /// template-variable normalization) — approvals left behind when a config
     /// command was edited or removed.
+    ///
+    /// Reads the exact key only, unlike [`Self::is_command_approved`]. A
+    /// pattern entry's commands are shared with every repository it matches,
+    /// and this drives `wt config approvals clear --stale`, so judging them
+    /// against one repository's config would let that repository revoke
+    /// approvals the others still rely on.
     pub fn stale_approvals<'a>(&'a self, project: &str, templates: &[&str]) -> Vec<&'a str> {
         let normalized: Vec<_> = templates
             .iter()
@@ -497,6 +508,86 @@ mod tests {
     fn test_empty_approvals() {
         let approvals = Approvals::default();
         assert!(!approvals.is_command_approved("any/project", "any command"));
+    }
+
+    #[test]
+    fn test_pattern_key_approves_every_project_it_matches() {
+        // A hand-written pattern entry — the only way one appears, since every
+        // write path keys by the exact identifier.
+        let approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+"#,
+        )
+        .unwrap();
+
+        assert!(approvals.is_command_approved("git.company.example/owner/repo", "npm install"));
+        assert!(
+            approvals.is_command_approved("git.company.example/group/team/repo", "npm install")
+        );
+        assert!(!approvals.is_command_approved("github.com/owner/repo", "npm install"));
+        assert!(!approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+    }
+
+    #[test]
+    fn test_approving_under_a_pattern_writes_the_exact_key() {
+        // Approving in one repository must not widen an existing pattern entry
+        // to cover a command the user was only asked about once.
+        let (_temp_dir, path) = test_dir();
+        let mut approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+"#,
+        )
+        .unwrap();
+        // Mutations reload under the file lock, so the fixture has to be on
+        // disk for the pattern entry to survive into the mutation.
+        approvals.save_to(&path).unwrap();
+
+        approvals
+            .approve_command(
+                "git.company.example/owner/repo".to_string(),
+                "npm test".to_string(),
+                &path,
+            )
+            .unwrap();
+
+        assert!(approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+        assert!(
+            !approvals.is_command_approved("git.company.example/other/repo", "npm test"),
+            "the pattern entry must not have absorbed the new approval"
+        );
+    }
+
+    #[test]
+    fn test_clearing_one_project_leaves_a_matching_pattern_intact() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+
+[projects."git.company.example/owner/repo"]
+approved-commands = ["npm test"]
+"#,
+        )
+        .unwrap();
+        approvals.save_to(&path).unwrap();
+
+        approvals
+            .revoke_project("git.company.example/owner/repo", &path)
+            .unwrap();
+
+        assert!(
+            !approvals.is_command_approved("git.company.example/owner/repo", "npm test"),
+            "the repository's own approval is gone"
+        );
+        assert!(
+            approvals.is_command_approved("git.company.example/owner/repo", "npm install"),
+            "the pattern entry other repositories share is untouched"
+        );
     }
 
     #[test]
