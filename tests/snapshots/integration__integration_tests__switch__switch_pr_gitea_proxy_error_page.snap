@@ -59,4 +59,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mGitea API error 401 for PR #101 on owner/test-repo: token is required[39m
+[31m✗[39m [31mGitea API error 502 for PR #101 on owner/test-repo, and the response body is not one Gitea sends[39m

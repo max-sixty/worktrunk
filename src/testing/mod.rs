@@ -63,7 +63,7 @@ use crate::git::Repository;
 use crate::shell_exec::{self, Cmd, INHERITED_GIT_PATH_VARS};
 use path_slash::PathExt;
 
-use self::mock_commands::{MockConfig, MockResponse};
+use self::mock_commands::{MockConfig, MockResponse, tea_api_include_stderr};
 
 /// Path to the `wt` binary built by Cargo.
 ///
@@ -2630,48 +2630,69 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
-    /// Setup mock `tea` that returns configurable Gitea PR / commit-status data.
+    /// Setup mock `tea` that returns configurable Gitea PR / commit-status
+    /// responses.
     ///
     /// Use this for testing Gitea CI status parsing. The mock handles:
-    /// - `tea api repos/{owner}/{repo}/pulls?state=open` → `pulls_json`
-    /// - `tea api repos/{owner}/{repo}/commits/{head_sha}/status` → `status_json`
+    /// - `tea api --include repos/{owner}/{repo}/pulls?state=open` → `pulls`
+    /// - `tea api --include repos/{owner}/{repo}/commits/{head_sha}/status` →
+    ///   `status`
     ///
     /// `owner`/`repo_name`/`head_sha` are needed because mock-stub matches the
-    /// invocation's leading arguments verbatim, and `tea api <path>` passes the
-    /// whole API path as a single argument — so the exact path string must be
-    /// registered.
+    /// invocation's leading arguments verbatim, and `tea api --include <path>`
+    /// passes the whole API path as a single argument — so the exact path
+    /// string must be registered.
     ///
     /// # Arguments
     /// * `owner`, `repo_name` - the Gitea repo the test's remote points at.
     /// * `head_sha` - the SHA used for the `commits/{sha}/status` lookup
-    ///   (the feature branch's HEAD; also the PR head SHA in `pulls_json`).
-    /// * `pulls_json` - JSON array for `tea api .../pulls`. Each entry should
-    ///   include `mergeable`, `html_url`, and `head.{ref,sha,repo.owner.login}`.
-    /// * `status_json` - JSON object for `tea api .../commits/{sha}/status`,
-    ///   with `state` and `total_count`.
+    ///   (the feature branch's HEAD; also the PR head SHA in `pulls`).
+    /// * `pulls` - `(HTTP status, body)` for `tea api .../pulls`. On 200 the
+    ///   body is a JSON array whose entries carry `mergeable`, `html_url`, and
+    ///   `head.{ref,sha,repo.owner.login}`; on a 4xx/5xx it is whatever the
+    ///   server sent instead, which the backend reads only for error text.
+    /// * `status` - `(HTTP status, body)` for
+    ///   `tea api .../commits/{sha}/status`, the 200 body carrying `state` and
+    ///   `total_count`.
+    ///
+    /// The status is what the backend classifies on, so it is a parameter
+    /// rather than inferred from the body — an `APIError` served with a 200 is
+    /// a Gitea API change, and the tests say which they mean.
     pub fn setup_mock_tea_with_ci_data(
         &mut self,
         owner: &str,
         repo_name: &str,
         head_sha: &str,
-        pulls_json: &str,
-        status_json: &str,
+        pulls: (&str, &str),
+        status: (&str, &str),
     ) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
+        let (pulls_status, pulls_json) = pulls;
+        let (status_status, status_json) = status;
         std::fs::write(mock_bin.join("tea_pulls.json"), pulls_json).unwrap();
         std::fs::write(mock_bin.join("tea_status.json"), status_json).unwrap();
 
         // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
         // `src/commands/list/ci_status/mod.rs`.
-        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open&limit=20");
-        let status_path = format!("api repos/{owner}/{repo_name}/commits/{head_sha}/status");
+        let pulls_path =
+            format!("api --include repos/{owner}/{repo_name}/pulls?state=open&limit=20");
+        let status_path =
+            format!("api --include repos/{owner}/{repo_name}/commits/{head_sha}/status");
 
         MockConfig::new("tea")
             .version("tea version development (mock)")
-            .command(&pulls_path, MockResponse::file("tea_pulls.json"))
-            .command(&status_path, MockResponse::file("tea_status.json"))
+            .command(
+                &pulls_path,
+                MockResponse::file("tea_pulls.json")
+                    .with_stderr(&tea_api_include_stderr(pulls_status)),
+            )
+            .command(
+                &status_path,
+                MockResponse::file("tea_status.json")
+                    .with_stderr(&tea_api_include_stderr(status_status)),
+            )
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
 
@@ -2727,11 +2748,12 @@ impl TestRepo {
             .command(
                 // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
                 // `src/commands/list/ci_status/mod.rs`.
-                "api repos/owner/test-repo/pulls?state=open&limit=20",
-                MockResponse::file("tea_pulls.json"),
+                "api --include repos/owner/test-repo/pulls?state=open&limit=20",
+                MockResponse::file("tea_pulls.json").with_stderr(&tea_api_include_stderr("200 OK")),
             )
             .command(
-                &format!("api repos/owner/test-repo/commits/{head_sha}/status"),
+                // `tea` itself failing: no response, so no status line.
+                &format!("api --include repos/owner/test-repo/commits/{head_sha}/status"),
                 MockResponse::stderr(stderr).with_exit_code(1),
             )
             .command("_default", MockResponse::exit(1))

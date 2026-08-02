@@ -265,6 +265,20 @@ pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
 // High-level mock helpers for common test scenarios
 // =============================================================================
 
+/// The stderr `tea api --include` writes ahead of the body: the status line,
+/// then the response headers, then a blank line.
+///
+/// Every mock `tea api` response that stands for an HTTP response carries this
+/// — both Gitea backends read the status from here, and a body arriving with no
+/// status line is a failed request rather than a resource. `status` is the
+/// status line's tail (`200 OK`, `404 Not Found`).
+///
+/// A mock standing for `tea` itself failing (non-zero exit, no response) has no
+/// status line to write, and must not have one.
+pub fn tea_api_include_stderr(status: &str) -> String {
+    format!("HTTP/1.1 {status}\r\nContent-Type: application/json;charset=utf-8\r\n\r\n")
+}
+
 /// Create a mock cargo command for tests.
 pub fn create_mock_cargo(bin_dir: &Path) {
     MockConfig::new("cargo")

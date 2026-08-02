@@ -2350,7 +2350,9 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 // PR Syntax Tests (pr:<number>)
 // ============================================================================
 
-use crate::common::mock_commands::{MockConfig, MockResponse, copy_mock_binary};
+use crate::common::mock_commands::{
+    MockConfig, MockResponse, copy_mock_binary, tea_api_include_stderr,
+};
 
 /// Set origin to a GitHub URL so `fetch_pr_info` can parse owner/repo.
 ///
@@ -4724,25 +4726,27 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 // not real `gh`.
 // ============================================================================
 
-/// Helper to set up mock tea for Gitea PR tests with custom response.
+/// Set up mock `tea` answering every `tea api --include` with `status` on
+/// stderr and `body` on stdout — the two streams a real `tea` writes for one
+/// HTTP response.
 ///
-/// Returns the path to the mock bin directory; pass it to
-/// `configure_mock_cli_env`.
-fn setup_mock_tea(repo: &TestRepo, tea_response: Option<&str>) -> std::path::PathBuf {
+/// The status is what the Gitea provider classifies on, so every test states
+/// the one it stands for rather than leaving it implied. Returns the mock bin
+/// directory; pass it to `configure_mock_cli_env`.
+fn setup_mock_tea(repo: &TestRepo, status: &str, body: &str) -> std::path::PathBuf {
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
-
     copy_mock_binary(&mock_bin, "tea");
+    fs::write(mock_bin.join("tea_pr_response.json"), body).unwrap();
 
-    if let Some(response) = tea_response {
-        fs::write(mock_bin.join("tea_pr_response.json"), response).unwrap();
-
-        MockConfig::new("tea")
-            .version("tea version development (mock)")
-            .command("api", MockResponse::file("tea_pr_response.json"))
-            .command("_default", MockResponse::exit(1))
-            .write(&mock_bin);
-    }
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::file("tea_pr_response.json").with_stderr(&tea_api_include_stderr(status)),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
 
     mock_bin
 }
@@ -4774,7 +4778,7 @@ fn test_switch_pr_gitea_create_conflict(#[from(repo_with_remote)] repo: TestRepo
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
 
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -4847,7 +4851,7 @@ fn test_switch_pr_gitea_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
 
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -4921,7 +4925,7 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
     }"#;
 
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -4935,7 +4939,8 @@ fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
 ///
 /// `tea api` exits 0 for every HTTP response, so the 404 arrives as a
 /// successful spawn whose stdout carries Gitea's `APIError` body rather than
-/// the PR — the shape, not the exit code, is what says the request failed.
+/// the PR — the status line, not the exit code, is what says the request
+/// failed.
 #[rstest]
 fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -4945,21 +4950,11 @@ fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitea.example.com/owner/test-repo.git",
     ]);
 
-    let mock_bin = repo.root_path().join("mock-bin");
-    fs::create_dir_all(&mock_bin).unwrap();
-
-    copy_mock_binary(&mock_bin, "tea");
-
-    MockConfig::new("tea")
-        .version("tea version development (mock)")
-        .command(
-            "api",
-            MockResponse::output(
-                r#"{"errors":null,"message":"pull request does not exist [index: 9999]","url":"https://gitea.example.com/api/swagger"}"#,
-            ),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
+    let mock_bin = setup_mock_tea(
+        &repo,
+        "404 Not Found",
+        r#"{"errors":null,"message":"pull request does not exist [index: 9999]","url":"https://gitea.example.com/api/swagger"}"#,
+    );
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5025,7 +5020,7 @@ fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo)
         "html_url": "https://git.internal.example.com/owner/test-repo/pulls/101"
     }"#;
 
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5205,7 +5200,7 @@ fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
         },
         "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
     }"#;
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5283,7 +5278,7 @@ fn test_switch_pr_gitea_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitea.example.com/owner/test-repo.git",
     ]);
 
-    let mock_bin = setup_mock_tea(&repo, Some("not json {"));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", "not json {");
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5357,7 +5352,7 @@ fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRep
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
 
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5396,7 +5391,7 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
         "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
     }"#;
 
-    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+    let mock_bin = setup_mock_tea(&repo, "200 OK", tea_response);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5417,20 +5412,11 @@ fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitea.example.com/owner/test-repo.git",
     ]);
 
-    let mock_bin = repo.root_path().join("mock-bin");
-    fs::create_dir_all(&mock_bin).unwrap();
-    copy_mock_binary(&mock_bin, "tea");
-
-    MockConfig::new("tea")
-        .version("tea version development (mock)")
-        .command(
-            "api",
-            MockResponse::output(
-                r#"{"errors":null,"message":"token is required","url":"https://gitea.example.com/api/swagger"}"#,
-            ),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
+    let mock_bin = setup_mock_tea(
+        &repo,
+        "401 Unauthorized",
+        r#"{"errors":null,"message":"token is required","url":"https://gitea.example.com/api/swagger"}"#,
+    );
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5452,20 +5438,11 @@ fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
         "https://gitea.example.com/owner/test-repo.git",
     ]);
 
-    let mock_bin = repo.root_path().join("mock-bin");
-    fs::create_dir_all(&mock_bin).unwrap();
-    copy_mock_binary(&mock_bin, "tea");
-
-    MockConfig::new("tea")
-        .version("tea version development (mock)")
-        .command(
-            "api",
-            MockResponse::output(
-                r#"{"errors":null,"message":"user does not have permission to read this repository","url":"https://gitea.example.com/api/swagger"}"#,
-            ),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
+    let mock_bin = setup_mock_tea(
+        &repo,
+        "403 Forbidden",
+        r#"{"errors":null,"message":"user does not have permission to read this repository","url":"https://gitea.example.com/api/swagger"}"#,
+    );
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
@@ -5477,11 +5454,40 @@ fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
 
 /// A 500 reaches the user as an API error, not as a parse failure. Gitea
 /// blanks the message of a 500 in production unless the token belongs to an
-/// admin, so the body arrives as the same `APIError` envelope with nothing in
-/// it — the shape still says the request failed, and the message says why
+/// admin, so the body arrives as the `APIError` envelope with nothing in it —
+/// the status line still says the request failed, and the message says why
 /// there's no more to report.
 #[rstest]
 fn test_switch_pr_gitea_blank_error_message(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = setup_mock_tea(
+        &repo,
+        "500 Internal Server Error",
+        r#"{"errors":null,"message":"","url":"https://gitea.example.com/api/swagger"}"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_blank_error_message", cmd);
+    });
+}
+
+/// A `tea` that exits 0 having written no status line never reached the API,
+/// so its stdout is not the PR however well-formed it looks. Real `tea` can't
+/// produce this — `--include` prints the moment the response does — which is
+/// exactly why the backstop is here rather than a fall-through: without it the
+/// body would be read as the resource, the failure the status line exists to
+/// prevent.
+#[rstest]
+fn test_switch_pr_gitea_no_status_line(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
         "remote",
         "set-url",
@@ -5493,12 +5499,22 @@ fn test_switch_pr_gitea_blank_error_message(#[from(repo_with_remote)] repo: Test
     fs::create_dir_all(&mock_bin).unwrap();
     copy_mock_binary(&mock_bin, "tea");
 
+    // A complete PR body, so nothing but the absent status line can reject it.
     MockConfig::new("tea")
         .version("tea version development (mock)")
         .command(
             "api",
             MockResponse::output(
-                r#"{"errors":null,"message":"","url":"https://gitea.example.com/api/swagger"}"#,
+                r#"{
+                "title": "Fix login",
+                "user": {"login": "alice"},
+                "state": "open",
+                "head": {"label": "feature", "ref": "feature",
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                "base": {"label": "main", "ref": "main",
+                         "repo": {"name": "test-repo", "owner": {"login": "owner"}}},
+                "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+            }"#,
             ),
         )
         .command("_default", MockResponse::exit(1))
@@ -5508,7 +5524,36 @@ fn test_switch_pr_gitea_blank_error_message(#[from(repo_with_remote)] repo: Test
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_gitea_blank_error_message", cmd);
+        assert_cmd_snapshot!("switch_pr_gitea_no_status_line", cmd);
+    });
+}
+
+/// A body written in front of Gitea — a reverse proxy's error page — is an API
+/// error too, on the strength of the status alone. Nothing in the body says so,
+/// which is what separates this from the blanked 500 above: that one at least
+/// arrives in Gitea's own envelope, while this is not JSON at all. Reading the
+/// body for the answer would send it to the resource parse and blame a Gitea
+/// API change for a gateway that never reached Gitea.
+#[rstest]
+fn test_switch_pr_gitea_proxy_error_page(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = setup_mock_tea(
+        &repo,
+        "502 Bad Gateway",
+        "<html><head><title>502 Bad Gateway</title></head></html>",
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_proxy_error_page", cmd);
     });
 }
 
