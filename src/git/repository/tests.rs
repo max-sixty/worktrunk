@@ -1181,11 +1181,55 @@ fn prewarm_partial_warm_runs_only_the_cold_threads() {
         super::GIT_COMMON_DIR_CACHE.contains_key(&second),
         "rev-parse thread must run when only its cache is cold"
     );
-    let entry = super::GIT_CONFIG_PRELOAD.get(&second).unwrap();
+    let sentinel_value = |path: &std::path::Path| {
+        super::GIT_CONFIG_PRELOAD
+            .get(path)
+            .and_then(|e| e.value().get("wt.sentinel").and_then(|v| v.last()).cloned())
+    };
     assert_eq!(
-        entry.value().get("wt.sentinel").and_then(|v| v.last()),
-        Some(&"1".to_string()),
+        sentinel_value(&second),
+        Some("1".to_string()),
         "an existing preload must not be re-read or overwritten"
+    );
+
+    // Fully warm: every gate is satisfied, so a repeat call early-returns
+    // without spawning anything or touching the preload.
+    super::Repository::prewarm_at(&second);
+    assert_eq!(sentinel_value(&second), Some("1".to_string()));
+}
+
+#[test]
+fn prewarm_post_pass_swallows_common_dir_read_failures() {
+    // Best-effort contract: when the declined preload's common-dir re-read
+    // fails — the directory is gone, or its config is corrupt — the post-pass
+    // leaves the preload empty and the on-demand `all_config()` surfaces the
+    // error. The rev-parse thread is skipped (its cache is hand-populated),
+    // so the bogus common-dir entries survive to the post-pass.
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    // Spawn failure: the cached common dir does not exist.
+    let missing = linked.join("no-such-dir");
+    super::GIT_COMMON_DIR_CACHE.insert(linked.clone(), missing);
+    super::Repository::prewarm_at(&linked);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
+        "a failed spawn must not populate the preload"
+    );
+
+    // Non-zero exit: the cached common dir is a git dir with corrupt config.
+    let (_tmp2, project2, _main2, linked2) = build_worktree_config_bare_layout();
+    let corrupt = project2.join("corrupt.git");
+    let out = crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"))
+        .args(["init", "--bare", corrupt.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init --bare failed");
+    std::fs::write(corrupt.join("config"), "[core\ngarbage").unwrap();
+    super::GIT_COMMON_DIR_CACHE.insert(linked2.clone(), corrupt);
+    super::Repository::prewarm_at(&linked2);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked2).is_none(),
+        "a non-zero config read must not populate the preload"
     );
 }
 
