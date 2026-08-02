@@ -1141,6 +1141,55 @@ fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
 }
 
 #[test]
+fn prewarm_partial_warm_runs_only_the_cold_threads() {
+    // The gates are per-cache: with the git-config preload already present
+    // (and the process-wide user-config preload latched) but no resolved
+    // common dir, prewarm still runs the rev-parse thread, and neither the
+    // config thread nor the post-pass touches the existing preload.
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let init_repo = |name: &str| {
+        let root = canonicalize(tmp.path()).unwrap().join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
+            .args(["init", "-b", "main", root.to_str().unwrap()])
+            .run()
+            .unwrap();
+        assert!(out.status.success(), "git init failed");
+        root
+    };
+
+    // A full prewarm on one repo latches the process-wide user-config
+    // preload (OnceLock), whichever test runs first.
+    super::Repository::prewarm_at(&init_repo("first"));
+    assert!(super::WORKTRUNK_USER_CONFIG_PRELOAD.get().is_some());
+
+    // Second repo: hand-populate the config preload, then prewarm. Only
+    // the rev-parse cache is cold.
+    let second = init_repo("second");
+    let sentinel: indexmap::IndexMap<String, Vec<String>> =
+        [("wt.sentinel".to_string(), vec!["1".to_string()])]
+            .into_iter()
+            .collect();
+    super::GIT_CONFIG_PRELOAD.insert(second.clone(), sentinel);
+
+    super::Repository::prewarm_at(&second);
+
+    assert!(
+        super::GIT_COMMON_DIR_CACHE.contains_key(&second),
+        "rev-parse thread must run when only its cache is cold"
+    );
+    let entry = super::GIT_CONFIG_PRELOAD.get(&second).unwrap();
+    assert_eq!(
+        entry.value().get("wt.sentinel").and_then(|v| v.last()),
+        Some(&"1".to_string()),
+        "an existing preload must not be re-read or overwritten"
+    );
+}
+
+#[test]
 fn all_config_without_prewarm_reads_common_dir_under_worktree_config() {
     // The on-demand branch: a `Repository::at` with no prewarm (a non-base
     // discovery path in production) gets no preload, so `all_config()` forks
