@@ -249,7 +249,40 @@ impl Repository {
     ///
     /// For remote branches, returns the local name (e.g., "fix" not "origin/fix")
     /// since `git worktree add path fix` auto-creates a tracking branch.
-    pub fn branches_for_completion(&self) -> anyhow::Result<Vec<CompletionBranch>> {
+    ///
+    /// `include_remote_only` is the caller's answer to "could a remote-only
+    /// branch reach the user from here?". A completer that can never offer one
+    /// (`wt remove`, worktree-only arguments) passes `false` and the
+    /// `refs/remotes/` scan — the most expensive of the three, since it reads a
+    /// commit object per ref and a fetched-into clone has far more of those
+    /// than local branches — never runs. Filtering the results afterwards
+    /// instead would pay for the scan and then throw it away.
+    pub fn branches_for_completion(
+        &self,
+        include_remote_only: bool,
+    ) -> anyhow::Result<Vec<CompletionBranch>> {
+        // The three scans are independent git calls that this function only
+        // joins in memory, and completion is a process that does nothing else
+        // — run in sequence the user waits for their sum, run concurrently for
+        // their max. Best-effort, on the same contract as
+        // `Repository::prewarm`: a thread that fails leaves its cache slot
+        // empty, and the accessor below re-runs the call and surfaces the
+        // error. `RepoCache`'s slots are separate thread-safe `OnceCell`s, so
+        // the three fill independently.
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _ = self.list_worktrees();
+            });
+            scope.spawn(|| {
+                let _ = self.local_branches();
+            });
+            if include_remote_only {
+                scope.spawn(|| {
+                    let _ = self.remote_branches();
+                });
+            }
+        });
+
         let worktrees = self.list_worktrees()?;
         let worktree_branches: HashSet<String> = worktrees
             .iter()
@@ -264,7 +297,12 @@ impl Repository {
         // (users should use the local one). Keeps the most recent timestamp
         // across remotes to preserve recency ordering.
         let mut branch_remotes: HashMap<String, (Vec<String>, i64)> = HashMap::new();
-        for remote in self.remote_branches()? {
+        let remotes: &[RemoteBranch] = if include_remote_only {
+            self.remote_branches()?
+        } else {
+            &[]
+        };
+        for remote in remotes {
             if local_names.contains(remote.local_name.as_str()) {
                 continue;
             }
@@ -283,7 +321,13 @@ impl Repository {
                 (name, remotes, ts)
             })
             .collect();
-        remote_only.sort_by_key(|b| std::cmp::Reverse(b.2));
+        // Recency first, then name. The name is not a cosmetic tiebreak: these
+        // entries come out of a `HashMap`, whose iteration order varies per
+        // process, and `sort_by_key` is stable — so on the timestamps that tie
+        // (branches cut from one commit, a bulk import) sorting on recency
+        // alone leaves the surviving order randomized, and the completion list
+        // reshuffles between one Tab press and the next.
+        remote_only.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
         let mut result = Vec::with_capacity(locals.len() + remote_only.len() + worktrees.len());
 
@@ -422,6 +466,68 @@ mod tests {
         assert_eq!(repo.default_branch_sha(), None);
     }
 
+    /// Build `refs/remotes/origin/<name>` for each name, all at HEAD — so
+    /// every one carries the same committer timestamp and the recency sort
+    /// between them is a tie.
+    fn add_remote_refs_at_head(test: &TestRepo, names: &[&str]) {
+        let head = test.git_output(&["rev-parse", "HEAD"]);
+        for name in names {
+            test.run_git(&["update-ref", &format!("refs/remotes/origin/{name}"), &head]);
+        }
+    }
+
+    #[test]
+    fn branches_for_completion_omits_remote_only_when_not_requested() {
+        // `include_remote_only` is what keeps a completer that can never
+        // offer a remote-only branch (`wt remove`, worktree-only arguments)
+        // from running the `refs/remotes/` scan at all. Filtering afterwards
+        // would look the same from here but pay for the scan first, which on
+        // a long-lived clone is the most expensive call on the path.
+        let test = TestRepo::with_initial_commit();
+        add_remote_refs_at_head(&test, &["only-on-remote"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let with = repo.branches_for_completion(true).unwrap();
+        assert!(
+            with.iter()
+                .any(|b| b.name == "only-on-remote"
+                    && matches!(b.category, BranchCategory::Remote(_))),
+            "requested but absent: {with:?}",
+        );
+
+        // A separate Repository, so the first call's cached scan can't stand
+        // in for the second's.
+        let repo = Repository::at(test.root_path()).unwrap();
+        let without = repo.branches_for_completion(false).unwrap();
+        assert!(
+            !without
+                .iter()
+                .any(|b| matches!(b.category, BranchCategory::Remote(_))),
+            "not requested but present: {without:?}",
+        );
+    }
+
+    #[test]
+    fn branches_for_completion_orders_tied_remote_only_branches_by_name() {
+        // Remote-only entries are collected through a `HashMap`, whose
+        // iteration order differs per process, and the recency sort is
+        // stable — so branches sharing a timestamp keep whatever random order
+        // they were iterated in unless the sort breaks the tie itself. Left
+        // unbroken, a user's completion list reshuffles between Tab presses.
+        let test = TestRepo::with_initial_commit();
+        add_remote_refs_at_head(&test, &["cherry", "apple", "banana"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let remote_only: Vec<String> = repo
+            .branches_for_completion(true)
+            .unwrap()
+            .into_iter()
+            .filter(|b| matches!(b.category, BranchCategory::Remote(_)))
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(remote_only, vec!["apple", "banana", "cherry"]);
+    }
+
     #[test]
     fn branches_for_completion_includes_unborn_default_branch() {
         // Regression for #3094: on a fresh `git init -b main` with no
@@ -433,7 +539,7 @@ mod tests {
         let test = TestRepo::new();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        let branches = repo.branches_for_completion().unwrap();
+        let branches = repo.branches_for_completion(true).unwrap();
         let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(names, vec!["main"], "completion candidates: {:?}", branches);
         assert!(
@@ -460,7 +566,7 @@ mod tests {
         ]);
 
         let repo = Repository::at(test.root_path()).unwrap();
-        let branches = repo.branches_for_completion().unwrap();
+        let branches = repo.branches_for_completion(true).unwrap();
         let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
         assert!(
             names.contains(&"main") && names.contains(&"feature"),

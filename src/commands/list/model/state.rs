@@ -74,7 +74,15 @@ impl Divergence {
 /// - For worktrees: whether the path matches the template, or has issues
 /// - For branches (without worktree): shows / to distinguish from worktrees
 ///
-/// Priority order for worktrees: Prunable > Locked > BranchWorktreeMismatch
+/// Priority order for worktrees: Prunable > Locked > DuplicateBranch >
+/// BranchWorktreeMismatch
+///
+/// `DuplicateBranch` and `BranchWorktreeMismatch` share the `⚑` glyph: both
+/// say this worktree's place in the branch ⇔ worktree map is irregular, and
+/// the table already distinguishes them — a repeated Branch cell is the
+/// duplicate, an off-template Path cell the mismatch. The variants stay
+/// separate because the JSON `worktree.state` names the cause, where there
+/// is no glyph budget to spend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum WorktreeState {
     #[strum(serialize = "")]
@@ -83,6 +91,8 @@ pub enum WorktreeState {
     None,
     /// Branch-worktree mismatch: path doesn't match what the template would generate
     BranchWorktreeMismatch,
+    /// The branch is checked out in more than one worktree
+    DuplicateBranch,
     /// Prunable (worktree directory missing)
     Prunable,
     /// Locked (protected from removal)
@@ -95,7 +105,7 @@ impl std::fmt::Display for WorktreeState {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::None => Ok(()),
-            Self::BranchWorktreeMismatch => write!(f, "⚑"),
+            Self::BranchWorktreeMismatch | Self::DuplicateBranch => write!(f, "⚑"),
             Self::Prunable => write!(f, "⊟"),
             Self::Locked => write!(f, "⊞"),
             Self::Branch => write!(f, "/"),
@@ -520,6 +530,8 @@ mod tests {
     fn test_worktree_state_display() {
         assert_eq!(format!("{}", WorktreeState::None), "");
         assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚑");
+        // Shares the mismatch glyph; the JSON state names which cause it was.
+        assert_eq!(format!("{}", WorktreeState::DuplicateBranch), "⚑");
         assert_eq!(format!("{}", WorktreeState::Prunable), "⊟");
         assert_eq!(format!("{}", WorktreeState::Locked), "⊞");
         assert_eq!(format!("{}", WorktreeState::Branch), "/");

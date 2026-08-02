@@ -12,6 +12,7 @@ use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, ProjectConfig, require_approvals_path};
 use worktrunk::git::{GitError, Repository};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message, warning_message,
@@ -256,6 +257,7 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
 
         if approval_count == 0 {
             eprintln!("{}", info_message("No approvals to clear for this project"));
+            emit_pattern_entries_hint(&approvals, &project_id)?;
             return Ok(());
         }
 
@@ -270,7 +272,29 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
                 if approval_count == 1 { "" } else { "s" }
             ))
         );
+        emit_pattern_entries_hint(&approvals, &project_id)?;
     }
 
+    Ok(())
+}
+
+/// After a per-project clear — or one with nothing exact to remove — name the
+/// hand-written pattern entries still approving commands for this project.
+/// `clear` only ever touches the exact entry, so without this the approval
+/// survives with nothing pointing at the entry supplying it.
+fn emit_pattern_entries_hint(approvals: &Approvals, project_id: &str) -> anyhow::Result<()> {
+    let keys = approvals.matching_pattern_keys(project_id);
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let label = if keys.len() == 1 { "entry" } else { "entries" };
+    let keys = keys.join(", ");
+    let path = format_path_for_display(&require_approvals_path()?);
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Commands approved by pattern {label} <underline>{keys}</> still apply; to change them, edit <underline>{path}</>"
+        ))
+    );
     Ok(())
 }

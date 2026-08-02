@@ -214,7 +214,8 @@ pub struct JsonRemote {
 /// Worktree-specific state
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorktree {
-    /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
+    /// Worktree state: "branch_worktree_mismatch", "duplicate_branch",
+    /// "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
 
@@ -455,6 +456,7 @@ fn worktree_state_to_json(
         Some(WorktreeState::BranchWorktreeMismatch) => {
             return (Some("branch_worktree_mismatch"), None);
         }
+        Some(WorktreeState::DuplicateBranch) => return (Some("duplicate_branch"), None),
         Some(WorktreeState::Prunable) => return (Some("prunable"), data.prunable.clone()),
         Some(WorktreeState::Locked) => return (Some("locked"), data.locked.clone()),
     }
@@ -475,7 +477,7 @@ fn worktree_state_to_json(
 impl JsonCi {
     /// Build a `JsonCi` from a [`PrStatus`], deriving the target-repo metadata
     /// from the PR/MR URL. `provider_override` is the configured
-    /// `[forge].platform` (see [`Repository::forge_platform_override`]); it lets
+    /// `[forge].platform` (see [`Repository::configured_forge_platform`]); it lets
     /// a self-hosted instance whose host can't be auto-detected still report the
     /// right provider.
     pub(crate) fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
@@ -570,7 +572,7 @@ pub fn to_json_items(
 ) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_from_snapshot().unwrap_or_default();
     let repo_metadata = repo.repo_info();
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
     items
         .iter()
         .map(|item| {
@@ -825,6 +827,7 @@ mod tests {
             has_working_tree_conflicts: None,
             git_operation: Some(None),
             branch_worktree_mismatch: false,
+            duplicate_branch: false,
         }
     }
 

@@ -3,7 +3,7 @@
 //! Reads a JSON config file to determine responses. When invoked as `gh`,
 //! looks for `gh.json` and responds based on config.
 //!
-//! Config location: `MOCK_CONFIG_DIR` env var (set by test harness)
+//! Config location: `WORKTRUNK_TEST_MOCK_CONFIG_DIR` env var (set by test harness)
 //!
 //! Config format:
 //! ```json
@@ -31,8 +31,9 @@
 //! - `output`: output literal string to stdout
 //! - `stderr`: output literal string to stderr
 //! - `exit_code`: exit with specified code (default 0)
-//! - `delay_ms`: sleep this long before responding (default 0), to simulate a
-//!   slow command (e.g. a forge call the picker streams in behind its frame)
+//! - `wait_for_file`: wait for this path under the config directory to exist
+//!   before responding. Lets a test observe a loading state, then causally
+//!   release the response without another user input.
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -58,8 +59,7 @@ struct CommandResponse {
     stderr: Option<String>,
     #[serde(default)]
     exit_code: i32,
-    #[serde(default)]
-    delay_ms: u64,
+    wait_for_file: Option<String>,
 }
 
 /// Get command name from argv\[0\].
@@ -73,17 +73,21 @@ fn command_name() -> String {
 }
 
 fn config_dir() -> PathBuf {
-    PathBuf::from(env::var_os("MOCK_CONFIG_DIR").expect("mock: MOCK_CONFIG_DIR not set"))
+    PathBuf::from(
+        env::var_os("WORKTRUNK_TEST_MOCK_CONFIG_DIR")
+            .expect("mock: WORKTRUNK_TEST_MOCK_CONFIG_DIR not set"),
+    )
 }
 
-/// Append this invocation's argv to `<MOCK_CALL_LOG_DIR>/<command>.calls` so
-/// a test can assert *how many times* and *with what arguments* a command was
-/// spawned, not just what it returned. Needed wherever the spawn count is the
-/// behavior under test — e.g. the fsmonitor sweep resolving every daemon in
-/// one batched `lsof` rather than one call per PID.
+/// Append this invocation's argv to
+/// `<WORKTRUNK_TEST_MOCK_CALL_LOG_DIR>/<command>.calls` so a test can assert
+/// *how many times* and *with what arguments* a command was spawned, not just
+/// what it returned. Needed wherever the spawn count is the behavior under
+/// test — e.g. the fsmonitor sweep resolving every daemon in one batched
+/// `lsof` rather than one call per PID.
 ///
 /// Opt-in, and deliberately NOT written next to the JSON config. Tests
-/// routinely place `MOCK_CONFIG_DIR` inside the repo under test
+/// routinely place `WORKTRUNK_TEST_MOCK_CONFIG_DIR` inside the repo under test
 /// (`<repo>/.bin`), so logging there would create an untracked file mid-run
 /// and change what the command being tested observes — a hook-spawned mock
 /// dirties the working tree, and `wt merge` then stashes. Observability must
@@ -94,7 +98,7 @@ fn config_dir() -> PathBuf {
 /// failure must not change what the mock returns, or a test would fail on the
 /// logging rather than on its actual assertion.
 fn log_invocation(cmd_name: &str, args: &[String]) {
-    let Some(dir) = env::var_os("MOCK_CALL_LOG_DIR") else {
+    let Some(dir) = env::var_os("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR") else {
         return;
     };
     let path = PathBuf::from(dir).join(format!("{}.calls", cmd_name));
@@ -138,7 +142,7 @@ fn main() {
         output: None,
         stderr: None,
         exit_code: 1,
-        delay_ms: 0,
+        wait_for_file: None,
     };
 
     // Try triple match first (e.g., "mr view 1", "mr view 2")
@@ -170,10 +174,26 @@ fn main() {
         .or_else(|| config.commands.get("_default"))
         .unwrap_or(&default_response);
 
-    // Simulate a slow command (e.g. a forge call) so tests can observe the
-    // caller's in-flight UI before the response lands.
-    if response.delay_ms > 0 {
-        sleep(Duration::from_millis(response.delay_ms));
+    // Causal release gate for tests that must first observe the caller's
+    // in-flight state. Bound the wait so a failed test cannot orphan the mock.
+    if let Some(path) = &response.wait_for_file {
+        const MAX_POLLS: u32 = 6000; // 10ms × 6000 = 60s
+        let release = config_dir.join(path);
+        let mut released = false;
+        for _ in 0..MAX_POLLS {
+            if release.exists() {
+                released = true;
+                break;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        if !released {
+            eprintln!(
+                "mock: timed out waiting for release file {}",
+                release.display()
+            );
+            exit(1);
+        }
     }
 
     if let Some(file) = &response.file {

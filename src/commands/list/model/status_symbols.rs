@@ -58,9 +58,12 @@
 //! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⚑ /`, priority
 //! `✘ > ↻ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘↻`) comes from live
 //! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
+//! `⚑` covers both irregular-mapping states — a duplicated branch outranks
+//! an off-template path, and the JSON `worktree.state` names which.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
-//! (`locked`, `prunable`, `branch_worktree_mismatch`, `ItemKind::Branch`).
+//! (`locked`, `prunable`, `duplicate_branch`, `branch_worktree_mismatch`,
+//! `ItemKind::Branch`).
 //!
 //! **Rule — short-circuit on priority:** a higher-priority signal, once known
 //! to be positive, resolves the gate immediately without waiting for
@@ -276,7 +279,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > branch_worktree_mismatch > branch)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > duplicate_branch > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -366,7 +369,9 @@ impl WorkingTreeStatus {
 /// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
-/// - ⚑: Branch-worktree mismatch (informational, dim yellow)
+/// - ⚑: Irregular branch ⇔ worktree mapping — the branch is checked out in
+///   more than one worktree, or the path is off-template (informational, dim
+///   yellow)
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
@@ -564,10 +569,10 @@ impl StatusSymbols {
                 Some(WorktreeState::Branch) => {
                     SlotState::Visible(cformat!("<dim>{}</>", WorktreeState::Branch))
                 }
-                Some(WorktreeState::BranchWorktreeMismatch) => SlotState::Visible(cformat!(
-                    "<dim,yellow>{}</>",
-                    WorktreeState::BranchWorktreeMismatch
-                )),
+                Some(
+                    state
+                    @ (WorktreeState::BranchWorktreeMismatch | WorktreeState::DuplicateBranch),
+                ) => SlotState::Visible(cformat!("<dim,yellow>{state}</>")),
                 Some(other) => SlotState::Visible(cformat!("<yellow>{}</>", other)),
             },
         };

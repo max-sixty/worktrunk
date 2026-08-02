@@ -252,6 +252,58 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     );
 }
 
+/// A hand-written pattern entry approves commands `clear` deliberately can't
+/// touch; the hint names the entry so the surviving approval is traceable.
+#[rstest]
+fn test_clear_approvals_only_pattern_entry(repo: TestRepo) {
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.commit("Initial commit");
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
+    repo.commit("Add config");
+
+    // Written raw: pattern entries are hand-edited by definition (the write
+    // paths refuse `*`).
+    fs::write(
+        repo.test_approvals_path(),
+        "[projects.\"*\"]\napproved-commands = [\"echo 'test'\"]\n",
+    )
+    .unwrap();
+
+    snapshot_clear_approvals("clear_approvals_only_pattern_entry", &repo, &[]);
+}
+
+/// Clearing the exact entry succeeds, and the hint says why `list` will still
+/// show the pattern entry's command as approved.
+#[rstest]
+fn test_clear_approvals_exact_cleared_pattern_remains(repo: TestRepo) {
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.commit("Initial commit");
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
+    repo.commit("Add config");
+
+    fs::write(
+        repo.test_approvals_path(),
+        "[projects.\"*\"]\napproved-commands = [\"echo 'other'\"]\n",
+    )
+    .unwrap();
+    // The exact entry rides the same file: mutations reload it from disk
+    // under the lock, so the pattern entry survives alongside.
+    let mut approvals = Approvals::default();
+    approvals
+        .approve_command(
+            repo.project_id(),
+            "echo 'test'".to_string(),
+            repo.test_approvals_path(),
+        )
+        .unwrap();
+
+    snapshot_clear_approvals("clear_approvals_exact_cleared_pattern_remains", &repo, &[]);
+}
+
 #[rstest]
 fn test_clear_approvals_after_clear(repo: TestRepo) {
     // Remove origin so project_identifier uses the canonical worktree path —

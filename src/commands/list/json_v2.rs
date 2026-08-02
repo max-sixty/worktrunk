@@ -179,8 +179,8 @@ pub struct JsonHead {
 }
 
 /// Worktree facts. Location attributes (`locked`, `prunable`,
-/// `branch_mismatch`) are independent fields — unlike schema 1's single
-/// `state`, they can co-occur.
+/// `branch_mismatch`, `duplicate_branch`) are independent fields — unlike
+/// schema 1's single `state`, they can co-occur.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct JsonWorktreeV2 {
     /// Filesystem path.
@@ -209,6 +209,9 @@ pub struct JsonWorktreeV2 {
     /// The checked-out branch doesn't match the branch this worktree was
     /// created for.
     pub branch_mismatch: bool,
+
+    /// Another worktree has the same branch checked out.
+    pub duplicate_branch: bool,
 
     /// In-progress operation: `"rebase"`, `"merge"`, `"cherry_pick"`,
     /// `"revert"`, or `"bisect"`; absent when none, null while unresolved.
@@ -394,7 +397,7 @@ pub fn to_json_envelope(
 ) -> JsonEnvelope {
     let mut all_vars = repo.all_vars_from_snapshot().unwrap_or_default();
     let default_branch = repo.default_branch();
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
 
     let json_items = items
         .iter()
@@ -596,6 +599,7 @@ fn json_worktree(data: &WorktreeData) -> JsonWorktreeV2 {
         locked: reason(&data.locked),
         prunable: reason(&data.prunable),
         branch_mismatch: data.branch_worktree_mismatch,
+        duplicate_branch: data.duplicate_branch,
         operation,
         changes,
     }

@@ -22,6 +22,9 @@ docstring for the exact command list and first-run behavior.
 The skeleton shows:
 - Branch names (known from worktree list)
 - Paths (known from worktree list)
+- Abbreviated commit hashes (git's `%h`, from the commit-details batch the
+  skeleton already waits on for sort order — see `collect/mod.rs`). This is
+  also a detached row's Branch cell, which has no branch name to show
 - Placeholder gutter symbols (`·`)
 - Loading indicators for computed columns
 

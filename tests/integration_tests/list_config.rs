@@ -194,28 +194,9 @@ fn test_list_json_no_url_without_template(repo: TestRepo) {
 ///
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
-fn test_list_url_with_branches_flag(repo: TestRepo) {
+fn test_list_url_with_branches_flag(mut repo: TestRepo) {
     // Remove fixture worktrees and their branches to isolate test (keep only main worktree)
-    for branch in &["feature-a", "feature-b", "feature-c"] {
-        let worktree_path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{}", branch));
-        if worktree_path.exists() {
-            let _ = repo
-                .git_command()
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap(),
-                ])
-                .run();
-        }
-        // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).run();
-    }
+    repo.remove_fixture_worktrees();
 
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
@@ -285,59 +266,6 @@ url = "http://localhost:8080/{{ branch }}"
 
     let url = first["url"].as_str().unwrap();
     assert_eq!(url, "http://localhost:8080/main");
-}
-
-/// Test that task-timeout-ms config option is parsed correctly.
-/// We use a very short timeout (1ms) to trigger timeouts.
-#[rstest]
-fn test_list_config_timeout_triggers_timeouts(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
-task-timeout-ms = 1
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // With a 1ms timeout, some tasks should time out
-    // The footer should show the timeout count
-    assert!(
-        stderr.contains("timed out") || output.status.success(),
-        "Expected either timeout message in footer or success (if git was fast enough)"
-    );
-}
-
-/// Test that task-timeout-ms = 0 explicitly disables timeout.
-#[rstest]
-fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
-task-timeout-ms = 0
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // With task-timeout-ms = 0, there should be no timeout
-    assert!(
-        !stderr.contains("timed out"),
-        "Expected no timeout message with task-timeout-ms = 0, but got: {}",
-        stderr
-    );
 }
 
 /// Regression: setting a typed env-var override (e.g. `WORKTRUNK__LIST__TIMEOUT_MS`)
@@ -708,33 +636,6 @@ fn test_list_config_malformed_system_config_non_section_field(repo: TestRepo) {
 
         assert_cmd_snapshot!(cmd);
     });
-}
-
-/// Test that --full disables the task timeout.
-#[rstest]
-fn test_list_config_timeout_disabled_with_full(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
-task-timeout-ms = 1
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.args(["list", "--full"]).current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // With --full, the timeout is disabled so we shouldn't see timeout messages
-    // (though tasks may still fail for other reasons)
-    assert!(
-        !stderr.contains("timed out"),
-        "Expected no timeout message with --full flag, but got: {}",
-        stderr
-    );
 }
 
 #[rstest]

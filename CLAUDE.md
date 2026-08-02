@@ -37,13 +37,13 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Worktree Model
 
-- Worktrees are **addressed by branch name**, not filesystem path.
+- Worktrees are **addressed by branch name**, with a worktree's own path as an alias — resolved branch-first by `Repository::resolve_worktree`, the one canonicalizer every worktree-naming argument routes through. A path is not a second addressing scheme: it names what a branch cannot (a detached worktree, one of two checkouts of a branch). So document arguments as taking a branch, state the path alias once rather than per argument, and give a new argument the canonicalizer rather than its own rule.
 - Each worktree maps to **exactly one branch**.
 - **Never retarget an existing worktree** to a different branch; create/switch/remove instead. (Sole exception: `wt step promote`, experimental, exchanges branches between two worktrees.)
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/content/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/content/`, skill-only pages like `shell-integration.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept -- --test integration "test_help"` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/content/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/content/`, skill-only pages like `shell-integration.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept --test integration -- test_help` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
 ## Plugin Layout
 
@@ -59,6 +59,11 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **Favor the failing variant on races** — `git reset --keep` (fails if tracked files were modified) over `--hard`; `git checkout --merge` over `--force`. If no safer variant exists, document the risk inline.
 - **Time-of-check vs time-of-use** — be conservative when there's a gap between the safety check and the operation. `wt merge` verifies clean before rebasing, but files could appear before cleanup — don't force-remove during cleanup.
 - **Replace files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every write to a file worktrunk can't put back (rc files, shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
+
+These stop where git's own protections stop, and matching git is deliberate in each case. The named spec says why:
+
+- `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would (`src/commands/worktree/push.rs`).
+- Removal's final dirty-worktree gate is answered by the fsmonitor daemon under `core.fsmonitor`, exactly as `git worktree remove`'s own gate is (`src/git/remove.rs`).
 
 Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
 
@@ -96,9 +101,13 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 
 When no structured alternative exists, document the fragility inline.
 
+### Immutable Ids Over List Positions
+
+`stash@{0}` names a position in a list any process can reorder, so a handle captured before a mutation window and used after it can resolve to a different object — restoring the target worktree's autostash by position after `git push` silently restored a concurrent writer's entry and reported success. Capture the immutable id instead (`git stash list --format=%H`, `git stash create`, `rev-parse`) and act on that; where an operation accepts only a positional selector, re-derive it from something stable immediately beforehand. An index into a collection `wt` owns is a different thing — this is about namespaces other processes can mutate. The strongest form is not to enter the shared namespace at all: the autostash this rule came from was later deleted outright, replaced by a two-tree merge that leaves the target worktree's changes in place (`advance_target` in `src/commands/worktree/push.rs`).
+
 ### Network Access
 
-worktrunk is local-first: the network is touched only when the user asked for it, and only where reaching the wire directly serves that request. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
+worktrunk is local-first: the network is touched only when the user asked for it, and only where reaching the wire directly serves that request. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. The query is bounded by `REMOTE_DETECTION_TIMEOUT` — nothing in git bounds it, and an unreachable host costs ~127 s per address on Linux — and a query that hits the bound falls back to local inference *without* caching it, so an outage can't make a guess permanent. No other detection helper may add a similar fallback.
 
 Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context build, recovery) stall commands the user wouldn't expect to do network work, worst on a fresh clone. The `default_branch()` bootstrap keeps a fresh clone usable while bounding the exception to one helper firing at most once per repo.
 
@@ -125,7 +134,7 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 - Signal-derived child exits surface structurally: stream mode (`Cmd::stream`) as `WorktrunkError::ChildProcessExited { signal: Some(sig), .. }`, capture mode (`Cmd::run`) as `CommandError { signal: Some(sig), .. }`. These fields are the structured channel — never sniff `code >= 128` or parse error messages.
 - Detect via `err.interrupt_signal()` (the `worktrunk::git::ErrorExt` trait). When it returns `Some(signal)`, propagate as `WorktrunkError::Interrupted { signal, hint }` and break the loop. `Interrupted` exits `128 + signal` (130 SIGINT, 143 SIGTERM) and renders once, at exit, per shell convention: silent for SIGINT (the terminal echoed `^C`), `Terminated` for SIGTERM — the line the shell would print if wt weren't trapping the signal. `hint` carries an optional recovery line for state the interrupt left behind (e.g. a mid-rebase worktree).
-- In capture mode only SIGINT/SIGTERM classify as interrupts. Capture children get no forwarding or escalation, and their captured output would be discarded by the silent exit — so a child killed by any other signal (a crash, an OOM kill) surfaces as a visible error instead. Stream mode counts any signal: output already streamed to the terminal, and user-initiated kills are normalized upstream to the originating SIGINT/SIGTERM (`seen_signal` in `shell_exec`, the concurrent runner's originating-signal override).
+- In capture mode only SIGINT/SIGTERM classify as interrupts. Capture children get no forwarding or escalation, and their captured output would be discarded by the silent exit — so a child killed by any other signal (a crash, an OOM kill) surfaces as a visible error instead. A capture child with a `Cmd::timeout` is the one the tty broadcast doesn't reach: it runs in its own process group so expiry can tear down its whole tree (`run_with_timeout_impl`), which is what makes the bound bound anything, so a Ctrl-C during one waits out the remaining timeout. Stream mode counts any signal: output already streamed to the terminal, and user-initiated kills are normalized upstream to the originating SIGINT/SIGTERM (`seen_signal` in `shell_exec`, the concurrent runner's originating-signal override).
 - The check happens **before** any `FailureStrategy` branch — Warn must NOT swallow signal-derived errors.
 - `handle_command_error` in `src/commands/command_executor.rs` enforces this for hook and alias pipelines (foreground and concurrent groups); `for_each.rs` enforces it for the worktree loop. New code that loops over child processes calls `.interrupt_signal()` on per-iteration errors and breaks.
 

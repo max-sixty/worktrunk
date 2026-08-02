@@ -638,6 +638,62 @@ fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: Te
     );
 }
 
+/// `--execute` computes only the template variables its command names.
+///
+/// The context map built at that call site feeds `expand_template` and nothing
+/// else — the payload reaches the child as a shell string, never as JSON on
+/// stdin, and `--execute` renders no `-v` variables table — so a var the
+/// templates don't reference is a git subprocess whose result is discarded.
+/// `var_default_branch` is the one with teeth: on a clone with no
+/// `refs/remotes/origin/HEAD` and no cached `worktrunk.default-branch` it falls
+/// through to `git ls-remote`, so an unfiltered context puts a variable-free
+/// `wt switch -x` on the network.
+///
+/// The `var_*` spans in the `-vv` trace are that work made observable. The
+/// second case is the control: it proves the trace captures spans from this
+/// call site, so the first case's empty set is the filter working rather than
+/// the trace missing them.
+#[rstest]
+fn test_switch_execute_computes_only_referenced_vars(mut repo: TestRepo) {
+    repo.add_worktree("exec-vars");
+    let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
+
+    // Each `-vv` run replaces trace.jsonl, so the two cases don't accumulate.
+    let var_spans = |execute: &str| -> Vec<String> {
+        let output = repo
+            .wt_command()
+            .args(["-vv", "switch", "exec-vars", "--execute", execute])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch --execute '{execute}' failed:\nstderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let raw = fs::read_to_string(&trace).expect("-vv should write trace.jsonl");
+        let mut spans: Vec<String> = raw
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| record["kind"] == "span")
+            .filter_map(|record| record["span"].as_str().map(str::to_owned))
+            .filter(|span| span.starts_with("var_"))
+            .collect();
+        spans.sort();
+        spans
+    };
+
+    let none_referenced = var_spans("echo hi");
+    assert!(
+        none_referenced.is_empty(),
+        "a --execute command naming no variables should compute none, got {none_referenced:?}"
+    );
+    assert_eq!(
+        var_spans("echo {{ commit }}"),
+        ["var_commit"],
+        "a --execute command naming commit should compute exactly that"
+    );
+}
+
 /// `--execute` with trailing `-- args` containing shell metacharacters: the
 /// constructed command appended to the exec directive file must POSIX-escape
 /// each trailing arg so the user's shell wrapper (`sh -c`, `bash -c`, …)
@@ -887,15 +943,6 @@ fn test_switch_error_path_occupied(repo: TestRepo) {
 }
 // Execute flag tests
 #[rstest]
-fn test_switch_execute_success(repo: TestRepo) {
-    snapshot_switch(
-        "switch_execute_success",
-        &repo,
-        &["--create", "exec-test", "--execute", "echo 'test output'"],
-    );
-}
-
-#[rstest]
 fn test_switch_execute_creates_file(repo: TestRepo) {
     let create_file_cmd = "echo 'test content' > test.txt";
 
@@ -903,6 +950,33 @@ fn test_switch_execute_creates_file(repo: TestRepo) {
         "switch_execute_creates_file",
         &repo,
         &["--create", "file-test", "--execute", create_file_cmd],
+    );
+
+    // Query Git rather than reconstructing the configured path template: this
+    // keeps the state oracle correct if the fixture's worktree-path changes.
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    let file_worktree = worktrees
+        .split("\n\n")
+        .find(|entry| {
+            entry
+                .lines()
+                .any(|line| line == "branch refs/heads/file-test")
+        })
+        .unwrap_or_else(|| panic!("file-test worktree not registered:\n{worktrees}"));
+    let worktree_path = file_worktree
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .map(Path::new)
+        .unwrap_or_else(|| panic!("file-test worktree has no path:\n{file_worktree}"));
+
+    assert_eq!(
+        fs::read_to_string(worktree_path.join("test.txt")).unwrap(),
+        "test content\n",
+        "--execute should run in the created worktree"
+    );
+    assert!(
+        !repo.root_path().join("test.txt").exists(),
+        "--execute must not run in the source worktree"
     );
 }
 
@@ -912,30 +986,6 @@ fn test_switch_execute_failure(repo: TestRepo) {
         "switch_execute_failure",
         &repo,
         &["--create", "fail-test", "--execute", "exit 1"],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_with_existing_worktree(mut repo: TestRepo) {
-    repo.add_worktree("existing-exec");
-
-    let create_file_cmd = "echo 'existing worktree' > existing.txt";
-
-    snapshot_switch(
-        "switch_execute_existing",
-        &repo,
-        &["existing-exec", "--execute", create_file_cmd],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_multiline(repo: TestRepo) {
-    let multiline_cmd = "echo 'line1'\necho 'line2'\necho 'line3'";
-
-    snapshot_switch(
-        "switch_execute_multiline",
-        &repo,
-        &["--create", "multiline-test", "--execute", multiline_cmd],
     );
 }
 
@@ -957,15 +1007,17 @@ fn test_switch_execute_template_branch(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_execute_template_base(repo: TestRepo) {
-    // Test that {{ base }} is available when creating with --create
+    repo.create_branch("release-base");
+
+    // A create uses the explicitly selected base, not the default branch.
     snapshot_switch(
         "switch_execute_template_base",
         &repo,
         &[
             "--create",
-            "from-main",
+            "from-release-base",
             "--base",
-            "main",
+            "release-base",
             "--execute",
             "echo 'base={{ base }}'",
         ],
@@ -973,29 +1025,14 @@ fn test_switch_execute_template_base(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_execute_template_base_without_create(mut repo: TestRepo) {
-    // Test that {{ base }} errors when switching to existing worktree (no --create)
-    // The `base` variable is only available during branch creation
+fn test_switch_execute_template_base_for_existing_worktree_uses_source(mut repo: TestRepo) {
+    // For an existing-worktree switch, `base` is the source worktree rather
+    // than a branch selected by `--base`. This command starts from main.
     repo.add_worktree("existing");
     snapshot_switch(
         "switch_execute_template_base_without_create",
         &repo,
         &["existing", "--execute", "echo 'base={{ base }}'"],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_template_with_filter(repo: TestRepo) {
-    // Test that filters work ({{ branch | sanitize }})
-    snapshot_switch(
-        "switch_execute_template_with_filter",
-        &repo,
-        &[
-            "--create",
-            "feature/with-slash",
-            "--execute",
-            "echo 'sanitized={{ branch | sanitize }}'",
-        ],
     );
 }
 
@@ -1007,21 +1044,6 @@ fn test_switch_execute_template_shell_escape(repo: TestRepo) {
         "switch_execute_template_shell_escape",
         &repo,
         &["--create", "feat;id", "--execute", "echo {{ branch }}"],
-    );
-}
-
-#[rstest]
-fn test_switch_execute_template_worktree_path(repo: TestRepo) {
-    // Test that {{ worktree_path }} is expanded
-    snapshot_switch(
-        "switch_execute_template_worktree_path",
-        &repo,
-        &[
-            "--create",
-            "path-test",
-            "--execute",
-            "echo 'path={{ worktree_path }}'",
-        ],
     );
 }
 
@@ -1072,27 +1094,6 @@ fn test_switch_execute_arg_template_error(repo: TestRepo) {
 }
 
 // Verbose mode tests
-#[rstest]
-fn test_switch_execute_verbose_template_expansion(repo: TestRepo) {
-    // Test that -v shows template expansion details
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd_with_global_flags(
-            &repo,
-            "switch",
-            &[
-                "--create",
-                "verbose-test",
-                "--execute",
-                "echo 'branch={{ branch }}'",
-            ],
-            None,
-            &["-v"],
-        );
-        assert_cmd_snapshot!("switch_execute_verbose_template", cmd);
-    });
-}
-
 #[rstest]
 fn test_switch_execute_verbose_multiline_template(repo: TestRepo) {
     // Test that -v shows multiline template expansion with proper formatting
@@ -1676,29 +1677,6 @@ fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
     assert!(
         output.status.success(),
         "wt switch should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// Switch via a symlink that resolves to an existing worktree (#2460).
-#[cfg(unix)]
-#[rstest]
-fn test_switch_worktree_by_symlinked_path(mut repo: TestRepo) {
-    let worktree_path = repo.add_worktree("feature-symlinked");
-
-    let symlink_path = worktree_path.parent().unwrap().join("worktree-link");
-    std::os::unix::fs::symlink(&worktree_path, &symlink_path).unwrap();
-
-    let symlink_str = symlink_path.to_string_lossy().to_string();
-    let output = repo
-        .wt_command()
-        .args(["switch", &symlink_str])
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "wt switch via symlink should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -2468,7 +2446,7 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
 /// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
 /// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
 /// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
-/// end: `spawn_compute` → `compute_pr_log` → `render_github_commits` → cache.
+/// end: `spawn_compute` → `compute_pr_log` → `parse_github_commits` → cache.
 ///
 /// `headRefOid` here is a SHA that isn't in the test repo's object store, so
 /// `compute_pr_log`'s local-`git log` fast path misses and falls back to the
@@ -2735,19 +2713,19 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 /// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
 /// calls keyed by the row's `mr:{N}` token. Both `mode:2` (Log) and `mode:7`
 /// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
-/// `compute_pr_comments` → `render_gitlab_commits` / `render_gitlab_notes` →
+/// `compute_pr_comments` → `parse_gitlab_commits` / `render_gitlab_notes` →
 /// cache for the GitLab forge — the half the unit tests (canned JSON straight
 /// into the renderers) can't reach, pinning the endpoint/arg construction.
 ///
 /// Both `glab api …/commits` and `…/notes` match the mock's `api --paginate`
 /// compound key, so one canned response carries all fields each renderer reads
-/// (`short_id`/`title` for commits; `body`/`author`/`created_at`/`system` for
+/// (`id`/`title` for commits; `body`/`author`/`created_at`/`system` for
 /// notes) — serde ignores the rest.
 #[rstest]
 fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     repo.write_project_config("[forge]\nplatform = \"gitlab\"\n");
     let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7"}]"#;
-    let api_json = r#"[{"short_id":"abc12345","title":"Cache deps between jobs","body":"Looks good.","author":{"username":"reviewer"},"created_at":"2024-12-01T00:00:00Z","system":false}]"#;
+    let api_json = r#"[{"id":"abc12345def678900000000000000000000000a","short_id":"abc12345","title":"Cache deps between jobs","body":"Looks good.","author":{"username":"reviewer"},"created_at":"2024-12-01T00:00:00Z","system":false}]"#;
 
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
@@ -2869,10 +2847,11 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
 
 /// Configure command environment for any mock CLI installed in `mock_bin`.
 ///
-/// Sets `MOCK_CONFIG_DIR` (so mock-stub finds its config) and prepends
-/// `mock_bin` to `PATH` (so the mock binary is found before any real CLI).
+/// Sets `WORKTRUNK_TEST_MOCK_CONFIG_DIR` (so mock-stub finds its config) and
+/// prepends `mock_bin` to `PATH` (so the mock binary is found before any real
+/// CLI).
 fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
-    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin);
 
     // Find the actual PATH var name (case-insensitive on Windows) to avoid
     // creating a duplicate entry with different case.
@@ -3610,6 +3589,41 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A 404 is the one GitHub failure worded by us rather than forwarded from
+/// `gh`, because it answers about an owner/repo we chose — so the message has to
+/// name where that choice came from. With `gh repo set-default` configured, that
+/// is the default, and the remedy is to check it rather than the remotes.
+#[rstest]
+fn test_switch_pr_not_found_gh_default(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "gh");
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/other-repo\n"),
+        )
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#)
+                .with_stderr("gh: Not Found (HTTP 404)")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_not_found_gh_default", cmd);
+    });
+}
+
 /// Regression: when the GitHub remote is *non-primary* (origin is GitLab,
 /// `upstream` is GitHub), `wt switch pr:N` must derive owner/repo from the
 /// GitHub remote, not the primary. The mock answers only the upstream's API
@@ -4043,7 +4057,7 @@ fn test_switch_base_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
             &["--create", "feat/follow-up", "--base", "mr:101", "--no-cd"],
             None,
         );
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_mr_same_repo", cmd);
     });
 }
@@ -6168,30 +6182,6 @@ fn setup_mock_glab_for_mr(repo: &TestRepo, glab_response: Option<&str>) -> std::
     mock_bin
 }
 
-/// Configure command environment for mock glab.
-fn configure_mock_glab_env(cmd: &mut std::process::Command, mock_bin: &Path) {
-    // Tell mock-stub where to find config files
-    cmd.env("MOCK_CONFIG_DIR", mock_bin);
-
-    // Build PATH with mock binary first
-    let (path_var_name, current_path) = std::env::vars_os()
-        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
-        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
-        .unwrap_or(("PATH".to_string(), None));
-
-    let mut paths: Vec<std::path::PathBuf> = current_path
-        .as_deref()
-        .map(|p| std::env::split_paths(p).collect())
-        .unwrap_or_default();
-    paths.insert(0, mock_bin.to_path_buf());
-    let new_path = std::env::join_paths(&paths)
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
-
-    cmd.env(path_var_name, new_path);
-}
-
 /// Test that --create flag conflicts with mr: syntax
 #[rstest]
 fn test_switch_mr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
@@ -6212,7 +6202,7 @@ fn test_switch_mr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_create_conflict", cmd);
     });
 }
@@ -6277,7 +6267,7 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo", cmd);
     });
 }
@@ -6342,7 +6332,7 @@ fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo_limited_refspec", cmd);
     });
 }
@@ -6379,7 +6369,7 @@ fn test_switch_mr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_same_repo_no_remote", cmd);
     });
 }
@@ -6403,7 +6393,7 @@ fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo:
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_malformed_web_url", cmd);
     });
 }
@@ -6427,7 +6417,7 @@ fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: T
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_malformed_web_url_no_project", cmd);
     });
 }
@@ -6441,12 +6431,15 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     // Copy mock-stub binary as "glab"
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 404 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 404 error (JSON on stdout, human-readable on
+    // stderr — glab formats the API's own message as `glab: <message> (HTTP N)`)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"404 Not found"}"#)
+                .with_stderr("glab: 404 Not found (HTTP 404)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -6454,7 +6447,7 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:9999"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_not_found", cmd);
     });
 }
@@ -6467,12 +6460,15 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 
     copy_mock_binary(&mock_bin, "glab");
 
-    // Configure glab api to return 401 error (JSON on stdout like real GitLab API)
+    // Configure glab api to return 401 error (JSON on stdout, human-readable on
+    // stderr — the shape a real `glab api` produces for a rejected token)
     MockConfig::new("glab")
         .version("glab version 1.40.0 (mock)")
         .command(
             "api",
-            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#)
+                .with_stderr("glab: 401 Unauthorized (HTTP 401)")
+                .with_exit_code(1),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
@@ -6480,7 +6476,7 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_not_authenticated", cmd);
     });
 }
@@ -6503,7 +6499,7 @@ fn test_switch_mr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_invalid_json", cmd);
     });
 }
@@ -6537,7 +6533,7 @@ fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_empty_branch", cmd);
     });
 }
@@ -6657,7 +6653,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork", cmd);
     });
 }
@@ -6739,7 +6735,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_mr", cmd);
     });
 }
@@ -6789,7 +6785,7 @@ fn test_switch_mr_fork_existing_branch_tracks_different(#[from(repo_with_remote)
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_branch_tracks_different", cmd);
     });
 }
@@ -6826,7 +6822,7 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork_existing_no_tracking", cmd);
     });
 }
@@ -6853,7 +6849,7 @@ fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:101"], None);
-        configure_mock_glab_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_unknown_error", cmd);
     });
 }
@@ -7250,4 +7246,88 @@ cd = false
 
     // Without any cd flags, config should be respected (no cd directive)
     snapshot_switch("switch_no_cd_config_default", &repo, &["no-cd-config-test"]);
+}
+
+/// A worktree's own path names it, including the single-component spelling —
+/// `wt switch solo` where `solo/` is a worktree but no branch is called that.
+///
+/// Path resolution runs through `-C`, so the assertion is on the directory the
+/// switch resolved to rather than on the process cwd.
+#[rstest]
+fn switch_by_relative_worktree_path(mut repo: TestRepo) {
+    let nested = repo.root_path().join("solo");
+    let worktree_path = repo.add_worktree_at_path("solo-branch", &nested);
+
+    for spelling in ["solo", "./solo", worktree_path.to_str().unwrap()] {
+        let output = repo
+            .wt_command()
+            .args(["switch", spelling, "--no-cd"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "switch {spelling} should resolve the worktree: {stderr}"
+        );
+        assert!(
+            stderr.contains("solo-branch"),
+            "switch {spelling} should name the branch checked out there: {stderr}"
+        );
+    }
+}
+
+/// The tilde form worktrunk prints paths in is a form it also accepts, so a
+/// path copied out of wt's output works when the shell can't expand it.
+#[cfg(unix)]
+#[rstest]
+fn switch_by_tilde_worktree_path(mut repo: TestRepo, temp_home: TempDir) {
+    let worktree_path = repo.add_worktree("feature");
+    // Re-home the process at the worktree's parent so the worktree is under
+    // `~`, which is what makes the tilde spelling reachable at all.
+    let home = worktree_path.parent().unwrap().to_path_buf();
+    drop(temp_home);
+
+    let mut cmd = repo.wt_command();
+    set_temp_home_env(&mut cmd, &home);
+    let output = cmd
+        .args([
+            "switch",
+            &format!("~/{}", worktree_path.file_name().unwrap().to_str().unwrap()),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stderr.contains("feature"),
+        "a tilde-form worktree path should resolve: {stderr}"
+    );
+}
+
+/// `--base` names a branch, so a worktree's path stands for the branch checked
+/// out there — the same rule as a merge or rebase target.
+#[rstest]
+fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
+    let base_path = repo.add_worktree("base-branch");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "derived",
+            "--base",
+            base_path.to_str().unwrap(),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw.ansi_strip();
+    assert!(
+        output.status.success() && stderr.contains("from base-branch"),
+        "--base should resolve the worktree path to its branch: {stderr}"
+    );
 }

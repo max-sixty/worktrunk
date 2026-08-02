@@ -119,12 +119,10 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use skim::tui::event::ActionCallback;
 use worktrunk::HookType;
-use worktrunk::config::Approvals;
+use worktrunk::config::{Approvals, CommitGenerationConfig};
 use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{
-    eprintln, error_message, hint_message, info_message, strip_osc8_hyperlinks, warning_message,
-};
+use worktrunk::styling::{eprintln, error_message, hint_message, info_message, warning_message};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
@@ -133,10 +131,10 @@ use super::list::model::{BranchScope, ItemKind, ListItem};
 use super::list::progressive::RenderTarget;
 use super::list::render::PLACEHOLDER;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use super::worktree::{RemoveResult, SwitchPipeline};
+use super::worktree::{RemovalPlan, SwitchPipeline};
 use crate::cli::SwitchFormat;
-use crate::output::{BackgroundFallbackMode, handle_remove_output};
-use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
+use crate::output::{RemovalExecution, handle_remove_output};
+use worktrunk::git::{BranchDeletionMode, execute_branch_deletion};
 
 use items::{LocalContent, LocalContentSlot, PreviewCache, ShortcutTable, WORKTREE_OUTPUT_PREFIX};
 use preview::{PreviewLayout, PreviewMode, PreviewState, PreviewStateData};
@@ -147,14 +145,9 @@ use preview_orchestrator::PreviewOrchestrator;
 /// during the picker would corrupt skim's frame, so collect routes warnings
 /// through `PickerProgressHandler::stash_warning` and we emit them here.
 ///
-/// TODO(picker-feedback): the declined-removal diagnostics (the main-worktree /
-/// dirty / unmerged "can't remove this row" messages from the `alt-x` keep paths)
-/// only surface here, on exit — the user presses `alt-x`, the row visibly stays,
-/// and the reason scrolls past after they quit. Consider a short in-picker message
-/// at `alt-x` time so the *why* lands immediately. skim has no footer slot (see the
-/// dropped Stall-indicator work), so the realistic slot is the header line — swap
-/// it to a transient "main worktree can't be removed" for a beat, then restore. The
-/// stash stays the fallback for background failures that surface after exit.
+/// Declined removals also explain themselves immediately through
+/// [`items::HeaderFlash`]. The stash remains the durable exit-time copy and the
+/// fallback for background failures that surface after the picker frame.
 fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
     for line in stash.lock().unwrap().drain(..) {
         eprintln!("{line}");
@@ -169,30 +162,23 @@ enum PickerAction {
     Create,
 }
 
-/// The alt-x removal target parsed back out of a row's `output()` token.
+/// Parse the canonical removal target from a row's `output()` token.
 ///
 /// A worktree-backed row's token is `worktree-path:<path>` (paths are
 /// unique — detached worktrees would otherwise collide on the shared
 /// `(detached)` label); a branch-only row's token is the bare branch name.
-enum PickerRemovalTarget {
-    WorktreePath(PathBuf),
-    Branch(String),
-}
-
-impl PickerRemovalTarget {
-    fn from_signal(signal: &str) -> Option<Self> {
-        let signal = signal.trim();
-        if signal.is_empty() {
+fn parse_removal_target(signal: &str) -> Option<RemoveTarget> {
+    let signal = signal.trim();
+    if signal.is_empty() {
+        return None;
+    }
+    if let Some(path) = signal.strip_prefix(WORKTREE_OUTPUT_PREFIX) {
+        if path.is_empty() {
             return None;
         }
-        if let Some(path) = signal.strip_prefix(WORKTREE_OUTPUT_PREFIX) {
-            if path.is_empty() {
-                return None;
-            }
-            return Some(Self::WorktreePath(PathBuf::from(path)));
-        }
-        Some(Self::Branch(signal.to_string()))
+        return Some(RemoveTarget::WorktreePath(PathBuf::from(path)));
     }
+    Some(RemoveTarget::BranchOnly(signal.to_string()))
 }
 
 /// Resolve the switch identifier for a selected picker row, decoded from its
@@ -209,8 +195,8 @@ impl PickerRemovalTarget {
 /// downcast fail when the item originates on the reader thread.
 fn picker_item_identifier(item: &dyn SkimItem) -> String {
     let output = item.output().to_string();
-    match PickerRemovalTarget::from_signal(&output) {
-        Some(PickerRemovalTarget::WorktreePath(path)) => path.to_string_lossy().into_owned(),
+    match parse_removal_target(&output) {
+        Some(RemoveTarget::WorktreePath(path)) => path.to_string_lossy().into_owned(),
         _ => output,
     }
 }
@@ -325,38 +311,28 @@ impl AltXRemover {
     /// `target` carries the exact worktree path or branch name decoded from
     /// the row's `output()` token — no `git worktree list` lookup, so a
     /// detached row can't be confused with another detached row.
-    fn prepare_removal(
-        &self,
-        target: &PickerRemovalTarget,
-    ) -> anyhow::Result<(Repository, RemoveResult)> {
+    fn prepare_removal(&self, target: RemoveTarget) -> anyhow::Result<(Repository, RemovalPlan)> {
         let repo = Repository::at(self.repo.discovery_path())?;
 
         // Validate removal before touching the list. prepare_worktree_removal
         // runs a few git commands (~15-20ms) — acceptable on skim's event loop.
         // Only remove the item and spawn background deletion if this succeeds.
-        let caller_path = repo.current_worktree().root().ok();
-
-        let result = {
-            let remove_target = match target {
-                PickerRemovalTarget::WorktreePath(path) => RemoveTarget::Path(path),
-                PickerRemovalTarget::Branch(branch) => RemoveTarget::Branch(branch),
-            };
-            repo.prepare_worktree_removal(
-                remove_target,
-                BranchDeletionMode::SafeDelete,
-                false,
-                caller_path,
-                None,
-                None,
-            )?
-        };
+        let caller_path = repo.current_worktree().root()?;
+        let result = repo.prepare_worktree_removal(
+            target,
+            BranchDeletionMode::SafeDelete,
+            false,
+            &caller_path,
+            None,
+            None,
+        )?;
 
         Ok((repo, result))
     }
 
     /// Execute a queued removal in the background.
     ///
-    /// A `RemovedWorktree` result goes through [`handle_remove_output`] in its
+    /// A `Worktree` result goes through [`handle_remove_output`] in its
     /// silent (TUI) mode — the git worktree removal with no `wt`-generated
     /// messages, spinner, or `cd` directive (skim owns the terminal). Its
     /// `pre-remove` / `post-remove` / `post-switch` hooks run only when they're
@@ -377,8 +353,8 @@ impl AltXRemover {
     /// worktree is physically gone (rendering or spawning a
     /// `post-remove`/`post-switch` hook can error during the announcer flush, which
     /// runs after the dir is renamed into `.git/wt/trash/`), and a `BranchOnly`
-    /// delete that raced from integrated to unmerged returns `Ok` with the branch
-    /// surviving. Instead it
+    /// delete that became unmerged or gained a checkout after planning returns
+    /// `Ok` with the branch surviving. Instead it
     /// observes whether the target still exists ([`removal_target_still_present`])
     /// and restores the row via [`restore_failed_removal`] only when it does, so
     /// the list never shows a removal that didn't happen. The `Result` is for
@@ -386,16 +362,16 @@ impl AltXRemover {
     ///
     /// `repo` is the worktree the picker is operating from — the config source
     /// for the removal hooks (see [`approved_removal_plan`]) and the target of
-    /// a `BranchOnly` deletion. `RemovedWorktree` removal itself is rooted at
+    /// a `BranchOnly` deletion. `Worktree` removal itself is rooted at
     /// `main_path` (which may differ from the picker's startup repo in bare-repo
     /// setups).
     fn do_removal(
         repo: &Repository,
-        result: &RemoveResult,
+        result: &RemovalPlan,
         approvals: &Approvals,
     ) -> anyhow::Result<()> {
         match result {
-            RemoveResult::RemovedWorktree {
+            RemovalPlan::Worktree {
                 main_path,
                 worktree_path,
                 ..
@@ -403,18 +379,19 @@ impl AltXRemover {
                 let main_repo = Repository::at(main_path)?;
                 let plan = approved_removal_plan(repo, main_path, worktree_path, approvals)?;
                 let mut announcer = HookAnnouncer::new(&main_repo, false);
+                // The fate is dropped: the picker infers success by observing
+                // whether the target survived (`removal_target_still_present`),
+                // never from what the executor reports.
                 handle_remove_output(
                     result,
-                    /* foreground */ true,
+                    RemovalExecution::Silent,
                     &plan,
                     /* quiet */ true,
-                    /* silent */ true,
                     &mut announcer,
-                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
             }
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name,
                 deletion_mode,
                 ..
@@ -422,19 +399,15 @@ impl AltXRemover {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    if let Ok(snapshot) = repo.capture_refs()
-                        && let Err(e) = delete_branch_if_safe(
-                            repo,
-                            &snapshot,
-                            branch_name,
-                            target,
-                            deletion_mode.is_force(),
-                        )
+                    if let Err(e) =
+                        execute_branch_deletion(repo, branch_name, target, deletion_mode.is_force())
                     {
-                        // A safe-delete refusal is `Ok(NotDeleted)`, not an error;
-                        // this is a genuine `git branch -D` failure. The row is
-                        // restored anyway because the branch still exists (see
-                        // `removal_target_still_present`) — surface the cause.
+                        // Safe-delete retention (`NotDeleted`,
+                        // `RetainedCheckedOut`, or `RetainedRaced`) is `Ok`, not
+                        // an error; this is a genuine deletion-command failure.
+                        // The row is restored anyway because the branch still
+                        // exists (see `removal_target_still_present`) — surface
+                        // the cause.
                         tracing::warn!(branch = %branch_name, error = %e, "picker: failed to delete branch '{branch_name}': {e:#}");
                     }
                 }
@@ -464,7 +437,7 @@ impl AltXRemover {
         &self,
         selected_output: String,
         planning_repo: Repository,
-        result: RemoveResult,
+        result: RemovalPlan,
     ) {
         // Capture the removed row (and its position) before dropping it: the
         // position is handed to the background thread so it can put the row back
@@ -546,8 +519,8 @@ impl AltXRemover {
         // The canonical "retained; unmerged" info + hint `wt remove` prints,
         // shared so the picker copy can't drift (see
         // `stash_retained_unmerged_branch`). Taking the branch name (not the whole
-        // `RemoveResult`) makes it unrepresentable for this keep path to be handed
-        // a `RemovedWorktree`, which always removes — see the dispatch in
+        // `RemovalPlan`) makes it unrepresentable for this keep path to be handed
+        // a `Worktree`, which always removes — see the dispatch in
         // [`apply`](Self::apply) and [`removal_will_remove_target`].
         // A by-design retain, not a failure — info (○), matching the canonical
         // `info_message` this path stashes (see `stash_retained_unmerged_branch`).
@@ -578,7 +551,7 @@ impl AltXRemover {
     /// Morph the selected worktree row into a `/ branch` row in place, then remove
     /// the worktree on a background thread.
     ///
-    /// For a `RemovedWorktree` removal that [`worktree_removal_keeps_branch`]
+    /// For a `Worktree` removal that [`worktree_removal_keeps_branch`]
     /// predicts will keep its (unmerged) branch. The row never leaves its slot:
     /// the morph rewrites the row's shared `rendered` line to the branch line
     /// (rendered on the live layout — gutter `+` → `/`, path blank), flips the
@@ -606,7 +579,7 @@ impl AltXRemover {
         selected_output: String,
         branch: String,
         planning_repo: Repository,
-        result: RemoveResult,
+        result: RemovalPlan,
     ) -> RemovalEffect {
         // Gather the row's shared morph handles and render the branch line on the
         // live layout. Any gap (row not morphable, layout not yet handed over)
@@ -702,10 +675,10 @@ impl AltXRemover {
     /// `prepare_removal` git work is the same cost the old `reload`-time dispatch
     /// paid; the actual worktree/branch deletion is deferred to a background thread.
     fn apply(&self, selected_output: String) -> RemovalEffect {
-        let Some(removal_target) = PickerRemovalTarget::from_signal(&selected_output) else {
+        let Some(removal_target) = parse_removal_target(&selected_output) else {
             return RemovalEffect::Kept;
         };
-        match self.prepare_removal(&removal_target) {
+        match self.prepare_removal(removal_target) {
             Ok((planning_repo, result)) => {
                 if removal_targets_current_worktree(&result) {
                     self.keep_current_worktree_row();
@@ -724,11 +697,11 @@ impl AltXRemover {
                 } else {
                     // The only non-removing outcome: `removal_will_remove_target`
                     // returns false solely for an unmerged `BranchOnly` row (a
-                    // `RemovedWorktree` always removes, so it never reaches here), so
+                    // `Worktree` always removes, so it never reaches here), so
                     // this arm is always that row — keep it, explained.
                     // `keep_unremovable_row` taking the branch name — not the whole
                     // result — keeps that narrowing at the type level.
-                    if let RemoveResult::BranchOnly { branch_name, .. } = &result {
+                    if let RemovalPlan::BranchOnly { branch_name, .. } = &result {
                         self.keep_unremovable_row(branch_name);
                     }
                     RemovalEffect::Kept
@@ -837,8 +810,7 @@ struct MorphRevert {
 /// kind — `refresh_status_symbols` only fills empty slots, so the worktree's must
 /// be cleared first. The [`LocalContent`] is read off the demoted item, so its
 /// `working_tree` signal resolves empty (no worktree to diff) and the
-/// `working_tree` preview tab dims. OSC 8 hyperlinks are stripped to match the
-/// rows the handler builds (skim's pipeline mangles them).
+/// `working_tree` preview tab dims.
 fn build_morph_branch_row(
     layout: &crate::commands::list::layout::LayoutConfig,
     worktree_item: &ListItem,
@@ -848,11 +820,9 @@ fn build_morph_branch_row(
     branch_item.kind = ItemKind::Branch(BranchScope::Local);
     branch_item.status_symbols = Default::default();
     branch_item.refresh_status_symbols(default_branch);
-    let line = strip_osc8_hyperlinks(
-        &layout
-            .render_list_item_line(&branch_item, PLACEHOLDER)
-            .render(),
-    );
+    let line = layout
+        .render_list_item_line(&branch_item, PLACEHOLDER)
+        .render();
     (line, LocalContent::from_item(&branch_item))
 }
 
@@ -1021,27 +991,27 @@ fn run_preview_when_settled(
 /// A removal's user-facing subject for the `kept` warning: a `(label, noun)`
 /// pair where `noun` is `worktree` or `branch` and `label` is the branch name
 /// (or the worktree's display path for a detached worktree). Computed before the
-/// `RemoveResult` moves into the background thread; surfaced by
+/// `RemovalPlan` moves into the background thread; surfaced by
 /// [`restore_failed_removal`].
-fn removal_failure_subject(result: &RemoveResult) -> (String, &'static str) {
+fn removal_failure_subject(result: &RemovalPlan) -> (String, &'static str) {
     match result {
-        RemoveResult::RemovedWorktree {
+        RemovalPlan::Worktree {
             branch_name: Some(branch),
             ..
         } => (branch.clone(), "worktree"),
-        RemoveResult::RemovedWorktree { worktree_path, .. } => {
+        RemovalPlan::Worktree { worktree_path, .. } => {
             (format_path_for_display(worktree_path), "worktree")
         }
-        RemoveResult::BranchOnly { branch_name, .. } => (branch_name.clone(), "branch"),
+        RemovalPlan::BranchOnly { branch_name, .. } => (branch_name.clone(), "branch"),
     }
 }
 
 /// Whether `do_removal` will actually remove the target — predicted up front from
-/// `prepare_removal`'s already-computed [`RemoveResult`], before the row is
+/// `prepare_removal`'s already-computed [`RemovalPlan`], before the row is
 /// dropped. The dual of [`removal_target_still_present`]: this decides whether to
 /// drop the row, that confirms the drop afterward.
 ///
-/// A `RemovedWorktree` result has passed `ensure_clean` (Phase 5 of
+/// A `Worktree` result has passed `ensure_clean` (Phase 5 of
 /// `prepare_worktree_removal`), so the worktree removes — the only failures left
 /// are async and rare (a clean-check race, a failing approved `pre-remove` hook),
 /// which the background restore still catches. A `BranchOnly` result deletes only
@@ -1050,10 +1020,10 @@ fn removal_failure_subject(result: &RemoveResult) -> (String, &'static str) {
 /// `Repository::integration_reason` the later delete consults, so they can't
 /// drift). An unmerged branch-only row is thus kept, and predicting it here means
 /// it never drops (no flicker) — see [`AltXRemover::keep_unremovable_row`].
-fn removal_will_remove_target(result: &RemoveResult) -> bool {
+fn removal_will_remove_target(result: &RemovalPlan) -> bool {
     match result {
-        RemoveResult::RemovedWorktree { .. } => true,
-        RemoveResult::BranchOnly {
+        RemovalPlan::Worktree { .. } => true,
+        RemovalPlan::BranchOnly {
             deletion_mode,
             integration_reason,
             ..
@@ -1076,22 +1046,23 @@ fn removal_will_remove_target(result: &RemoveResult) -> bool {
 /// removing the now-non-current row is the clean path, so alt-x on the current
 /// worktree keeps the row and explains. `BranchOnly` rows have no worktree to be
 /// standing in, so this is always `false` for them.
-fn removal_targets_current_worktree(result: &RemoveResult) -> bool {
+fn removal_targets_current_worktree(result: &RemovalPlan) -> bool {
     matches!(
         result,
-        RemoveResult::RemovedWorktree {
+        RemovalPlan::Worktree {
             changed_directory: true,
             ..
         }
     )
 }
 
-/// The branch a `RemovedWorktree` removal will **keep** — worktree gone, branch
+/// The branch a `Worktree` removal will **keep** — worktree gone, branch
 /// retained — or `None` if the removal will delete the branch (or there's no
 /// branch). Drives the `alt-x` in-place morph: a kept branch turns the row into
 /// a `/ branch` row rather than dropping it.
 ///
-/// Mirrors [`delete_branch_if_safe`] exactly so the prediction can't drift from
+/// Mirrors [`delete_branch_if_safe`](worktrunk::git::delete_branch_if_safe)
+/// exactly so the prediction can't drift from
 /// the deletion the background `do_removal` performs: force always deletes; a
 /// `Keep` flag always retains; otherwise the branch is kept precisely when it is
 /// **not** integrated into the same `target_branch.unwrap_or("HEAD")` the actual
@@ -1099,8 +1070,8 @@ fn removal_targets_current_worktree(result: &RemoveResult) -> bool {
 /// or integration error yields `None` (fall back to the drop path) — never a
 /// morph the removal won't back up. Runs a couple of git commands on skim's
 /// event loop, like `prepare_removal`'s own validation.
-fn worktree_removal_keeps_branch(repo: &Repository, result: &RemoveResult) -> Option<String> {
-    let RemoveResult::RemovedWorktree {
+fn worktree_removal_keeps_branch(repo: &Repository, result: &RemovalPlan) -> Option<String> {
+    let RemovalPlan::Worktree {
         branch_name: Some(branch),
         deletion_mode,
         target_branch,
@@ -1126,15 +1097,16 @@ fn worktree_removal_keeps_branch(repo: &Repository, result: &RemoveResult) -> Op
 /// primary evidence for "was this actually removed," used in place of inferring
 /// from `do_removal`'s `Result`.
 ///
-/// A `Result` is the wrong signal in two directions: a `RemovedWorktree` removal
+/// A `Result` is the wrong signal in two directions: a `Worktree` removal
 /// can return `Err` *after* the worktree is already trashed (rendering or
 /// spawning a `post-remove`/`post-switch` hook fails during the announcer flush),
-/// and a `BranchOnly` safe-delete that raced from integrated to unmerged returns
-/// `Ok` while leaving the branch in place. (The *predictable* unmerged case never
-/// reaches here — [`removal_will_remove_target`] keeps that row without dropping
-/// it.) Observing the target directly handles both: the worktree dir is gone once
-/// removed (renamed into `.git/wt/trash/`), and the branch ref is gone once
-/// deleted. The check runs on the background thread, off skim's event loop.
+/// and a `BranchOnly` safe-delete that became unmerged or gained a checkout after
+/// planning returns `Ok` while leaving the branch in place. (The *predictable*
+/// unmerged case never reaches here — [`removal_will_remove_target`] keeps that
+/// row without dropping it.) Observing the target directly handles both: the
+/// worktree dir is gone once removed (renamed into `.git/wt/trash/`), and the
+/// branch ref is gone once deleted. The check runs on the background thread, off
+/// skim's event loop.
 ///
 /// `worktree_path.exists()` is the right signal here because the picker only ever
 /// removes *non-current* worktrees — [`removal_targets_current_worktree`] keeps the
@@ -1143,10 +1115,10 @@ fn worktree_removal_keeps_branch(repo: &Repository, result: &RemoveResult) -> Op
 /// created only when removing the worktree the shell is sitting in — see
 /// [`crate::output::handlers`]). A successful removal renames the whole tree away;
 /// a failed one leaves it intact.
-fn removal_target_still_present(repo: &Repository, result: &RemoveResult) -> bool {
+fn removal_target_still_present(repo: &Repository, result: &RemovalPlan) -> bool {
     match result {
-        RemoveResult::RemovedWorktree { worktree_path, .. } => worktree_path.exists(),
-        RemoveResult::BranchOnly { branch_name, .. } => {
+        RemovalPlan::Worktree { worktree_path, .. } => worktree_path.exists(),
+        RemovalPlan::BranchOnly { branch_name, .. } => {
             repo.branch(branch_name).exists_locally().unwrap_or(false)
         }
     }
@@ -1202,9 +1174,10 @@ struct DroppedRow {
 /// `invoke` drops a row optimistically once alt-x's validation passes, then
 /// removes the target on a background thread. When the target unexpectedly
 /// survives (data safety: a clean-check race against `ensure_clean`, a locked
-/// directory, a failing `pre-remove` hook, or a `BranchOnly` delete that raced
-/// from integrated to unmerged — see [`removal_target_still_present`]; the
-/// predictably-kept unmerged branch is filtered earlier by
+/// directory, a failing `pre-remove` hook, or a `BranchOnly` delete that became
+/// unmerged or gained a checkout after planning — see
+/// [`removal_target_still_present`]; the predictably-kept unmerged branch is
+/// filtered earlier by
 /// [`removal_will_remove_target`]), the row must reappear. This re-inserts it into
 /// `shared_items` at its original slot, flashes the `kept` reason in the header and
 /// stashes the same line (drained to stderr once skim releases the terminal; the
@@ -1377,7 +1350,6 @@ struct PipelineFactory {
     header_flash: Arc<items::HeaderFlash>,
     preview_dims: (usize, usize),
     skim_list_width: usize,
-    command_timeout: Option<std::time::Duration>,
     llm_command: Option<String>,
     summary_hint: Option<String>,
     show_branches: bool,
@@ -1507,7 +1479,6 @@ impl PipelineFactory {
         let bg_repo = spawn_repo.clone();
         let show_branches = self.show_branches;
         let show_remotes = self.show_remotes;
-        let command_timeout = self.command_timeout;
         let skim_list_width = self.skim_list_width;
         let collect_handle = std::thread::Builder::new()
             .name("picker-collect".into())
@@ -1517,7 +1488,6 @@ impl PipelineFactory {
                     collect::ShowConfig::Resolved {
                         show_branches,
                         show_remotes,
-                        command_timeout,
                         collect_deadline: None,
                         list_width: Some(skim_list_width),
                         progressive_handler: Some(bg_handler),
@@ -1587,6 +1557,63 @@ impl PipelineFactory {
             prs_handle,
         })
     }
+}
+
+/// Select the command or guidance shown by the picker's Summary tab.
+///
+/// The caller supplies the resolved display path so this decision stays pure:
+/// runtime config-path resolution remains at the command boundary, while direct
+/// tests can use an explicit isolated path.
+fn summary_command_and_hint(
+    summaries_enabled: bool,
+    commit_generation: &CommitGenerationConfig,
+    config_path: &str,
+) -> (Option<String>, Option<String>) {
+    let generation_configured = commit_generation.is_configured();
+    if summaries_enabled && generation_configured {
+        return (commit_generation.command.clone(), None);
+    }
+
+    // Keep every prose line short and put the resolved path on its own
+    // line. `render_summary` word-wraps prose to the preview width, and
+    // that width is a column narrower under Windows' PTY — so a sentence
+    // long enough to wrap lands its break on a different word there.
+    // A short lead line, the path alone (one unbreakable token, no wrap
+    // boundary to shift), and the fenced config block (code blocks are
+    // never wrapped) all render identically on every platform. The first
+    // line stays the bold H4 subject, which `render_summary` promotes and
+    // never wraps.
+    let hint = if generation_configured {
+        format!(
+            r#"Summaries off
+
+Enable summaries in:
+{config_path}
+
+```toml
+[list]
+summary = true
+```
+"#
+        )
+    } else {
+        format!(
+            r#"Summaries not configured
+
+Add a [commit.generation] command in:
+{config_path}
+
+```toml
+[commit.generation]
+command = "llm -m haiku"
+
+[list]
+summary = true
+```
+"#
+        )
+    };
+    (None, Some(hint))
 }
 
 pub fn handle_picker(
@@ -1726,10 +1753,6 @@ pub fn handle_picker(
     // the same live status. `--prs` rows carry their own number from the explicit
     // `--prs` forge call.
 
-    // Per-task command timeout (bounds any single git invocation) from
-    // shared `[list]` config. Still applies in progressive mode.
-    let command_timeout = config.list.task_timeout();
-
     // Progressive rendering means the picker never blocks waiting for
     // collect — so there's no UI-freeze budget to bound. The drain runs
     // until its results channel closes or the fallback DRAIN_TIMEOUT
@@ -1782,57 +1805,17 @@ pub fn handle_picker(
             .dimensions_for(term_width, term_height, num_items_estimate);
     let preview_window_spec = state.initial_layout.spec_for(preview_dims);
 
-    // Summary hint: when summaries are disabled, prime the Summary cache
-    // with config guidance instead of showing a perpetual "Generating…"
-    // placeholder.
-    let (llm_command, summary_hint) =
-        if config.list.summary() && config.commit_generation.is_configured() {
-            (config.commit_generation.command.clone(), None)
-        } else {
-            // Point at the config file wt actually loads from, not a hardcoded
-            // default (resolution + fallback live in `config_path_for_display`).
-            let config_path = worktrunk::config::config_path_for_display();
-            // Keep every prose line short and put the resolved path on its own
-            // line. `render_summary` word-wraps prose to the preview width, and
-            // that width is a column narrower under Windows' PTY — so a sentence
-            // long enough to wrap lands its break on a different word there, and
-            // the single cross-platform snapshot can't match. A short lead line,
-            // the path alone (one unbreakable token, no wrap boundary to shift),
-            // and the fenced config block (code blocks are never wrapped) all
-            // render identically on every platform. The first line stays the bold
-            // H4 subject, which `render_summary` promotes and never wraps.
-            let hint = if !config.commit_generation.is_configured() {
-                format!(
-                    r#"Summaries not configured
-
-Add a [commit.generation] command in:
-{config_path}
-
-```toml
-[commit.generation]
-command = "llm -m haiku"
-
-[list]
-summary = true
-```
-"#
-                )
-            } else {
-                format!(
-                    r#"Summaries off
-
-Enable summaries in:
-{config_path}
-
-```toml
-[list]
-summary = true
-```
-"#
-                )
-            };
-            (None, Some(hint))
-        };
+    // When summary generation is unavailable, prime the Summary cache with
+    // config guidance instead of showing a perpetual "Generating…" placeholder.
+    // Point at the config file wt actually loads from, not a hardcoded default
+    // (resolution + fallback live in `config_path_for_display`). Resolve it at
+    // this runtime boundary rather than inside the pure decision helper.
+    let config_path = worktrunk::config::config_path_for_display();
+    let (llm_command, summary_hint) = summary_command_and_hint(
+        config.list.summary(),
+        &config.commit_generation,
+        &config_path,
+    );
 
     // The picker's full row list — header, worktree/branch rows, and (in `--prs`
     // mode) PR/MR rows. `on_skeleton` fills it with the header + worktree/branch
@@ -1872,7 +1855,6 @@ summary = true
         header_flash: Arc::new(items::HeaderFlash::default()),
         preview_dims,
         skim_list_width,
-        command_timeout,
         llm_command,
         summary_hint,
         show_branches,
@@ -2535,19 +2517,73 @@ fn switch_pipeline_repo(repo: &Repository, is_recovered: bool) -> anyhow::Result
 pub mod tests {
     use super::items::{LocalCheckout, LocalContent, PickerRow, worktree_output_token};
     use super::{
-        AltXRemover, PickerAction, PickerRemovalTarget, RemovalEffect, drain_stashed_warnings,
-        install_preview_tab_keybindings, install_shortcut_keybindings, picker_item_identifier,
-        resolve_identifier, resolve_shortcut_branch, resolve_shortcut_url, switch_pipeline_repo,
+        AltXRemover, PickerAction, RemovalEffect, RemoveTarget, drain_stashed_warnings,
+        install_preview_tab_keybindings, install_shortcut_keybindings, parse_removal_target,
+        picker_item_identifier, removal_target_still_present, resolve_identifier,
+        resolve_shortcut_branch, resolve_shortcut_url, summary_command_and_hint,
+        switch_pipeline_repo,
     };
     use crate::commands::list::model::{BranchScope, ItemKind, ListItem, WorktreeData};
-    use crate::commands::worktree::RemoveResult;
+    use crate::commands::worktree::RemovalPlan;
+    use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
     use std::fs;
     use std::path::Path;
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
-    use worktrunk::config::Approvals;
+    use worktrunk::config::{Approvals, CommitGenerationConfig};
     use worktrunk::git::BranchDeletionMode;
+
+    #[test]
+    fn summary_command_and_hint_covers_configuration_matrix() {
+        #[derive(serde::Serialize)]
+        struct Decision {
+            case: &'static str,
+            command: Option<String>,
+            hint: Option<String>,
+        }
+
+        let cases = [
+            ("summaries off + no command", false, None),
+            ("summaries on + no command", true, None),
+            ("summaries off + command", false, Some("llm -m haiku")),
+            ("summaries on + command", true, Some("llm -m haiku")),
+        ];
+        let decisions = cases
+            .into_iter()
+            .map(|(case, summaries_enabled, command)| {
+                let commit_generation = CommitGenerationConfig {
+                    command: command.map(str::to_string),
+                    ..Default::default()
+                };
+                let (command, hint) = summary_command_and_hint(
+                    summaries_enabled,
+                    &commit_generation,
+                    "[TEST_CONFIG]",
+                );
+                Decision {
+                    case,
+                    command,
+                    hint,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_yaml_snapshot!(decisions, @r#"
+        - case: summaries off + no command
+          command: ~
+          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = true\n```\n"
+        - case: summaries on + no command
+          command: ~
+          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = true\n```\n"
+        - case: summaries off + command
+          command: ~
+          hint: "Summaries off\n\nEnable summaries in:\n[TEST_CONFIG]\n\n```toml\n[list]\nsummary = true\n```\n"
+        - case: summaries on + command
+          command: llm -m haiku
+          hint: ~
+        "#);
+    }
 
     /// Empties the stash and emits each line. Verifies post-skim drain
     /// semantics without standing up a real picker.
@@ -2744,22 +2780,22 @@ pub mod tests {
         );
     }
 
-    /// `from_signal` rejects tokens that carry no usable target: a blank or
+    /// The parser rejects tokens that carry no usable target: a blank or
     /// whitespace-only signal, and a bare `worktree-path:` prefix with no path
     /// after it. A non-empty branch token and a prefixed path both parse.
     #[test]
-    fn test_picker_removal_target_from_signal() {
-        assert!(PickerRemovalTarget::from_signal("").is_none());
-        assert!(PickerRemovalTarget::from_signal("   ").is_none());
-        assert!(PickerRemovalTarget::from_signal("worktree-path:").is_none());
+    fn test_parse_removal_target() {
+        assert!(parse_removal_target("").is_none());
+        assert!(parse_removal_target("   ").is_none());
+        assert!(parse_removal_target("worktree-path:").is_none());
 
         assert!(matches!(
-            PickerRemovalTarget::from_signal("feature/foo"),
-            Some(PickerRemovalTarget::Branch(branch)) if branch == "feature/foo"
+            parse_removal_target("feature/foo"),
+            Some(RemoveTarget::BranchOnly(branch)) if branch == "feature/foo"
         ));
         assert!(matches!(
-            PickerRemovalTarget::from_signal("worktree-path:/tmp/wt"),
-            Some(PickerRemovalTarget::WorktreePath(path)) if path == std::path::Path::new("/tmp/wt")
+            parse_removal_target("worktree-path:/tmp/wt"),
+            Some(RemoveTarget::WorktreePath(path)) if path == std::path::Path::new("/tmp/wt")
         ));
     }
 
@@ -2801,15 +2837,17 @@ pub mod tests {
         .unwrap();
         assert!(wt_path.exists());
 
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
 
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
@@ -2827,12 +2865,13 @@ pub mod tests {
         // Create a branch at the same commit (fully integrated into main)
         repo.run_command(&["branch", "feature"]).unwrap();
 
-        let result = RemoveResult::BranchOnly {
+        let result = RemovalPlan::BranchOnly {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
+            branch_checked_out_at: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -2853,12 +2892,13 @@ pub mod tests {
             .unwrap();
         repo.run_command(&["checkout", "main"]).unwrap();
 
-        let result = RemoveResult::BranchOnly {
+        let result = RemovalPlan::BranchOnly {
             branch_name: "unmerged".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
+            branch_checked_out_at: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -2895,24 +2935,26 @@ pub mod tests {
 
         assert!(wt_path.exists());
 
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
 
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
         assert!(!wt_path.exists(), "detached worktree should be removed");
     }
 
-    /// A branch-only row's signal carries the bare branch name, which
-    /// `PickerRemovalTarget::from_signal` decodes to `Branch`; `prepare_removal`
-    /// then resolves it to the branch-only disposition.
+    /// A branch-only row's signal carries the bare branch name, which the
+    /// parser decodes directly to the canonical `BranchOnly` target;
+    /// `prepare_removal` then resolves it to the branch-only disposition.
     #[test]
     fn test_prepare_removal_resolves_branch_only_item() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
@@ -2924,11 +2966,69 @@ pub mod tests {
 
         let remover = test_remover(Arc::new(Mutex::new(Vec::new())), repo);
 
-        let target = PickerRemovalTarget::from_signal("branch-only-feature").unwrap();
-        let (_planning_repo, result) = remover.prepare_removal(&target).unwrap();
+        let target = parse_removal_target("branch-only-feature").unwrap();
+        let (_planning_repo, result) = remover.prepare_removal(target).unwrap();
         assert!(
-            matches!(&result, RemoveResult::BranchOnly { branch_name, .. } if branch_name == "branch-only-feature"),
+            matches!(&result, RemovalPlan::BranchOnly { branch_name, .. } if branch_name == "branch-only-feature"),
             "a branch with no worktree should resolve to BranchOnly"
+        );
+    }
+
+    /// A branch-only row can gain a checkout after `prepare_removal` returns.
+    /// `do_removal` must retain it, and the picker's direct target observation
+    /// must see the surviving ref so the optimistically dropped row is restored
+    /// rather than reported as gone.
+    #[test]
+    fn test_do_removal_restores_branch_only_row_that_gained_checkout() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        repo.run_command(&["branch", "row-branch"]).unwrap();
+
+        let remover = test_remover(Arc::new(Mutex::new(Vec::new())), repo.clone());
+        let target = parse_removal_target("row-branch").unwrap();
+        let (planning_repo, plan) = remover.prepare_removal(target).unwrap();
+
+        let checkout = test.home_path().join("repo.row-branch-raced-checkout");
+        test.run_git(&["worktree", "add", checkout.to_str().unwrap(), "row-branch"]);
+
+        AltXRemover::do_removal(&planning_repo, &plan, &Approvals::default()).unwrap();
+        assert!(
+            removal_target_still_present(&planning_repo, &plan),
+            "the picker must observe the retained branch and restore its row"
+        );
+        assert!(
+            repo.worktree_at(&checkout)
+                .run_command(&["rev-parse", "--verify", "HEAD"])
+                .is_ok(),
+            "the checkout added after planning must remain resolvable"
+        );
+    }
+
+    /// A branch-only row whose branch has since acquired a worktree — someone
+    /// ran `wt switch` elsewhere while the picker sat open. The row's signal
+    /// still decodes to `Branch`, and removing it would take out a worktree
+    /// nobody selected, so validation refuses.
+    #[test]
+    fn test_prepare_removal_refuses_branch_that_gained_a_worktree() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let remover = test_remover(Arc::new(Mutex::new(Vec::new())), repo);
+
+        let target = parse_removal_target("feature").unwrap();
+        let err = remover
+            .prepare_removal(target)
+            .map(|_| ())
+            .expect_err("a branch with a worktree should not delete as branch-only");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("feature") && rendered.contains("wt remove"),
+            "error should name the branch and the command that removes its worktree: {err:#}"
+        );
+        assert!(
+            worktree_path.exists(),
+            "the worktree nobody selected should survive"
         );
     }
 
@@ -2942,11 +3042,11 @@ pub mod tests {
 
         let remover = test_remover(Arc::new(Mutex::new(Vec::new())), repo);
 
-        // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
+        // `RemovalPlan` isn't `Debug`; drop the Ok payload so `unwrap_err`
         // (which needs `T: Debug`) can report a failure cleanly.
-        let target = PickerRemovalTarget::from_signal("no-such-branch").unwrap();
+        let target = parse_removal_target("no-such-branch").unwrap();
         let err = remover
-            .prepare_removal(&target)
+            .prepare_removal(target)
             .map(|_| ())
             .expect_err("unknown removal target should fail validation");
         assert!(
@@ -2985,15 +3085,17 @@ pub mod tests {
         )
         .unwrap();
 
-        let result = RemoveResult::RemovedWorktree {
+        let result = RemovalPlan::Worktree {
             main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
 
         // Empty approvals → `approve_readonly` drops the unapproved project
@@ -3123,7 +3225,10 @@ pub mod tests {
             Some(crate::commands::list::layout::calculate_layout_with_width(
                 std::slice::from_ref(&*item_arc),
                 &crate::commands::list::columns::all_tasks(),
-                80,
+                crate::commands::list::layout::Destination {
+                    width: 80,
+                    link_style: crate::commands::list::layout::LinkStyle::Expanded,
+                },
                 Path::new("/test"),
                 None,
                 None,
@@ -3158,7 +3263,6 @@ pub mod tests {
             header_flash: Arc::new(super::items::HeaderFlash::default()),
             preview_dims: (80, 24),
             skim_list_width: 80,
-            command_timeout: None,
             llm_command: None,
             summary_hint: None,
             show_branches: false,
@@ -3194,8 +3298,9 @@ pub mod tests {
     /// concurrent background removal can trigger.
     ///
     /// `apply` renames the worktree into the trash (so its path vanishes) and
-    /// then runs `git worktree prune`, which deletes the `.git/worktrees/<id>`
-    /// admin dir — all on a background thread. `git branch --list` enumerates
+    /// then runs `git worktree remove` on it, which deletes that worktree's
+    /// `.git/worktrees/<id>` admin dir — all on a background thread.
+    /// `git branch --list` enumerates
     /// worktrees to mark checked-out branches, so a query that races the
     /// in-flight prune can read a half-deleted admin dir and fail with
     /// `exit 128`. A test that `.unwrap()`s such a query flakes; retry until the
@@ -3672,42 +3777,47 @@ pub mod tests {
     /// `worktree` for a worktree removal, `branch` for a branch-only deletion.
     #[test]
     fn test_removal_failure_subject() {
-        let branched = RemoveResult::RemovedWorktree {
+        let branched = RemovalPlan::Worktree {
             main_path: std::path::PathBuf::from("/tmp/main"),
             worktree_path: std::path::PathBuf::from("/tmp/wt-feature"),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
         assert_eq!(
             super::removal_failure_subject(&branched),
             ("feature".to_string(), "worktree")
         );
 
-        let detached = RemoveResult::RemovedWorktree {
+        let detached = RemovalPlan::Worktree {
             main_path: std::path::PathBuf::from("/tmp/main"),
             worktree_path: std::path::PathBuf::from("/tmp/wt-detached"),
             changed_directory: false,
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
         assert_eq!(
             super::removal_failure_subject(&detached),
             ("/tmp/wt-detached".to_string(), "worktree")
         );
 
-        let branch_only = RemoveResult::BranchOnly {
+        let branch_only = RemovalPlan::BranchOnly {
             branch_name: "orphan".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
+            branch_checked_out_at: None,
         };
         assert_eq!(
             super::removal_failure_subject(&branch_only),
@@ -4017,7 +4127,7 @@ pub mod tests {
         assert!(!reported_path.exists(), "the worktree is removed");
     }
 
-    /// `worktree_removal_keeps_branch` predicts the morph: a `RemovedWorktree`
+    /// `worktree_removal_keeps_branch` predicts the morph: a `Worktree`
     /// whose `SafeDelete` would retain the branch (unmerged) yields the branch
     /// name; an integrated one (deletes the branch) and a force-delete both yield
     /// `None`. Built from real refs so the prediction runs the same
@@ -4034,15 +4144,17 @@ pub mod tests {
         repo.run_command(&["commit", "-m", "work"]).unwrap();
         repo.run_command(&["checkout", "main"]).unwrap();
 
-        let result = |branch: &str, mode| RemoveResult::RemovedWorktree {
+        let result = |branch: &str, mode| RemovalPlan::Worktree {
             main_path: test.path().to_path_buf(),
             worktree_path: test.path().join("gone"),
             changed_directory: false,
             branch_name: Some(branch.to_string()),
             deletion_mode: mode,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
 
         assert_eq!(
@@ -4088,7 +4200,10 @@ pub mod tests {
         let layout = crate::commands::list::layout::calculate_layout_with_width(
             std::slice::from_ref(&worktree_item),
             &crate::commands::list::columns::all_tasks(),
-            80,
+            crate::commands::list::layout::Destination {
+                width: 80,
+                link_style: crate::commands::list::layout::LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -4131,15 +4246,17 @@ pub mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
-        let worktree_result = |path: std::path::PathBuf| RemoveResult::RemovedWorktree {
+        let worktree_result = |path: std::path::PathBuf| RemovalPlan::Worktree {
             main_path: test.path().to_path_buf(),
             worktree_path: path,
             changed_directory: false,
             branch_name: Some("x".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
         assert!(super::removal_target_still_present(
             &repo,
@@ -4151,21 +4268,23 @@ pub mod tests {
         ));
 
         repo.run_command(&["branch", "live-branch"]).unwrap();
-        let present_branch = RemoveResult::BranchOnly {
+        let present_branch = RemovalPlan::BranchOnly {
             branch_name: "live-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
+            branch_checked_out_at: None,
         };
         assert!(super::removal_target_still_present(&repo, &present_branch));
 
-        let gone_branch = RemoveResult::BranchOnly {
+        let gone_branch = RemovalPlan::BranchOnly {
             branch_name: "no-such-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            pruned: false,
+            prune_entry: None,
             target_branch: None,
             integration_reason: None,
+            branch_checked_out_at: None,
         };
         assert!(!super::removal_target_still_present(&repo, &gone_branch));
     }
@@ -4180,24 +4299,27 @@ pub mod tests {
         use worktrunk::git::IntegrationReason;
 
         let branch_only = |mode: BranchDeletionMode, integration: Option<IntegrationReason>| {
-            RemoveResult::BranchOnly {
+            RemovalPlan::BranchOnly {
                 branch_name: "b".to_string(),
                 deletion_mode: mode,
-                pruned: false,
+                prune_entry: None,
                 target_branch: None,
                 integration_reason: integration,
+                branch_checked_out_at: None,
             }
         };
 
-        let worktree = RemoveResult::RemovedWorktree {
+        let worktree = RemovalPlan::Worktree {
             main_path: std::path::PathBuf::from("/repo"),
             worktree_path: std::path::PathBuf::from("/repo.feature"),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            branch_checked_out_at: None,
         };
         assert!(
             super::removal_will_remove_target(&worktree),
@@ -4228,86 +4350,119 @@ pub mod tests {
         );
     }
 
-    /// `removal_targets_current_worktree` fires only for a `RemovedWorktree` whose
-    /// `changed_directory` flag is set (the worktree the picker was launched from);
-    /// a non-current worktree and any `BranchOnly` row read as `false`.
+    /// End-to-end through `apply`: alt-x on the worktree the picker was launched
+    /// from keeps its exact row in place and stashes the canonical explanation.
+    ///
+    /// The branch is deliberately unmerged. `prepare_removal` therefore proves
+    /// this is both the current worktree (`changed_directory`) and a kept-branch
+    /// worktree removal (`integration_reason == None`): without the current-row
+    /// guard, dispatch would enter the morph path and start background deletion.
+    /// `RemovalEffect::Kept` proves the synchronous guard wins instead, so the
+    /// immediate survival assertions do not race an asynchronous removal.
     #[test]
-    fn test_removal_targets_current_worktree() {
-        let path = std::path::PathBuf::from("/repo.feature");
-        let worktree = |changed_directory| RemoveResult::RemovedWorktree {
-            main_path: std::path::PathBuf::from("/repo"),
-            worktree_path: path.clone(),
-            changed_directory,
-            branch_name: Some("feature".to_string()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some("main".to_string()),
-            force_worktree: false,
-            removed_commit: None,
-        };
-        assert!(
-            super::removal_targets_current_worktree(&worktree(true)),
-            "removing the worktree the picker was launched from"
-        );
-        assert!(
-            !super::removal_targets_current_worktree(&worktree(false)),
-            "removing some other worktree"
-        );
-        assert!(
-            !super::removal_targets_current_worktree(&RemoveResult::BranchOnly {
-                branch_name: "feature".to_string(),
-                deletion_mode: BranchDeletionMode::SafeDelete,
-                pruned: false,
-                target_branch: None,
-                integration_reason: None,
-            }),
-            "a branch-only row has no worktree to be standing in"
-        );
-    }
+    fn test_apply_keeps_current_worktree_row() {
+        let mut test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.add_worktree_with_commit("standing-here", "new.txt", "unmerged work", "unmerged work");
 
-    /// `keep_current_worktree_row` keeps the row in place and stashes the
-    /// can't-remove-current-worktree info + switch-away hint — alt-x on the current
-    /// worktree never removes it and never spawns a background removal.
-    #[test]
-    fn test_keep_current_worktree_row() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let main_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let reported_path = main_repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some("standing-here"))
+            .map(|wt| wt.path.clone())
+            .expect("standing-here worktree is listed");
+        let repo = worktrunk::git::Repository::at(&reported_path).unwrap();
+        assert_eq!(
+            repo.current_worktree().root().unwrap(),
+            reported_path,
+            "the removal repository is genuinely anchored in the linked worktree"
+        );
 
-        let item = branched_picker_item("current", &test.path().join("current"));
+        let item = branched_picker_item("standing-here", &reported_path);
         let token = item.output().to_string();
         let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
         let remover = test_remover(Arc::clone(&items), repo.clone());
 
-        remover.keep_current_worktree_row();
-
+        let target = parse_removal_target(&token).expect("worktree token parses");
+        let (planning_repo, plan) = remover.prepare_removal(target).unwrap();
+        let RemovalPlan::Worktree {
+            worktree_path,
+            changed_directory,
+            branch_name,
+            integration_reason,
+            ..
+        } = &plan
+        else {
+            panic!("a linked-worktree token must prepare a worktree removal");
+        };
+        assert_eq!(worktree_path, &reported_path);
+        assert!(*changed_directory, "the target is the current worktree");
+        assert_eq!(branch_name.as_deref(), Some("standing-here"));
         assert_eq!(
-            items
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|item| item.output().into_owned())
-                .collect::<Vec<_>>(),
-            vec![token.clone()],
-            "the current worktree row is kept, not removed"
+            integration_reason, &None,
+            "the branch is unmerged and would be kept"
         );
+        assert_eq!(
+            super::worktree_removal_keeps_branch(&planning_repo, &plan).as_deref(),
+            Some("standing-here"),
+            "without the current-worktree guard, dispatch would enter the morph path"
+        );
+
+        let effect = remover.apply(token.clone());
+        assert!(
+            matches!(effect, RemovalEffect::Kept),
+            "the current-worktree guard is synchronous and starts no removal"
+        );
+
+        {
+            let rows = items.lock().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(
+                Arc::ptr_eq(&rows[0], &item),
+                "apply keeps the exact selected row"
+            );
+            assert_eq!(
+                rows[0].output().as_ref(),
+                token,
+                "the row's selection token is unchanged"
+            );
+        }
+        assert!(
+            reported_path.is_dir(),
+            "the synchronous keep guard preserves the worktree directory"
+        );
+        assert!(
+            repo.branch("standing-here").exists_locally().unwrap(),
+            "the synchronous keep guard preserves the branch"
+        );
+
         let warnings = remover.stashed_warnings.lock().unwrap().clone();
-        assert!(
-            warnings.iter().any(|w| w.contains("current worktree")),
-            "stashes the can't-remove-current-worktree info: {warnings:?}"
-        );
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("Switch to another worktree")),
-            "stashes the switch-away hint: {warnings:?}"
+        assert_eq!(
+            warnings,
+            vec![
+                worktrunk::styling::info_message(
+                    "Can't remove the current worktree from the picker"
+                )
+                .to_string(),
+                worktrunk::styling::hint_message("Switch to another worktree first").to_string(),
+            ],
+            "apply stashes the canonical current-worktree diagnostic and hint"
         );
 
-        // A second alt-x on the same kept row dedups — the stash doesn't grow.
-        remover.keep_current_worktree_row();
+        let second_effect = remover.apply(token.clone());
+        assert!(matches!(second_effect, RemovalEffect::Kept));
         assert_eq!(
-            remover.stashed_warnings.lock().unwrap().len(),
-            warnings.len(),
+            *remover.stashed_warnings.lock().unwrap(),
+            warnings,
             "repeated alt-x on the current worktree stashes the hint only once"
         );
+        let rows = items.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(Arc::ptr_eq(&rows[0], &item));
+        assert_eq!(rows[0].output().as_ref(), token);
+        assert!(reported_path.is_dir());
+        assert!(repo.branch("standing-here").exists_locally().unwrap());
     }
 
     /// The header flash a declined alt-x sets self-clears after the beat: the timer

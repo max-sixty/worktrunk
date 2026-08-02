@@ -39,7 +39,7 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
 // Re-exports from submodules
-pub use ci_platform::CiPlatform;
+pub use ci_platform::ForgeKind;
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
@@ -59,13 +59,14 @@ pub use error::{
     // Special-handling error enum
     HookErrorWithHint,
     // Platform-specific reference type (PR vs MR)
-    RefContext,
     RefType,
     // CLI context for enriching switch suggestions in error hints
     SwitchSuggestionCtx,
     WorktrunkError,
     // Wrap a HookCommandFailed-bearing error with a --no-hooks hint
     add_hook_skip_hint,
+    // Shared phrasing for an unmerged index ("1 path with unresolved conflicts")
+    format_unresolved_conflicts,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };
@@ -73,14 +74,14 @@ pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
-    delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
-    stop_fsmonitor_daemon,
+    delete_branch_if_safe, execute_branch_deletion, remove_worktree_with_cleanup,
+    stage_worktree_removal, stop_fsmonitor_daemon,
 };
 pub use repository::sha_cache;
 pub use repository::{
     Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
-    RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree, resolve_input_path,
-    select_comparison_base, set_base_path,
+    RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree, duplicated_branches,
+    resolve_input_path, select_comparison_base, set_base_path,
 };
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};

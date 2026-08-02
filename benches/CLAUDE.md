@@ -30,6 +30,9 @@ cargo bench --bench prune --features real-repo-benches prune_real_repo  # rust s
 # Picker preview pre-compute (wt switch preview workload)
 cargo bench --bench picker_preview               # all variants
 cargo bench --bench picker_preview warm          # warm only
+
+# Shell completion (COMPLETE=$SHELL wt -- wt switch <Tab>) — one variant, no filter
+cargo bench --bench completion
 ```
 
 ## Fixtures and Benches
@@ -44,10 +47,10 @@ it runs on.
 | Fixture (generator) | `wt-perf setup` handle | Bench group(s) |
 |---|---|---|
 | `RepoConfig::typical(N)` | `typical-N` | `skeleton`, `worktree_scaling` (list.rs); `first_output` (time_to_first_output.rs); `picker_preview`; `remove_e2e` |
-| `RepoConfig::branches(N, M)` | `branches-N[-M]` | `completion_switch` (completion.rs) |
+| `RepoConfig::branches(N, M)` | `branches-N[-M]` | — (branch-scaling investigation only) |
 | `RepoConfig::many_divergent_branches()` | `divergent` | `divergent_branches` (list.rs) |
-| `create_mixed_repo(W, B)` | `mixed-W-B` | `full` (list.rs) |
-| `create_prune_repo_at(M, U)` | `prune-M-U` | `prune_e2e` (prune.rs) |
+| `create_mixed_repo(W, B, R)` | `mixed-W-B[-R]` | `full` (list.rs); `completion_switch` (completion.rs) |
+| `create_prune_repo(M, U)` | `prune-M-U` | `prune_e2e` (prune.rs) |
 | `ensure_prune_real_repo(M, U)` | `prune-real[-M-U]` | `prune_real_repo` (prune.rs) |
 | rust-lang/rust clone (`clone_rust_repo`) | — | `real_repo`, `real_repo_many_branches` (list.rs) |
 | `lean_worktrees` (local to alias.rs) | — | `dispatch` (alias.rs) |
@@ -57,6 +60,12 @@ Renaming a bench group is not free: `.github/scripts/criterion-to-jsonl.py`
 keys each time-series row by the criterion output path (`<group>/<id>`), and the
 daily `benchmarks` workflow appends those to a gist. A rename orphans that
 series.
+
+Every ephemeral generator returns `FixtureRepo`, the owner of the temporary
+root plus the canonical primary/linked-worktree paths. Repo-bound benchmark
+subprocesses start through `wt_command`, and warm/cold matrices use
+`CacheState::WARM_AND_COLD`; keep lifecycle, environment isolation, and cache
+labels in those shared APIs rather than re-deriving them in a bench target.
 
 ## Rust Repo Caching
 
@@ -198,7 +207,7 @@ worth measuring at CI cadence.
 
 ## Recording `wt remove` / `wt step prune` staging
 
-The removal commands interleave serial per-target work with parallel scans and
+The removal commands interleave per-target work with parallel scans and
 detached background processes; a single e2e number hides which phase moved.
 Record them in two layers:
 
@@ -215,9 +224,9 @@ because its ~15 GiB fixture must never build on a hosted CI runner):
 
 | Variant | Expected | What it measures |
 |---------|----------|------------------|
-| `prune_e2e/dry_run_probe_cold` | ~160 ms | full parallel scan, probes re-run (`.git/wt/cache/` cleared; git's own caches stay warm — the "first prune after fetching main" shape) |
-| `prune_e2e/dry_run_warm` | ~90 ms | steady-state re-scan, probes hit sha_cache |
-| `prune_e2e/live` | ~620 ms | probe-cold scan + serial removal of the 8 candidates (~60 ms each, under the scan write lock) |
+| `prune_e2e/dry_run_probe_cold` | ~150 ms | full parallel scan, probes re-run (`.git/wt/cache/` cleared; git's own caches stay warm — the "first prune after fetching main" shape) |
+| `prune_e2e/dry_run_warm` | ~60 ms | steady-state re-scan, probes hit sha_cache |
+| `prune_e2e/live` | ~400 ms | probe-cold scan + parallel removal of the 8 candidates (worktree candidates ~145 ms each — mostly the fsmonitor-daemon stop — branch-only ~50 ms, concurrent on the removal worker pool under the scan lock's read side, reusing scan-time plans) |
 | `prune_real_repo/dry_run_warm` | ~0.25–0.8 s | steady-state scan of 72 items (36 worktrees + 36 branches) at 331k-commit scale |
 | `prune_real_repo/dry_run_probe_cold` | ~0.6–1 s | the same 72-item scan with probes re-running at real cost (statuses stay stat-warm) |
 | `first_output/remove` | ~86 ms | single-target validation up to first output (`benches/time_to_first_output.rs`) |
@@ -227,18 +236,25 @@ groups** (a full-cold criterion iteration costs ~1 min in re-hashing statuses
 alone; a live one consumes the candidates). Expected one-shots on the
 `prune-real` fixture:
 
-- **full-cold dry-run ~5.5 s wall** (~46 s CPU over 472 subprocesses absorbed
-  by the rayon pool) — the fresh-fixture shape, dominated by stat-cold
-  `git status` at ~4.5 s per fresh worktree; the probes are `merge-base
-  --is-ancestor` ~40 ms and `merge-tree --write-tree` ~130 ms (vs 4–25 ms
-  synthetic, where shallow history walks bottom out at subprocess-spawn cost)
-- **live ~12 s wall** — all 24 removals serialize under the scan write lock
-  inside the `prune-scan` window: each of the 12 worktree candidates takes
-  ~0.5–1.7 s (pre-remove re-checks plus drain waits), branch-only candidates
-  ~50 ms
+- **full-cold dry-run ~5.5–7 s wall** (46–92 s CPU over ~480 subprocesses
+  absorbed by the rayon pool) — the fresh-fixture shape, dominated by
+  stat-cold `git status` at ~4.5–6.5 s per fresh worktree; the probes are
+  `merge-base --is-ancestor` ~40 ms and `merge-tree --write-tree` ~130 ms (vs
+  4–25 ms synthetic, where shallow history walks bottom out at
+  subprocess-spawn cost)
+- **live ~0.6 s wall** — all 24 removals run concurrently on the removal
+  worker pool inside the `prune-scan` window (read side of the scan lock):
+  the 12 worktree candidates ~240–290 ms each, branch-only ~100–135 ms.
+  Contention inflates the per-span numbers — run serially, a worktree
+  candidate's chain is ~155–210 ms (fsmonitor-served status ~20 ms, daemon
+  stop ~57 ms, metadata prune ~11 ms, fresh ref snapshot ~40 ms, CAS delete
+  ~7 ms) — but the wall collapses to the scan plus the slowest straggler.
+  When candidate branches are packed (post-`gc`), the CAS deletes serialize
+  on `packed-refs.lock`, putting a floor under the branch-deletion tail
 
 This is the "prune takes many seconds" experience users report: worktree
-count × stat-cold statuses bounds the scan, and removals extend it serially.
+count × stat-cold statuses bounds the scan, and the removal tail extends it
+by roughly one candidate's chain.
 The synthetic fixture can't show it — its statuses are milliseconds — so
 scale-sensitive changes need a one-shot on `prune-real` (or
 `wt-perf timeline -- -C <repo> step prune --dry-run` on a real repo) alongside
@@ -260,10 +276,12 @@ silently timed.
 check region), one `prune-check:<ref>` per scanned item, and one
 `prune-remove:<label>` per removed candidate; `wt remove` emits
 `internal-sweep` around its end-of-command janitor. The `prune-remove` spans
-sit *inside* the `prune-scan` window on the live path — each removal takes the
-scan lock's write side, so a span covers the wait for in-flight checks to
-drain *plus* the removal itself: read it as "how long this removal stalled the
-run", not as pure removal work.
+sit *inside* the `prune-scan` window on the live path and overlap each other —
+removals execute concurrently on the worker pool, holding the scan lock's read
+side. A span covers any wait for the lock plus the removal itself; the
+exceptional candidates that take the write side (hook-bearing, `--foreground`,
+metadata-pruning — `removal_needs_write` in `src/commands/step/prune.rs`) also
+wait for every in-flight check and removal to drain first.
 
 ```bash
 cargo run -p wt-perf -- setup prune-4-8 --path /tmp/prune-repo
@@ -335,7 +353,8 @@ cargo run -p wt-perf -- setup typical-8
 #   branches-N      - N branches, 1 commit each
 #   branches-N-M    - N branches, M commits each
 #   divergent       - 200 branches × 20 commits (GH #461 scenario)
-#   mixed-W-B       - W worktrees + B branches in varied states (the `full` fixture)
+#   mixed-W-B[-R]   - W worktrees + B branches in varied states, plus R
+#                     remote-tracking refs (the `full` and completion fixture)
 #   prune-M-U       - M squash-merged candidates + U two-sided-diverged
 #                     worktrees/branches (the `wt step prune` workload; see
 #                     benches/prune.rs)
@@ -406,6 +425,30 @@ For visual critical-path inspection — the one thing the aggregate report can't
 show — open the Chrome Trace JSON (`wt-perf timeline --chrome`, or `wt-perf
 trace` on an existing `trace.jsonl`) in <https://ui.perfetto.dev> or
 chrome://tracing.
+
+**A traced run skips prewarm's rev-parse batch, so its startup ordering is
+not quite the run users get.** At `-vv`, `logging::init` opens the log sinks
+through `log_files::try_create`, which calls `Repository::current()` and so
+resolves the git common dir in a fork the trace never sees (the subscriber
+isn't installed yet). `Repository::prewarm` gates each of its threads on the
+cache it populates: the git-config and user-config preloads still run — their
+spans appear in the trace — but the rev-parse batch is skipped because its
+product is already cached, so the per-worktree discovery (`WORKTREE_ROOTS`,
+`GIT_DIRS`, `CURRENT_BRANCHES`) happens on demand via `prewarm_info` instead
+of overlapped at startup.
+
+Three consequences when reading one:
+
+- The run's first fork (the common-dir rev-parse) is invisible — it lands in
+  the untraced gap before the first span.
+- Don't conclude the per-worktree discovery is on-demand in production because
+  the trace shows a `prewarm_info` refork mid-command; in production the
+  rev-parse batch covers it at startup.
+- Don't measure a startup change by trace alone. Time the real binary
+  (`hyperfine` on the shipped path) and, for a fork inventory that doesn't perturb
+  the run, put a logging shim named `git` at the front of `PATH` — a two-line
+  `sh` script that appends `"$*"` to a file and `exec`s the real git. That counts
+  every spawn with no verbosity flag set.
 
 ### Performance questions
 

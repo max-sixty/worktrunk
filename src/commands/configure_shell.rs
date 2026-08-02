@@ -132,9 +132,15 @@ const WRAPPER_MARKER: &str = "worktrunk shell integration for";
 /// The header every fish completion file worktrunk has shipped opens with.
 const COMPLETION_MARKER: &str = "# worktrunk completions for";
 
-/// Whether a whole file is one worktrunk generated, and so is worktrunk's to
-/// delete — by `uninstall`, and by the install-time cleanup of the legacy fish
-/// `conf.d` wrapper.
+/// Whether a whole file is one worktrunk generated, and so is `uninstall`'s to
+/// delete.
+///
+/// This is the one place ownership is read out of a file's contents, because
+/// it's the one place worktrunk doesn't know the name. `uninstall` takes no
+/// `--cmd`, so it lists the shell-owned directories and has to tell worktrunk's
+/// `{cmd}.fish` from the user's own files sitting beside it. Wherever the
+/// command name *is* known — install, and the legacy-location cleanups that
+/// accompany it — the path names the file worktrunk owns and nothing reads it.
 ///
 /// The answer is independent of the binary name embedded in the file, so a
 /// wrapper installed as `wt.fish`, `git-wt.fish`, or `git-wt.nu` is recognized
@@ -145,10 +151,10 @@ const COMPLETION_MARKER: &str = "# worktrunk completions for";
 /// (per the rc-file line detector, keeping one definition of "an integration
 /// line").
 ///
-/// Both callers walk directories the user owns, so the question is asked of
-/// every line rather than of the file as a blob. A user's own `wt.fish` that
-/// runs `wt config shell init` amid other code — or merely mentions it in a
-/// comment — survives; a whole-file substring test would delete it.
+/// The directories walked are the user's, so the question is asked of every
+/// line rather than of the file as a blob. A user's own `wt.fish` that runs
+/// `wt config shell init` amid other code — or merely mentions it in a comment
+/// — survives; a whole-file substring test would delete it.
 fn is_worktrunk_managed_content(content: &str) -> bool {
     if content.contains(WRAPPER_MARKER) {
         return true;
@@ -160,24 +166,29 @@ fn is_worktrunk_managed_content(content: &str) -> bool {
             .all(shell::is_shell_integration_line_for_uninstall_any_cmd)
 }
 
-/// Check if a Nushell wrapper file is worktrunk-managed.
+/// Take back the fish wrapper's legacy `conf.d` location after installing to
+/// `functions/`.
 ///
-/// The Nushell wrapper is a complete autoload file (not a `source` line), so it
-/// carries no `config shell init` marker — the header comment is the whole
-/// signal that the file is ours to remove during stranded-file cleanup
-/// (issue #2878).
-fn is_worktrunk_managed_nushell(content: &str) -> bool {
-    content.contains(&format!("{WRAPPER_MARKER} nushell"))
-}
-
-/// Clean up legacy fish conf.d file after installing to functions/
+/// Fish integration used to install to `~/.config/fish/conf.d/{cmd}.fish`,
+/// which loads before Homebrew's PATH setup in `config.fish` (issue #566);
+/// installs now write `functions/{cmd}.fish`, autoloaded on first use.
 ///
-/// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
-/// This caused issues with Homebrew PATH setup (see issue #566). We now install to
-/// `functions/{cmd}.fish` instead. This function removes the legacy file if it exists.
+/// The path names the command being installed, so it's worktrunk's and the file
+/// goes whole — the contents are never read. Leaving it would also break the
+/// install it accompanies: `conf.d` is sourced at startup, so a `function
+/// {cmd}` defined there is already loaded by the time fish would autoload
+/// `functions/{cmd}.fish`, and the stale wrapper wins every time.
+///
+/// With `dry_run`, the same detection runs but nothing is removed — the returned
+/// paths are what a real run *would* delete, so a preview and the confirmation
+/// prompt can name them before the user consents (issue #3644).
 ///
 /// Returns the paths of files that were cleaned up, each paired with `Shell::Fish`.
-fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
+fn cleanup_legacy_fish_conf_d(
+    configured: &[ConfigureResult],
+    cmd: &str,
+    dry_run: bool,
+) -> Vec<(Shell, PathBuf)> {
     let mut cleaned = Vec::new();
 
     // Clean up if fish was part of the install (regardless of whether it already existed)
@@ -198,13 +209,8 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
         return cleaned;
     }
 
-    // Only remove if the file contains worktrunk integration markers
-    // to avoid deleting user's custom wt.fish that isn't from worktrunk
-    let Ok(content) = fs::read_to_string(&legacy_path) else {
-        return cleaned;
-    };
-
-    if !is_worktrunk_managed_content(&content) {
+    if dry_run {
+        cleaned.push((Shell::Fish, legacy_path));
         return cleaned;
     }
 
@@ -231,12 +237,24 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
 ///
 /// Older worktrunk installed the wrapper under `<config-dir>/vendor/autoload`,
 /// which Nushell never autoloads (issue #2878). After installing to the correct
-/// vendor-autoload dir (`<data-dir>/vendor/autoload`), this removes any
-/// worktrunk-managed wrapper left at the other candidate paths so a stale,
-/// never-loaded copy isn't left behind.
+/// vendor-autoload dir (`<data-dir>/vendor/autoload`), this removes the wrapper
+/// left at the other candidate paths so a stale, never-loaded copy isn't left
+/// behind.
+///
+/// Every path considered is one worktrunk itself computes for this command name
+/// (`config_paths`), so — as with the fish `conf.d` cleanup — the path settles
+/// ownership and the file is removed whole, unread.
+///
+/// With `dry_run`, the same detection runs but nothing is removed — the returned
+/// paths are what a real run *would* delete, so a preview and the confirmation
+/// prompt can name them before the user consents (issue #3644).
 ///
 /// Returns the paths removed, each paired with `Shell::Nushell`.
-fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(Shell, PathBuf)> {
+fn cleanup_stranded_nushell(
+    configured: &[ConfigureResult],
+    cmd: &str,
+    dry_run: bool,
+) -> Vec<(Shell, PathBuf)> {
     let mut cleaned = Vec::new();
 
     // Only act if nushell was part of this install.
@@ -254,12 +272,8 @@ fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(S
         if &path == canonical || !path.exists() {
             continue;
         }
-        // Only remove files that are clearly worktrunk's, to avoid deleting a
-        // user's own `wt.nu`.
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        if !is_worktrunk_managed_nushell(&content) {
+        if dry_run {
+            cleaned.push((Shell::Nushell, path));
             continue;
         }
         match fs::remove_file(&path) {
@@ -278,6 +292,22 @@ fn cleanup_stranded_nushell(configured: &[ConfigureResult], cmd: &str) -> Vec<(S
     }
 
     cleaned
+}
+
+/// Both legacy-location cleanups for one install, as one list.
+///
+/// With `dry_run`, detects the files a real install would remove without
+/// removing them, so a `--dry-run` preview and the install confirmation can name
+/// the deletions before they happen (issue #3644). With `dry_run` false, removes
+/// them and returns what was removed.
+pub(crate) fn collect_legacy_cleanups(
+    configured: &[ConfigureResult],
+    cmd: &str,
+    dry_run: bool,
+) -> Vec<(Shell, PathBuf)> {
+    let mut cleanups = cleanup_legacy_fish_conf_d(configured, cmd, dry_run);
+    cleanups.extend(cleanup_stranded_nushell(configured, cmd, dry_run));
+    cleanups
 }
 
 pub fn handle_configure_shell(
@@ -315,9 +345,20 @@ pub fn handle_configure_shell(
         .iter()
         .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
 
+    // Detect (without removing) the legacy files a real install would delete, so
+    // both the --dry-run preview and the confirmation prompt can name them before
+    // the user consents — the removal is destructive and used to happen unpreviewed
+    // (issue #3644).
+    let legacy_preview = collect_legacy_cleanups(&preview.configured, &cmd, true);
+
     // For --dry-run, show preview and return without modifying anything
     if dry_run {
-        let preview_text = show_install_preview(&preview.configured, &completion_preview, &cmd);
+        let preview_text = show_install_preview(
+            &preview.configured,
+            &completion_preview,
+            &legacy_preview,
+            &cmd,
+        );
         if !preview_text.is_empty() {
             println!("{preview_text}");
         }
@@ -326,15 +367,38 @@ pub fn handle_configure_shell(
             completion_results: completion_preview,
             skipped: preview.skipped,
             zsh_needs_compinit: false,
-            legacy_cleanups: Vec::new(),
+            legacy_cleanups: legacy_preview,
         });
     }
 
-    // If nothing needs to be changed, still clean up legacy fish conf.d files
-    // A user might have upgraded and have both functions/wt.fish and conf.d/wt.fish
+    // If nothing needs to be changed, there may still be legacy files to clean up
+    // (a user who upgraded and has both functions/wt.fish and conf.d/wt.fish). That
+    // removal is destructive, so gate it behind the same confirmation as an install
+    // — never delete a hand-written file as a silent side effect (issue #3644).
     if !needs_shell_changes && !needs_completion_changes {
-        let mut legacy_cleanups = cleanup_legacy_fish_conf_d(&preview.configured, &cmd);
-        legacy_cleanups.extend(cleanup_stranded_nushell(&preview.configured, &cmd));
+        if legacy_preview.is_empty() {
+            return Ok(ScanResult {
+                configured: preview.configured,
+                completion_results: completion_preview,
+                skipped: preview.skipped,
+                zsh_needs_compinit: false,
+                legacy_cleanups: Vec::new(),
+            });
+        }
+
+        if !skip_confirmation
+            && !prompt_for_install(
+                &preview.configured,
+                &completion_preview,
+                &legacy_preview,
+                &cmd,
+                "Remove deprecated shell integration files?",
+            )?
+        {
+            return Err("Cancelled by user".to_string());
+        }
+
+        let legacy_cleanups = collect_legacy_cleanups(&preview.configured, &cmd, false);
         return Ok(ScanResult {
             configured: preview.configured,
             completion_results: completion_preview,
@@ -349,6 +413,7 @@ pub fn handle_configure_shell(
         && !prompt_for_install(
             &preview.configured,
             &completion_preview,
+            &legacy_preview,
             &cmd,
             "Install shell integration?",
         )?
@@ -386,16 +451,18 @@ pub fn handle_configure_shell(
         && (shell_filter == Some(Shell::Zsh)
             || (shell_filter.is_none() && shell::current_shell() == Some(Shell::Zsh)));
 
-    // Probe user's zsh to check if compinit is enabled.
+    // Probe a normal interactive zsh (global + user startup files) to check if
+    // compinit is enabled in the session the freshly installed wrapper enters.
     // Only flag if we positively detect it's missing (Some(false)).
     // If detection fails (None), stay silent - we can't be sure.
-    let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
+    let zsh_needs_compinit = should_check_compinit
+        && shell::probe_zsh_compdef(shell::ZshStartupScope::GlobalAndUser) == Some(false);
 
     // Clean up legacy fish conf.d file if we just installed to functions/
     // (issue #566), plus any nushell wrapper stranded at a legacy autoload
-    // location (issue #2878).
-    let mut legacy_cleanups = cleanup_legacy_fish_conf_d(&result.configured, &cmd);
-    legacy_cleanups.extend(cleanup_stranded_nushell(&result.configured, &cmd));
+    // location (issue #2878). The confirmation above listed these removals
+    // (issue #3644).
+    let legacy_cleanups = collect_legacy_cleanups(&result.configured, &cmd, false);
 
     Ok(ScanResult {
         configured: result.configured,
@@ -777,18 +844,26 @@ fn configure_wrapper_file(
     }))
 }
 
-/// Format what will be installed (shell extensions and completions).
+/// Format what will be installed (shell extensions and completions) and what
+/// legacy files will be removed to make way for them.
 ///
 /// Returns the preview as a string (no trailing newline); the caller picks the
 /// sink. `--dry-run` is the command's answer, so it prints to stdout; the
 /// interactive `?` re-preview during the install prompt is mid-prompt narration,
 /// so it prints to stderr. See /writing-user-outputs.
 ///
+/// `legacy_cleanups` are the deprecated wrapper files a real install would
+/// delete (fish `conf.d`, stranded nushell autoload). Listing them here is what
+/// makes the removal consented rather than a silent side effect (issue #3644);
+/// the message mirrors the after-the-fact "Removed … (deprecated; now using …)"
+/// line, in the future tense.
+///
 /// Note: I/O errors are intentionally ignored - preview is best-effort
 /// and shouldn't block the prompt flow.
 pub fn show_install_preview(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
+    legacy_cleanups: &[(Shell, PathBuf)],
     cmd: &str,
 ) -> String {
     let bold = Style::new().bold();
@@ -845,6 +920,21 @@ pub fn show_install_preview(
             result.action.symbol(),
             result.action.description(),
             format_bash_with_gutter(fish_completion.trim()),
+        ));
+    }
+
+    // Show legacy files that will be removed. The canonical replacement is the
+    // path this shell is being configured at (found in `results`), matching the
+    // "now using <new>" the after-the-fact removal message shows.
+    for (shell, legacy_path) in legacy_cleanups {
+        let old_path = format_path_for_display(legacy_path);
+        let new_path = results
+            .iter()
+            .find(|r| r.shell == *shell)
+            .map(|r| format_path_for_display(&r.path))
+            .unwrap_or_default();
+        blocks.push(format!(
+            "{INFO_SYMBOL} Will remove {bold}{old_path}{bold:#} (deprecated; now using {bold}{new_path}{bold:#})",
         ));
     }
 
@@ -920,6 +1010,7 @@ pub(crate) fn format_matched_lines(matched_lines: &[String]) -> String {
 pub fn prompt_for_install(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
+    legacy_cleanups: &[(Shell, PathBuf)],
     cmd: &str,
     prompt_text: &str,
 ) -> Result<bool, String> {
@@ -928,7 +1019,7 @@ pub fn prompt_for_install(
         // blank separates it from the re-prompt). See /writing-user-outputs.
         eprintln!(
             "{}\n",
-            show_install_preview(results, completion_results, cmd)
+            show_install_preview(results, completion_results, legacy_cleanups, cmd)
         );
     })
     .map_err(|e| e.to_string())?;
@@ -1633,12 +1724,12 @@ mod tests {
             assert!(is_worktrunk_managed_content(content), "{content}");
         }
 
-        // Not ours: both callers walk directories the user owns, so a file that
-        // only mentions the command must survive — as must a user's own file
-        // that runs the init line amid other code, which a per-line any-match
-        // would delete whole. The second and third also carry the init command
-        // and a `| source` somewhere, which is all a whole-file substring test
-        // asks before deleting.
+        // Not ours: the uninstall scan walks directories the user owns and has
+        // only the contents to go on, so a file that merely mentions the command
+        // must survive — as must a user's own file that runs the init line amid
+        // other code, which a per-line any-match would delete whole. The second
+        // and third also carry the init command and a `| source` somewhere,
+        // which is all a whole-file substring test asks before deleting.
         for content in [
             "function notes\n    echo run wt config shell init fish to set up\nend\n",
             "# reminder: wt config shell init fish\nfunction helpers\n    cat ~/.aliases | source\nend\n",

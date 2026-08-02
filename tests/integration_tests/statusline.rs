@@ -480,12 +480,19 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Verify statusline shows the detached marker, not the prior branch name.
+    // Verify the statusline names a detached worktree the way its `wt list`
+    // row does — by the abbreviated HEAD — and not by the prior branch name.
+    // The SHA also tells two detached worktrees apart, which one shared
+    // "(detached)" label cannot.
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    // In detached state we render "(detached)" in place of a branch name.
+    // Ask git for the abbreviation instead of slicing a fixed width: the
+    // statusline prints git's own `%h`, so the length follows `core.abbrev` and
+    // stretches further still when a prefix is ambiguous.
+    let head = repo.git_output(&["rev-parse", "--short", "HEAD"]);
+    let short_head = head.trim();
     assert!(
-        output.contains("(detached)"),
-        "statusline should show '(detached)' for detached HEAD, got: {output}"
+        output.contains(short_head),
+        "statusline should show the abbreviated HEAD ({short_head}) for detached HEAD, got: {output}"
     );
     assert!(
         !output.contains("feature"),
@@ -521,7 +528,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m");
+    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m[4m]8;;http://main.localhost:3000\:3000]8;;\[24m[22m");
 }
 
 #[rstest]
@@ -542,7 +549,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m]8;;http://feature.localhost:3000\:3000]8;;\[22m");
+    assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m[4m]8;;http://feature.localhost:3000\:3000]8;;\[24m[22m");
 }
 
 /// The URL segment lands after the CI reference and before the model in Claude
@@ -562,7 +569,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m]8;;http://main.localhost:3000\:3000]8;;\[22m  Opus");
+        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m[4m]8;;http://main.localhost:3000\:3000]8;;\[24m[22m  Opus");
     });
 }
 

@@ -24,12 +24,11 @@
 //!
 //! For now, we keep `for-each` under `step` as a pragmatic choice.
 
-use std::collections::HashMap;
 use std::io::{Write as _, stderr};
 use std::process::Stdio;
 
 use color_print::cformat;
-use worktrunk::config::{UserConfig, expand_template};
+use worktrunk::config::{UserConfig, VarScope};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
 use worktrunk::shell_exec::{Cmd, ShellEscapeMode};
 use worktrunk::styling::{
@@ -75,31 +74,19 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
-        let context_map = build_hook_context(&ctx, &[], None)?;
+        let context_map = build_hook_context(&ctx, &[], VarScope::All)?;
 
         // Expand each argv element through the template engine without
         // shell-escaping — values are interpolated directly into the argv
         // element a program receives, not through `sh -c`.
-        let vars: HashMap<&str, &str> = context_map
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
         let expanded: Vec<String> = args
             .iter()
             .map(|arg| {
-                expand_template(
-                    arg,
-                    &vars,
-                    ShellEscapeMode::Literal,
-                    &repo,
-                    "for-each argument",
-                )
+                context_map.expand(arg, ShellEscapeMode::Literal, &repo, "for-each argument")
             })
             .collect::<Result<_, _>>()?;
 
-        // Build JSON context for stdin
-        let context_json = serde_json::to_string(&context_map)
-            .expect("HashMap<String, String> serialization should never fail");
+        let context_json = context_map.to_json();
 
         match run_argv(&wt.path, expanded, &context_json) {
             Ok(()) => {

@@ -12,6 +12,8 @@ test-concurrent.sh
 # Insta snapshot test artifacts
 *.snap.new
 *.snap.pending
+# Pending *inline* snapshots, named `<source-file>.pending-snap`
+*.pending-snap
 logo-variant-*.png
 test-results/
 

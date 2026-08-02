@@ -36,12 +36,12 @@ use crate::styling::{
 
 /// Platform-specific reference type (PR vs MR).
 ///
-/// Used to unify error handling for GitHub PRs and GitLab MRs.
+/// Used to unify error handling across supported forges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefType {
-    /// GitHub Pull Request
+    /// Pull request (GitHub, Gitea, or Azure DevOps)
     Pr,
-    /// GitLab Merge Request
+    /// GitLab merge request
     Mr,
 }
 
@@ -84,25 +84,6 @@ impl RefType {
     pub fn display(self, number: u32) -> String {
         format!("{} {}{}", self.name(), self.symbol(), number)
     }
-}
-
-/// Common display fields for PR/MR context.
-///
-/// Implemented by both `PrInfo` and `MrInfo` to enable unified formatting.
-pub trait RefContext {
-    fn ref_type(&self) -> RefType;
-    fn number(&self) -> u32;
-    fn title(&self) -> &str;
-    fn author(&self) -> &str;
-    fn state(&self) -> &str;
-    fn draft(&self) -> bool;
-    fn url(&self) -> &str;
-
-    /// The source branch reference for display.
-    ///
-    /// For same-repo PRs/MRs: just the branch name (e.g., `feature-auth`)
-    /// For fork PRs/MRs: `owner:branch` format (e.g., `contributor:feature-fix`)
-    fn source_ref(&self) -> String;
 }
 
 /// Multi-line styled rendering for terminal display.
@@ -592,6 +573,16 @@ pub enum GitError {
     WorktreeNotFound {
         branch: String,
     },
+    /// A worktree selector matched neither a branch nor a worktree path.
+    ///
+    /// Distinct from [`GitError::WorktreeNotFound`], which means the branch
+    /// exists and simply has no checkout — there, suggesting `wt switch` to
+    /// create one is right. Here wt cannot tell whether the user meant a branch
+    /// or a path, and `wt switch <a-path-that-matched-nothing>` would only fail
+    /// again, so the message asks for neither.
+    WorktreeSelectorNotFound {
+        selector: String,
+    },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
         ref_type: RefType,
@@ -640,6 +631,15 @@ pub enum GitError {
 
 impl std::error::Error for GitError {}
 
+/// `"1 path with unresolved conflicts"` — the shared tail of every message
+/// about an unmerged index. [`GitError::UnmergedPaths`] refuses outright;
+/// `wt step relocate` warns and skips instead, because a conflict blocks only
+/// one of the many worktrees it walks. The phrase is shared, not the error type.
+pub fn format_unresolved_conflicts(count: usize) -> String {
+    let paths = if count == 1 { "path" } else { "paths" };
+    format!("{count} {paths} with unresolved conflicts")
+}
+
 impl GitError {
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
@@ -662,9 +662,10 @@ impl GitError {
             }
 
             GitError::UnmergedPaths { action, files } => {
-                let count = files.len();
-                let paths = if count == 1 { "path" } else { "paths" };
-                cformat!("Cannot {action}: {count} {paths} with unresolved conflicts")
+                format!(
+                    "Cannot {action}: {}",
+                    format_unresolved_conflicts(files.len())
+                )
             }
 
             GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
@@ -827,6 +828,10 @@ impl GitError {
 
             GitError::WorktreeNotFound { branch } => {
                 cformat!("Branch <bold>{branch}</> has no worktree")
+            }
+
+            GitError::WorktreeSelectorNotFound { selector } => {
+                cformat!("No branch or worktree named <bold>{selector}</>")
             }
 
             GitError::RefCreateConflict {
@@ -1363,6 +1368,18 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To create a worktree, run <underline>{switch_cmd}</>"
+                    ))
+                )
+            }
+
+            GitError::WorktreeSelectorNotFound { .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To see branches and worktree paths, run <underline>wt list --branches</>"
                     ))
                 )
             }

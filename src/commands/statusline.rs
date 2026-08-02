@@ -964,7 +964,7 @@ fn run_json() -> Result<()> {
     }
     // No custom columns: the statusline path never expands `[list.custom-columns]`
     // (prompt hot path; its compact format has no column grid).
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
 
     // Output follows `wt list --format=json`: schema 1 is a bare
     // single-item array, schema 2 a single-item envelope.
@@ -1022,7 +1022,7 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 
 /// Get git status as prioritized segments for the current worktree.
 ///
-/// CI status and the dev-server URL render as clickable OSC 8 hyperlinks.
+/// CI status and the dev-server URL render as underlined OSC 8 hyperlinks.
 fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn test_statusline_fitting_never_splits_a_hyperlink() {
         use super::super::list::columns::ColumnKind;
-        use super::super::list::layout::format_url_cell;
+        use super::super::list::layout::{LinkStyle, format_url_cell};
 
         let ci = StatuslineSegment::from_column(
             format!(
@@ -1217,7 +1217,7 @@ mod tests {
             ColumnKind::CiStatus,
         );
         let url = StatuslineSegment::from_column(
-            format_url_cell("http://127.0.0.1:17913", true),
+            format_url_cell("http://127.0.0.1:17913", LinkStyle::Linked),
             ColumnKind::Url,
         );
         let segments = vec![

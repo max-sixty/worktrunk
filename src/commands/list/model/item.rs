@@ -15,19 +15,25 @@ use super::stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus}
 use super::status_symbols::{StatusSymbols, WorkingTreeStatus};
 use crate::commands::list::ci_status::PrStatus;
 use crate::commands::list::columns::ColumnKind;
-use crate::commands::list::layout::format_url_cell;
+use crate::commands::list::layout::{LinkStyle, format_url_cell};
 
 /// Compute the `WorktreeState` from `WorktreeData` metadata alone.
 ///
 /// Used by `refresh_status_symbols` to resolve the worktree-state position
 /// (Gate 2) from metadata alone. The decision priority is:
-/// `prunable` > `locked` > `branch_worktree_mismatch` > `None` — the yellow
-/// actionable states outrank the informational (dim yellow) mismatch flag.
+/// `prunable` > `locked` > `duplicate_branch` > `branch_worktree_mismatch` >
+/// `None` — the yellow actionable states outrank the informational (dim
+/// yellow) `⚑`. The last two both render `⚑`, so their order decides only
+/// which cause the JSON `worktree.state` names; a duplicate wins because a
+/// force-added worktree lands off-template as a side effect of being
+/// force-added, not as the fact worth reporting.
 fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
     if data.is_prunable() {
         WorktreeState::Prunable
     } else if data.locked.is_some() {
         WorktreeState::Locked
+    } else if data.duplicate_branch {
+        WorktreeState::DuplicateBranch
     } else if data.branch_worktree_mismatch {
         WorktreeState::BranchWorktreeMismatch
     } else {
@@ -66,6 +72,12 @@ pub struct WorktreeData {
     /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
     /// Only true when: has branch name, not main worktree, and path differs from template.
     pub branch_worktree_mismatch: bool,
+    /// Whether another worktree has the same branch checked out. Only
+    /// `git worktree add --force` produces this state; worktrunk assumes a
+    /// branch ⇔ worktree bijection and resolves the branch to whichever
+    /// worktree git lists first (see `worktree_for_branch`), so every
+    /// worktree on the branch carries the flag, resolved one included.
+    pub duplicate_branch: bool,
 }
 
 impl WorktreeData {
@@ -224,6 +236,14 @@ pub struct ListItem {
     /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
     /// row, including prunable worktrees). Empty for null OIDs (unborn
     /// branches) or when the batch failed for this row.
+    ///
+    /// The only abbreviation of `head` anywhere: the Commit cell, a detached
+    /// row's Branch cell ([`Self::display_name`]), the statusline, and
+    /// `--format=json` all render this one string, so a commit reads the same
+    /// length wherever it appears. `collect()` folds it in *before* the
+    /// skeleton — the batch that carries it already gates the skeleton for
+    /// `%ct` — so those cells paint with the skeleton rather than filling in
+    /// late, and the Commit/Branch columns size to the width git chose.
     pub short_sha: String,
     /// Branch name - None for detached worktrees
     pub branch: Option<String>,
@@ -397,9 +417,13 @@ impl ListItem {
     }
 
     /// Short display name for this item — the branch if present, otherwise
-    /// the short SHA. Use when reporting which item is pending, stuck, or
+    /// [`Self::short_sha`]. Use when reporting which item is pending, stuck, or
     /// missing: `branch_name()`'s `"(detached)"` fallback collapses distinct
     /// detached items into one label.
+    ///
+    /// Also the Branch cell's text: a detached worktree has no name to put
+    /// there, so the column shows this instead (styled `DETACHED`, since a SHA
+    /// is a legal branch name too).
     pub fn display_name(&self) -> &str {
         self.branch.as_deref().unwrap_or(&self.short_sha)
     }
@@ -492,9 +516,12 @@ impl ListItem {
 
         let mut segments = Vec::new();
 
-        // 1. Branch name (priority 1)
+        // 1. Branch name (priority 1) — `display_name`, so the prompt names a
+        // detached worktree the way its `wt list` row does: the abbreviated
+        // HEAD, which also tells two detached worktrees apart where the
+        // `"(detached)"` label collapses them.
         segments.push(StatuslineSegment::from_column(
-            self.branch_name().to_string(),
+            self.display_name().to_string(),
             ColumnKind::Branch,
         ));
 
@@ -556,7 +583,7 @@ impl ListItem {
         // bare `#` otherwise (no width cap in the statusline)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
-                pr_status.format_cell(usize::MAX, true),
+                pr_status.format_cell(usize::MAX, LinkStyle::Linked),
                 ColumnKind::CiStatus,
             ));
         }
@@ -564,7 +591,7 @@ impl ListItem {
         // 8. URL (priority 9) — the dev server, as in `wt list`: the port as a
         // link, dimmed unless the health check found something listening on it.
         if let Some(ref url) = self.url {
-            let cell = format_url_cell(url, true);
+            let cell = format_url_cell(url, LinkStyle::Linked);
             segments.push(StatuslineSegment::from_column(
                 if self.url_active == Some(true) {
                     cell
@@ -854,7 +881,9 @@ mod tests {
     use super::*;
 
     /// The yellow actionable states outrank the informational (dim yellow)
-    /// mismatch flag, so a demoted `⚑` can never mask `⊟` or `⊞`.
+    /// `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
+    /// duplicate lands off-template too, so the two `⚑` states routinely
+    /// co-occur and their order picks the cause the JSON reports.
     #[test]
     fn test_metadata_worktree_state_priority() {
         let mismatched = WorktreeData {
@@ -866,15 +895,24 @@ mod tests {
             WorktreeState::BranchWorktreeMismatch
         );
 
+        let duplicate = WorktreeData {
+            duplicate_branch: true,
+            ..mismatched.clone()
+        };
+        assert_eq!(
+            metadata_worktree_state(&duplicate),
+            WorktreeState::DuplicateBranch
+        );
+
         let prunable = WorktreeData {
             prunable: Some("gone".to_string()),
-            ..mismatched.clone()
+            ..duplicate.clone()
         };
         assert_eq!(metadata_worktree_state(&prunable), WorktreeState::Prunable);
 
         let locked = WorktreeData {
             locked: Some("pinned".to_string()),
-            ..mismatched.clone()
+            ..duplicate.clone()
         };
         assert_eq!(metadata_worktree_state(&locked), WorktreeState::Locked);
     }
@@ -887,6 +925,21 @@ mod tests {
         let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         item.branch = None; // Simulate detached
         assert_eq!(item.branch_name(), "(detached)");
+    }
+
+    /// The Branch cell of a detached row renders `display_name`, and the Commit
+    /// cell of every row renders `short_sha` — the same string, at the length
+    /// git chose, so the row that shows both agrees with itself and with
+    /// `--format=json`.
+    #[test]
+    fn test_list_item_display_name_falls_back_to_short_sha() {
+        let head = "abc123def456abc123def456abc123def456abcd";
+        let mut item = ListItem::new_branch(head.to_string(), "feature".to_string());
+        item.short_sha = "abc123d".to_string();
+        assert_eq!(item.display_name(), "feature");
+
+        item.branch = None; // Simulate detached
+        assert_eq!(item.display_name(), "abc123d");
     }
 
     #[test]
@@ -950,11 +1003,49 @@ mod tests {
                 .content
         };
 
-        let plain = format_url_cell("http://127.0.0.1:17913", true);
+        let plain = format_url_cell("http://127.0.0.1:17913", LinkStyle::Linked);
         let dim = cformat!("<dim>{plain}</>");
         assert_eq!(url_cell(Some(false)), dim, "a dead port should dim");
         assert_eq!(url_cell(None), dim, "an unfinished health check should dim");
         assert_eq!(url_cell(Some(true)), plain, "a live port should not dim");
+    }
+
+    /// Underline is the statusline's only cue that a reference is clickable:
+    /// link text is tuned for width (`#123`, `:17913`) and reads as ordinary
+    /// content, and color is already spoken for by CI state. So every link on
+    /// the line carries one, whichever segment emitted it.
+    #[test]
+    fn test_statusline_links_are_underlined() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef};
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.url = Some("http://127.0.0.1:17913".to_string());
+        item.url_active = Some(true);
+        item.pr_status = Some(Some(PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: Some("https://github.com/owner/repo/pull/123".to_string()),
+            number: Some(PrRef::pr(123)),
+            review_state: None,
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
+            updated_at: None,
+        }));
+
+        let line = item.format_statusline();
+        for (url, text) in [
+            ("https://github.com/owner/repo/pull/123", "#123"),
+            ("http://127.0.0.1:17913", ":17913"),
+        ] {
+            assert!(
+                line.contains(&worktrunk::styling::hyperlink(url, text)),
+                "{text} should render as an underlined link in {line:?}"
+            );
+        }
     }
 
     #[test]

@@ -167,7 +167,7 @@ mod tests {
             @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
 
         // forge in user config should suggest project config
-        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n"), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n"), @r#"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored); to set it from user config, add it under [projects."<id>"][39m"#);
     }
 
     #[test]

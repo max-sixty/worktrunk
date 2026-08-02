@@ -10,7 +10,10 @@ docs = "wt step tether -C docs -- zola serve -p {{ branch | hash_port }}"
 
 [post-merge]
 clippy = "pre-commit run clippy --all-files || true"
-build = "cargo test --no-run --all-targets --locked --all-features"
+# Warms the cache the pre-merge `insta` gate reuses, so RUSTFLAGS and the
+# feature set must match that line: cargo fingerprints both, and a mismatch in
+# either leaves the gate rebuilding artifacts it can't reuse.
+build = "RUSTFLAGS='-D warnings' cargo test --no-run --locked --all-targets --all-features"
 install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
@@ -22,7 +25,7 @@ sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 # `cargo update --locked` would also fail on dependencies merely behind latest.
 lockfile = "cargo update --workspace --locked"
 pre-commit = "pre-commit run --all-files"
-insta = """RUSTFLAGS='-D warnings' cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --features shell-integration-tests"""
+insta = """RUSTFLAGS='-D warnings' cargo insta test --test-runner nextest --dnd --check $([ "$(uname)" = 'Linux' ] && echo '--unreferenced reject') --all-features"""
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps --document-private-items"
 

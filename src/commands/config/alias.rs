@@ -26,7 +26,7 @@ use std::io::Write;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, VarScope, referenced_vars_for_config,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
@@ -139,10 +139,9 @@ fn warn_if_shadowed(name: &str) {
 /// and print the rendered command(s) without executing.
 ///
 /// Rendering goes through [`render_template_preview`], which mirrors
-/// execution-time semantics: templates referencing `vars.*` are shown raw
-/// (after syntax validation) because those values resolve from git config
-/// when the step runs, potentially written by earlier pipeline steps. Other
-/// templates expand against the current context.
+/// execution-time semantics for everything but `{{ vars.<key> }}`: each of
+/// those renders as itself, because the value resolves from git config when
+/// the step runs, potentially written by an earlier pipeline step.
 pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = repo.user_config();
@@ -185,9 +184,9 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs, None)?;
+    let mut context_map = build_hook_context(&ctx, &extra_refs, VarScope::All)?;
     context_map.insert(
-        ALIAS_ARGS_KEY.to_string(),
+        ALIAS_ARGS_KEY,
         serde_json::to_string(&opts.positional_args)
             .expect("Vec<String> serialization should never fail"),
     );

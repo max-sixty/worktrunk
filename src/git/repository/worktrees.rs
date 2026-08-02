@@ -1,12 +1,18 @@
 //! Worktree management operations for Repository.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
+use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
-use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
+use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo, resolve_input_path};
 use crate::path::{format_path_for_display, paths_match};
+use crate::styling::{
+    eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
+};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -61,13 +67,20 @@ impl Repository {
     }
 
     /// Find the worktree path for a given branch, if one exists.
+    ///
+    /// A branch normally maps to at most one worktree, but `git worktree add
+    /// --force <path> <branch>` bypasses git's "already used by worktree" guard
+    /// and lets the same branch live in several at once. Worktrunk never creates
+    /// that state; when it exists, this resolves to the first worktree git lists
+    /// (roughly creation order) and warns once per branch so the otherwise-silent
+    /// choice is visible. See `warn_duplicate_checkout`.
     pub fn worktree_for_branch(&self, branch: &str) -> anyhow::Result<Option<PathBuf>> {
         let worktrees = self.list_worktrees()?;
-
-        Ok(worktrees
-            .iter()
-            .find(|wt| wt.branch.as_deref() == Some(branch))
-            .map(|wt| wt.path.clone()))
+        let paths = worktree_paths_for_branch(worktrees, branch);
+        if paths.len() > 1 {
+            warn_duplicate_checkout(branch, &paths);
+        }
+        Ok(paths.into_iter().next())
     }
 
     /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
@@ -104,13 +117,68 @@ impl Repository {
             .map(|wt| (wt.path.clone(), wt.branch.clone())))
     }
 
-    /// Prune worktree entries whose directories no longer exist.
+    /// Unregister the one worktree at `path`, whose directory is already gone.
     ///
-    /// Git tracks worktrees in `.git/worktrees/`. If a worktree directory is deleted
-    /// externally (e.g., `rm -rf`), this method runs `git worktree prune` to clean
-    /// up the entries.
-    pub fn prune_worktrees(&self) -> anyhow::Result<()> {
-        self.run_command(&["worktree", "prune"])?;
+    /// Git tracks worktrees in `.git/worktrees/<id>/`. When a worktree's
+    /// directory disappears — deleted externally, or renamed into the trash by
+    /// [`stage_worktree_removal`](crate::git::remove::stage_worktree_removal) —
+    /// that admin dir is stale and has to go. `git worktree remove` skips its
+    /// clean check when the directory is missing and deletes just that entry,
+    /// so it is the scoped spelling of the cleanup.
+    ///
+    /// # Why not `git worktree prune`
+    ///
+    /// `git worktree prune` takes no path filter: it walks *every* entry and
+    /// unregisters each one whose directory it cannot find at that instant. A
+    /// worktree that is merely absent right now — an unmounted volume, a
+    /// dropped network mount, a half-finished `mv` — is indistinguishable from
+    /// a deleted one, so removing worktree A would also unregister bystander
+    /// B. B's committed work survives (refs and objects are shared) and its
+    /// files stay on disk, but its admin dir does not: the index, `ORIG_HEAD`,
+    /// the per-worktree reflog, `refs/worktree/*` and `refs/bisect/*`, and any
+    /// in-progress rebase or merge all go with it. `git worktree repair`
+    /// cannot rebuild them — it relinks an admin dir, it does not recreate
+    /// one. Naming the target keeps a removal's blast radius equal to its
+    /// intent.
+    ///
+    /// # Locked worktrees
+    ///
+    /// A repo-wide prune silently skips a locked entry; `git worktree remove`
+    /// fails on one instead. Every call site has already established the target
+    /// is unlocked, by a different route each: `prepare_worktree_removal`
+    /// returns `WorktreeLocked` at the top of its path/current arm and rejects
+    /// a locked worktree before staging one for removal, and prune's
+    /// `gather_check_items` never selects one as a candidate.
+    ///
+    /// # Concurrent calls
+    ///
+    /// `wt step prune` removes several entries at once, but **serializes the
+    /// teardowns** — this and every other `git worktree remove` — behind
+    /// `RemovalContext::registry_lock` (see the `prune` module). It has to:
+    /// naming one entry bounds what a call *deletes*, not what it *reads*.
+    /// `git worktree remove` enumerates *every* sibling under `.git/worktrees/`
+    /// and reads each one's `commondir` while resolving its target, so a
+    /// teardown overlapping another worker's teardown — or a branch delete's
+    /// `list_worktrees` probe — can read an entry mid-deletion and fail
+    /// (`failed to read …/commondir` / `Invalid path …/.git/worktrees/<id>`).
+    /// That is git's own TOCTOU between the enumerator's `readdir` and its
+    /// `open`; it holds however wt schedules its removals, so wt closes the
+    /// window by not letting two registry mutations overlap (issue #3661).
+    ///
+    /// Git also `rmdir`s the containing `.git/worktrees` once the last entry
+    /// goes, but that only succeeds on an already-empty directory, and every
+    /// per-worktree command in the removal chain (`git status`, the fsmonitor
+    /// stop) runs while that worktree is still registered, so an emptied
+    /// directory has no in-flight reader left to strand. A `git worktree list`
+    /// in an *unrelated* process — outside wt's lock — remains exposed to the
+    /// same `Invalid path` race; wt's serialization only covers its own
+    /// removals.
+    pub fn prune_worktree_entry(&self, path: &Path) -> anyhow::Result<()> {
+        // Every caller's path came from `list_worktrees`, which parses git's
+        // porcelain as UTF-8, so this only fires if that edge ever stops
+        // guaranteeing it — a bare `?` rather than a rendered path.
+        let path_str = path.to_str().context("worktree path is not valid UTF-8")?;
+        self.run_command(&["worktree", "remove", path_str])?;
         Ok(())
     }
 
@@ -227,23 +295,27 @@ impl Repository {
         }
     }
 
-    /// Resolve a worktree by name, returning its path and branch (if known).
+    /// Resolve a worktree selector — the one place a token the user typed
+    /// becomes a worktree.
     ///
-    /// Unlike `resolve_worktree_name` which returns a branch name, this returns
-    /// the worktree path directly. This is useful for commands like `wt remove`
-    /// that operate on worktrees, not branches.
+    /// Every argument that names a worktree routes through here, so they all
+    /// accept the same vocabulary: the shortcuts, a branch name, and the path
+    /// of the worktree itself. wt addresses worktrees by branch (see the
+    /// "Worktree Model" section of `CLAUDE.md`), so the branch is tried first
+    /// and a path only answers what a branch name cannot — a detached worktree,
+    /// or one of several checkouts of the same branch.
     ///
-    /// # Arguments
-    /// * `name` - The worktree name to resolve:
-    ///   - "@" for current worktree (works even in detached HEAD)
-    ///   - "-" for previous branch's worktree
-    ///   - "^" for the default branch's worktree
-    ///   - any other string is treated as a branch name
+    /// Resolution order:
+    /// 1. `@` — the current worktree, matched by path so detached HEAD resolves
+    /// 2. `-` / `^` — the previous / default branch, then as a branch below
+    /// 3. a branch with a worktree
+    /// 4. a path naming a registered worktree — absolute, `~`-relative, or
+    ///    relative to `-C` (see [`resolve_input_path`])
+    /// 5. otherwise the branch alone, which may or may not exist
     ///
     /// # Returns
-    /// - `Worktree { path, branch }` if a worktree exists
-    /// - `BranchOnly { branch }` if only the branch exists (no worktree)
-    /// - `Err` if neither worktree nor branch exists
+    /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
+    /// - `BranchOnly { branch }` when nothing is checked out under that name
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
         match name {
             "@" => {
@@ -265,17 +337,100 @@ impl Repository {
                 Ok(ResolvedWorktree::Worktree { path, branch })
             }
             _ => {
-                // Resolve to branch name first, then find its worktree
                 let branch = self.resolve_worktree_name(name)?;
-                match self.worktree_for_branch(&branch)? {
-                    Some(path) => Ok(ResolvedWorktree::Worktree {
+                if let Some(path) = self.worktree_for_branch(&branch)? {
+                    return Ok(ResolvedWorktree::Worktree {
                         path,
                         branch: Some(branch),
-                    }),
-                    None => Ok(ResolvedWorktree::BranchOnly { branch }),
+                    });
                 }
+
+                // A shortcut named a branch, not a directory: `resolve_worktree_name`
+                // returns a non-shortcut token unchanged, so an unequal result is
+                // exactly the case where the literal token would be a nonsense path.
+                if branch == name
+                    && let Some((path, wt_branch)) = self.worktree_at_input_path(name)?
+                {
+                    return Ok(ResolvedWorktree::Worktree {
+                        path,
+                        branch: wt_branch,
+                    });
+                }
+
+                Ok(ResolvedWorktree::BranchOnly { branch })
             }
         }
+    }
+
+    /// The branch a selector names, erroring only when it names a detached
+    /// worktree.
+    ///
+    /// [`resolve_worktree`](Self::resolve_worktree) for the arguments that want
+    /// a branch rather than a worktree — `wt step promote`, and the `--branch`
+    /// of the `wt config state` commands, which key state by branch name. A
+    /// branch with no worktree is a fine answer to those; a worktree named by
+    /// path that has no branch is not.
+    pub fn require_selected_branch(&self, name: &str, action: &str) -> anyhow::Result<String> {
+        match self.resolve_worktree(name)? {
+            ResolvedWorktree::Worktree {
+                branch: Some(branch),
+                ..
+            }
+            | ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
+                action: Some(cformat!(
+                    "{action} — <bold>{}</> is detached",
+                    format_path_for_display(&path)
+                )),
+            }
+            .into()),
+        }
+    }
+
+    /// The path of the worktree a selector names, erroring when it names none.
+    ///
+    /// [`resolve_worktree`](Self::resolve_worktree) for the commands that need a
+    /// worktree to operate in rather than a branch to reason about — `wt step
+    /// diff --branch`, `copy-ignored --from`/`--to`, `promote`. A branch with no
+    /// checkout and a name matching nothing at all are the same answer to them.
+    /// A selector matching nothing at all is reported as such, rather than as a
+    /// branch without a worktree: `wt switch <the selector>` creates a worktree
+    /// only when the branch exists, so offering it for a mistyped path would
+    /// just fail again.
+    pub fn require_worktree(&self, name: &str) -> anyhow::Result<PathBuf> {
+        match self.resolve_worktree(name)? {
+            ResolvedWorktree::Worktree { path, .. } => Ok(path),
+            ResolvedWorktree::BranchOnly { branch } => Err(self.no_worktree_error(branch)),
+        }
+    }
+
+    /// The error for a selector that resolved to a branch with no checkout.
+    fn no_worktree_error(&self, branch: String) -> anyhow::Error {
+        match self.branch(&branch).exists_locally() {
+            Ok(true) => GitError::WorktreeNotFound { branch }.into(),
+            // A ref lookup that fails says nothing about the branch, so fall
+            // back to the message that claims less.
+            _ => GitError::WorktreeSelectorNotFound { selector: branch }.into(),
+        }
+    }
+
+    /// The worktree a user-supplied token names by path, if it names one.
+    ///
+    /// The path half of [`resolve_worktree`](Self::resolve_worktree), split out
+    /// for arguments that want a branch rather than a worktree — a merge target,
+    /// a state key. Resolving the token is the whole point: it goes through
+    /// [`resolve_input_path`] here so no call site
+    /// has to remember that a relative path answers to `-C` and a leading `~` to
+    /// the home directory.
+    ///
+    /// Branch-first is the rule everywhere, so callers reach for this only after
+    /// a branch or ref lookup has already come up empty. `branch` is `None` for
+    /// a detached worktree.
+    pub fn worktree_at_input_path(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
+        self.worktree_at_path(&resolve_input_path(name))
     }
 
     /// Find the "home" path - where to cd when leaving a worktree.
@@ -286,5 +441,81 @@ impl Repository {
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
+    }
+}
+
+/// Paths of every worktree checked out on `branch`, in git's listing order.
+///
+/// At most one under normal use; more than one only when the user ran
+/// `git worktree add --force <path> <branch>`, which bypasses git's
+/// "already used by worktree" guard. Worktrunk never creates that state.
+pub(crate) fn worktree_paths_for_branch(worktrees: &[WorktreeInfo], branch: &str) -> Vec<PathBuf> {
+    worktrees
+        .iter()
+        .filter(|wt| wt.branch.as_deref() == Some(branch))
+        .map(|wt| wt.path.clone())
+        .collect()
+}
+
+/// Every branch checked out in more than one worktree.
+///
+/// The all-at-once counterpart to `worktree_paths_for_branch`, for callers
+/// classifying the whole list rather than resolving one branch — `wt list`
+/// flags each affected row with `⚑` so the ambiguity is visible before a
+/// command resolves the branch and warns.
+pub fn duplicated_branches(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
+    let mut seen = HashSet::new();
+    let mut duplicated = HashSet::new();
+    for branch in worktrees.iter().filter_map(|wt| wt.branch.as_deref()) {
+        if !seen.insert(branch) {
+            duplicated.insert(branch);
+        }
+    }
+    duplicated
+}
+
+/// Warn once per process that `branch` resolves ambiguously across worktrees.
+///
+/// Worktrunk addresses worktrees by branch name and resolves an ambiguous
+/// branch to the first worktree git lists, leaving the others reachable only by
+/// path. The warning surfaces that otherwise-silent choice — naming every
+/// path — without changing which worktree is used. Deduplicated per branch so
+/// a command that resolves the same branch repeatedly (the picker, `wt list`)
+/// warns only once.
+///
+/// Called only from `worktree_for_branch` with `paths.len() > 1`, so `paths[1..]`
+/// names at least one shadowed worktree.
+fn warn_duplicate_checkout(branch: &str, paths: &[PathBuf]) {
+    static WARNED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    // A poisoned set of already-warned branches never justifies aborting; recover it.
+    let is_new = WARNED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(branch.to_string());
+    if is_new {
+        let listing = paths
+            .iter()
+            .map(|p| format_path_for_display(p))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Branch <bold>{branch}</> is checked out in {} worktrees; wt uses the first:",
+                paths.len()
+            ))
+        );
+        eprintln!("{}", format_with_gutter(&listing, None));
+        // Name every shadowed worktree so removing them all is actionable; with a
+        // single extra (the common case) this is one hint. `wt remove <path>`
+        // removes exactly the worktree named and retains the branch the others
+        // still hold, so it's safe to suggest for a duplicate.
+        for extra in &paths[1..] {
+            let cmd = suggest_command("remove", &[&format_path_for_display(extra)], &[]);
+            eprintln!(
+                "{}",
+                hint_message(cformat!("To drop a duplicate, run <underline>{cmd}</>"))
+            );
+        }
     }
 }

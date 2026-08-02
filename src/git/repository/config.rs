@@ -1,6 +1,7 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
@@ -10,6 +11,46 @@ use crate::config::ProjectConfig;
 use crate::git::CommandError;
 
 use super::{DefaultBranchName, GitError, Repository};
+
+/// How long `git ls-remote` may run before default-branch detection gives up.
+///
+/// The query normally answers in 100 ms–2 s, and until this bound nothing
+/// limited how long it could take *not* to answer: an unanswered SYN costs
+/// ~127 s per address on Linux (`tcp_syn_retries=6`) and git tries each of a
+/// host's addresses in turn, so a remote behind a dropped VPN or a dead host
+/// stalled `wt list --full` and `wt switch` for minutes. The bound is far
+/// above a slow-but-working handshake and far below that, so it separates the
+/// two cases without a judgement call.
+const REMOTE_DETECTION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Outcome of the remote half of default-branch detection.
+enum RemoteDetection {
+    /// The remote — or git's local `<remote>/HEAD` cache for it — named a branch.
+    Found(String),
+    /// There is no remote, or the query failed — no HEAD, no such repository,
+    /// an offline laptop. Whatever the local branches say stands in, and it is
+    /// cached: `ls-remote` exits 128 for all of those alike, so telling a
+    /// down network from a remote that simply has no HEAD would mean reading
+    /// git's error text, and re-querying on every command is the cost the
+    /// cache exists to avoid. Only a timeout separates cleanly, via
+    /// `ErrorKind::TimedOut`.
+    Unavailable,
+    /// The query hit [`REMOTE_DETECTION_TIMEOUT`]. The default branch is
+    /// unknown rather than absent, so local inference answers this invocation
+    /// but is not written to `worktrunk.default-branch`: a guess made while
+    /// the network was down would otherwise outlive the outage, and the
+    /// persisted cache is exactly what stops later calls from re-detecting.
+    TimedOut,
+}
+
+/// Whether a command failed by exceeding its [`crate::shell_exec::Cmd::timeout`].
+///
+/// `Cmd::run` reports the kill as an [`std::io::Error`], which `anyhow`
+/// context wraps but preserves in the chain.
+fn timed_out(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>()
+        .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut)
+}
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
@@ -367,12 +408,15 @@ impl Repository {
     /// Detection strategy:
     /// 1. Check worktrunk cache (`git config worktrunk.default-branch`)
     /// 2. Try primary remote's local cache (e.g., `origin/HEAD`)
-    /// 3. Query remote (`git ls-remote`) — may take 100 ms–2 s (sole wire fallback)
+    /// 3. Query remote (`git ls-remote`) — may take 100 ms–2 s (sole wire
+    ///    fallback), bounded by `REMOTE_DETECTION_TIMEOUT`
     /// 4. Infer from local branches if no remote
     ///
     /// Detection results are cached to `worktrunk.default-branch` for future
-    /// calls. Result is also cached in the shared repo cache (shared across
-    /// all worktrees).
+    /// calls, except when step 3 timed out — see `RemoteDetection::TimedOut`.
+    /// Result is also cached in the shared repo cache (shared across all
+    /// worktrees), timeouts included: one invocation waits out the bound once,
+    /// not once per caller.
     ///
     /// To minimize latency on the rare cold-clone case:
     /// - Defer calling this until after fast, local checks (see e497f0f for an example).
@@ -400,14 +444,19 @@ impl Repository {
                 }
 
                 // Detect: try remote, then local inference
-                let detected = self.detect_from_remote().or_else(|| {
-                    self.infer_default_branch_locally()
+                let remote = self.detect_from_remote();
+                let persist = !matches!(remote, RemoteDetection::TimedOut);
+                let detected = match remote {
+                    RemoteDetection::Found(branch) => Some(branch),
+                    RemoteDetection::Unavailable | RemoteDetection::TimedOut => self
+                        .infer_default_branch_locally()
                         .inspect_err(|e| tracing::debug!(error = %e, "Local inference failed: {e}"))
-                        .ok()
-                });
+                        .ok(),
+                };
 
                 // Cache detected result to git config for future runs
-                if let Some(ref branch) = detected
+                if persist
+                    && let Some(ref branch) = detected
                     && let Err(e) = self.set_config_value("worktrunk.default-branch", branch)
                 {
                     tracing::debug!(error = %e, "Failed to persist default-branch cache: {e}");
@@ -419,16 +468,31 @@ impl Repository {
     }
 
     /// Try to detect default branch from remote.
-    fn detect_from_remote(&self) -> Option<String> {
-        let remote = self.primary_remote().ok()?;
+    fn detect_from_remote(&self) -> RemoteDetection {
+        let Ok(remote) = self.primary_remote() else {
+            return RemoteDetection::Unavailable;
+        };
 
         // Try git's local cache for this remote (e.g., origin/HEAD)
         if let Ok(branch) = self.local_default_branch(&remote) {
-            return Some(branch);
+            return RemoteDetection::Found(branch);
         }
 
         // Query remote directly (may be slow)
-        self.query_remote_default_branch(&remote).ok()
+        match self.query_remote_default_branch(&remote) {
+            Ok(branch) => RemoteDetection::Found(branch),
+            Err(e) if timed_out(&e) => {
+                tracing::debug!(
+                    "Remote default-branch query exceeded {REMOTE_DETECTION_TIMEOUT:?}; \
+                     falling back to local inference without caching it"
+                );
+                RemoteDetection::TimedOut
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Remote default-branch query failed: {e}");
+                RemoteDetection::Unavailable
+            }
+        }
     }
 
     /// Resolve a target branch from an optional override
@@ -453,6 +517,28 @@ impl Repository {
         }
     }
 
+    /// The branch checked out at `target`, when `target` is a worktree path.
+    ///
+    /// The path arm of a merge or rebase target: `wt merge ../repo.main` names
+    /// the same branch as `wt merge main`. Refs win, so this runs only once the
+    /// caller's own ref lookup has failed, and only for a target the user typed
+    /// — a default branch that resolved from the cache is not a path.
+    ///
+    /// `resolved` is `target` after shortcut expansion; an expansion means the
+    /// literal token was a symbol rather than a path.
+    fn target_branch_at_path(
+        &self,
+        target: Option<&str>,
+        resolved: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(target) = target.filter(|t| *t == resolved) else {
+            return Ok(None);
+        };
+        Ok(self
+            .worktree_at_input_path(target)?
+            .and_then(|(_, branch)| branch))
+    }
+
     /// Resolve and validate a target that must be a branch.
     ///
     /// Use this for commands that update a branch ref (merge, push).
@@ -466,6 +552,9 @@ impl Repository {
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
+            if let Some(from_path) = self.target_branch_at_path(target, &branch)? {
+                return Ok(from_path);
+            }
             if target.is_none() {
                 if self.is_unborn_branch(&branch) {
                     return Err(GitError::UnbornDefaultBranch { branch }.into());
@@ -495,6 +584,9 @@ impl Repository {
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
+            if let Some(from_path) = self.target_branch_at_path(target, &reference)? {
+                return Ok(from_path);
+            }
             if target.is_none() {
                 if self.is_unborn_branch(&reference) {
                     return Err(GitError::UnbornDefaultBranch { branch: reference }.into());
@@ -584,7 +676,10 @@ impl Repository {
     }
 
     pub(super) fn query_remote_default_branch(&self, remote: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["ls-remote", "--symref", remote, "HEAD"])?;
+        let stdout = self.run_command_bounded(
+            &["ls-remote", "--symref", remote, "HEAD"],
+            Some(REMOTE_DETECTION_TIMEOUT),
+        )?;
         DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
     }
 

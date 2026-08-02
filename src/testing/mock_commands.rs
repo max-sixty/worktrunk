@@ -78,7 +78,7 @@ pub struct MockResponse {
     output: Option<String>,
     stderr: Option<String>,
     exit_code: i32,
-    delay_ms: u64,
+    wait_for_file: Option<String>,
 }
 
 impl MockResponse {
@@ -89,7 +89,7 @@ impl MockResponse {
             output: None,
             stderr: None,
             exit_code: 0,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -100,7 +100,7 @@ impl MockResponse {
             output: Some(text.to_string()),
             stderr: None,
             exit_code: 0,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -111,7 +111,7 @@ impl MockResponse {
             output: None,
             stderr: Some(text.to_string()),
             exit_code: 0,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -122,7 +122,7 @@ impl MockResponse {
             output: None,
             stderr: None,
             exit_code: code,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -138,10 +138,12 @@ impl MockResponse {
         self
     }
 
-    /// Sleep this long before responding, to simulate a slow command (e.g. a
-    /// forge call) so a test can observe the caller's in-flight UI.
-    pub fn with_delay_ms(mut self, ms: u64) -> Self {
-        self.delay_ms = ms;
+    /// Wait until `path` exists under the mock config directory before
+    /// responding. This gives a test a causal release gate for an in-flight
+    /// command: first assert the caller's loading state, then create the file
+    /// and observe the response without sending another input.
+    pub fn wait_for_file(mut self, path: &str) -> Self {
+        self.wait_for_file = Some(path.to_string());
         self
     }
 
@@ -161,8 +163,8 @@ impl MockResponse {
         {
             obj.insert("exit_code".to_string(), json!(self.exit_code));
         }
-        if self.delay_ms != 0 {
-            obj.insert("delay_ms".to_string(), json!(self.delay_ms));
+        if let Some(path) = &self.wait_for_file {
+            obj.insert("wait_for_file".to_string(), json!(path));
         }
         serde_json::Value::Object(obj)
     }
@@ -224,10 +226,10 @@ impl MockConfig {
 /// PIDs) rather than called in a loop. Returns empty when the command was
 /// never invoked, so a "was not called" assertion reads naturally.
 ///
-/// `log_dir` is the directory passed to the command as `MOCK_CALL_LOG_DIR`.
-/// It must be OUTSIDE the repo under test: mocks spawned by hooks would
-/// otherwise dirty the working tree mid-run and change the behavior being
-/// measured.
+/// `log_dir` is the directory passed to the command as
+/// `WORKTRUNK_TEST_MOCK_CALL_LOG_DIR`. It must be OUTSIDE the repo under test:
+/// mocks spawned by hooks would otherwise dirty the working tree mid-run and
+/// change the behavior being measured.
 pub fn mock_calls(log_dir: &Path, name: &str) -> Vec<String> {
     fs::read_to_string(log_dir.join(format!("{}.calls", name)))
         .map(|s| s.lines().map(str::to_string).collect())
@@ -324,95 +326,24 @@ API authentication.
         .write(bin_dir);
 }
 
-/// Create a mock uv command for dependency sync and dev server.
-pub fn create_mock_uv_sync(bin_dir: &Path) {
-    MockConfig::new("uv")
-        .command(
-            "sync",
-            MockResponse::output(
-                "
-  Resolved 24 packages in 145ms
-  Installed 24 packages in 1.2s
-",
-            ),
-        )
-        .command(
-            "run",
-            MockResponse::output(
-                "
-  Starting dev server on http://localhost:3000...
-",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create mock uv that delegates to pytest/ruff commands.
-///
-/// Note: This mock doesn't actually delegate - it provides fixed output.
-/// For tests needing real delegation, set up both commands separately.
-pub fn create_mock_uv_pytest_ruff(bin_dir: &Path) {
-    MockConfig::new("uv")
-        .command(
-            "run",
-            MockResponse::output(
-                "
-============================= test session starts ==============================
-collected 3 items
-
-tests/test_auth.py::test_login_success PASSED                            [ 33%]
-tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-tests/test_auth.py::test_token_validation PASSED                         [100%]
-
-============================== 3 passed in 0.8s ===============================
-",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock pytest command with test output.
-pub fn create_mock_pytest(bin_dir: &Path) {
-    MockConfig::new("pytest")
-        .command(
-            "_default",
-            MockResponse::output(
-                "
-============================= test session starts ==============================
-collected 3 items
-
-tests/test_auth.py::test_login_success PASSED                            [ 33%]
-tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-tests/test_auth.py::test_token_validation PASSED                         [100%]
-
-============================== 3 passed in 0.8s ===============================
-",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock ruff command.
-pub fn create_mock_ruff(bin_dir: &Path) {
-    MockConfig::new("ruff")
-        .command("check", MockResponse::output("\nAll checks passed!\n\n"))
-        .write(bin_dir);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::testing::test_tempdir;
 
     #[test]
     fn test_mock_config_write() {
-        let temp = TempDir::new().unwrap();
+        let temp = test_tempdir();
         let bin_dir = temp.path();
 
         MockConfig::new("test-cmd")
             .version("test-cmd version 1.0")
             .command("foo", MockResponse::output("hello"))
             .command("bar", MockResponse::exit(42))
+            .command(
+                "gated",
+                MockResponse::output("released").wait_for_file("release"),
+            )
             .write(bin_dir);
 
         // Check config file exists and is valid JSON
@@ -421,6 +352,7 @@ mod tests {
         let content = fs::read_to_string(&config_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["version"], "test-cmd version 1.0");
+        assert_eq!(parsed["commands"]["gated"]["wait_for_file"], "release");
 
         // Check binary exists
         #[cfg(unix)]

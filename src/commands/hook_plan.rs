@@ -316,10 +316,21 @@ impl ApprovedHookPlan {
         self.entries.is_empty()
     }
 
+    /// True when the frozen selection carries any commands for `anchor` under
+    /// one of `hook_types`. `wt step prune` routes such candidates onto its
+    /// serialized removal path — a foreground hook body is an arbitrary
+    /// command with streamed output, so it doesn't join the parallel removal
+    /// fan-out.
+    pub fn has_hooks_for(&self, anchor: &Path, hook_types: &[HookType]) -> bool {
+        hook_types
+            .iter()
+            .any(|ht| !self.lookup(*ht, anchor).is_empty())
+    }
+
     /// The frozen selection for `(hook_type, anchor)`, by exact match.
     ///
     /// Every covered gate anchors at the identical path its executor passes:
-    /// the `RemoveResult` worktree/destination path threaded unchanged, the
+    /// the `RemovalPlan` worktree/destination path threaded unchanged, the
     /// `SwitchPlan`/`SwitchResult` destination, or the merge feature root
     /// (`current_worktree().root()` on the same `Repository`, cached, so the
     /// gate and `finish_after_merge` produce the same `PathBuf`). The invariant
@@ -347,7 +358,8 @@ fn render_planned(
 ) -> anyhow::Result<Vec<SourcedStep>> {
     let mut out = Vec::new();
     for (source, cfg) in entries {
-        for step in prepare_steps(cfg, ctx, extra_vars, hook_type, *source)? {
+        let steps = prepare_steps(cfg, ctx, extra_vars, hook_type, *source)?.validated()?;
+        for step in steps {
             out.push(SourcedStep {
                 step,
                 source: *source,

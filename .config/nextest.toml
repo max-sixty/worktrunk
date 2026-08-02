@@ -5,6 +5,14 @@ nextest-version = "0.9.118"
 
 # Enable setup-scripts (still experimental in nextest) so the build-bins script
 # below can run before any test starts.
+#
+# Nothing in this file may change what a test observes — no `[env]`, no
+# `$NEXTEST_ENV` from a setup script. `cargo test`, `cargo llvm-cov`, `cargo
+# bench` and the Nix derivation run this same suite and would silently disagree.
+# Environment belongs in the hermetic latch (`shell_exec::enable_hermetic_test_env`)
+# and `.cargo/config.toml`, behavior in the fixture. See
+# tests/CLAUDE.md → One Result Per Test, Whatever Runs It; build-bins below is a
+# build step, not an exception to it.
 experimental = ["setup-scripts"]
 
 [profile.default]

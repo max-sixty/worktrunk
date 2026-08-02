@@ -1,7 +1,10 @@
 comment: false
 
+# `cargo llvm-cov` reports only `src/`, so this is a guard rather than a live
+# filter. It has to be `tests/**`: codecov compiles `**/tests/**` to
+# `.*/tests/.*`, which needs a leading directory and so misses `tests/` itself.
 ignore:
-  - "**/tests/**"
+  - "tests/**"
 
 coverage:
   status:

@@ -90,15 +90,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
 }
 
 #[rstest]
-fn test_list_single_worktree(repo: TestRepo) {
-    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
-}
-
-#[rstest]
-fn test_list_multiple_worktrees(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-
+fn test_list_multiple_worktrees(repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
@@ -149,6 +141,154 @@ fn test_list_detached_head_in_worktree(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// One commit, one rendering. The table's Commit cell and a detached row's
+/// Branch cell both print git's `%h`, so they follow `core.abbrev` and agree
+/// with the `short_sha` that `--format=json` carries. Sliced to a fixed width
+/// instead, the table disagreed with its own JSON about the same commit and
+/// ignored the setting entirely.
+#[rstest]
+fn test_list_abbreviated_sha_follows_git(mut repo: TestRepo) {
+    use ansi_str::AnsiStr;
+
+    repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+
+    let run = |args: &[&str]| {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "wt {args:?} should succeed");
+        output.stdout
+    };
+
+    // Git's default first, then a width nothing but `core.abbrev` explains —
+    // one anchor plus one single-factor neighbor.
+    for abbrev in [None, Some("12")] {
+        if let Some(value) = abbrev {
+            repo.run_git(&["config", "core.abbrev", value]);
+        }
+
+        let json: Vec<serde_json::Value> =
+            serde_json::from_slice(&run(&["list", "--format=json"])).unwrap();
+        let table = String::from_utf8_lossy(&run(&["list"]))
+            .ansi_strip()
+            .into_owned();
+
+        assert!(
+            json.iter().any(|item| item["branch"].is_null()),
+            "the detached worktree should be listed: {json:?}"
+        );
+        for item in &json {
+            let sha = item["commit"]["sha"].as_str().expect("full sha");
+            let short = item["commit"]["short_sha"].as_str().expect("short sha");
+
+            assert!(
+                table.contains(short),
+                "table should print the {short:?} that JSON reports \
+                 (core.abbrev={abbrev:?}):\n{table}"
+            );
+            // `contains` alone passes on a longer prefix — precisely the fixed
+            // 8-character slice this replaced — so rule that out as well.
+            assert!(
+                !table.contains(&sha[..short.len() + 1]),
+                "table should stop abbreviating where git does \
+                 (core.abbrev={abbrev:?}):\n{table}"
+            );
+
+            if item["branch"].is_null() {
+                assert!(
+                    table.lines().any(|line| line.matches(short).count() == 2),
+                    "a detached row has no branch name, so one line carries {short:?} \
+                     in both Branch and Commit (core.abbrev={abbrev:?}):\n{table}"
+                );
+            }
+        }
+    }
+}
+
+/// Adds a second worktree on `branch` via `git worktree add --force`, which
+/// bypasses git's "already used by worktree" guard. Worktrunk never creates
+/// this state itself.
+fn force_duplicate_worktree(repo: &TestRepo, branch: &str) -> std::path::PathBuf {
+    let dup_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("repo.{branch}-dup"));
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--force",
+        dup_path.to_str().unwrap(),
+        branch,
+    ]);
+    dup_path
+}
+
+/// A branch checked out in two worktrees flags both rows with `⚑`, the same
+/// irregular-mapping flag an off-template path earns, and the Path column
+/// earns its place: the branch name no longer identifies the row. Before
+/// this, only the off-template duplicate was flagged, and the worktree `wt`
+/// actually resolves to showed nothing.
+#[rstest]
+fn test_list_duplicate_branch(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    force_duplicate_worktree(&repo, "feature");
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+/// Both JSON schemas report the duplicate: schema 1 through the single
+/// `worktree.state` value, schema 2 through its own orthogonal flag.
+#[rstest]
+fn test_list_duplicate_branch_json(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    force_duplicate_worktree(&repo, "feature");
+
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let flagged: Vec<_> = items
+        .iter()
+        .filter(|item| item["worktree"]["state"] == "duplicate_branch")
+        .collect();
+    assert_eq!(flagged.len(), 2, "both rows carry the state: {items:#?}");
+    assert!(
+        flagged.iter().all(|item| item["branch"] == "feature"),
+        "only the duplicated branch is flagged: {items:#?}"
+    );
+
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let items = json["items"].as_array().unwrap();
+    let flagged: Vec<_> = items
+        .iter()
+        .filter(|item| item["worktree"]["duplicate_branch"] == true)
+        .collect();
+    assert_eq!(flagged.len(), 2, "both rows carry the flag: {items:#?}");
+    assert!(
+        items
+            .iter()
+            .filter(|item| item["branch"] == "main")
+            .all(|item| item["worktree"]["duplicate_branch"] == false),
+        "the unduplicated branch stays clear: {items:#?}"
+    );
+}
+
 #[rstest]
 fn test_list_locked_worktree(mut repo: TestRepo) {
     repo.add_worktree("locked-feature");
@@ -165,8 +305,6 @@ fn test_list_locked_no_reason(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-// Removed: test_list_long_branch_name - covered by spacing_edge_cases.rs
-
 #[rstest]
 fn test_list_long_commit_message(mut repo: TestRepo) {
     // Create commit with very long message
@@ -177,8 +315,6 @@ fn test_list_long_commit_message(mut repo: TestRepo) {
 
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
-
-// Removed: test_list_unicode_branch_name - covered by spacing_edge_cases.rs
 
 #[rstest]
 fn test_list_unicode_commit_message(mut repo: TestRepo) {
@@ -372,6 +508,51 @@ fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
         row["repo"].get("project").is_none(),
         "GitHub repo metadata should not include project"
     );
+}
+
+/// A self-hosted instance names its forge however it likes — its own label, a
+/// hyphenated one, inside a word, or a single-label SSH alias — and the
+/// provider follows the name with no config. The statusline stays silent.
+#[rstest]
+fn test_list_json_provider_reads_branded_self_hosted_hosts(repo: TestRepo) {
+    for (remote, host, provider) in [
+        (
+            "https://github-enterprise.acme.com/owner/repo.git",
+            "github-enterprise.acme.com",
+            "github",
+        ),
+        (
+            "https://gitlab-internal.company.com/owner/repo.git",
+            "gitlab-internal.company.com",
+            "gitlab",
+        ),
+        (
+            "https://mygithub.com/owner/repo.git",
+            "mygithub.com",
+            "github",
+        ),
+        (
+            "git@github-personal:owner/repo.git",
+            "github-personal",
+            "github",
+        ),
+    ] {
+        repo.run_git(&["remote", "set-url", "origin", remote]);
+        let output = repo
+            .wt_command()
+            .args(["list", "--format=json"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "wt list should succeed for {remote}"
+        );
+
+        let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let row = json.first().expect("at least one row");
+        assert_eq!(row["repo"]["provider"].as_str(), Some(provider), "{remote}");
+        assert_eq!(row["repo"]["host"].as_str(), Some(host), "{remote}");
+    }
 }
 
 #[rstest]
@@ -944,34 +1125,9 @@ fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// NOTE: This test is used for doc generation (claude-code.md). It removes fixture
-/// worktrees to produce clean output.
-/// TODO: Consider extracting fixture cleanup into a helper function shared with
-/// setup_readme_example_repo.
-#[rstest]
-fn test_list_with_user_marker(mut repo: TestRepo) {
-    // Remove fixture worktrees for clean doc output (used by claude-code.md)
-    for branch in &["feature-a", "feature-b", "feature-c"] {
-        let worktree_path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{}", branch));
-        if worktree_path.exists() {
-            let _ = repo
-                .git_command()
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap(),
-                ])
-                .run();
-        }
-        // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).run();
-    }
-
+/// Set up the clean worktree state shared by the user-marker documentation snapshots.
+fn setup_user_marker_example(repo: &mut TestRepo) {
+    repo.remove_fixture_worktrees();
     repo.commit_with_age("Initial commit", DAY);
 
     // Branch ahead of main with commits and user marker 🤖
@@ -999,7 +1155,11 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
     // Branch with uncommitted changes only (no user marker)
     let wip_wt = repo.add_worktree("wip-docs");
     std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+}
 
+#[rstest]
+fn test_list_with_user_marker(mut repo: TestRepo) {
+    setup_user_marker_example(&mut repo);
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
@@ -1136,32 +1296,6 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
 // These functions create minimal repos for Quick Start documentation.
 // The examples show the simplest workflow: create → list → merge.
 
-/// Remove fixture worktrees to start with a clean main-only repo.
-///
-/// The standard TestRepo fixture includes feature-a, feature-b, feature-c.
-/// Doc examples need clean output without these.
-fn remove_fixture_worktrees(repo: &mut TestRepo) {
-    for branch in &["feature-a", "feature-b", "feature-c"] {
-        let worktree_path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{}", branch));
-        if worktree_path.exists() {
-            let _ = repo
-                .git_command()
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap(),
-                ])
-                .run();
-        }
-        let _ = repo.git_command().args(["branch", "-D", branch]).run();
-    }
-}
-
 /// Set up a minimal repo with just main branch.
 ///
 /// Creates a simple codebase:
@@ -1171,7 +1305,7 @@ fn remove_fixture_worktrees(repo: &mut TestRepo) {
 ///
 /// Used as base for both Quick Start and full README examples.
 fn setup_quickstart_base(repo: &mut TestRepo) {
-    remove_fixture_worktrees(repo);
+    repo.remove_fixture_worktrees();
 
     // Suppress the "customize worktree locations" hint for clean snapshots
     repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
@@ -1405,7 +1539,7 @@ pub fn init() -> bool {
 /// use a different setup function.
 fn setup_readme_example_repo(repo: &mut TestRepo) -> std::path::PathBuf {
     // Start with clean base (removes fixture worktrees)
-    remove_fixture_worktrees(repo);
+    repo.remove_fixture_worktrees();
 
     // === Set up main branch with initial codebase ===
     // Main has a working API with security issues that fix-auth will harden
@@ -2564,32 +2698,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap
 #[rstest]
 fn test_readme_example_list_marker(mut repo: TestRepo) {
-    remove_fixture_worktrees(&mut repo);
-
-    repo.commit_with_age("Initial commit", DAY);
-
-    // Branch ahead of main with commits and user marker 🤖
-    let _feature_wt = repo.add_worktree_with_commit(
-        "feature-api",
-        "api.rs",
-        "// API implementation",
-        "Add REST API endpoints",
-    );
-    repo.set_marker("feature-api", "🤖");
-
-    // Branch with uncommitted changes and user marker 💬
-    let review_wt = repo.add_worktree_with_commit(
-        "review-ui",
-        "component.tsx",
-        "// UI component",
-        "Add dashboard component",
-    );
-    std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
-    repo.set_marker("review-ui", "💬");
-
-    // Branch with uncommitted changes only (no user marker)
-    let wip_wt = repo.add_worktree("wip-docs");
-    std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+    setup_user_marker_example(&mut repo);
 
     assert_cmd_snapshot!(
         "readme_example_list_marker",
@@ -2621,20 +2730,6 @@ url = "http://localhost:{{ branch | hash_port }}"
         "tips_dev_server_workflow",
         list_snapshots::command_readme(&repo, repo.root_path())
     );
-}
-
-#[rstest]
-fn test_list_progressive_flag(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-
-    // Force progressive mode even in non-TTY test environment
-    // Output should be identical to buffered mode (only process differs)
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--progressive");
-        cmd
-    });
 }
 
 #[rstest]
@@ -2695,28 +2790,6 @@ fn test_list_first_output_writes_buffered_stdout(mut repo: TestRepo) {
 // ============================================================================
 // Task DAG Mode Tests
 // ============================================================================
-
-#[rstest]
-fn test_list_task_dag_single_worktree(repo: TestRepo) {
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--progressive");
-        cmd
-    });
-}
-
-#[rstest]
-fn test_list_task_dag_multiple_worktrees(mut repo: TestRepo) {
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-    repo.add_worktree("feature-c");
-
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--progressive");
-        cmd
-    });
-}
 
 #[rstest]
 fn test_list_task_dag_full_with_diffs(mut repo: TestRepo) {

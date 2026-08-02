@@ -770,6 +770,164 @@ fn test_relocate_swap(repo: TestRepo) {
     assert!(path_for_beta.exists(), "beta should be at repo.beta");
 }
 
+/// A worktree whose target is occupied by a *blocked* worktree must itself be
+/// skipped, not temp-moved.
+///
+/// Regression: `beta` sits at `alpha`'s target, so `alpha` depends on `beta`
+/// vacating — but `beta`'s own target is a plain non-worktree file with no
+/// `--clobber`, so `beta` is blocked and never moves. Previously the no-progress
+/// branch treated `alpha` as a cycle, temp-moved it into the staging dir, and
+/// `finalize` then failed moving it into the still-occupied target — erroring
+/// out and stranding `alpha` in `.git/wt/staging/relocate/`.
+#[rstest]
+fn test_relocate_blocked_occupant_skips_dependent(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // beta occupies alpha's expected path (repo.alpha).
+    let path_alpha = parent.join("repo.alpha");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "beta",
+        path_alpha.to_str().unwrap(),
+    ]);
+
+    // alpha lives at a non-standard location and wants repo.alpha.
+    let wrong_alpha = parent.join("wrong-alpha");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "alpha",
+        wrong_alpha.to_str().unwrap(),
+    ]);
+
+    // Block beta's target (repo.beta) with a plain, non-worktree directory.
+    let path_beta = parent.join("repo.beta");
+    fs::create_dir_all(&path_beta).unwrap();
+    fs::write(path_beta.join("blocker.txt"), "blocker").unwrap();
+
+    // Both are skipped; the command must succeed and strand nothing.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "alpha", "beta"],
+        None
+    ));
+
+    // alpha stays at its original location (not stranded in staging).
+    assert!(
+        wrong_alpha.exists(),
+        "alpha should remain at its original location: {}",
+        wrong_alpha.display()
+    );
+    // beta stays where it was (still occupying repo.alpha).
+    assert!(path_alpha.exists(), "beta should remain at repo.alpha");
+    // Nothing left behind in the staging dir.
+    let stranded = repo.root_path().join(".git/wt/staging/relocate/alpha");
+    assert!(
+        !stranded.exists(),
+        "alpha must not be stranded in the staging dir: {}",
+        stranded.display()
+    );
+}
+
+/// A blocked occupant must propagate transitively down a chain of dependents,
+/// across multiple resolution passes.
+///
+/// Extends `test_relocate_blocked_occupant_skips_dependent` to a 3-level chain
+/// (`alpha → beta → gamma-blocked`) that specifically exercises the loop's
+/// `made_progress` re-drive. `gamma`'s target is a plain non-worktree directory
+/// (no `--clobber`), so `gamma` is blocked at construction; `beta` occupies
+/// `gamma`'s dependency (sits at repo.beta) and `alpha` occupies `beta`'s (sits
+/// at repo.alpha), so the block can only reach `alpha` one pass after it reaches
+/// `beta`.
+///
+/// The re-drive is only load-bearing when a dependent is *iterated before* its
+/// occupant within a pass. Worktrees are processed in `git worktree list` order
+/// (git sorts linked worktrees by registration id ≈ path basename), independent
+/// of the argument order — so `alpha` is parked at `aaa-alpha`, whose basename
+/// sorts before `beta`'s `repo.alpha`. That makes pass 1 visit `alpha` while
+/// `beta` is still pending (no block yet → `alpha` stays pending), then block
+/// `beta` (occupant `gamma` already blocked). Only the `made_progress` re-drive
+/// runs a pass 2 that sees `beta` blocked and blocks `alpha` in turn. Drop the
+/// re-drive and pass 1 falls straight into `break_cycle`, which temp-moves the
+/// still-pending `alpha` and `finalize` then misplaces it into the occupied
+/// `repo.alpha` — the exact bug this guards. (Parking `alpha` at a path that
+/// sorts *after* `repo.alpha` collapses the chain into a single pass and no
+/// longer tests the re-drive; see the 2-level test.)
+#[rstest]
+fn test_relocate_blocked_occupant_skips_chain(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // alpha lives at aaa-alpha (basename sorts before repo.alpha, so alpha is
+    // iterated before its occupant beta) and wants repo.alpha.
+    let wrong_alpha = parent.join("aaa-alpha");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "alpha",
+        wrong_alpha.to_str().unwrap(),
+    ]);
+
+    // beta occupies alpha's expected path (repo.alpha) and wants repo.beta.
+    let path_alpha = parent.join("repo.alpha");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "beta",
+        path_alpha.to_str().unwrap(),
+    ]);
+
+    // gamma occupies beta's expected path (repo.beta) and wants repo.gamma.
+    let path_beta = parent.join("repo.beta");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "gamma",
+        path_beta.to_str().unwrap(),
+    ]);
+
+    // Block gamma's target (repo.gamma) with a plain, non-worktree directory.
+    let path_gamma = parent.join("repo.gamma");
+    fs::create_dir_all(&path_gamma).unwrap();
+    fs::write(path_gamma.join("blocker.txt"), "blocker").unwrap();
+
+    // All three are skipped; the command must succeed and strand nothing.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["relocate", "alpha", "beta", "gamma"],
+        None
+    ));
+
+    // Every worktree stays put — none stranded in staging or misplaced into an
+    // occupied target.
+    assert!(
+        wrong_alpha.exists(),
+        "alpha should remain at its original location: {}",
+        wrong_alpha.display()
+    );
+    assert!(path_alpha.exists(), "beta should remain at repo.alpha");
+    assert!(path_beta.exists(), "gamma should remain at repo.beta");
+    let stranded = repo.root_path().join(".git/wt/staging/relocate/alpha");
+    assert!(
+        !stranded.exists(),
+        "alpha must not be stranded in the staging dir: {}",
+        stranded.display()
+    );
+    let misplaced = path_alpha.join("alpha");
+    assert!(
+        !misplaced.exists(),
+        "alpha must not be misplaced inside beta's worktree: {}",
+        misplaced.display()
+    );
+}
+
 /// Test relocating multiple worktrees shows compact output
 #[rstest]
 fn test_relocate_multiple(repo: TestRepo) {
@@ -896,6 +1054,59 @@ worktree-path = "{{ nonexistent_variable }}"
         wrong_path.exists(),
         "Worktree should not be moved when template fails: {}",
         wrong_path.display()
+    );
+}
+
+/// Regression test: the human-readable summary count must include
+/// template-error branches, matching the `--format=json` skip set.
+///
+/// When a valid candidate and a template-error branch coexist, the JSON path
+/// folds template errors into `all_skipped` but the human summary previously
+/// counted only validation/executor skips, undercounting by the number of
+/// template errors. The template here fails only for branch `bad` (via a
+/// branch-gated undefined variable) while `good` expands cleanly, so relocate
+/// moves `good` and skips `bad`.
+#[rstest]
+fn test_relocate_template_error_counted_in_summary(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // `good`: a mismatched worktree that will relocate successfully.
+    let good_wrong = parent.join("good-wrong");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "good",
+        good_wrong.to_str().unwrap(),
+    ]);
+    // `bad`: a worktree whose template expansion fails.
+    let bad_path = parent.join("bad-loc");
+    repo.run_git(&["worktree", "add", "-b", "bad", bad_path.to_str().unwrap()]);
+
+    // Template errors only for branch `bad`; `good` renders the standard path.
+    let worktrunk_config = "worktree-path = \"{% if branch == 'bad' %}{{ undefined_var }}{% endif %}{{ repo_path }}/../{{ repo }}.{{ branch }}\"\n";
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "relocate should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Relocated 1 worktree, skipped 1 worktree"),
+        "summary must count the template-error branch as skipped; stderr was:\n{stderr}"
+    );
+
+    // `good` relocated to its expected sibling path; `bad` untouched.
+    assert!(
+        parent.join("repo.good").exists(),
+        "good should have relocated"
+    );
+    assert!(
+        bad_path.exists(),
+        "bad should be untouched (template error)"
     );
 }
 
@@ -1211,5 +1422,128 @@ fn test_relocate_preserves_subdir(repo: TestRepo) {
     assert!(
         cd_content.contains(&*expected_str),
         "CD file should contain relocated subdirectory path {expected_str}, got: {cd_content}"
+    );
+}
+
+/// A shell started before the split directive protocol cannot follow a
+/// relocated current worktree. The relocation still succeeds, but it must
+/// explain that the wrapper is stale and how to repair it rather than silently
+/// leaving the shell in the renamed-away directory.
+///
+/// Ignored on Windows for the same reason as the adjacent subdirectory test:
+/// relocating a worktree while this process holds its cwd there fails with a
+/// sharing violation before the directive-warning path is reachable.
+#[rstest]
+#[cfg_attr(windows, ignore)]
+fn test_relocate_current_with_retired_wrapper_warns(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    let directive_dir = tempfile::TempDir::new().unwrap();
+    let retired_path = directive_dir.path().join("directive");
+    fs::write(&retired_path, "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_DIRECTIVE_FILE", &retired_path)
+        .args(["step", "relocate"])
+        .current_dir(&wrong_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "relocation should still succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!wrong_path.exists(), "the old worktree path should be gone");
+    assert!(
+        parent.join("repo.feature").exists(),
+        "the worktree should reach its expected path"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell wrapper is out of date"),
+        "the stale wrapper must not fail silently:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt config shell install"),
+        "the warning must include the repair action:\n{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&retired_path).unwrap(),
+        "",
+        "wt must never write to the retired directive file"
+    );
+}
+
+/// An argument naming no worktree is an error. Matching it against branch names
+/// alone left a typo filtering everything out, and the empty result rendered as
+/// "All worktrees are at expected paths" — a success message for a no-op.
+#[rstest]
+fn step_relocate_rejects_unknown_worktree(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--dry-run", "no-such-worktree"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "an unknown argument should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {stderr}"
+    );
+}
+
+/// A detached worktree can be named by path but has no expected path to move
+/// to — the `worktree-path` template is written over the branch name. Naming
+/// one is an error rather than an empty filter reported as success.
+#[rstest]
+fn step_relocate_rejects_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--dry-run", "../repo.feature-detached"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "a detached worktree should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("detached"),
+        "expected a detached-worktree error, got: {stderr}"
+    );
+}
+
+/// A worktree whose directory is gone still resolves by branch, but git has
+/// marked it prunable and there is nothing left to move. Naming one is an error
+/// rather than an empty filter reported as success.
+#[rstest]
+fn step_relocate_rejects_prunable_worktree(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-gone");
+    fs::remove_dir_all(&worktree_path).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--dry-run", "feature-gone"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "a prunable worktree should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("directory is gone"),
+        "expected a prunable-worktree error, got: {stderr}"
     );
 }

@@ -2,7 +2,7 @@
 //!
 //! Provides unified types for PR/MR metadata across platforms.
 
-use crate::git::{RefContext, RefType};
+use crate::git::{ForgeKind, RefType};
 
 /// Platform-specific data for a remote ref.
 ///
@@ -61,14 +61,24 @@ pub enum PlatformData {
     },
 }
 
+impl PlatformData {
+    /// The forge represented by this platform-specific payload.
+    pub const fn forge_kind(&self) -> ForgeKind {
+        match self {
+            Self::GitHub { .. } => ForgeKind::GitHub,
+            Self::Gitea { .. } => ForgeKind::Gitea,
+            Self::GitLab { .. } => ForgeKind::GitLab,
+            Self::AzureDevOps { .. } => ForgeKind::AzureDevOps,
+        }
+    }
+}
+
 /// Unified information about a PR or MR.
 ///
 /// This struct contains all the data needed to create a local branch
 /// for a PR/MR, regardless of platform.
 #[derive(Debug, Clone)]
 pub struct RemoteRefInfo {
-    /// The reference type (PR or MR).
-    pub ref_type: RefType,
     /// The PR/MR number.
     pub number: u32,
     /// The PR/MR title.
@@ -91,36 +101,14 @@ pub struct RemoteRefInfo {
     pub platform_data: PlatformData,
 }
 
-impl RefContext for RemoteRefInfo {
-    fn ref_type(&self) -> RefType {
-        self.ref_type
+impl RemoteRefInfo {
+    /// Whether this forge calls the change request a PR or an MR.
+    pub const fn ref_type(&self) -> RefType {
+        self.platform_data.forge_kind().ref_type()
     }
 
-    fn number(&self) -> u32 {
-        self.number
-    }
-
-    fn title(&self) -> &str {
-        &self.title
-    }
-
-    fn author(&self) -> &str {
-        &self.author
-    }
-
-    fn state(&self) -> &str {
-        &self.state
-    }
-
-    fn draft(&self) -> bool {
-        self.draft
-    }
-
-    fn url(&self) -> &str {
-        &self.url
-    }
-
-    fn source_ref(&self) -> String {
+    /// The source branch reference for display.
+    pub fn source_ref(&self) -> String {
         if self.is_cross_repo {
             // Try to extract owner for display
             match &self.platform_data {
@@ -148,9 +136,7 @@ impl RefContext for RemoteRefInfo {
             self.source_branch.clone()
         }
     }
-}
 
-impl RemoteRefInfo {
     /// Generate a prefixed local branch name for when the unprefixed name conflicts.
     ///
     /// Returns `<owner>/<branch>` (e.g., `contributor/main`).
@@ -207,7 +193,6 @@ mod tests {
     #[test]
     fn test_source_ref_same_repo() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 101,
             title: "Fix bug".to_string(),
             author: "alice".to_string(),
@@ -225,13 +210,13 @@ mod tests {
                 base_repo: "repo".to_string(),
             },
         };
+        assert_eq!(info.ref_type(), RefType::Pr);
         assert_eq!(info.source_ref(), "feature-auth");
     }
 
     #[test]
     fn test_source_ref_fork_gitea() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 42,
             title: "Add feature".to_string(),
             author: "contributor".to_string(),
@@ -249,13 +234,13 @@ mod tests {
                 base_repo: "repo".to_string(),
             },
         };
+        assert_eq!(info.ref_type(), RefType::Pr);
         assert_eq!(info.source_ref(), "contributor:feature-fix");
     }
 
     #[test]
     fn test_source_ref_fork_github() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 42,
             title: "Add feature".to_string(),
             author: "contributor".to_string(),
@@ -279,7 +264,6 @@ mod tests {
     #[test]
     fn test_source_ref_fork_gitlab() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Mr,
             number: 101,
             title: "Fix bug".to_string(),
             author: "contributor".to_string(),
@@ -297,13 +281,13 @@ mod tests {
                 target_project_id: 123,
             },
         };
+        assert_eq!(info.ref_type(), RefType::Mr);
         assert_eq!(info.source_ref(), "contributor:feature-fix");
     }
 
     #[test]
     fn test_prefixed_local_branch_name_github() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 101,
             title: "Test".to_string(),
             author: "contributor".to_string(),
@@ -330,7 +314,6 @@ mod tests {
     #[test]
     fn test_prefixed_local_branch_name_gitea() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 101,
             title: "Test".to_string(),
             author: "contributor".to_string(),
@@ -357,7 +340,6 @@ mod tests {
     #[test]
     fn test_prefixed_local_branch_name_gitlab() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Mr,
             number: 101,
             title: "Test".to_string(),
             author: "contributor".to_string(),
@@ -424,7 +406,6 @@ mod tests {
     #[test]
     fn test_source_ref_azure_same_repo() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 550,
             title: "Add ACH mandate support".to_string(),
             author: "crogers".to_string(),
@@ -447,7 +428,6 @@ mod tests {
     #[test]
     fn test_prefixed_local_branch_name_azure() {
         let info = RemoteRefInfo {
-            ref_type: RefType::Pr,
             number: 550,
             title: "Test".to_string(),
             author: "crogers".to_string(),

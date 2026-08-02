@@ -140,7 +140,7 @@ The split-trust design enforces two trust levels:
 
 All directive env vars are removed from spawned subprocesses by default via
 `shell_exec::scrub_directive_env_vars()`. `DirectivePassthrough::inherit_from_env()`
-re-adds only the CD file (and legacy compat file) for trusted contexts.
+re-adds only the CD file for trusted contexts.
 
 ## Windows Compatibility (Git Bash / MSYS2)
 
@@ -735,6 +735,33 @@ eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktree
 // BAD - quoted commands
 eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
 ```
+
+## Hyperlinks
+
+Every OSC 8 link is underlined. Link text is sized to fit a column (`#3604`,
+`:11486`) and reads as ordinary content, and color already carries state (the
+CI verdict, dim for a port nothing answers on), so the underline is what marks
+a run of text as clickable.
+
+`worktrunk::styling::hyperlink(url, text)` emits the link and its underline
+together, which is what keeps the rule true at every call site. It closes with
+`[24m`, leaving a surrounding color or dim intact.
+
+```rust
+// GOOD - the helper carries the underline
+let cell = hyperlink(url, &format!(":{port}"));
+// GOOD - a caller's own style wraps the link
+format!("{style}{}{style:#}", hyperlink(url, text))
+// BAD - hand-assembled sequences, unmarked link
+format!("{}{text}{}", osc8::Hyperlink::new(url), osc8::Hyperlink::END)
+```
+
+Text that isn't a link stays plain, and whether a run of text is a link belongs
+to the render rather than to the cell emitting it: `LayoutConfig::link_style`
+answers it once for a whole row, so a CI reference and a dev-server port can't
+disagree. Two destinations carry no links, and so no underline: a terminal
+without OSC 8 support, where `wt list` prints the dev-server URL in full, and
+the picker, whose rows pass through skim.
 
 ## Design Principles
 

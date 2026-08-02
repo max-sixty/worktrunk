@@ -136,6 +136,27 @@ pub fn format_path_for_display(path: &Path) -> String {
     }
 }
 
+/// Expand a leading `~` to the user's home directory.
+///
+/// The inverse of [`format_path_for_display`], which renders home-relative paths
+/// in tilde form. wt prints those paths in its own status lines and hints, so a
+/// user pasting one back — quoted, where the shell leaves `~` alone — names the
+/// same directory wt named. Paths wt derives itself are already absolute and
+/// pass through untouched.
+///
+/// Only a bare `~` or a leading `~/` expands. `~user` is a shell feature that
+/// resolves another account's home directory, which wt does not reimplement, so
+/// it stays a literal relative path — as does a `~` anywhere but the front.
+pub fn expand_tilde(path: &Path) -> Cow<'_, Path> {
+    let Ok(rest) = path.strip_prefix("~") else {
+        return Cow::Borrowed(path);
+    };
+    let Some(home) = home_dir() else {
+        return Cow::Borrowed(path);
+    };
+    Cow::Owned(home.join(rest))
+}
+
 /// Canonicalize a path, resolving parent symlinks even if the path doesn't exist.
 ///
 /// For existing paths, uses standard canonicalization.
@@ -218,9 +239,34 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        canonicalize_with_parents, format_path_for_display, home_dir, paths_match,
+        canonicalize_with_parents, expand_tilde, format_path_for_display, home_dir, paths_match,
         sanitize_for_filename, to_posix_path,
     };
+
+    /// The tilde form `format_path_for_display` prints is a form wt reads back,
+    /// so a path from wt's own output can be pasted into a wt command.
+    #[test]
+    fn expand_tilde_round_trips_displayed_paths() {
+        // No skip guard: every platform the suite runs on sets HOME or
+        // USERPROFILE, and skipping would leave the assertion silently unrun.
+        let home = home_dir().expect("HOME or USERPROFILE is set");
+
+        let path = home.join("workspace").join("repo.feature");
+        let displayed = format_path_for_display(&path);
+        assert_eq!(expand_tilde(&PathBuf::from(displayed)), path);
+
+        assert_eq!(expand_tilde(&PathBuf::from("~")), home);
+    }
+
+    /// Only a leading `~` component expands: `~user` is a shell feature wt does
+    /// not reimplement, and a tilde mid-path is an ordinary directory name.
+    #[test]
+    fn expand_tilde_leaves_other_tildes_alone() {
+        for literal in ["~user/repo", "sub/~/repo", "repo~", "../repo.feature"] {
+            let path = PathBuf::from(literal);
+            assert_eq!(expand_tilde(&path), path, "{literal} should not expand");
+        }
+    }
 
     #[test]
     fn shortens_path_under_home() {

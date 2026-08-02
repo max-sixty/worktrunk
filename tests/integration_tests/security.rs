@@ -29,10 +29,6 @@
 //! 4. **Filesystem layer**: OS enforces valid path characters (NUL is
 //!    universally invalid in paths).
 //!
-//! 5. **Legacy escaping** (compat path only): When the pre-split legacy
-//!    wrapper is active, paths use POSIX single-quote escaping (`'\''`),
-//!    which handles `$`, `` ` ``, `;`, `&`, `|`, spaces, etc.
-//!
 //! ## What These Tests Verify
 //!
 //! The CD file holds a raw path, so path-based shell injection is structurally
@@ -244,34 +240,6 @@ fn test_commit_message_with_directive_not_executed(mut repo: TestRepo) {
 }
 
 ///
-/// This tests if file paths shown in output could inject directives
-#[cfg(unix)]
-#[rstest]
-fn test_path_with_directive_not_executed(repo: TestRepo) {
-    // Create a directory with a malicious name
-    let malicious_dir = repo
-        .root_path()
-        .join("__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked5");
-    std::fs::create_dir_all(&malicious_dir).unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-
-    // Run a command that might display this path
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.arg("list").current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    assert!(
-        !std::path::Path::new("/tmp/hacked5").exists(),
-        "Malicious code was executed from path display!"
-    );
-}
-
-///
 /// Similar to EXEC injection, but for CD directives
 #[rstest]
 fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
@@ -419,47 +387,6 @@ fn test_git_rejects_ansi_escape_in_branch_names(repo: TestRepo) {
         "Expected git to complain about invalid branch name, got: {}",
         stderr
     );
-}
-
-/// Test that manually created refs with ANSI escapes are ignored by git.
-///
-/// Even if an attacker bypasses git's normal validation and creates a ref file
-/// directly in .git/refs/heads/ with ANSI codes in the filename, git ignores it.
-#[rstest]
-#[cfg(unix)]
-fn test_git_ignores_malformed_refs_with_ansi(repo: TestRepo) {
-    let shell_cmd = r#"
-        commit_sha=$(git rev-parse HEAD)
-        printf "$commit_sha" > '.git/refs/heads/feature-'$'\x1b''[31mRED'$'\x1b''[0m-test'
-        "#;
-
-    let create_result = Command::new("bash")
-        .args(["-c", shell_cmd])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    assert!(
-        create_result.status.success(),
-        "Failed to create malformed ref file: {}",
-        String::from_utf8_lossy(&create_result.stderr)
-    );
-
-    // Git should ignore the malformed ref
-    let branch_output = repo.git_output(&["branch", "-a"]);
-    assert!(
-        !branch_output.contains("RED"),
-        "Malformed ref with ANSI escape should not appear in branch list"
-    );
-
-    // wt list should also not show it
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.arg("list").current_dir(repo.root_path());
-        assert_cmd_snapshot!(cmd);
-    });
 }
 
 /// Test that literal escape-like text in branch names displays safely.

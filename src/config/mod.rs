@@ -161,21 +161,23 @@ pub use deprecation::{
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
-    TemplateExpandError, ValidationScope, alias_context_filter, base_vars, expand_template,
-    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
-    referenced_vars_for_config, sanitize_branch_name, sanitize_db, short_hash,
+    TemplateContext, TemplateExpandError, ValidationScope, VarScope, VarsMode,
+    alias_context_filter, base_vars, expand_template, format_alias_variables,
+    format_base_variables, format_hook_variables, redact_credentials, referenced_vars_for_config,
+    referenced_vars_for_templates, sanitize_branch_name, sanitize_db, short_hash,
     template_environment, template_references_var, validate_list_column_template,
     validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
 };
 pub use hooks::HooksConfig;
 pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
-    ProjectListConfig, valid_project_config_keys,
+    ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
 };
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
 pub(crate) use user::LoadError;
+pub(crate) use user::project_match::matching_keys as matching_project_keys;
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,
     MergeConfig, RemoveConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig,

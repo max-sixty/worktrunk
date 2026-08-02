@@ -36,6 +36,10 @@ $ wt switch --create fix --base release    # New branch from release
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
+## Naming a worktree
+
+Worktrees are addressed by branch name, and every argument that takes one also accepts the path of the worktree itself — resolved after the branch, so a directory never shadows a branch sharing its name. A path names what a branch cannot: a detached worktree, or one of two checkouts of the same branch. Relative paths resolve against `-C` and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
+
 ## Shortcuts
 
 | Shortcut | Meaning |
@@ -97,7 +101,7 @@ Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](https://worktrunk.dev/config/#commit)
 6. **pr** — The selected row's PR/MR, for any row whose branch has one
-7. **comments** — The PR/MR's comment thread, fetched from the forge on `--prs` rows
+7. **comments** — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
 
 On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every `Alt-N` accelerator stays visible.
 
@@ -145,7 +149,7 @@ Usage: wt switch [OPTIONS] [BRANCH] [-- <EXECUTE_ARGS>...]
 
 Arguments:
   [BRANCH]
-          Branch name, shortcut, or PR/MR URL
+          Branch, worktree path, shortcut, or PR/MR URL
 
           Opens interactive picker if omitted. Shortcuts: ^ (default branch), - (previous), @
           (current), pr:{N} (GitHub PR), mr:{N} (GitLab MR)
@@ -177,7 +181,8 @@ Options:
           there.
 
           Supports hook template variables ({{ branch }}, {{ worktree_path }}, etc.) and filters. {{
-          base }} and {{ base_worktree_path }} require --create.
+          base }} and {{ base_worktree_path }} describe the source: the selected base with --create,
+          or the invoking worktree when switching to an existing worktree.
 
           Especially useful with shell aliases:
 

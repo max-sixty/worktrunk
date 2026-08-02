@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -24,6 +25,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -135,6 +137,8 @@ The default-branch walk is capped so a single check stays fast; a squash merge w
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
 Branches matching these conditions and with empty working trees are dimmed in [2mwt list[0m as safe to delete.
+
+Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via [2mgit worktree add --force[0m) fails a different test: deleting the ref would leave that worktree unable to resolve [2mHEAD[0m, which is why [2mgit branch -d[0m refuses the same delete. Such a branch is retained whatever [2m-D[0m asks, and the surviving checkout is named.
 
 [1m[32mForce flags[0m
 

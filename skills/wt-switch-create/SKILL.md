@@ -33,9 +33,9 @@ branch-shaped lead — all task).
 
 ## What to do
 
-Steps 1–3 run on every invocation, before any other work. The invocation is
-itself the explicit request to create the worktree; a research or read-only
-task gets one all the same.
+Creating the worktree comes first on every invocation, before any other work.
+The invocation is itself the explicit request to create it; a research or
+read-only task gets one all the same.
 
 <!-- Maintainers: rationale.md (same directory) covers the harness rules and
 design choices behind this — read it before re-adding guards or routes. -->
@@ -44,7 +44,20 @@ design choices behind this — read it before re-adding guards or routes. -->
    consistent with existing worktree names, or, mid-session, from the work
    being moved; with nothing to derive from, ask.
 
-2. **Create the worktree** with a `Bash` call (omit `-C <repo>` for this repo):
+2. **With no repo argument, create and enter in one call:**
+   `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook runs
+   `wt switch --create`, so the result is an ordinary `wt` worktree in the
+   default layout, and the user sees no confirmation prompt. On success,
+   do the task (or, with no task text, confirm it's ready and wait).
+
+   Mid-session, carry uncommitted work across: `git stash push -u` before the
+   `EnterWorktree` call, then `git stash pop` after — the call re-roots the
+   session into the new worktree, and the stash is shared across worktrees.
+
+3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
+   repo argument, which step 2 can't target, and a failed step 2, whose error
+   says which — `✗ Branch <branch> already exists`, or `Already in a worktree
+   session`. Create with a `Bash` call (omit `-C <repo>` for this repo):
 
    ```
    wt -C <repo> switch --create <branch> --no-cd --format=json
@@ -56,29 +69,20 @@ design choices behind this — read it before re-adding guards or routes. -->
    worktree if missing); if step 1 picked the name, pick another and rerun. Any
    other failure (not a git repo, invalid name): report it and stop.
 
-   Mid-session, carry uncommitted work across: `git stash push -u` before
-   creating the worktree, then `git -C <path> stash pop` after (the stash is
-   shared across worktrees).
-
-3. **Enter the worktree, then do the task.** Call
-   `EnterWorktree({path: "<path from the JSON>"})`.
+   Then call `EnterWorktree({path: "<path from the JSON>"})`.
 
    - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
      with no task text, confirm it's ready and wait).
-   - **Rejected** → graceful, and nothing is created. `EnterWorktree`
-     re-roots only into a worktree the session is permitted to enter, and that
-     permitted set is fixed by two factors: the repo your cwd resolves to, and
-     the session's state. Each rejection is just that set coming up empty or
-     without the target: no repo resolves (cwd is outside any git repo, e.g. a
-     non-git parent such as `~/workspace` that only holds repos, as in a
-     background job), which fails with `the current directory is not in a git
-     repository`; the target belongs to a different repo than the one resolved;
-     or the session is already rooted in a worktree (or is a pinned agent), a
-     state that narrows the set to the resolved repo's `.claude/worktrees/` and
-     so excludes even a same-repo `wt` sibling. All reduce to the same recovery
-     test: whether you can `cd` into the worktree, which works when it's inside
-     an allowed directory (a `permissions.additionalDirectories` entry such as
-     `~/workspace`). So `cd <path>` and read the result:
+   - **Tool error** — the tool ran and returned an error (`Cannot enter
+     worktree: …`) → graceful; nothing moved, and one recovery covers them
+     all. Common causes: the cwd resolves to no git repo (e.g. a non-git
+     parent like `~/workspace` that only holds repos, as in a background job)
+     or to a different repo than the target; or the session is already rooted
+     in a worktree (or is a pinned agent), which limits entry to the current
+     repo's `.claude/worktrees/` and excludes even a same-repo `wt` sibling.
+     The recovery test is whether you can `cd` into the worktree, which works
+     when it's inside an allowed directory. So `cd <path>` and read the
+     result:
      - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
        Work there, but a bare `cd` is not a tracked re-root, so the cwd can
        revert to the session's launch worktree across turns (and in spawned
@@ -89,15 +93,28 @@ design choices behind this — read it before re-adding guards or routes. -->
        `permissions.additionalDirectories` (durable, every session), or run
        `/add-dir <path>` (this session). Then continue. Don't grind through
        absolute paths with `cd` resetting on every command.
+   - **Denied** — the call itself was refused, with no tool error → however
+     the denial is worded, it is the user's answer to the confirmation Claude
+     Code shows for entering a worktree outside `.claude/worktrees/`, unless
+     there was no user to ask (the denial says the session couldn't prompt),
+     which decides nothing — take the recovery above. On the user's answer:
+     the worktree `wt` just created still exists; only the entry didn't
+     happen. Report its path and ask how to proceed, since reaching it
+     through `cd` would override that answer.
 
 ## Cleanup
 
-The worktree is a normal worktrunk worktree: it persists after the session
-ends, shows up in `wt list`, and is merged or removed with `wt merge` /
-`wt remove <branch>` like any other. Don't remove it unprompted. If the user
-asks to leave mid-session, `ExitWorktree({action: "keep"})` returns the
-session to its original directory; `ExitWorktree` cannot remove a worktree
-entered by `path`, so removal is always `wt remove <branch>`.
+The worktree is a normal worktrunk worktree: it shows up in `wt list` and is
+merged or removed with `wt merge` / `wt remove <branch>` like any other. Don't
+remove it unprompted.
+
+A worktree from step 2 that the session never touched — no changed files, no
+commits — is cleaned up when the session ends, branch included; anything
+written into it keeps it. A worktree from step 3 always stays. If the user asks
+to leave mid-session, `ExitWorktree({action: "keep"})` returns the session to
+its original directory;
+`ExitWorktree` cannot remove a worktree entered by `path`, so removing one of
+those is always `wt remove <branch>`.
 
 ## Scope
 

@@ -541,8 +541,10 @@ fn parse_git_bool_variants() {
 fn worktree_config_enabled_detects_extension() {
     // The detector keys on the lowercased canonical form that git emits in
     // `--list -z` output. Both git-bool truthy spellings and the absent/
-    // explicitly-false cases must classify correctly — getting either wrong
-    // breaks the prewarm-skip in `prewarm_git_config` (see issue #2779).
+    // explicitly-false cases must classify correctly. A false truthy costs
+    // one extra prewarm fork (the common-dir post-pass caches the same map);
+    // a false falsy caches the incomplete linked-worktree map and
+    // reintroduces the #2779 `is_bare=false` bug.
     use indexmap::IndexMap;
 
     let mut empty: IndexMap<String, Vec<String>> = IndexMap::new();
@@ -713,6 +715,37 @@ fn commit_details_many_returns_subject_with_spaces() {
     // and a fresh test repo never needs more than that.
     assert!(sha1.starts_with(short1.as_str()));
     assert!(sha2.starts_with(short2.as_str()));
+}
+
+#[test]
+fn abbrev_len_follows_core_abbrev_and_covers_absent_objects() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    // The width git actually uses here — the same one `%h` and `short_sha`
+    // produce, which is the whole point of asking git rather than picking a
+    // number.
+    let head_short = test.repo.short_sha("HEAD").unwrap();
+    assert_eq!(test.repo.abbrev_len(), head_short.chars().count());
+
+    // `core.abbrev` reaches it. A fresh `Repository` because the width is
+    // resolved once per repo handle and cached for the process.
+    test.repo
+        .run_command(&["config", "core.abbrev", "12"])
+        .unwrap();
+    let reread = Repository::at(test.path()).unwrap();
+    assert_eq!(reread.abbrev_len(), 12);
+
+    // The case `short_sha` can't serve per-SHA: an object that isn't in the
+    // store, as every commit the `--prs` log tab gets from a forge API is. git
+    // has nothing to disambiguate against, so this width is its whole answer.
+    let absent = "0".repeat(head_short.chars().count().max(40));
+    assert_eq!(
+        reread.short_sha(&absent).unwrap().chars().count(),
+        reread.abbrev_len(),
+    );
 }
 
 #[test]
@@ -972,22 +1005,7 @@ fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf
     std::fs::create_dir_all(&project_root).unwrap();
     let git_dir = project_root.join(".git");
 
-    let gitconfig = tmp.path().join("test-gitconfig");
-    std::fs::write(
-        &gitconfig,
-        "[init]\n\tdefaultBranch = main\n[user]\n\tname = test\n\temail = test@test\n",
-    )
-    .unwrap();
-    let git = || {
-        Cmd::new("git")
-            .env("GIT_CONFIG_GLOBAL", &gitconfig)
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C")
-            .env("LANG", "C")
-            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-    };
+    let git = || crate::testing::configure_git_env(Cmd::new("git"));
 
     let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
 
@@ -1085,9 +1103,9 @@ fn prewarm_from_linked_worktree_under_worktree_config_preserves_is_bare() {
     // `all_config()` with the stale value, and `is_bare()` returned
     // `false` from the linked worktree.
     //
-    // After the fix, the prewarm detects `extensions.worktreeconfig=true`
-    // and skips the preload — `all_config()` re-forks from
-    // `git_common_dir`, which sees the merged set.
+    // The prewarm detects `extensions.worktreeconfig=true`, declines the
+    // discovery-path map, and preloads the `git_common_dir` read instead —
+    // the merged set `all_config()` would fork for on demand.
     use super::Repository;
 
     let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
@@ -1123,41 +1141,153 @@ fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
 }
 
 #[test]
-fn prewarm_skips_preload_when_worktree_config_enabled() {
-    // Direct test of the prewarm skip: with the extension on, the preload
-    // map for the linked worktree must stay empty so `all_config()`
-    // re-forks from `git_common_dir` instead of consuming a stale map.
+fn prewarm_partial_warm_runs_only_the_cold_threads() {
+    // The gates are per-cache: with the git-config preload already present
+    // (and the process-wide user-config preload latched) but no resolved
+    // common dir, prewarm still runs the rev-parse thread, and neither the
+    // config thread nor the post-pass touches the existing preload.
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let init_repo = |name: &str| {
+        let root = canonicalize(tmp.path()).unwrap().join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
+            .args(["init", "-b", "main", root.to_str().unwrap()])
+            .run()
+            .unwrap();
+        assert!(out.status.success(), "git init failed");
+        root
+    };
+
+    // A full prewarm on one repo latches the process-wide user-config
+    // preload (OnceLock), whichever test runs first.
+    super::Repository::prewarm_at(&init_repo("first"));
+    assert!(super::WORKTRUNK_USER_CONFIG_PRELOAD.get().is_some());
+
+    // Second repo: hand-populate the config preload, then prewarm. Only
+    // the rev-parse cache is cold.
+    let second = init_repo("second");
+    let sentinel: indexmap::IndexMap<String, Vec<String>> =
+        [("wt.sentinel".to_string(), vec!["1".to_string()])]
+            .into_iter()
+            .collect();
+    super::GIT_CONFIG_PRELOAD.insert(second.clone(), sentinel);
+
+    super::Repository::prewarm_at(&second);
+
+    assert!(
+        super::GIT_COMMON_DIR_CACHE.contains_key(&second),
+        "rev-parse thread must run when only its cache is cold"
+    );
+    let sentinel_value = |path: &std::path::Path| {
+        super::GIT_CONFIG_PRELOAD
+            .get(path)
+            .and_then(|e| e.value().get("wt.sentinel").and_then(|v| v.last()).cloned())
+    };
+    assert_eq!(
+        sentinel_value(&second),
+        Some("1".to_string()),
+        "an existing preload must not be re-read or overwritten"
+    );
+
+    // Fully warm: every gate is satisfied, so a repeat call early-returns
+    // without spawning anything or touching the preload.
+    super::Repository::prewarm_at(&second);
+    assert_eq!(sentinel_value(&second), Some("1".to_string()));
+}
+
+#[test]
+fn prewarm_post_pass_swallows_common_dir_read_failures() {
+    // Best-effort contract: when the declined preload's common-dir re-read
+    // fails — the directory is gone, or its config is corrupt — the post-pass
+    // leaves the preload empty and the on-demand `all_config()` surfaces the
+    // error. The rev-parse thread is skipped (its cache is hand-populated),
+    // so the bogus common-dir entries survive to the post-pass.
     let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
 
+    // Spawn failure: the cached common dir does not exist.
+    let missing = linked.join("no-such-dir");
+    super::GIT_COMMON_DIR_CACHE.insert(linked.clone(), missing);
     super::Repository::prewarm_at(&linked);
     assert!(
         super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
-        "prewarm must skip GIT_CONFIG_PRELOAD when extensions.worktreeConfig=true"
+        "a failed spawn must not populate the preload"
+    );
+
+    // Non-zero exit: the cached common dir is a git dir with corrupt config.
+    let (_tmp2, project2, _main2, linked2) = build_worktree_config_bare_layout();
+    let corrupt = project2.join("corrupt.git");
+    let out = crate::testing::configure_git_env(crate::shell_exec::Cmd::new("git"))
+        .args(["init", "--bare", corrupt.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init --bare failed");
+    std::fs::write(corrupt.join("config"), "[core\ngarbage").unwrap();
+    super::GIT_COMMON_DIR_CACHE.insert(linked2.clone(), corrupt);
+    super::Repository::prewarm_at(&linked2);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked2).is_none(),
+        "a non-zero config read must not populate the preload"
+    );
+}
+
+#[test]
+fn all_config_without_prewarm_reads_common_dir_under_worktree_config() {
+    // The on-demand branch: a `Repository::at` with no prewarm (a non-base
+    // discovery path in production) gets no preload, so `all_config()` forks
+    // — and it must fork from `git_common_dir`, not the discovery path, or
+    // the linked worktree's partial config map reintroduces the #2779
+    // `is_bare=false` bug. The prewarm post-pass caches the same read, so
+    // only this prewarm-less construction still exercises the fork.
+    use super::Repository;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    let repo = Repository::at(&linked).unwrap();
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
+        "test setup: no preload may exist for this path"
+    );
+    assert!(
+        repo.is_bare().unwrap(),
+        "on-demand all_config must read core.bare=true from the common dir"
+    );
+}
+
+#[test]
+fn prewarm_preload_under_worktree_config_holds_common_dir_map() {
+    // With the extension on, the discovery-path read is declined (it misses
+    // the main worktree's `config.worktree`) and the post-pass re-reads from
+    // `git_common_dir`. The preload must land, and it must be the merged
+    // common-dir map — `core.bare = true` from `.git/config.worktree` is the
+    // #2779 poison pin: the declined linked-worktree read would say `false`.
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    super::Repository::prewarm_at(&linked);
+    let entry = super::GIT_CONFIG_PRELOAD
+        .get(&linked)
+        .expect("prewarm must preload the common-dir map under extensions.worktreeConfig");
+    assert_eq!(
+        entry.value().get("core.bare").and_then(|v| v.last()),
+        Some(&"true".to_string()),
+        "the preload must hold the merged common-dir map, not the linked worktree's partial one"
     );
 }
 
 #[test]
 fn prewarm_still_caches_preload_when_worktree_config_disabled() {
-    // The skip is targeted: normal repos (no worktreeConfig extension)
-    // still benefit from the prewarm preload. This guards against
-    // regressing the optimization for the common case while fixing #2779.
-    //
-    // Build a fresh repo directly (bypass `TestRepo`, whose constructor
-    // calls `Repository::at` and populates `GIT_COMMON_DIR_CACHE` — that
-    // short-circuits `prewarm_at` before it can run the config preload).
+    // The #2779 decline is targeted: normal repos (no worktreeConfig
+    // extension) get the preload from the discovery-path read alone.
     use super::canonicalize;
     use crate::shell_exec::Cmd;
 
     let tmp = tempfile::tempdir().unwrap();
     let root = canonicalize(tmp.path()).unwrap().join("normal");
     std::fs::create_dir_all(&root).unwrap();
-    let gitconfig = tmp.path().join("test-gitconfig");
-    std::fs::write(&gitconfig, "[init]\n\tdefaultBranch = main\n").unwrap();
 
-    let out = Cmd::new("git")
-        .env("GIT_CONFIG_GLOBAL", &gitconfig)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("LC_ALL", "C")
+    let out = crate::testing::configure_git_env(Cmd::new("git"))
         .args(["init", "-b", "main", root.to_str().unwrap()])
         .run()
         .unwrap();
@@ -1168,4 +1298,287 @@ fn prewarm_still_caches_preload_when_worktree_config_disabled() {
         super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
         "prewarm should preload normal repos (no extensions.worktreeConfig)"
     );
+}
+
+#[test]
+fn prewarm_after_early_repository_still_preloads_config() {
+    // A `Repository` constructed before prewarm — the `-vv` log-file sinks
+    // in `log_files::init` do this during `logging::init` — populates
+    // `GIT_COMMON_DIR_CACHE` on its own. Prewarm used to fast-path on that
+    // one key and silently skip the config preloads, so every `-vv` run
+    // lost them and its trace overstated the `git config --list -z` forks
+    // of a normal run. Each prewarm thread now gates on the cache it
+    // populates: the config preload must land even when the common dir is
+    // already resolved.
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap().join("early");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let out = crate::testing::configure_git_env(Cmd::new("git"))
+        .args(["init", "-b", "main", root.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init failed");
+
+    super::Repository::at(&root).unwrap();
+    assert!(
+        super::GIT_COMMON_DIR_CACHE.contains_key(&root),
+        "Repository::at should have resolved the common dir"
+    );
+
+    super::Repository::prewarm_at(&root);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
+        "prewarm must still preload git config when GIT_COMMON_DIR_CACHE was populated first"
+    );
+}
+
+/// A worktree answers to its branch and to its own path, and the branch wins.
+///
+/// Both spellings reaching the same worktree is the point of routing every
+/// worktree argument through one canonicalizer; branch-first is what keeps a
+/// directory from shadowing a branch that shares its name.
+#[test]
+fn resolve_worktree_accepts_branch_and_path() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    // A relative path resolves against `-C`, which only a spawned `wt` has —
+    // `switch::switch_by_relative_worktree_path` covers that spelling.
+    for selector in ["feature", worktree_path.to_str().unwrap()] {
+        let resolved = test.repo.resolve_worktree(selector).unwrap();
+        let ResolvedWorktree::Worktree { path, branch } = resolved else {
+            panic!("{selector} should resolve to a worktree");
+        };
+        assert_eq!(canonicalize(&path).unwrap(), worktree_path);
+        assert_eq!(branch.as_deref(), Some("feature"));
+    }
+}
+
+/// A directory whose name matches a branch does not shadow it: `wt switch docs`
+/// means the branch even when `docs/` is also a worktree.
+#[test]
+fn resolve_worktree_prefers_branch_over_same_named_directory() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let branch_worktree = test.add_worktree("docs");
+    // A second worktree literally at `<repo>/docs`, on a different branch.
+    let nested = test.root_path().join("docs");
+    test.add_worktree_at_path("docs-nested", &nested);
+
+    let ResolvedWorktree::Worktree { path, branch } = test.repo.resolve_worktree("docs").unwrap()
+    else {
+        panic!("docs should resolve to a worktree");
+    };
+    assert_eq!(branch.as_deref(), Some("docs"));
+    assert_eq!(canonicalize(&path).unwrap(), branch_worktree);
+}
+
+/// A detached worktree has no branch to be named by, so its path is the only
+/// selector that reaches it.
+#[test]
+fn resolve_worktree_reaches_detached_worktree_by_path() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    test.detach_head_in_worktree("feature");
+
+    let ResolvedWorktree::Worktree { path, branch } = test
+        .repo
+        .resolve_worktree(worktree_path.to_str().unwrap())
+        .unwrap()
+    else {
+        panic!("a detached worktree should resolve by path");
+    };
+    assert_eq!(canonicalize(&path).unwrap(), worktree_path);
+    assert_eq!(branch, None);
+
+    // And it is the one case `require_selected_branch` refuses.
+    let err = test
+        .repo
+        .require_selected_branch(worktree_path.to_str().unwrap(), "promote")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("detached"),
+        "expected a detached-HEAD error, got: {err}"
+    );
+}
+
+/// `-` and `^` expand to a branch, so the literal token never reaches the path
+/// lookup — a directory named `-` cannot hijack `wt switch -`.
+#[test]
+fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let default_branch = test.repo.default_branch().unwrap();
+    // A worktree literally at `<repo>/^`, which `^` must not resolve to.
+    let decoy = test.root_path().join("^");
+    test.add_worktree_at_path("decoy", &decoy);
+
+    let resolved = test.repo.resolve_worktree("^").unwrap();
+    let branch = match resolved {
+        ResolvedWorktree::Worktree { branch, .. } => branch,
+        ResolvedWorktree::BranchOnly { branch } => Some(branch),
+    };
+    assert_eq!(branch.as_deref(), Some(default_branch.as_str()));
+}
+
+/// A name matching neither a branch nor a worktree path is branch-only, which
+/// is what lets `wt remove` still delete a worktree-less branch.
+#[test]
+fn resolve_worktree_falls_through_to_branch_only() {
+    use crate::git::ResolvedWorktree;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    let resolved = test.repo.resolve_worktree("../nowhere").unwrap();
+    let ResolvedWorktree::BranchOnly { branch } = resolved else {
+        panic!("an unmatched selector should resolve to branch-only");
+    };
+    assert_eq!(branch, "../nowhere");
+
+    // A selector matching nothing names neither, so the error claims neither —
+    // suggesting `wt switch ../nowhere` to create a worktree would only fail.
+    let err = test.repo.require_worktree("../nowhere").unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {err}"
+    );
+}
+
+/// A branch that exists without a checkout is the one case where offering to
+/// create a worktree is right, so it keeps the distinct message and hint.
+#[test]
+fn require_worktree_distinguishes_a_branch_with_no_checkout() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    test.run_git(&["branch", "worktreeless"]);
+
+    let err = test.repo.require_worktree("worktreeless").unwrap_err();
+    let rendered = format!("{err}");
+    assert!(
+        rendered.contains("has no worktree"),
+        "expected the branch-without-worktree error, got: {rendered}"
+    );
+}
+
+#[test]
+fn test_worktree_paths_for_branch_detects_duplicates() {
+    use super::worktrees::{duplicated_branches, worktree_paths_for_branch};
+
+    // Two worktrees on `feature` — the state `git worktree add --force`
+    // produces. Porcelain retains every entry; only resolution collapses it.
+    // The detached worktree has no branch to duplicate.
+    let output = "worktree /path/to/main
+HEAD abcd1234
+branch refs/heads/main
+
+worktree /path/to/feature
+HEAD efgh5678
+branch refs/heads/feature
+
+worktree /path/to/feature-dup
+HEAD efgh5678
+branch refs/heads/feature
+
+worktree /path/to/detached
+HEAD efgh5678
+detached
+
+";
+    let worktrees = WorktreeInfo::parse_porcelain_list(output).unwrap();
+
+    // The duplicated branch yields both paths, in git's listing order — the
+    // first is what resolution uses, the rest are what the warning surfaces.
+    assert_eq!(
+        worktree_paths_for_branch(&worktrees, "feature"),
+        vec![
+            PathBuf::from("/path/to/feature"),
+            PathBuf::from("/path/to/feature-dup"),
+        ]
+    );
+    // A branch with a single worktree is unambiguous (len 1, no warning).
+    assert_eq!(
+        worktree_paths_for_branch(&worktrees, "main"),
+        vec![PathBuf::from("/path/to/main")]
+    );
+    // A branch with no worktree yields nothing.
+    assert!(worktree_paths_for_branch(&worktrees, "absent").is_empty());
+
+    // The set form `wt list` uses to flag rows names only the branch that
+    // repeats — a single-worktree branch and a detached head can't duplicate.
+    assert_eq!(
+        duplicated_branches(&worktrees),
+        std::collections::HashSet::from(["feature"])
+    );
+}
+
+#[test]
+fn test_worktree_for_branch_dedups_duplicate_warning() {
+    // `git worktree add --force` puts one branch in two worktrees. Resolving it
+    // twice in a single process must warn only once — this drives both sides of
+    // the once-per-branch dedup guard (emit on the first, skip on the second)
+    // while confirming resolution is stable.
+    use super::Repository;
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+    use std::path::Path;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let git = |args: &[&str], dir: &Path| {
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
+            .args(args.iter().copied())
+            .current_dir(dir)
+            .run()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed");
+    };
+
+    git(&["init", "-b", "main", "."], &root);
+    std::fs::write(root.join("f"), "x").unwrap();
+    git(&["add", "."], &root);
+    git(&["commit", "-m", "init"], &root);
+    git(&["branch", "dup-feature"], &root);
+
+    let wt1 = tmp.path().join("wt1");
+    let wt2 = tmp.path().join("wt2");
+    git(
+        &["worktree", "add", wt1.to_str().unwrap(), "dup-feature"],
+        &root,
+    );
+    git(
+        &[
+            "worktree",
+            "add",
+            "--force",
+            wt2.to_str().unwrap(),
+            "dup-feature",
+        ],
+        &root,
+    );
+
+    let repo = Repository::at(&root).unwrap();
+    let first = repo.worktree_for_branch("dup-feature").unwrap();
+    let second = repo.worktree_for_branch("dup-feature").unwrap();
+    assert!(first.is_some(), "an ambiguous branch still resolves");
+    assert_eq!(first, second, "resolution is stable across the dedup guard");
 }

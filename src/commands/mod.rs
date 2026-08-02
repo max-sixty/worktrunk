@@ -64,8 +64,7 @@ pub(crate) use step::{
     step_relocate, step_show_squash_prompt, step_tether,
 };
 pub(crate) use worktree::{
-    handle_switch_command, is_worktree_at_expected_path, resolve_worktree_arg,
-    worktree_display_name,
+    handle_switch_command, is_worktree_at_expected_path, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location
