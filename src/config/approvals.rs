@@ -248,6 +248,23 @@ impl Approvals {
             .map(|(id, p)| (id.as_str(), p.approved_commands.as_slice()))
     }
 
+    /// Pattern keys whose approved commands cover `project` — the entries
+    /// [`Self::is_command_approved`] consults beyond the exact one. Always
+    /// hand-written (the write paths refuse `*`), so mutations never touch
+    /// them; `wt config approvals clear` names them in a hint, making an
+    /// approval that survives a clear traceable to the entry that supplies it.
+    pub fn matching_pattern_keys(&self, project: &str) -> Vec<&str> {
+        self.projects
+            .iter()
+            .filter(|(key, p)| {
+                key.contains('*')
+                    && !p.approved_commands.is_empty()
+                    && super::user::project_match::matches(key, project)
+            })
+            .map(|(key, _)| key.as_str())
+            .collect()
+    }
+
     /// Approved commands for `project` that match none of `templates` (after
     /// template-variable normalization) — approvals left behind when a config
     /// command was edited or removed.
@@ -530,6 +547,39 @@ approved-commands = ["npm install"]
         );
         assert!(!approvals.is_command_approved("github.com/owner/repo", "npm install"));
         assert!(!approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+    }
+
+    #[test]
+    fn test_matching_pattern_keys_names_covering_entries() {
+        let approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+
+[projects."git.company.example/owner/repo"]
+approved-commands = ["npm test"]
+
+[projects."git.company.example/owner/*"]
+approved-commands = []
+
+[projects."github.com/*"]
+approved-commands = ["make"]
+"#,
+        )
+        .unwrap();
+
+        // The exact key, a non-matching pattern, and a matching pattern with
+        // no commands are all excluded — only entries actually supplying
+        // approvals are worth naming.
+        assert_eq!(
+            approvals.matching_pattern_keys("git.company.example/owner/repo"),
+            vec!["git.company.example/*"]
+        );
+        assert!(
+            approvals
+                .matching_pattern_keys("codeberg.org/owner/repo")
+                .is_empty()
+        );
     }
 
     #[test]
