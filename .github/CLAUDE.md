@@ -25,11 +25,17 @@ Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 
 ## Environment protection
 
-The `release` environment holds the credentials only a release build needs —
-`AUR_SSH_PRIVATE_KEY` and `SIGNPATH_API_TOKEN` — so no other workflow the repo
-runs can read them. Its one protection rule restricts deployments to `v*` tags;
-there is no reviewer gate, so adding `environment: release` to a job costs no
-approval step.
+Release credentials live in GitHub Environments so no other workflow the repo
+runs can read them. Each environment holds what one phase needs, since a job
+that joins an environment can read every secret in it:
+
+| Environment | Secret | Read by |
+|-------------|--------|---------|
+| `release` | `AUR_SSH_PRIVATE_KEY` | `publish-aur` |
+| `signing` | `SIGNPATH_API_TOKEN` | `build-local-artifacts` |
+
+Both restrict deployments to `v*` tags and neither has a reviewer rule, so
+joining a job to one costs no approval step.
 
 crates.io publishing holds no stored token — it uses Trusted Publishing.
 crates.io mints a short-lived one only for an OIDC claim from `release.yaml`
