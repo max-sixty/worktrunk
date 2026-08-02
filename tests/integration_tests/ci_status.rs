@@ -12,7 +12,7 @@
 use crate::common::{
     TestRepo, make_snapshot_cmd,
     mock_commands::{MockConfig, MockResponse},
-    repo, setup_snapshot_settings,
+    repo, setup_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -1178,6 +1178,14 @@ const GITEA_API_ERROR_BODY: &str = r#"{
     "url": "https://gitea.example.com/api/swagger"
 }"#;
 
+/// The same body a production Gitea sends a non-admin token for that 500:
+/// `APIError` with the message blanked. Only the envelope is left, which is
+/// what `api_error_message` keys on.
+const GITEA_BLANK_ERROR_BODY: &str = r#"{
+    "message": "",
+    "url": "https://gitea.example.com/api/swagger"
+}"#;
+
 /// Build a one-PR `tea api .../pulls` response for the `feature` branch.
 fn gitea_feature_pr_json(head_sha: &str, mergeable: bool) -> String {
     format!(
@@ -1264,6 +1272,62 @@ fn test_list_full_with_gitea_commit_status_error_body(mut repo: TestRepo) {
         &head_sha,
         "[]",
         GITEA_API_ERROR_BODY,
+    );
+}
+
+/// Run `wt list --full` against the given `tea api .../pulls` body and return
+/// stderr.
+///
+/// `RUST_LOG=warn` because `parse_json`'s warning is a `tracing` record and the
+/// stderr layer is off at the default verbosity; `-v` would turn it on but bury
+/// it under a template expansion per worktree.
+fn gitea_ci_status_stderr(repo: &mut TestRepo, head_sha: &str, pulls_json: &str) -> String {
+    repo.setup_mock_tea_with_ci_data(
+        "owner",
+        "test-repo",
+        head_sha,
+        pulls_json,
+        r#"{"state":"","total_count":0}"#,
+    );
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env("RUST_LOG", "warn");
+    cmd.args(["list", "--full"]).current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "wt list --full failed: {stderr}");
+    stderr
+}
+
+/// "May indicate a Gitea API change" is reserved for a body that is neither the
+/// resource nor the error envelope.
+///
+/// A blanked message is still the envelope, so the PR list never reads it as
+/// data. The CI cell is blank either way — an empty message isn't retriable —
+/// so what the key buys is the diagnosis: requiring a *non-empty* message let
+/// that body through to `parse_json`, which blamed a Gitea API change for a
+/// Gitea API error. The unknown-body case is the control: it pins where the
+/// warning does belong, and keeps the first case from passing merely because
+/// nothing logs at all.
+///
+/// One case per repo, not two runs in one: `wt list` caches CI status per
+/// branch for 30s, so a second run against the same HEAD never reaches `tea`.
+#[rstest]
+#[case::blank_message_is_still_an_error(GITEA_BLANK_ERROR_BODY, false)]
+#[case::unknown_body_is_a_parse_failure(r#"{"unexpected":1}"#, true)]
+fn test_list_full_gitea_parse_warning_is_reserved_for_unknown_bodies(
+    mut repo: TestRepo,
+    #[case] pulls_json: &str,
+    #[case] expect_parse_warning: bool,
+) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    let stderr = gitea_ci_status_stderr(&mut repo, &head_sha, pulls_json);
+
+    assert_eq!(
+        stderr.contains("Failed to parse tea api pulls JSON"),
+        expect_parse_warning,
+        "wrong diagnosis for {pulls_json}: {stderr}"
     );
 }
 
