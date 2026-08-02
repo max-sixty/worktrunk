@@ -9,6 +9,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -25,6 +33,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -81,8 +90,28 @@ Clear only approvals for commands no longer in the project config:
 Clear global approvals:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--global[0m
 
+Check whether an unattended run would stop for approval:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m .state[0m
+
 [1m[32mHow approvals work[0m
 
 Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.
+
+[1m[32mReading approval state[0m
+
+[2mwt config approvals list[0m reads the state without prompting or writing it, so an orchestrator can find out whether a non-interactive run will stop for approval before scheduling one. [2m--format=json[0m emits:
+
+[107m [0m [2m{[0m
+[107m [0m [2m  "state": "approval_required",[0m
+[107m [0m [2m  "commands": [[0m
+[107m [0m [2m    {"phase": "post-start", "name": "dev", "template": "npm run dev", "approved": false},[0m
+[107m [0m [2m    {"phase": "pre-merge", "template": "cargo test", "approved": true}[0m
+[107m [0m [2m  ],[0m
+[107m [0m [2m  "stale": ["some removed command"][0m
+[107m [0m [2m}[0m
+
+[2mstate[0m is [2mno_commands[0m (the project declares none), [2mapproval_required[0m (at least one is unapproved), or [2mapproved[0m. [2mname[0m is absent for an unnamed command and for the commit-template fragment.
+
+[2mstale[0m is separate rather than a fourth [2mstate[0m, because it co-occurs with all three: these are approvals recorded earlier whose command has since been edited or removed from the project config. They are what [2m--yes[0m would silently re-approve, so an orchestrator preserving the approval model reads them before choosing that flag.
 
 ----- stderr -----

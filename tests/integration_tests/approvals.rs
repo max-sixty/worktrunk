@@ -31,13 +31,19 @@ fn snapshot_clear_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
     });
 }
 
-/// Helper to snapshot the list command
+/// Snapshot the list command in both formats from one setup. The sections and
+/// the JSON payload answer the same question about the same state, so every
+/// scenario below covers both without restating its config.
 fn snapshot_list_approvals(test_name: &str, repo: &TestRepo) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(repo, "config", &[], None);
         cmd.arg("approvals").arg("list");
         assert_cmd_snapshot!(test_name, cmd);
+
+        let mut cmd = make_snapshot_cmd(repo, "config", &[], None);
+        cmd.arg("approvals").arg("list").arg("--format=json");
+        assert_cmd_snapshot!(format!("{test_name}_json"), cmd);
     });
 }
 
