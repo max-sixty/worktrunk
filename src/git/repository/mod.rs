@@ -846,8 +846,7 @@ impl Repository {
         // merged map, so those repos get the same memory-hit constructions
         // as everyone else. One serialized fork here replaces the on-demand
         // one; a repo whose rev-parse failed (not a repo at all) skips this.
-        if need_git_config
-            && !GIT_CONFIG_PRELOAD.contains_key(discovery_path)
+        if !GIT_CONFIG_PRELOAD.contains_key(discovery_path)
             && let Some(common_dir) = GIT_COMMON_DIR_CACHE
                 .get(discovery_path)
                 .map(|entry| entry.value().clone())
@@ -1017,7 +1016,9 @@ impl Repository {
     /// `extensions.worktreeConfig` case, or a failed discovery-path read in
     /// a repo the rev-parse thread still resolved). The common-dir read is
     /// safe to cache in both cases because it produces exactly the map the
-    /// on-demand path would.
+    /// on-demand path would at this moment — like every preload it is a
+    /// startup snapshot, never invalidated by later `set_config` writes
+    /// (which update only the writing instance's `cache.all_config`).
     fn prewarm_git_config_from_common_dir(discovery_path: &Path, common_dir: &Path) {
         let Ok(output) = Cmd::new("git")
             .args(["config", "--list", "-z"])

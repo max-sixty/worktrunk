@@ -541,8 +541,10 @@ fn parse_git_bool_variants() {
 fn worktree_config_enabled_detects_extension() {
     // The detector keys on the lowercased canonical form that git emits in
     // `--list -z` output. Both git-bool truthy spellings and the absent/
-    // explicitly-false cases must classify correctly — getting either wrong
-    // breaks the prewarm-skip in `prewarm_git_config` (see issue #2779).
+    // explicitly-false cases must classify correctly. A false truthy costs
+    // one extra prewarm fork (the common-dir post-pass caches the same map);
+    // a false falsy caches the incomplete linked-worktree map and
+    // reintroduces the #2779 `is_bare=false` bug.
     use indexmap::IndexMap;
 
     let mut empty: IndexMap<String, Vec<String>> = IndexMap::new();
@@ -1136,6 +1138,29 @@ fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
     let expected = canonicalize(repo.git_common_dir()).unwrap();
     let actual = canonicalize(repo.repo_path().unwrap()).unwrap();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn all_config_without_prewarm_reads_common_dir_under_worktree_config() {
+    // The on-demand branch: a `Repository::at` with no prewarm (a non-base
+    // discovery path in production) gets no preload, so `all_config()` forks
+    // — and it must fork from `git_common_dir`, not the discovery path, or
+    // the linked worktree's partial config map reintroduces the #2779
+    // `is_bare=false` bug. The prewarm post-pass caches the same read, so
+    // only this prewarm-less construction still exercises the fork.
+    use super::Repository;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    let repo = Repository::at(&linked).unwrap();
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
+        "test setup: no preload may exist for this path"
+    );
+    assert!(
+        repo.is_bare().unwrap(),
+        "on-demand all_config must read core.bare=true from the common dir"
+    );
 }
 
 #[test]
