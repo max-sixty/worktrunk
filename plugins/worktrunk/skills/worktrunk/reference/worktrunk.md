@@ -109,6 +109,8 @@ git-wt config shell install
 
 Alternatively, disable Windows Terminal's alias (Settings → Apps → Advanced app settings → App execution aliases → "Terminal"/"Terminal Preview") to use `wt` directly.
 
+> Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) — [policy](https://worktrunk.dev/code-signing/).
+
 **Arch Linux:**
 
 ```bash

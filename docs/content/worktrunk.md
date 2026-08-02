@@ -125,6 +125,8 @@ Shell integration allows commands to change directories.
 
 Alternatively, disable Windows Terminal's alias (Settings → Apps → Advanced app settings → App execution aliases → "Terminal"/"Terminal Preview") to use `wt` directly.
 
+> Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) — [policy](@/code-signing.md).
+
 **Arch Linux:**
 
 {{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
