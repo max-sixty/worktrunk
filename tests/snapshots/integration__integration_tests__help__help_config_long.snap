@@ -377,8 +377,8 @@ Scalar values (like [2mworktree-path[0m) replace the global value; everything 
 A key containing [2m*[0m matches any run of characters, [2m/[0m included, so one entry covers a whole host or namespace — including nested groups. [2m*[0m is the only wildcard; every other character, [2m.[0m among them, is literal.
 
 [107m [0m [2m# Every repository on a self-hosted forge whose hostname carries no brand[0m
-[107m [0m [2m[36m[projects."git.company.example/*".forge][0m
-[107m [0m [2mplatform = [0m[2m[32m"gitlab"[0m
+[107m [0m [2m[36m[projects."git.company.example/*"][0m
+[107m [0m [2mforge.platform = [0m[2m[32m"gitlab"[0m
 [107m [0m 
 [107m [0m [2m# Everything under one namespace shares a layout[0m
 [107m [0m [2m[36m[projects."git.company.example/platform/*"][0m
@@ -393,9 +393,9 @@ string.
 
 [2mforge[0m names the forge for the matched repositories — the user-level counterpart of the project config's forge platform block, for a self-hosted host whose name carries no [2mgithub[0m, [2mgitlab[0m, or [2mgitea[0m for detection to read.
 
-[107m [0m [2m[36m[projects."git.company.example/*".forge][0m
-[107m [0m [2mplatform = [0m[2m[32m"gitlab"[0m[2m                    [0m[2m# or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
-[107m [0m [2mhostname = [0m[2m[32m"api.git.company.example"[0m[2m   [0m[2m# API host, when the remote's own host isn't it[0m
+[107m [0m [2m[36m[projects."git.company.example/*"][0m
+[107m [0m [2mforge.platform = [0m[2m[32m"gitlab"[0m[2m                    [0m[2m# or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
+[107m [0m [2mforge.hostname = [0m[2m[32m"api.git.company.example"[0m[2m   [0m[2m# API host, when the remote's own host isn't it[0m
 
 Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through [2m~/.ssh/config[0m — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own [2m[forge][0m block still wins over any entry here, field by field: a repository that sets only [2mplatform[0m still takes a matching entry's [2mhostname[0m.
 

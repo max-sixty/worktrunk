@@ -329,8 +329,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Every repository on a self-hosted forge whose hostname carries no brand[0m
-[107m [0m [2m# [projects."git.company.example/*".forge][0m
-[107m [0m [2m# platform = "gitlab"[0m
+[107m [0m [2m# [projects."git.company.example/*"][0m
+[107m [0m [2m# forge.platform = "gitlab"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Everything under one namespace shares a layout[0m
 [107m [0m [2m# [projects."git.company.example/platform/*"][0m
@@ -345,9 +345,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# `forge` names the forge for the matched repositories — the user-level counterpart of the project config's forge platform (https://worktrunk.dev/config/#forge-platform) block, for a self-hosted host whose name carries no `github`, `gitlab`, or `gitea` for detection to read.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [projects."git.company.example/*".forge][0m
-[107m [0m [2m# platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
-[107m [0m [2m# hostname = "api.git.company.example"   # API host, when the remote's own host isn't it[0m
+[107m [0m [2m# [projects."git.company.example/*"][0m
+[107m [0m [2m# forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
+[107m [0m [2m# forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.[0m
 [107m [0m [2m#[0m

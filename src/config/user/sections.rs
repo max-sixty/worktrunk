@@ -571,8 +571,8 @@ impl Merge for StepConfig {
 /// squash = false
 ///
 /// # Every repository on a self-hosted forge whose name carries no brand
-/// [projects."git.company.example/*".forge]
-/// platform = "gitlab"
+/// [projects."git.company.example/*"]
+/// forge.platform = "gitlab"
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct UserProjectOverrides {

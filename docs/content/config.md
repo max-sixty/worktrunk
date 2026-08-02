@@ -363,8 +363,8 @@ A key containing `*` matches any run of characters, `/` included, so one entry c
 
 ```toml
 # Every repository on a self-hosted forge whose hostname carries no brand
-[projects."git.company.example/*".forge]
-platform = "gitlab"
+[projects."git.company.example/*"]
+forge.platform = "gitlab"
 
 # Everything under one namespace shares a layout
 [projects."git.company.example/platform/*"]
@@ -380,9 +380,9 @@ Every matching entry applies, least- to most-specific, following the rule above:
 `forge` names the forge for the matched repositories — the user-level counterpart of the project config's [forge platform](@/config.md#forge-platform) block, for a self-hosted host whose name carries no `github`, `gitlab`, or `gitea` for detection to read.
 
 ```toml
-[projects."git.company.example/*".forge]
-platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)
-hostname = "api.git.company.example"   # API host, when the remote's own host isn't it
+[projects."git.company.example/*"]
+forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)
+forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it
 ```
 
 Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.
