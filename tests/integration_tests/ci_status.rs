@@ -1144,15 +1144,16 @@ fn setup_gitea_repo_with_feature(repo: &mut TestRepo) -> String {
 }
 
 /// Run a Gitea CI status test with the given `tea api .../pulls` and
-/// `tea api .../commits/{sha}/status` mock responses.
+/// `tea api .../commits/{sha}/status` mock responses, each an
+/// `(HTTP status, body)` pair.
 fn run_gitea_ci_status_test(
     repo: &mut TestRepo,
     snapshot_name: &str,
     head_sha: &str,
-    pulls_json: &str,
-    status_json: &str,
+    pulls: (&str, &str),
+    status: (&str, &str),
 ) {
-    repo.setup_mock_tea_with_ci_data("owner", "test-repo", head_sha, pulls_json, status_json);
+    repo.setup_mock_tea_with_ci_data("owner", "test-repo", head_sha, pulls, status);
 
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
@@ -1173,8 +1174,8 @@ const GITEA_API_ERROR_BODY: &str = r#"{
 }"#;
 
 /// The same body a production Gitea sends a non-admin token for that 500:
-/// `APIError` with the message blanked. Only the envelope is left, which is
-/// what `api_error_message` keys on.
+/// `APIError` with the message blanked. Nothing in it says "error", which is
+/// why the status line rather than the body is what the backend reads.
 const GITEA_BLANK_ERROR_BODY: &str = r#"{
     "message": "",
     "url": "https://gitea.example.com/api/swagger"
@@ -1205,8 +1206,8 @@ fn test_list_full_with_gitea_pr_conflicts(mut repo: TestRepo) {
         &mut repo,
         "gitea_pr_conflicts",
         &head_sha,
-        &gitea_feature_pr_json(&head_sha, false),
-        r#"{"state":"","total_count":0}"#,
+        ("200 OK", &gitea_feature_pr_json(&head_sha, false)),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
     );
 }
 
@@ -1219,8 +1220,8 @@ fn test_list_full_with_gitea_commit_status(mut repo: TestRepo) {
         &mut repo,
         "gitea_commit_status",
         &head_sha,
-        "[]",
-        r#"{"state":"failure","total_count":1}"#,
+        ("200 OK", "[]"),
+        ("200 OK", r#"{"state":"failure","total_count":1}"#),
     );
 }
 
@@ -1232,15 +1233,15 @@ fn test_list_full_with_gitea_no_ci(mut repo: TestRepo) {
         &mut repo,
         "gitea_no_ci",
         &head_sha,
-        "[]",
-        r#"{"state":"","total_count":0}"#,
+        ("200 OK", "[]"),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
     );
 }
 
 /// A Gitea 500 whose `APIError` body names a retriable cause surfaces as an
 /// error indicator rather than NoCI. `tea api` exits 0 here — it copies the
-/// response body through without reading the HTTP status — so the body's shape
-/// is what separates this from a PR list.
+/// response body through whatever the status — so the status line `--include`
+/// puts on stderr is what separates this from a PR list.
 #[rstest]
 fn test_list_full_with_gitea_pr_error_body(mut repo: TestRepo) {
     let head_sha = setup_gitea_repo_with_feature(&mut repo);
@@ -1248,15 +1249,15 @@ fn test_list_full_with_gitea_pr_error_body(mut repo: TestRepo) {
         &mut repo,
         "gitea_pr_error_body",
         &head_sha,
-        GITEA_API_ERROR_BODY,
-        r#"{"state":"","total_count":0}"#,
+        ("500 Internal Server Error", GITEA_API_ERROR_BODY),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
     );
 }
 
 /// The same `APIError` body from the commit-status lookup (when no PR exists
-/// for the branch). Without shape discrimination this one is the quieter bug:
-/// every field of `GiteaCombinedStatus` defaults, so the error body would
-/// deserialize as "no statuses" and paint a blank cell.
+/// for the branch). Read as data this one is the quieter bug: every field of
+/// `GiteaCombinedStatus` defaults, so the error body would deserialize as "no
+/// statuses" and paint a blank cell.
 #[rstest]
 fn test_list_full_with_gitea_commit_status_error_body(mut repo: TestRepo) {
     let head_sha = setup_gitea_repo_with_feature(&mut repo);
@@ -1264,24 +1265,59 @@ fn test_list_full_with_gitea_commit_status_error_body(mut repo: TestRepo) {
         &mut repo,
         "gitea_commit_status_error_body",
         &head_sha,
-        "[]",
-        GITEA_API_ERROR_BODY,
+        ("200 OK", "[]"),
+        ("500 Internal Server Error", GITEA_API_ERROR_BODY),
     );
 }
 
-/// Run `wt list --full` against the given `tea api .../pulls` body and return
-/// stderr.
+/// A 500 the message of which Gitea blanked still reaches the cell as an error.
+/// The status is the whole basis: the body says nothing, so the text sniff that
+/// used to decide had nothing to match and painted the same blank cell as a
+/// healthy branch with no CI.
+#[rstest]
+fn test_list_full_with_gitea_blanked_500(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_blanked_500",
+        &head_sha,
+        ("500 Internal Server Error", GITEA_BLANK_ERROR_BODY),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
+    );
+}
+
+/// A 404 is the other half of that: also an error, also carrying no useful
+/// text, but nothing a later `wt list` would answer differently — so the cell
+/// stays blank rather than showing an indicator that never clears. Pairs with
+/// the 500 above; between them the status is doing the deciding, not the body.
+#[rstest]
+fn test_list_full_with_gitea_not_found(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_not_found",
+        &head_sha,
+        (
+            "404 Not Found",
+            r#"{"message":"user redirect does not exist [name: owner]"}"#,
+        ),
+        ("200 OK", r#"{"state":"","total_count":0}"#),
+    );
+}
+
+/// Run `wt list --full` against the given `tea api .../pulls` response — an
+/// `(HTTP status, body)` pair — and return stderr.
 ///
 /// `RUST_LOG=warn` because `parse_json`'s warning is a `tracing` record and the
 /// stderr layer is off at the default verbosity; `-v` would turn it on but bury
 /// it under a template expansion per worktree.
-fn gitea_ci_status_stderr(repo: &mut TestRepo, head_sha: &str, pulls_json: &str) -> String {
+fn gitea_ci_status_stderr(repo: &mut TestRepo, head_sha: &str, pulls: (&str, &str)) -> String {
     repo.setup_mock_tea_with_ci_data(
         "owner",
         "test-repo",
         head_sha,
-        pulls_json,
-        r#"{"state":"","total_count":0}"#,
+        pulls,
+        ("200 OK", r#"{"state":"","total_count":0}"#),
     );
 
     let mut cmd = wt_command();
@@ -1294,34 +1330,38 @@ fn gitea_ci_status_stderr(repo: &mut TestRepo, head_sha: &str, pulls_json: &str)
     stderr
 }
 
-/// "May indicate a Gitea API change" is reserved for a body that is neither the
-/// resource nor the error envelope.
+/// "May indicate a Gitea API change" is reserved for a 2xx whose body isn't the
+/// resource, which is the only response that is one.
 ///
-/// A blanked message is still the envelope, so the PR list never reads it as
-/// data. The CI cell is blank either way — an empty message isn't retriable —
-/// so what the key buys is the diagnosis: requiring a *non-empty* message let
-/// that body through to `parse_json`, which blamed a Gitea API change for a
-/// Gitea API error. The unknown-body case is the control: it pins where the
-/// warning does belong, and keeps the first case from passing merely because
-/// nothing logs at all.
+/// The status decides, so the two bodies that used to be the hard cases are
+/// now read by what accompanied them. A 500 whose message Gitea blanked says
+/// nothing about being an error, and a proxy's HTML page isn't Gitea's shape at
+/// all; both reach the PR list as errors on the strength of the status line
+/// alone, and the CI cell stays blank because neither carries retriable text.
+/// The 200 case is the control: it pins where the warning does belong, and
+/// keeps the others from passing merely because nothing logs at all.
 ///
-/// One case per repo, not two runs in one: `wt list` caches CI status per
+/// One case per repo, not several runs in one: `wt list` caches CI status per
 /// branch for 30s, so a second run against the same HEAD never reaches `tea`.
 #[rstest]
-#[case::blank_message_is_still_an_error(GITEA_BLANK_ERROR_BODY, false)]
-#[case::unknown_body_is_a_parse_failure(r#"{"unexpected":1}"#, true)]
+#[case::blanked_500_is_an_error(
+    ("500 Internal Server Error", GITEA_BLANK_ERROR_BODY),
+    false
+)]
+#[case::proxy_page_is_an_error(("502 Bad Gateway", "<html>Bad Gateway</html>"), false)]
+#[case::unknown_200_body_is_a_parse_failure(("200 OK", r#"{"unexpected":1}"#), true)]
 fn test_list_full_gitea_parse_warning_is_reserved_for_unknown_bodies(
     mut repo: TestRepo,
-    #[case] pulls_json: &str,
+    #[case] pulls: (&str, &str),
     #[case] expect_parse_warning: bool,
 ) {
     let head_sha = setup_gitea_repo_with_feature(&mut repo);
-    let stderr = gitea_ci_status_stderr(&mut repo, &head_sha, pulls_json);
+    let stderr = gitea_ci_status_stderr(&mut repo, &head_sha, pulls);
 
     assert_eq!(
         stderr.contains("Failed to parse tea api pulls JSON"),
         expect_parse_warning,
-        "wrong diagnosis for {pulls_json}: {stderr}"
+        "wrong diagnosis for {pulls:?}: {stderr}"
     );
 }
 
@@ -1403,8 +1443,8 @@ fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
         "forkowner",
         "test-repo",
         &head_sha,
-        "[]",
-        r#"{"state":"success","total_count":1}"#,
+        ("200 OK", "[]"),
+        ("200 OK", r#"{"state":"success","total_count":1}"#),
     );
 
     let settings = setup_snapshot_settings(&repo);
@@ -1471,8 +1511,8 @@ fn test_list_full_with_gitea_fork_pr(mut repo: TestRepo) {
         "upstream",
         "test-repo",
         &head_sha,
-        &pulls_json,
-        r#"{"state":"success","total_count":1}"#,
+        ("200 OK", &pulls_json),
+        ("200 OK", r#"{"state":"success","total_count":1}"#),
     );
 
     let settings = setup_snapshot_settings(&repo);
