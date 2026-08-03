@@ -537,7 +537,14 @@ pub const SHELL_CWD_ENV_VAR: &str = "WORKTRUNK_SHELL_CWD";
 /// than [`std::env::current_dir`]. `-C` is deliberately not consulted: it sets
 /// git's discovery path without moving the shell.
 pub fn shell_cwd() -> Option<PathBuf> {
-    if let Some(value) = std::env::var_os(SHELL_CWD_ENV_VAR) {
+    shell_cwd_from(std::env::var_os(SHELL_CWD_ENV_VAR), startup_cwd())
+}
+
+/// Pure form of [`shell_cwd`], split out so the relative-value fall-through is
+/// unit-testable without mutating process-wide state — the same split
+/// [`compute_git_env_overrides`] makes for [`inherited_git_env_overrides`].
+fn shell_cwd_from(inherited: Option<OsString>, fallback: Option<&PathBuf>) -> Option<PathBuf> {
+    if let Some(value) = inherited {
         let path = PathBuf::from(value);
         // A relative value can't name the shell's position from a child that
         // runs elsewhere, so fall through to the process cwd. A stale absolute
@@ -547,7 +554,7 @@ pub fn shell_cwd() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    startup_cwd().cloned()
+    fallback.cloned()
 }
 
 /// Scrub all directive file env vars from a `std::process::Command`.
@@ -2282,7 +2289,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scrub_directive_env_vars_includes_retired_variable() {
+    fn test_scrub_directive_env_vars_covers_every_directive_variable() {
         assert_eq!(RETIRED_DIRECTIVE_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_FILE");
 
         let mut cmd = std::process::Command::new("child");
@@ -2290,6 +2297,7 @@ mod tests {
             DIRECTIVE_CD_FILE_ENV_VAR,
             DIRECTIVE_EXEC_FILE_ENV_VAR,
             RETIRED_DIRECTIVE_FILE_ENV_VAR,
+            SHELL_CWD_ENV_VAR,
         ] {
             cmd.env(var, "directive");
         }
@@ -2300,6 +2308,7 @@ mod tests {
             DIRECTIVE_CD_FILE_ENV_VAR,
             DIRECTIVE_EXEC_FILE_ENV_VAR,
             RETIRED_DIRECTIVE_FILE_ENV_VAR,
+            SHELL_CWD_ENV_VAR,
         ] {
             assert!(
                 cmd.get_envs()
@@ -2307,6 +2316,39 @@ mod tests {
                 "{var} should be removed from the child environment"
             );
         }
+    }
+
+    #[test]
+    fn test_shell_cwd_from_prefers_absolute_inherited_value() {
+        let fallback = PathBuf::from(if cfg!(windows) {
+            r"C:\fallback"
+        } else {
+            "/fallback"
+        });
+        let absolute = if cfg!(windows) {
+            r"C:\shell\cwd"
+        } else {
+            "/shell/cwd"
+        };
+
+        // An absolute inherited value wins over the process cwd.
+        assert_eq!(
+            shell_cwd_from(Some(OsString::from(absolute)), Some(&fallback)),
+            Some(PathBuf::from(absolute))
+        );
+        // A relative one names nothing from a child that runs elsewhere.
+        assert_eq!(
+            shell_cwd_from(Some(OsString::from("apps/gateway")), Some(&fallback)),
+            Some(fallback.clone())
+        );
+        assert_eq!(
+            shell_cwd_from(None, Some(&fallback)),
+            Some(fallback.clone())
+        );
+        assert_eq!(
+            shell_cwd_from(Some(OsString::from("apps/gateway")), None),
+            None
+        );
     }
 
     /// The only test allowed to set `FOREGROUND_THREAD` (a process-wide

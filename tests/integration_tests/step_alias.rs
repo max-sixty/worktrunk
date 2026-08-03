@@ -789,26 +789,11 @@ deploy = "echo deploying"
 fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
     repo.commit("initial");
 
-    // Escape the wt binary path for embedding in a sh -c command string.
-    // Test temp paths never contain single quotes.
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    // Double backslashes so the Windows path (e.g. `D:\a\worktrunk\...\wt.exe`)
-    // parses as literal characters inside a TOML basic string rather than
-    // being interpreted as escape sequences (`\a`, `\w`, ...).
-    let wt_toml = wt_str.replace('\\', r"\\");
-
     // Alias body invokes the test wt binary directly (PATH lookup in the
     // subprocess shell wouldn't find it).
-    repo.write_test_config(&format!(
-        r#"
-[aliases]
-new-branch = "'{wt_toml}' switch --create alias-created"
-"#
+    repo.write_test_config(&wt_alias_config(
+        "new-branch",
+        "switch --create alias-created",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -846,7 +831,9 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
-/// Build a user-config alias whose body invokes the test `wt` binary.
+/// Build an `[aliases]` config whose single alias body invokes the test `wt`
+/// binary. Suits either config source — pass it to `write_test_config` for a
+/// user alias or `write_project_config` for a project one.
 ///
 /// The binary path has to be embedded in a TOML basic string inside a shell
 /// command, so single quotes must be absent (they'd terminate the shell
@@ -959,19 +946,10 @@ fn test_alias_wrapping_remove_preserves_subdir(#[from(repo_with_remote)] mut rep
 #[rstest]
 fn test_user_alias_passes_exec_directive(repo: TestRepo) {
     repo.commit("initial");
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    let wt_toml = wt_str.replace('\\', r"\\");
 
-    repo.write_test_config(&format!(
-        r#"
-[aliases]
-exec-passthrough = "'{wt_toml}' switch --create user-alias-target --execute 'echo from-user-alias'"
-"#
+    repo.write_test_config(&wt_alias_config(
+        "exec-passthrough",
+        "switch --create user-alias-target --execute 'echo from-user-alias'",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -1006,19 +984,10 @@ exec-passthrough = "'{wt_toml}' switch --create user-alias-target --execute 'ech
 #[rstest]
 fn test_project_alias_scrubs_exec_directive(repo: TestRepo) {
     repo.commit("initial");
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    let wt_toml = wt_str.replace('\\', r"\\");
 
-    repo.write_project_config(&format!(
-        r#"
-[aliases]
-exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo should-not-pass'"
-"#
+    repo.write_project_config(&wt_alias_config(
+        "exec-blocked",
+        "switch --create project-alias-target --execute 'echo should-not-pass'",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -1062,27 +1031,16 @@ exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo
 #[rstest]
 fn test_user_and_project_alias_collision_scrubs_only_project_step(repo: TestRepo) {
     repo.commit("initial");
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    let wt_toml = wt_str.replace('\\', r"\\");
 
-    repo.write_test_config(&format!(
-        r#"
-[aliases]
-shared = "'{wt_toml}' switch --create user-step-target --execute 'echo from-user-step'"
-"#
+    repo.write_test_config(&wt_alias_config(
+        "shared",
+        "switch --create user-step-target --execute 'echo from-user-step'",
     ));
     // Project step also tries `--execute` so we can assert its payload is
     // scrubbed even though the user step's payload passes through.
-    repo.write_project_config(&format!(
-        r#"
-[aliases]
-shared = "'{wt_toml}' switch --create project-step-target --execute 'echo from-project-step'"
-"#,
+    repo.write_project_config(&wt_alias_config(
+        "shared",
+        "switch --create project-step-target --execute 'echo from-project-step'",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
