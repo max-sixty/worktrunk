@@ -168,8 +168,8 @@ a variable hermetic; an unprefixed name inherits from whatever shell ran the
 suite. The rule covers the test-only protocol between the harness and the mock
 playback, not just knobs that change wt's own behavior:
 `WORKTRUNK_TEST_MOCK_CONFIG_DIR` is read only by the playback dispatch
-(`testing::mock_stub`). A variable `wt`
-reads in production drops `TEST` and keeps `WORKTRUNK_`.
+(`testing::mock_stub`). A variable `wt` reads in production drops `TEST` and
+keeps `WORKTRUNK_`.
 
 ## Git Config Isolation
 

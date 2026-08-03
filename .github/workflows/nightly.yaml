@@ -107,8 +107,7 @@ jobs:
     # `required-features = ["cli", "syntax-highlighting"]` (Cargo.toml) because
     # it execs the `wt` binary and snapshots its highlighted output, so cargo
     # runs it only on combinations that satisfy both and runs lib + doc tests
-    # everywhere. No target filter, so default-members builds the mock-stub
-    # helper bin the lib suite shells out to.
+    # everywhere.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04

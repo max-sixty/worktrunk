@@ -140,9 +140,12 @@ impl MockConfig {
     pub fn new(name: &str) -> Self {
         // Playback dispatches on argv[0] (see `testing::mock_stub`), and wt's
         // own names are reserved for wt itself — a mock under either name
-        // would silently run the real binary.
+        // would silently run the real binary. Case-insensitive to match the
+        // dispatch's own guard: the config lookup goes through a filesystem
+        // that is case-insensitive on macOS and Windows, so a `WT.json` *is*
+        // `wt.json` there.
         assert!(
-            name != "wt" && name != "git-wt",
+            !name.eq_ignore_ascii_case("wt") && !name.eq_ignore_ascii_case("git-wt"),
             "a mock command cannot be named {name:?}: the mocks are the wt \
              binary dispatching on argv[0]"
         );
@@ -212,12 +215,21 @@ pub fn mock_calls(log_dir: &Path, name: &str) -> Vec<String> {
 /// Create mock binary in bin_dir with the given name: a link to the `wt`
 /// binary, whose argv\[0\] dispatch plays back the mock config
 /// (`testing::mock_stub`).
+///
+/// Private on purpose: `MockConfig::write` is the only caller, and it writes
+/// `<name>.json` before linking. A link therefore can't exist without its
+/// config, which is what lets the dispatch treat a foreign argv\[0\] with no
+/// config as wt itself rather than a broken mock.
+///
 /// Uses symlinks on Unix (instant, works across filesystems).
 /// Uses hard links on Windows (symlinks require admin privileges), falling
 /// back to a copy when the link fails — hard links can't cross drives, and
 /// the debug `wt.exe` is large enough that a copy per mock is the fallback
-/// rather than the default.
-pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
+/// rather than the default. CI keeps the fallback rare by pinning TEMP to
+/// the workspace volume (ci.yaml's Windows TEMP step); on a machine whose
+/// temp dir is on another drive, mock setup degrades to a full copy per
+/// mock but still works.
+fn copy_mock_binary(bin_dir: &Path, name: &str) {
     let stub = super::wt_bin();
 
     #[cfg(unix)]
@@ -326,5 +338,14 @@ mod tests {
     #[should_panic(expected = "a mock command cannot be named")]
     fn mock_config_rejects_wt_as_name() {
         MockConfig::new("wt");
+    }
+
+    /// The filesystem the dispatch probes is case-insensitive on macOS and
+    /// Windows — `WT.json` there *is* `wt.json` — so the name guard must be
+    /// case-insensitive too.
+    #[test]
+    #[should_panic(expected = "a mock command cannot be named")]
+    fn mock_config_rejects_wt_case_insensitively() {
+        MockConfig::new("WT");
     }
 }

@@ -80,33 +80,48 @@ pub fn maybe_run() {
     let Some(dir) = env::var_os("WORKTRUNK_TEST_MOCK_CONFIG_DIR") else {
         return;
     };
-    let name = command_name();
+    let Some(name) = command_name() else {
+        return;
+    };
     // The wt under test runs with the variable set too (that's how its mock
     // children inherit it); its own names never select playback, whatever a
     // config dir contains — a `wt.json` would otherwise shadow the binary
-    // under test. `MockConfig::new` rejects these names on the harness side.
-    if name == "wt" || name == "git-wt" {
+    // under test. Case-insensitive, because the config probe below goes
+    // through the filesystem, which matches names case-insensitively on
+    // macOS and Windows — an exact comparison would let argv[0] `WT` reach
+    // a `wt.json`. `MockConfig::new` rejects these names on the harness side.
+    if name.eq_ignore_ascii_case("wt") || name.eq_ignore_ascii_case("git-wt") {
         return;
     }
     let config_dir = PathBuf::from(dir);
-    // Playback is only for commands the harness configured. wt under any
-    // other foreign argv[0] — the argv0-validation tests symlink it as
-    // `wt;touch` — is still wt.
+    // Playback is only for commands the harness registered, and a registered
+    // mock always has its config: `MockConfig::write` writes `<name>.json`
+    // before linking the binary, and is the only way to create a mock link.
+    // So a foreign argv[0] with no config is not a half-configured mock —
+    // it's wt itself under another name, e.g. the argv0-validation tests'
+    // `wt;touch` symlink, and it must run as wt.
     if !config_dir.join(format!("{name}.json")).exists() {
         return;
     }
     run(&name, &config_dir);
 }
 
-/// Command name from argv\[0\]: the link name the harness gave this binary.
-/// `file_stem` drops `.exe` on Windows.
-fn command_name() -> String {
-    let argv0 = env::args().next().expect("mock: no argv[0]");
-    Path::new(&argv0)
-        .file_stem()
-        .expect("mock: argv[0] has no file stem")
-        .to_string_lossy()
-        .into_owned()
+/// Command name from argv\[0\]: the link name the harness gave this binary,
+/// with the platform's executable suffix (`.exe`) stripped. Stripping the
+/// suffix rather than taking `file_stem` keeps a dotted mock name
+/// (`python3.11`) intact, and identical across platforms. `None` when
+/// argv\[0\] is missing or degenerate — the caller treats that as "not a
+/// mock" rather than panicking inside wt's `main()`.
+///
+/// The bin crate's `invocation::binary_name` reads the same argv\[0\] to name
+/// wt in its own help output; keep the two derivations aligned.
+fn command_name() -> Option<String> {
+    let argv0 = env::args().next()?;
+    let name = Path::new(&argv0).file_name()?.to_string_lossy();
+    let name = name
+        .strip_suffix(std::env::consts::EXE_SUFFIX)
+        .unwrap_or(&name);
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Append this invocation's argv to
