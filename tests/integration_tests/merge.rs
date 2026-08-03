@@ -1829,7 +1829,7 @@ fn test_merge_no_rebase_when_not_rebased(mut repo: TestRepo) {
     assert!(feature_wt.exists(), "failed merge must keep the worktree");
     assert!(
         repo.git_output(&["stash", "list"]).is_empty(),
-        "known divergence must fail before target stashing"
+        "a failed merge must not write to the stash list"
     );
 }
 
@@ -1879,7 +1879,7 @@ fn test_merge_no_commit_no_rebase_rejects_unrelated_history(repo: TestRepo) {
     assert!(orphan_wt.exists(), "failed merge must keep the worktree");
     assert!(
         repo.git_output(&["stash", "list"]).is_empty(),
-        "unrelated history must fail before target stashing"
+        "a failed merge must not write to the stash list"
     );
 }
 
@@ -1933,90 +1933,11 @@ post-merge = "touch {{ repo_path }}/post-merge-race-ran"
     assert!(feature_wt.exists(), "failed merge must skip cleanup");
     assert!(
         repo.git_output(&["stash", "list"]).is_empty(),
-        "failed merge must not leave a target stash"
+        "a failed merge must not write to the stash list"
     );
     assert!(
         !post_merge_marker.exists(),
         "post-merge must not run after final ancestry rejection"
-    );
-}
-
-#[cfg(unix)]
-#[rstest]
-fn test_merge_target_diverges_during_receive_restores_autostash(mut repo: TestRepo) {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let feature_wt = repo.add_worktree_with_commit(
-        "feature-receive-race",
-        "feature.txt",
-        "feature content",
-        "Add feature",
-    );
-    fs::write(repo.root_path().join("notes.txt"), "target notes").unwrap();
-
-    let git_common_dir =
-        repo.git_output(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    let hooks_dir = PathBuf::from(git_common_dir).join("hooks");
-    fs::create_dir_all(&hooks_dir).unwrap();
-    let hook_path = hooks_dir.join("pre-receive");
-    fs::write(
-        &hook_path,
-        r#"#!/bin/sh
-set -eu
-unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-target=$(git rev-parse refs/heads/main)
-tree=$(git rev-parse "${target}^{tree}")
-concurrent=$(printf 'concurrent target\n' | git commit-tree "$tree" -p "$target")
-git update-ref refs/heads/main "$concurrent" "$target"
-"#,
-    )
-    .unwrap();
-    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
-
-    let target_before = repo.git_output(&["rev-parse", "main"]);
-    let source_tip = repo.git_output(&["rev-parse", "feature-receive-race"]);
-    let output = repo
-        .wt_command()
-        .args([
-            "merge",
-            "main",
-            "--no-commit",
-            "--no-rebase",
-            "--no-remove",
-            "--no-hooks",
-        ])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    assert!(
-        !output.status.success(),
-        "a divergent receive-time target update must reject the merge"
-    );
-    let target_after = repo.git_output(&["rev-parse", "main"]);
-    assert_ne!(
-        target_after,
-        target_before,
-        "receive hook did not advance target; stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        repo.git_output(&["show", "-s", "--format=%s", "main"]),
-        "concurrent target"
-    );
-    assert_eq!(
-        repo.git_output(&["rev-parse", "feature-receive-race"]),
-        source_tip
-    );
-    assert!(feature_wt.exists(), "failed merge must skip cleanup");
-    assert_eq!(
-        fs::read_to_string(repo.root_path().join("notes.txt")).unwrap(),
-        "target notes",
-        "target autostash must be restored after receive rejection"
-    );
-    assert!(
-        repo.git_output(&["stash", "list"]).is_empty(),
-        "target autostash must not leak"
     );
 }
 
@@ -2333,10 +2254,11 @@ fn test_merge_when_default_branch_missing_worktree(repo: TestRepo) {
 fn test_merge_doesnt_set_receive_deny_current_branch(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
-    // Explicitly set config to "refuse" - this would block pushes to checked-out branches
+    // Hostile receive config: this would block a `git push` into a checked-out
+    // branch. The merge advances the ref with plumbing, so it neither trips
+    // over the setting nor rewrites it.
     repo.run_git(&["config", "receive.denyCurrentBranch", "refuse"]);
 
-    // Perform merge - should succeed despite "refuse" setting because we use --receive-pack
     let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
     let output = cmd.output().unwrap();
     assert!(
@@ -4289,16 +4211,19 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
 
 /// --no-ff merge with non-overlapping dirty files in the target worktree.
 ///
-/// The target worktree has uncommitted changes to a file that doesn't overlap
-/// with the merge. These should be auto-stashed, the merge commit created,
-/// and the stash restored afterward.
+/// The target worktree has uncommitted changes at paths the merge doesn't
+/// touch. The two-tree merge carries them in place — staged state preserved,
+/// stash list untouched — while the merge commit lands.
 #[rstest]
-fn test_merge_no_ff_dirty_target_autostash(mut repo_with_main_worktree: TestRepo) {
+fn test_merge_no_ff_dirty_target_stays_in_place(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
     let main_wt = repo.root_path().to_path_buf();
 
-    // Make main worktree dirty with a non-conflicting file
+    // Non-overlapping uncommitted state in the target worktree: an untracked
+    // file and a staged new file.
     fs::write(main_wt.join("notes.txt"), "temporary notes").unwrap();
+    fs::write(main_wt.join("staged.txt"), "staged").unwrap();
+    repo.run_git(&["add", "staged.txt"]);
 
     let feature_wt = repo.add_worktree("feature");
     repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
@@ -4310,20 +4235,29 @@ fn test_merge_no_ff_dirty_target_autostash(mut repo_with_main_worktree: TestRepo
         Some(&feature_wt)
     ));
 
-    // Verify dirty file was restored after autostash
-    let notes = fs::read_to_string(main_wt.join("notes.txt")).unwrap();
+    // The uncommitted changes never moved — staged state included.
     assert_eq!(
-        notes, "temporary notes",
-        "Autostash should restore dirty file"
+        fs::read_to_string(main_wt.join("notes.txt")).unwrap(),
+        "temporary notes"
+    );
+    assert_eq!(
+        repo.git_output(&["diff", "--cached", "--name-only"]),
+        "staged.txt",
+        "the staged entry must stay staged"
+    );
+    assert_eq!(
+        repo.git_output(&["ls-files", "--others", "--exclude-standard"]),
+        "notes.txt",
+        "the untracked file must stay untracked"
     );
 
-    // Verify autostash cleaned up (no leftover stash entries)
+    // Nothing touches the stash list.
     let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
             .is_empty(),
-        "Autostash should clean up after itself"
+        "the merge must not create stash entries"
     );
 
     // Verify merge commit was created
@@ -4387,20 +4321,22 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
     );
 }
 
-/// --no-ff merge succeeds with a warning when target worktree sync fails.
+/// --no-ff merge fails whole when the target worktree can't be synced.
 ///
-/// Simulates a TOCTOU race by locking the target worktree's index before the
-/// merge. The merge commit is still created (via update-ref), but the working
-/// tree sync (read-tree) fails and emits a warning instead of aborting.
+/// A locked index in the target worktree stands in for a sync failure in the
+/// window after the upfront conflict check. The ref update is rolled back, so
+/// the branch and its worktree move together or not at all — no half-landed
+/// merge leaving the worktree stale behind its own branch.
 #[rstest]
-fn test_merge_no_ff_sync_failure_warns(mut repo_with_main_worktree: TestRepo) {
+fn test_merge_no_ff_sync_failure_rolls_back(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
     let main_wt = repo.root_path().to_path_buf();
     let feature_wt = repo.add_worktree("feature");
 
     repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
 
-    // Lock the target worktree's index to make read-tree fail
+    // Lock the target worktree's index to make the sync fail
+    let target_before = repo.git_output(&["rev-parse", "main"]);
     let index_lock = main_wt.join(".git/index.lock");
     fs::write(&index_lock, "").unwrap();
 
@@ -4411,30 +4347,22 @@ fn test_merge_no_ff_sync_failure_warns(mut repo_with_main_worktree: TestRepo) {
         .output()
         .unwrap();
 
-    // Merge should still succeed (ref was updated before sync)
     assert!(
-        output.status.success(),
-        "merge should succeed despite sync failure: {}",
+        !output.status.success(),
+        "a merge whose worktree sync fails must fail whole: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-
-    // Should emit a warning about the sync failure
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Failed to sync target worktree"),
-        "should warn about sync failure: {stderr}"
+        stderr.contains("rolled back"),
+        "the error must say the ref change was rolled back: {stderr}"
     );
 
-    // Verify merge commit was created on the ref
-    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
-    let parents: Vec<&str> = parent_count
-        .lines()
-        .filter(|l| l.starts_with("parent "))
-        .collect();
+    // The rollback left the target exactly where it started — no merge commit.
     assert_eq!(
-        parents.len(),
-        2,
-        "Should create merge commit despite sync failure"
+        repo.git_output(&["rev-parse", "main"]),
+        target_before,
+        "the ref update must be rolled back"
     );
 
     // Clean up lock so test teardown doesn't fail

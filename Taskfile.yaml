@@ -21,8 +21,8 @@ tasks:
       - cargo nextest run --no-run --features shell-integration-tests
       # bash's `time` keyword counts every reaped child. Task's own interpreter
       # (mvdan/sh) parses `time` but reports user/sys as zero, and /usr/bin/time
-      # is an extra package on minimal Linux; bash is already required on every
-      # platform (see .config/nextest.toml's build-bins).
+      # is an extra package on minimal Linux; bash is present on every dev and
+      # CI platform (Git Bash on Windows).
       - bash -c 'time "$@"' bash cargo nextest run --features shell-integration-tests {{.CLI_ARGS}}
       - echo "per-test timings in target/nextest/default/junit.xml"
 

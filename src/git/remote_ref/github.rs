@@ -127,11 +127,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     let api_path = format!("repos/{}/{}/pulls/{}", owner, repo_name, pr_number);
 
     // Only pass --hostname when explicitly configured (for GHE / self-hosted).
-    let hostname = repo
-        .load_project_config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.forge_hostname().map(String::from));
+    let hostname = repo.forge_hostname();
 
     let mut args = vec!["api", api_path.as_str()];
     if let Some(h) = &hostname {

@@ -551,6 +551,11 @@ impl Merge for StepConfig {
 /// These are user preferences (not checked into git) that override
 /// the corresponding global settings when set.
 ///
+/// The key is a project identifier (`host/owner/repo`) or a `*` pattern
+/// covering a set of them, so one entry can carry settings for every
+/// repository on a host. Every matching entry applies, least- to
+/// most-specific; the `project_match` module states the rules.
+///
 /// # TOML Format
 /// ```toml
 /// [projects."github.com/user/repo"]
@@ -564,6 +569,10 @@ impl Merge for StepConfig {
 ///
 /// [projects."github.com/user/repo".merge]
 /// squash = false
+///
+/// # Every repository on a self-hosted forge whose name carries no brand
+/// [projects."git.company.example/*"]
+/// forge.platform = "gitlab"
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct UserProjectOverrides {
@@ -604,6 +613,15 @@ pub struct UserProjectOverrides {
 
     #[serde(default, skip_serializing_if = "is_default")]
     pub step: StepConfig,
+
+    /// Forge platform and API hostname for the matched repositories.
+    ///
+    /// Same shape as the repository's own `[forge]` block, which wins field by
+    /// field where both are set. Both fields describe the host rather than the
+    /// repository, so a `*` pattern keyed to a hostname is the usual way to
+    /// write them.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub forge: crate::config::ProjectForgeConfig,
 
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aliases: BTreeMap<String, CommandConfig>,

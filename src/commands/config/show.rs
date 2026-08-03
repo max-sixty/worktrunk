@@ -449,7 +449,8 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
-    // Check the CI tool for this repo's platform (project config, else remote URL).
+    // Check the CI tool for this repo's platform (configured forge platform,
+    // else remote URL).
     let repo = Repository::current()?;
     match repo.ci_platform(None) {
         Some(ForgeKind::GitHub) => {

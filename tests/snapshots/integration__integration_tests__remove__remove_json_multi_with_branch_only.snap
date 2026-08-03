@@ -6,14 +6,14 @@ expression: "String::from_utf8_lossy(&output.stdout)"
   {
     "branch": "wt-feature",
     "branch_checked_out_at": null,
-    "branch_deleted": true,
+    "branch_outcome": "deleted",
     "kind": "worktree",
     "path": "<PATH>"
   },
   {
     "branch": "orphan-branch",
     "branch_checked_out_at": null,
-    "branch_deleted": true,
+    "branch_outcome": "deleted",
     "kind": "branch_only",
     "pruned": false
   }

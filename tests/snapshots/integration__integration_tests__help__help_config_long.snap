@@ -372,6 +372,33 @@ Scalar values (like [2mworktree-path[0m) replace the global value; everything 
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
 
+[1mMatching several repositories with one entry[0m
+
+A key containing [2m*[0m matches any run of characters, [2m/[0m included, so one entry covers a whole host or namespace — including nested groups. [2m*[0m is the only wildcard; every other character, [2m.[0m among them, is literal.
+
+[107m [0m [2m# Every repository on a self-hosted forge whose hostname carries no brand[0m
+[107m [0m [2m[36m[projects."git.company.example/*"][0m
+[107m [0m [2mforge.platform = [0m[2m[32m"gitlab"[0m
+[107m [0m 
+[107m [0m [2m# Everything under one namespace shares a layout[0m
+[107m [0m [2m[36m[projects."git.company.example/platform/*"][0m
+[107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
+
+Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — [2mgit.company.example/platform/*[0m over [2mgit.company.example/*[0m — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-[2m*[0m characters in the key. End a host-wide key with [2m/*[0m — a bare [2mgit.company.example*[0m also covers hosts whose names merely start with that 
+string.
+
+[2mapproved-commands[0m matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: [2mwt config approvals add[0m and the interactive prompt record under the exact identifier, and [2mwt config approvals clear[0m removes only that exact entry, leaving a pattern other repositories share intact.
+
+[1mForge platform and hostname[0m
+
+[2mforge[0m names the forge for the matched repositories — the user-level counterpart of the project config's forge platform block, for a self-hosted host whose name carries no [2mgithub[0m, [2mgitlab[0m, or [2mgitea[0m for detection to read.
+
+[107m [0m [2m[36m[projects."git.company.example/*"][0m
+[107m [0m [2mforge.platform = [0m[2m[32m"gitlab"[0m[2m                    [0m[2m# or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
+[107m [0m [2mforge.hostname = [0m[2m[32m"api.git.company.example"[0m[2m   [0m[2m# API host, when the remote's own host isn't it[0m
+
+Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through [2m~/.ssh/config[0m — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own [2m[forge][0m block still wins over any entry here, field by field: a repository that sets only [2mplatform[0m still takes a matching entry's [2mhostname[0m.
+
 Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats [2mprojects."github.com/user/repo".post-start.server = "..."[0m and a [2m[projects."github.com/user/repo".post-start][0m table the same way:
 
 [107m [0m [2m# Single command[0m
@@ -536,6 +563,8 @@ The forge is read from the remote's hostname: any host carrying [2mgithub[0m, 
 [107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
+
+When many repositories share one self-hosted host, name it once in user config with a pattern-keyed [2m[projects][0m entry instead of repeating this block in each repo. A repository's own [2m[forge][0m still wins, field by field.
 
 [1m[32mCommit-message append [experimental][0m
 

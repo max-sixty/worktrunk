@@ -12,7 +12,7 @@ cargo test --test integration                                      # integration
 cargo test --test integration --features shell-integration-tests   # + shell tests
 ```
 
-A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
+Every binary the suite spawns is `wt` itself — the mock commands are the same binary linked under other names, dispatching on argv[0] (`testing::mock_stub`) — so no run can spawn missing or stale code: cargo rebuilds a package's own binaries whenever its integration tests build, under every runner and filter, and the `CARGO_BIN_EXE_wt` the harness resolves at runtime names that just-built binary; outside a cargo runner the suite panics ("CARGO_BIN_EXE_wt not set") rather than guessing a path. `cargo build --bin wt` recompiling right after a test run is the bin-only build being a separate cached unit (a different feature graph), not evidence the tests ran stale code.
 
 **Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
 
@@ -24,11 +24,9 @@ A target-filtered run (`--lib`, `--test integration`, …) on a fresh `target/` 
 
 Five runners execute this suite — `cargo test`, `cargo nextest run`, `cargo llvm-cov nextest`, `cargo bench`, and the Nix `worktrunk-tests` derivation — and CI uses several of them on the same commit. **A test's result must not depend on which one started it.**
 
-So `.config/nextest.toml` carries no setting that changes what a test observes: no `[env]`, and no setup script exporting through `$NEXTEST_ENV`. Anything load-bearing goes where every runner sees it — the harness-latched floor in `shell_exec` for git environment (see Git Config Isolation), `.cargo/config.toml` for `COLUMNS`, the fixture for behavior.
+So `.config/nextest.toml` carries no setting that changes what a test observes: no `[env]`, no setup scripts. Anything load-bearing goes where every runner sees it — the harness-latched floor in `shell_exec` for git environment (see Git Config Isolation), `.cargo/config.toml` for `COLUMNS`, the fixture for behavior.
 
 A nextest-only knob doesn't fail loudly when another runner misses it. It yields a *different result*, and the runner that disagrees is typically `cargo llvm-cov` — whose numbers gate a merge, and whose disagreement therefore reads as a coverage regression rather than as missing configuration.
-
-The one setup script here, `build-bins`, is a build step rather than a behavior setting: it compiles the `mock-stub` helper a target-filtered run would otherwise skip, and the same gap under plain `cargo test` is handled by `default-members` (see Running the Suite). It carries its own TODO to disappear once cargo-dist supports per-binary exclusion. It is not precedent.
 
 ## Profiling the Suite
 
@@ -167,10 +165,11 @@ somewhere else.
 **Name it `WORKTRUNK_TEST_*`.** `isolate_subprocess_env` scrubs the parent
 environment by prefix — `GIT_*` and `WORKTRUNK_*` — so the prefix is what makes
 a variable hermetic; an unprefixed name inherits from whatever shell ran the
-suite. The rule covers the test-only protocol between the harness and its helper
-binaries, not just knobs `wt` itself reads: the harness sets
-`WORKTRUNK_TEST_MOCK_CONFIG_DIR` and only `mock-stub` reads it. A variable `wt`
-reads in production drops `TEST` and keeps `WORKTRUNK_`.
+suite. The rule covers the test-only protocol between the harness and the mock
+playback, not just knobs that change wt's own behavior:
+`WORKTRUNK_TEST_MOCK_CONFIG_DIR` is read only by the playback dispatch
+(`testing::mock_stub`). A variable `wt` reads in production drops `TEST` and
+keeps `WORKTRUNK_`.
 
 ## Git Config Isolation
 

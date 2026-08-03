@@ -157,7 +157,7 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
                 ))
             );
             match action {
-                ApprovalsCommand::List => list_approvals(),
+                ApprovalsCommand::List { format } => list_approvals(format),
                 ApprovalsCommand::Add { all } => add_approvals(all),
                 ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
             }
@@ -633,7 +633,7 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
         ConfigCommand::Update { print } => handle_config_update(yes, print),
         ConfigCommand::Approvals { action } => match action {
-            ApprovalsCommand::List => list_approvals(),
+            ApprovalsCommand::List { format } => list_approvals(format),
             ApprovalsCommand::Add { all } => add_approvals(all),
             ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
         },
@@ -1061,6 +1061,12 @@ fn print_help_to_stderr() {
 }
 
 fn main() {
+    // Mock-command playback for the test suite: when the harness linked this
+    // binary onto PATH under another name (`gh`, `glab`, …), play back the
+    // mock config and exit instead of running wt. Inert without
+    // WORKTRUNK_TEST_MOCK_CONFIG_DIR; see `worktrunk::testing::mock_stub`.
+    worktrunk::testing::mock_stub::maybe_run();
+
     // Capture startup state before anything else: the working directory
     // (used by shell_exec to resolve relative `GIT_*` path variables
     // inherited from a parent `git` — e.g. when invoked via `git wt ...`

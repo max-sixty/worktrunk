@@ -103,6 +103,54 @@ fn test_init_rejects_unsafe_cmd(#[case] shell: &str, repo: TestRepo) {
     );
 }
 
+/// A degenerate argv\[0\] — empty here, so it has no file name — never selects
+/// mock playback: `command_name()` yields `None` and the process runs as wt,
+/// rather than panicking inside `main()` or probing the config dir.
+#[test]
+fn test_mock_dispatch_ignores_degenerate_argv0() {
+    use std::os::unix::process::CommandExt;
+
+    let config_dir = tempfile::tempdir().unwrap();
+    let output = Command::new(wt_bin())
+        .arg0("")
+        .arg("--version")
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", config_dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "wt --version should succeed");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("wt "),
+        "expected wt's own version output, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// A non-UTF8 argv\[0\] must not panic the dispatch (`env::args()` panics on
+/// non-Unicode arguments; the dispatch reads `args_os`): it lossily converts,
+/// matches no config, and wt runs as itself.
+#[test]
+fn test_mock_dispatch_survives_non_utf8_argv0() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::process::CommandExt;
+
+    let config_dir = tempfile::tempdir().unwrap();
+    let output = Command::new(wt_bin())
+        .arg0(OsStr::from_bytes(b"\xff\xfe"))
+        .arg("--version")
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", config_dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "wt --version should succeed");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("wt "),
+        "expected wt's own version output, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
 #[rstest]
 fn test_init_rejects_unsafe_argv0_command_name(repo: TestRepo) {
     let temp_dir = tempfile::tempdir().unwrap();

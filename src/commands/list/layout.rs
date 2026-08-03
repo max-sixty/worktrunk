@@ -207,9 +207,6 @@ use super::custom_columns::ResolvedCustomColumn;
 // Re-export DiffVariant for external use (e.g., picker module)
 pub use super::columns::DiffVariant;
 
-/// Width of short commit hash display (first 8 hex characters)
-const COMMIT_HASH_WIDTH: usize = 8;
-
 /// Ensures a column width is at least as wide as its header.
 ///
 /// This is the general solution for preventing header overflow: pass the header
@@ -1188,12 +1185,13 @@ pub fn calculate_layout_with_width(
 
     // A detached row shows its abbreviated HEAD in this column
     // (`ListItem::display_name`), so the column has to fit a SHA as well as the
-    // branch names — the same `COMMIT_HASH_WIDTH` the Commit column budgets for
-    // the identical string.
+    // branch names — measured, not assumed, because `%h` follows `core.abbrev`
+    // and stretches further still to disambiguate.
     let detached_width = items
         .iter()
-        .any(|item| item.branch.is_none())
-        .then_some(COMMIT_HASH_WIDTH);
+        .filter(|item| item.branch.is_none())
+        .map(|item| item.short_sha.width())
+        .max();
 
     let max_branch = longest_branch
         .map(|b| b.width())
@@ -1252,7 +1250,16 @@ pub fn calculate_layout_with_width(
         custom_widths,
     );
 
-    let commit_width = fit_header(ColumnKind::Commit.header(), COMMIT_HASH_WIDTH);
+    // Sized from the abbreviated SHAs themselves — `%h` is `core.abbrev` wide
+    // (9-10 in a repo the size of rust-lang/rust, 7 by default) and a row whose
+    // prefix is ambiguous gets more still, so a fixed budget either truncates
+    // the hash or reserves space no row uses.
+    let commit_data_width = items
+        .iter()
+        .map(|item| item.short_sha.width())
+        .max()
+        .unwrap_or(0);
+    let commit_width = fit_header(ColumnKind::Commit.header(), commit_data_width);
 
     allocate_columns_with_priority(
         &metadata,
@@ -2100,7 +2107,9 @@ mod tests {
 
     /// A detached row shows its abbreviated HEAD in the Branch column, so the
     /// column has to fit a SHA even when every branch name is shorter than one.
-    /// Sized off the names alone it would truncate the hash mid-way.
+    /// Sized off the names alone it would truncate the hash mid-way — and the
+    /// budget is the row's own `short_sha`, not a fixed guess at how wide `%h`
+    /// runs.
     #[test]
     fn test_branch_column_fits_a_detached_rows_sha() {
         let mut detached = make_test_item("main");
@@ -2125,7 +2134,8 @@ mod tests {
 
         let branch = find_column(&layout, ColumnKind::Branch).expect("Branch allocated");
         assert_eq!(
-            branch.width, COMMIT_HASH_WIDTH,
+            branch.width,
+            "abc1234".len(),
             "the Branch column fits the abbreviated HEAD a detached row renders, \
              not just the branch names ({:?} wide)",
             branch.width

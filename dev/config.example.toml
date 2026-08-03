@@ -249,6 +249,32 @@
 # step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
+# #### Matching several repositories with one entry
+#
+# A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.
+#
+# # Every repository on a self-hosted forge whose hostname carries no brand
+# [projects."git.company.example/*"]
+# forge.platform = "gitlab"
+#
+# # Everything under one namespace shares a layout
+# [projects."git.company.example/platform/*"]
+# worktree-path = ".worktrees/{{ branch | sanitize }}"
+#
+# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
+#
+# `approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.
+#
+# #### Forge platform and hostname
+#
+# `forge` names the forge for the matched repositories — the user-level counterpart of the project config's forge platform (https://worktrunk.dev/config/#forge-platform) block, for a self-hosted host whose name carries no `github`, `gitlab`, or `gitea` for detection to read.
+#
+# [projects."git.company.example/*"]
+# forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)
+# forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it
+#
+# Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.
+#
 # Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:
 #
 # # Single command

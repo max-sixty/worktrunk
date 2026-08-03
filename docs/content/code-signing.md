@@ -5,6 +5,9 @@ weight = 26
 
 [extra]
 group = "Reference"
+# Linked from the install section rather than the sidebar: the page exists to
+# satisfy SignPath Foundation's transparency requirement, not to be browsed.
+hide_from_nav = true
 +++
 
 This page is Worktrunk's **code signing policy**. It describes what gets signed, which certificate is used, how the signing pipeline works, and who authorizes each release. It exists both to document the process for users and to satisfy the transparency requirements of the [SignPath Foundation](https://signpath.org/) open-source code signing program.

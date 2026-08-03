@@ -135,7 +135,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
-        version: "=0.3.2"
+        version: "=0.4.0"
 
     - name: Install llvm-tools
       run: rustup component add llvm-tools
@@ -246,7 +246,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
-        version: "=0.3.2"
+        version: "=0.4.0"
 
     - name: 🎯 Run affected tests
       env:

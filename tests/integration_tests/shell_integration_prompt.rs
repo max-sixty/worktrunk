@@ -548,6 +548,72 @@ mod pty_tests {
         });
     }
 
+    /// Test: the first-run offer names a legacy file it will delete before the
+    /// user consents.
+    ///
+    /// Regression for the `wt config shell install` preview (issue #3644) not
+    /// reaching the `wt switch` first-run offer. Setup: bash is unconfigured, so
+    /// the offer fires; fish is already configured at the canonical
+    /// `functions/wt.fish` while a deprecated `conf.d/wt.fish` lingers. Accepting
+    /// the offer would remove that legacy file, so its preview must name the
+    /// removal — otherwise `wt switch` deletes a file the prompt never mentioned.
+    #[rstest]
+    fn test_first_run_offer_previews_legacy_removal(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+
+        // bash: unconfigured (empty rc) → current shell not installed → offer fires.
+        let bashrc = temp_home.path().join(".bashrc");
+        fs::write(&bashrc, "# empty bashrc\n").unwrap();
+
+        // fish: already configured at the canonical functions/wt.fish location.
+        let functions = temp_home.path().join(".config/fish/functions");
+        fs::create_dir_all(&functions).unwrap();
+        let wrapper = worktrunk::shell::ShellInit::with_prefix(
+            worktrunk::shell::Shell::Fish,
+            "wt".to_string(),
+        )
+        .generate_fish_wrapper()
+        .unwrap();
+        fs::write(functions.join("wt.fish"), format!("{wrapper}\n")).unwrap();
+
+        // fish: a deprecated conf.d/wt.fish that accepting the offer would delete.
+        let conf_d = temp_home.path().join(".config/fish/conf.d");
+        fs::create_dir_all(&conf_d).unwrap();
+        let legacy_file = conf_d.join("wt.fish");
+        fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // Request the preview, then decline so nothing is actually removed.
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        assert!(
+            output.contains("Install shell integration"),
+            "Should show the first-run offer: {output}"
+        );
+        // The preview must name the deprecated fish file the install would remove.
+        assert!(
+            output.contains("Will remove") && output.contains("conf.d/wt.fish"),
+            "First-run offer preview must name the legacy fish removal: {output}"
+        );
+
+        // Declining leaves the legacy file in place — the preview did not delete it.
+        assert!(
+            legacy_file.exists(),
+            "Declining should preserve the legacy file: {legacy_file:?}"
+        );
+    }
+
     /// Test: Second switch after first prompt → no prompt
     #[rstest]
     fn test_no_prompt_after_first_prompt(repo: TestRepo) {

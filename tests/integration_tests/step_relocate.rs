@@ -1057,6 +1057,59 @@ worktree-path = "{{ nonexistent_variable }}"
     );
 }
 
+/// Regression test: the human-readable summary count must include
+/// template-error branches, matching the `--format=json` skip set.
+///
+/// When a valid candidate and a template-error branch coexist, the JSON path
+/// folds template errors into `all_skipped` but the human summary previously
+/// counted only validation/executor skips, undercounting by the number of
+/// template errors. The template here fails only for branch `bad` (via a
+/// branch-gated undefined variable) while `good` expands cleanly, so relocate
+/// moves `good` and skips `bad`.
+#[rstest]
+fn test_relocate_template_error_counted_in_summary(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // `good`: a mismatched worktree that will relocate successfully.
+    let good_wrong = parent.join("good-wrong");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "good",
+        good_wrong.to_str().unwrap(),
+    ]);
+    // `bad`: a worktree whose template expansion fails.
+    let bad_path = parent.join("bad-loc");
+    repo.run_git(&["worktree", "add", "-b", "bad", bad_path.to_str().unwrap()]);
+
+    // Template errors only for branch `bad`; `good` renders the standard path.
+    let worktrunk_config = "worktree-path = \"{% if branch == 'bad' %}{{ undefined_var }}{% endif %}{{ repo_path }}/../{{ repo }}.{{ branch }}\"\n";
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "relocate should succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Relocated 1 worktree, skipped 1 worktree"),
+        "summary must count the template-error branch as skipped; stderr was:\n{stderr}"
+    );
+
+    // `good` relocated to its expected sibling path; `bad` untouched.
+    assert!(
+        parent.join("repo.good").exists(),
+        "good should have relocated"
+    );
+    assert!(
+        bad_path.exists(),
+        "bad should be untouched (template error)"
+    );
+}
+
 /// Regression test: main worktree relocation must surface a failed
 /// `git checkout <default_branch>` rather than silently claiming success.
 ///

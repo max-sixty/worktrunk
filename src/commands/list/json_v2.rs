@@ -397,7 +397,7 @@ pub fn to_json_envelope(
 ) -> JsonEnvelope {
     let mut all_vars = repo.all_vars_from_snapshot().unwrap_or_default();
     let default_branch = repo.default_branch();
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
 
     let json_items = items
         .iter()

@@ -6,9 +6,14 @@
 //! sized like rayon's ([`RemovalJob`]). Checks and hook-free removals hold
 //! the read side of [`RemovalContext::check_lock`] and run concurrently; the
 //! exceptional removals serialize on the write side
-//! ([`removal_needs_write`]). One FIFO queue carrying both removals and skip
-//! lines means a single worker (`RAYON_NUM_THREADS=1`) reproduces the serial
-//! total order the deterministic-output tests pin. The first failing removal
+//! ([`removal_needs_write`]). A second lock, [`RemovalContext::registry_lock`],
+//! serializes worktree-registry teardowns (`git worktree remove`) against each
+//! other and against concurrent registry reads ([`removal_mutates_registry`]) —
+//! a git-level TOCTOU on `.git/worktrees/` that the two-locks split keeps out
+//! of the integration-check fan-out's way (issue #3661). One FIFO queue carrying
+//! both removals and skip lines means a single worker (`RAYON_NUM_THREADS=1`)
+//! reproduces the serial total order the deterministic-output tests pin. The
+//! first failing removal
 //! flips an abort flag that drains the remaining queue unexecuted; the
 //! current worktree is removed last, after the fan-out, because its removal
 //! cd's the shell to the primary.
@@ -38,7 +43,7 @@ use worktrunk::trace::Span;
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use super::super::worktree::RemovalPlan;
+use super::super::worktree::{BranchFate, RemovalPlan};
 use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
@@ -61,13 +66,26 @@ struct Candidate {
     /// reports a branch the run deliberately kept.
     ///
     /// Starts as the scan's prediction (what the dry run prints); on the live
-    /// path [`try_remove`] overwrites it with the executed
-    /// [`BranchFate`](crate::commands::worktree::BranchFate), so a deletion
-    /// the CAS refused mid-run is counted as retained, not as the plan hoped.
+    /// path [`record_fate`](Self::record_fate) replaces it with the executed
+    /// [`BranchFate`], so a deletion the CAS refused mid-run is counted as
+    /// retained, not as the plan hoped.
     deletes_branch: bool,
+    /// The executed fate, kept whole for `--format=json`'s `branch_outcome`.
+    /// `None` on the dry-run path, which runs no removal to have an outcome —
+    /// that path reports `branch_deleted`, its prediction, instead.
+    fate: Option<BranchFate>,
 }
 
 impl Candidate {
+    /// Record what a removal actually did to the branch, replacing the scan's
+    /// prediction. Both fields move together — `deletes_branch` is what the
+    /// summary counts, `fate` what `--format=json` names — so they are set
+    /// here rather than at each call site.
+    fn record_fate(&mut self, fate: BranchFate) {
+        self.deletes_branch = fate.deleted();
+        self.fate = Some(fate);
+    }
+
     /// Error context for `try_remove` failures: distinguishes branch-only
     /// removals (no worktree exists) from worktree removals.
     fn removal_context(&self) -> String {
@@ -235,6 +253,25 @@ struct RemovalContext<'a> {
     /// unreachable here because the chain captures the snapshot immediately
     /// before consulting it.)
     check_lock: &'a RwLock<()>,
+    /// Serializes access to the worktree registry (`.git/worktrees/`),
+    /// independently of `check_lock`.
+    ///
+    /// `git worktree remove` enumerates *every* sibling entry and reads each
+    /// one's `commondir` while resolving its target, so two overlapping
+    /// teardowns — or a teardown overlapping a branch delete's
+    /// `list_worktrees` checkout probe — can read an entry another worker is
+    /// mid-way through deleting and fail (`failed to read …/commondir` /
+    /// `Invalid path …/.git/worktrees/<id>`). That is a genuine git-level
+    /// TOCTOU, not a wt bug (issue #3661). A removal that unregisters an entry
+    /// ([`removal_mutates_registry`]) holds the write side; a removal that only
+    /// reads the registry holds the read side, so those still run concurrently.
+    ///
+    /// Kept distinct from `check_lock` on purpose: the integration-check
+    /// fan-out never enumerates the registry live (it plans off the cached
+    /// `list_worktrees` snapshot), so it must keep overlapping removals rather
+    /// than serialize behind them. Removals acquire `check_lock` first, then
+    /// `registry_lock`, so the two never deadlock.
+    registry_lock: &'a RwLock<()>,
 }
 
 /// Which removals must hold the write side of [`RemovalContext::check_lock`]
@@ -258,10 +295,14 @@ struct RemovalContext<'a> {
 /// a hook body nor a spinner, whatever selected it. `StaleDetached` never
 /// reaches here — [`try_remove`] prunes its entry and returns.
 ///
-/// Everything else fans out, including both mutations that unregister stale
-/// worktree metadata: `StaleDetached`'s prune, and the one a `BranchOnly`
-/// plan carries as `prune_entry`. Each names its own entry, so concurrent
-/// prunes are safe against each other and against the scan — see the
+/// Everything else fans out on the read side, including both mutations that
+/// unregister stale worktree metadata: `StaleDetached`'s prune, and the one a
+/// `BranchOnly` plan carries as `prune_entry`. Naming one entry bounds what
+/// each *deletes* but not what `git worktree remove` *reads* (it enumerates
+/// every sibling), so those teardowns are not safe to overlap — that is
+/// [`RemovalContext::registry_lock`]'s job, orthogonal to `check_lock`: they
+/// take its write side via [`removal_mutates_registry`] and so serialize
+/// against each other and against the scan's registry reads. See the
 /// concurrency section on
 /// [`prune_worktree_entry`](Repository::prune_worktree_entry).
 fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalContext<'_>) -> bool {
@@ -281,28 +322,53 @@ fn removal_needs_write(kind: CandidateKind, plan: &RemovalPlan, ctx: &RemovalCon
     }
 }
 
-/// Try to remove a candidate immediately. Returns `Ok(Some(branch_deleted))`
-/// if removed — the executed outcome the summary counts — `Ok(None)` if the
-/// removal turned out to be a no-op, `Err` on execution error.
+/// Whether a removal's execution unregisters a worktree entry — a `git worktree
+/// remove` teardown, which enumerates every sibling's `commondir` and so must
+/// hold the write side of [`RemovalContext::registry_lock`].
+///
+/// A `Worktree` plan always tears down (either the rename fast path's scoped
+/// prune or the direct `git worktree remove` fallback); a `BranchOnly` plan
+/// tears down only when it carries a stale `prune_entry`. A plain `BranchOnly`
+/// deletion touches the registry just to read it (`list_worktrees`, to refuse
+/// deleting a still-checked-out branch) and then deletes the ref with a CAS
+/// `update-ref -d` that never reads the registry, so it takes the read side and
+/// keeps running concurrently with its peers. `StaleDetached` never reaches
+/// here — [`try_remove`] prunes its entry directly under the write side.
+fn removal_mutates_registry(plan: &RemovalPlan) -> bool {
+    match plan {
+        RemovalPlan::Worktree { .. } => true,
+        RemovalPlan::BranchOnly { prune_entry, .. } => prune_entry.is_some(),
+    }
+}
+
+/// Try to remove a candidate immediately. Returns `Ok(Some(fate))` if removed
+/// — the executed outcome the summary counts and `--format=json` names —
+/// `Ok(None)` if the removal turned out to be a no-op, `Err` on execution
+/// error.
 ///
 /// `plan` is the scan-time `prepare_worktree_removal` result from
 /// [`check_one`]; only `StaleDetached` candidates arrive without one (their
 /// entry is pruned directly here — there is nothing to plan). Scan-time plans
 /// may be stale by execution; the pre-rename `ensure_clean` and the
 /// branch-delete CAS re-validate what matters — and the returned
-/// [`BranchFate`](crate::commands::worktree::BranchFate) is how a CAS
+/// [`BranchFate`] is how a CAS
 /// refusal reaches the summary.
 fn try_remove(
     candidate: &Candidate,
     plan: Option<RemovalPlan>,
     ctx: &RemovalContext<'_>,
-) -> anyhow::Result<Option<bool>> {
+) -> anyhow::Result<Option<BranchFate>> {
     let _span = Span::new(format!("prune-remove:{}", candidate.label));
 
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
-        // The scoped metadata prune is read-side-safe (see
-        // `prune_worktree_entry`), so hold the parallel default.
+        // Output side: no exclusive output here (no spinner, no hook stream),
+        // so join the parallel read side of `check_lock`.
         let _read = ctx.check_lock.read().unwrap_or_else(|e| e.into_inner());
+        // Registry side: `git worktree remove` on this stale entry is a
+        // teardown that enumerates every sibling's `commondir`, so hold the
+        // write side of `registry_lock` — no concurrent teardown or registry
+        // read may overlap it (issue #3661).
+        let _registry = ctx.registry_lock.write().unwrap_or_else(|e| e.into_inner());
         // Name the stale entry rather than sweeping the repository, so a
         // sibling whose directory is merely absent right now (unmounted
         // volume, half-finished `mv`) keeps its registration. `gather_check_items`
@@ -314,7 +380,7 @@ fn try_remove(
             .context("stale detached candidate has no worktree path")?;
         ctx.repo.prune_worktree_entry(path)?;
         // A stale detached entry has no branch to delete.
-        return Ok(Some(false));
+        return Ok(Some(BranchFate::NotAttempted));
     }
 
     let plan = plan.context("candidate arrived without a removal plan")?;
@@ -332,6 +398,23 @@ fn try_remove(
     } else {
         (
             Some(ctx.check_lock.read().unwrap_or_else(|e| e.into_inner())),
+            None,
+        )
+    };
+    // Registry side, acquired *after* `check_lock` (fixed order → no deadlock).
+    // A removal that unregisters a worktree entry (`git worktree remove`) takes
+    // the write side so it can't overlap another teardown's `commondir` read or
+    // a branch delete's `list_worktrees` probe; one that only reads the registry
+    // takes the read side and keeps running concurrently. See `registry_lock`'s
+    // spec and `removal_mutates_registry` (issue #3661).
+    let (_registry_read, _registry_write) = if removal_mutates_registry(&plan) {
+        (
+            None,
+            Some(ctx.registry_lock.write().unwrap_or_else(|e| e.into_inner())),
+        )
+    } else {
+        (
+            Some(ctx.registry_lock.read().unwrap_or_else(|e| e.into_inner())),
             None,
         )
     };
@@ -360,7 +443,7 @@ fn try_remove(
     {
         return Ok(None);
     }
-    Ok(Some(branch_deleted))
+    Ok(Some(fate))
 }
 
 /// One candidate skipped because its project hooks aren't yet approved.
@@ -954,6 +1037,7 @@ pub fn step_prune(
                         path,
                         kind,
                         deletes_branch: outcome.deletes_branch,
+                        fate: None,
                     },
                     DryRunInfo {
                         reason_desc: reason.description().to_string(),
@@ -1050,11 +1134,13 @@ pub fn step_prune(
     let mut skipped_approval: Vec<SkippedApproval> = Vec::new();
 
     let check_lock = RwLock::new(());
+    let registry_lock = RwLock::new(());
     let removal_ctx = RemovalContext {
         repo: &repo,
         foreground,
         hook_plan: &hook_plan,
         check_lock: &check_lock,
+        registry_lock: &registry_lock,
     };
     // Flipped by the first failing removal: the rest of the queue drains
     // without executing (matching the serial loop's abort-on-first-error),
@@ -1109,7 +1195,8 @@ pub fn step_prune(
             // closes once every worker has drained the job queue and exited,
             // so draining it below also waits out all in-flight printing.
             let (job_tx, job_rx) = chan::unbounded::<RemovalJob>();
-            let (done_tx, done_rx) = chan::unbounded::<(Candidate, anyhow::Result<Option<bool>>)>();
+            let (done_tx, done_rx) =
+                chan::unbounded::<(Candidate, anyhow::Result<Option<BranchFate>>)>();
             let abort_ref = &abort;
             let removal_ctx_ref = &removal_ctx;
             // Empty check_items → zero workers, correctly: no jobs can queue.
@@ -1216,6 +1303,7 @@ pub fn step_prune(
                     path,
                     kind,
                     deletes_branch: outcome.deletes_branch,
+                    fate: None,
                 };
                 if matches!(candidate.kind, CandidateKind::Current) {
                     deferred_current = Some((candidate, outcome.plan));
@@ -1234,8 +1322,8 @@ pub fn step_prune(
                 match result {
                     // Record the executed outcome, not the scan's prediction —
                     // what the summary and `--format=json` report.
-                    Ok(Some(branch_deleted)) => {
-                        candidate.deletes_branch = branch_deleted;
+                    Ok(Some(fate)) => {
+                        candidate.record_fate(fate);
                         removed.push(candidate);
                     }
                     Ok(None) => {}
@@ -1267,10 +1355,10 @@ pub fn step_prune(
     removed.sort_by_key(|c| c.check_idx);
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some((mut current, plan)) = deferred_current
-        && let Some(branch_deleted) =
+        && let Some(fate) =
             try_remove(&current, plan, &removal_ctx).with_context(|| current.removal_context())?
     {
-        current.deletes_branch = branch_deleted;
+        current.record_fate(fate);
         removed.push(current);
     }
 
@@ -1282,7 +1370,7 @@ pub fn step_prune(
                     "branch": c.branch,
                     "path": c.path,
                     "kind": c.kind.as_str(),
-                    "branch_deleted": c.deletes_branch,
+                    "branch_outcome": c.fate.map(|f| f.json_outcome()),
                 })
             })
             .collect();
@@ -1388,6 +1476,7 @@ mod tests {
             path: None,
             kind,
             deletes_branch: !matches!(kind, CandidateKind::StaleDetached),
+            fate: None,
         }
     }
 

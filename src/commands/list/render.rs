@@ -318,8 +318,9 @@ impl LayoutConfig {
                     // Show actual branch name (no dim - start normal, gray out later if removable).
                     // A detached row shows its abbreviated HEAD in the settled
                     // row's `DETACHED` style, so the cell doesn't restyle as
-                    // the row fills in.
-                    if item.branch.is_none() {
+                    // the row fills in. Empty text goes unstyled for the reason
+                    // [`Self::render_text_cell`] gives.
+                    if item.branch.is_none() && !branch.is_empty() {
                         cell.push_styled(branch.to_string(), DETACHED);
                     } else {
                         cell.push_raw(branch.to_string());
@@ -332,10 +333,11 @@ impl LayoutConfig {
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Commit => {
-                    // Show actual commit hash (empty for unborn branches with null OID)
-                    let short_head = item.abbreviated_head();
-                    if !short_head.is_empty() {
-                        cell.push_styled(short_head, dim);
+                    // git's own `%h`, folded in before the skeleton — so the cell
+                    // shows the hash from the first frame. Empty for unborn
+                    // branches (null OID, nothing to abbreviate).
+                    if !item.short_sha.is_empty() {
+                        cell.push_styled(&item.short_sha, dim);
                     }
                 }
                 ColumnKind::Custom(i) => {
@@ -399,12 +401,18 @@ impl ColumnLayout {
     }
 
     /// Render a text cell with optional style, truncated to column width.
+    ///
+    /// Styles only text that exists: an empty string wrapped
+    /// in a style is a bare escape pair around nothing, which a terminal renders
+    /// as an invisible artifact and a snapshot records verbatim. Every cell whose
+    /// text can be empty — the Commit column for an unborn branch, a detached
+    /// row's Branch column when the commit-details batch failed — relies on this
+    /// rather than repeating the check.
     fn render_text_cell(&self, text: &str, style: Option<Style>) -> StyledLine {
         let mut cell = StyledLine::new();
-        if let Some(s) = style {
-            cell.push_styled(text.to_string(), s);
-        } else {
-            cell.push_raw(text.to_string());
+        match style.filter(|_| !text.is_empty()) {
+            Some(s) => cell.push_styled(text.to_string(), s),
+            None => cell.push_raw(text.to_string()),
         }
         cell.truncate_to_width(self.width)
     }
@@ -589,11 +597,7 @@ impl ColumnLayout {
                 }
             }
             ColumnKind::Commit => {
-                // Style only a real SHA: an empty cell (null OID) styled would
-                // render as bare escape codes around nothing.
-                let short_head = item.abbreviated_head();
-                let style = (!short_head.is_empty()).then(|| Style::new().dimmed());
-                self.render_text_cell(short_head, style)
+                self.render_text_cell(&item.short_sha, Some(Style::new().dimmed()))
             }
             ColumnKind::Summary => match &item.summary {
                 None => self.placeholder_cell(placeholder),

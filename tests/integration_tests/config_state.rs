@@ -1798,12 +1798,15 @@ fn test_state_get_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_with_ci_entries(repo: TestRepo) {
-    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
+    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in
+    // snapshots. The heads are placeholders, so what the snapshot pins is the
+    // table's shape; that the width is git's own is pinned separately by
+    // `test_state_get_ci_head_uses_git_abbreviation`.
     write_ci_cache(
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
@@ -1811,7 +1814,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "bugfix",
         &format!(
-            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555","branch":"bugfix"}}"#
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"11122233","branch":"bugfix"}}"#
         ),
     );
 
@@ -1819,7 +1822,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "main",
         &format!(
-            r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678","branch":"main"}}"#
+            r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef","branch":"main"}}"#
         ),
     );
 
@@ -1828,6 +1831,48 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     state_get_settings().bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+/// The CI cache's Head column abbreviates through git, so a head reads at the
+/// same width in `wt config state` as it does in `wt list`'s Commit column and
+/// in the statusline — all of them `core.abbrev`, none of them a slice of their
+/// own. Snapshots can't pin this: the width git picks scales with the repo's
+/// object count, and the SHA a test repo commits to isn't fixed.
+#[rstest]
+fn test_state_get_ci_head_uses_git_abbreviation(repo: TestRepo) {
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#),
+    );
+
+    let expected = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "--short", &head])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = stdout
+        .lines()
+        .find(|l| l.contains("main") && l.contains("none"))
+        .unwrap_or_else(|| panic!("no CI cache row for main:\n{stdout}"));
+    assert!(
+        row.split_whitespace().any(|cell| cell == expected),
+        "expected the git-abbreviated head {expected:?} in the CI row: {row:?}"
+    );
+    assert!(
+        !stdout.contains(&head),
+        "the full SHA should not reach the table:\n{stdout}"
+    );
 }
 
 #[rstest]
@@ -1877,7 +1922,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 

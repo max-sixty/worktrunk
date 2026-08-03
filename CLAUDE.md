@@ -60,7 +60,10 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **Time-of-check vs time-of-use** — be conservative when there's a gap between the safety check and the operation. `wt merge` verifies clean before rebasing, but files could appear before cleanup — don't force-remove during cleanup.
 - **Replace files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every write to a file worktrunk can't put back (rc files, shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
 
-These stop where git's own protections stop: `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would. Matching git is deliberate — the spec in `src/commands/worktree/push.rs` says why.
+These stop where git's own protections stop, and matching git is deliberate in each case. The named spec says why:
+
+- `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would (`src/commands/worktree/push.rs`).
+- Removal's final dirty-worktree gate is answered by the fsmonitor daemon under `core.fsmonitor`, exactly as `git worktree remove`'s own gate is (`src/git/remove.rs`).
 
 Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
 
@@ -97,6 +100,10 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 | `gh` / `glab` | default | `--json` |
 
 When no structured alternative exists, document the fragility inline.
+
+### Immutable Ids Over List Positions
+
+`stash@{0}` names a position in a list any process can reorder, so a handle captured before a mutation window and used after it can resolve to a different object — restoring the target worktree's autostash by position after `git push` silently restored a concurrent writer's entry and reported success. Capture the immutable id instead (`git stash list --format=%H`, `git stash create`, `rev-parse`) and act on that; where an operation accepts only a positional selector, re-derive it from something stable immediately beforehand. An index into a collection `wt` owns is a different thing — this is about namespaces other processes can mutate. The strongest form is not to enter the shared namespace at all: the autostash this rule came from was later deleted outright, replaced by a two-tree merge that leaves the target worktree's changes in place (`advance_target` in `src/commands/worktree/push.rs`).
 
 ### Network Access
 

@@ -75,8 +75,8 @@ use worktrunk::styling::{
 };
 
 use crate::commands::configure_shell::{
-    ConfigAction, UninstallScanResult, format_matched_lines, handle_configure_shell,
-    prompt_for_install, scan_shell_configs,
+    ConfigAction, UninstallScanResult, collect_legacy_cleanups, format_matched_lines,
+    handle_configure_shell, prompt_for_install, scan_shell_configs,
 };
 
 /// Git config key tracking how many times the shell-integration install hint
@@ -482,13 +482,17 @@ pub fn prompt_shell_integration(
 
     // TTY + first time: Show interactive prompt
     // Accepting installs for all shells with config files (same as `wt config shell install`)
-    // This first-run offer installs but resolves no legacy cleanups of its own;
-    // the subsequent handle_configure_shell reports any deprecated-file removal
-    // after the fact, as before.
+    // Detect (without removing) the legacy files the subsequent handle_configure_shell
+    // would delete, so this offer names them before the user consents — the removal is
+    // destructive and must not happen unpreviewed, exactly as `wt config shell install`
+    // now previews it (issue #3644). The list is computed from the same dry-run scan
+    // handle_configure_shell re-derives internally, so the prompt names precisely what
+    // the install removes.
+    let legacy_preview = collect_legacy_cleanups(&scan.configured, binary_name, true);
     let confirmed = prompt_for_install(
         &scan.configured,
         &scan.completion_results,
-        &[],
+        &legacy_preview,
         binary_name,
         "Install shell integration?",
     )

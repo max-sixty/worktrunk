@@ -141,6 +141,74 @@ fn test_list_detached_head_in_worktree(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// One commit, one rendering. The table's Commit cell and a detached row's
+/// Branch cell both print git's `%h`, so they follow `core.abbrev` and agree
+/// with the `short_sha` that `--format=json` carries. Sliced to a fixed width
+/// instead, the table disagreed with its own JSON about the same commit and
+/// ignored the setting entirely.
+#[rstest]
+fn test_list_abbreviated_sha_follows_git(mut repo: TestRepo) {
+    use ansi_str::AnsiStr;
+
+    repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+
+    let run = |args: &[&str]| {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "wt {args:?} should succeed");
+        output.stdout
+    };
+
+    // Git's default first, then a width nothing but `core.abbrev` explains —
+    // one anchor plus one single-factor neighbor.
+    for abbrev in [None, Some("12")] {
+        if let Some(value) = abbrev {
+            repo.run_git(&["config", "core.abbrev", value]);
+        }
+
+        let json: Vec<serde_json::Value> =
+            serde_json::from_slice(&run(&["list", "--format=json"])).unwrap();
+        let table = String::from_utf8_lossy(&run(&["list"]))
+            .ansi_strip()
+            .into_owned();
+
+        assert!(
+            json.iter().any(|item| item["branch"].is_null()),
+            "the detached worktree should be listed: {json:?}"
+        );
+        for item in &json {
+            let sha = item["commit"]["sha"].as_str().expect("full sha");
+            let short = item["commit"]["short_sha"].as_str().expect("short sha");
+
+            assert!(
+                table.contains(short),
+                "table should print the {short:?} that JSON reports \
+                 (core.abbrev={abbrev:?}):\n{table}"
+            );
+            // `contains` alone passes on a longer prefix — precisely the fixed
+            // 8-character slice this replaced — so rule that out as well.
+            assert!(
+                !table.contains(&sha[..short.len() + 1]),
+                "table should stop abbreviating where git does \
+                 (core.abbrev={abbrev:?}):\n{table}"
+            );
+
+            if item["branch"].is_null() {
+                assert!(
+                    table.lines().any(|line| line.matches(short).count() == 2),
+                    "a detached row has no branch name, so one line carries {short:?} \
+                     in both Branch and Commit (core.abbrev={abbrev:?}):\n{table}"
+                );
+            }
+        }
+    }
+}
+
 /// Adds a second worktree on `branch` via `git worktree add --force`, which
 /// bypasses git's "already used by worktree" guard. Worktrunk never creates
 /// this state itself.

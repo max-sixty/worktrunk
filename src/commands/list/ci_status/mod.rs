@@ -121,7 +121,7 @@ pub(crate) fn non_interactive_cmd(program: &str) -> Cmd {
 /// Check if a CLI tool is available
 ///
 /// On Windows, CreateProcessW (via Cmd) searches PATH for .exe files.
-/// We provide .exe mocks in tests via mock-stub, so this works consistently.
+/// Tests provide `.exe` mocks via `testing::mock_commands`, so this works consistently.
 pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
     Cmd::new(tool)
         .args(args.iter().copied())

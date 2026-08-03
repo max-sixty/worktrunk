@@ -1,9 +1,10 @@
 //! CI platform identification.
 //!
 //! [`ForgeKind`] names the forge a repository's CI runs on (GitHub, GitLab,
-//! Gitea, or Azure DevOps). It comes from project config (`forge.platform`, or
-//! the deprecated `ci.platform`) when set, otherwise from the remote URL host —
-//! see [`Repository::ci_platform`].
+//! Gitea, or Azure DevOps). It comes from the configured forge platform when
+//! set — the repository's own `[forge].platform` (or the deprecated
+//! `ci.platform`), else a matching user-config `[projects."…"].forge` entry —
+//! otherwise from the remote URL host. See [`Repository::ci_platform`].
 
 use crate::git::{GitRemoteUrl, RefType, Repository};
 
@@ -103,7 +104,9 @@ impl Repository {
     /// The CI platform for this repository, or `None` if it can't be determined.
     ///
     /// Priority order:
-    /// 1. Project config `forge.platform` (or the deprecated `ci.platform`)
+    /// 1. The configured forge platform — the repository's `[forge].platform`
+    ///    (or the deprecated `ci.platform`), else a matching user-config
+    ///    `[projects."…"].forge.platform`
     /// 2. `remote_hint`'s effective URL host, when `remote_hint` is given
     /// 3. The primary remote's effective URL host
     ///
@@ -134,19 +137,20 @@ impl Repository {
         None
     }
 
-    /// The CI platform set in project config (`forge.platform` / `ci.platform`).
+    /// The configured CI platform: the repository's `[forge].platform` (or the
+    /// deprecated `ci.platform`), else a matching user-config
+    /// `[projects."…"].forge.platform`.
+    ///
+    /// The repository's own block wins because it is the more specific of the
+    /// two — a user entry keyed `git.company.example/*` states what the host
+    /// is, and a repository that disagrees knows better.
     ///
     /// `None` when unset or unrecognized. Resolved once per repository handle,
     /// so an unrecognized value warns a single time rather than once per branch
     /// `wt list` probes.
     fn configured_ci_platform(&self) -> Option<ForgeKind> {
         *self.cache.configured_ci_platform.get_or_init(|| {
-            let raw = self
-                .project_config()
-                .ok()
-                .flatten()?
-                .forge_platform()
-                .map(str::to_string)?;
+            let raw = self.configured_forge_platform()?;
             match raw.parse::<ForgeKind>() {
                 Ok(platform) => {
                     tracing::debug!(platform = %platform, "Using CI platform from config: {platform}");
@@ -155,7 +159,7 @@ impl Repository {
                 Err(_) => {
                     tracing::warn!(
                         value = %raw,
-                        "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
+                        "Invalid CI platform '{raw}' (from `[forge]` in project config or a `[projects]` entry in user config). Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
                     );
                     None
                 }
@@ -333,5 +337,118 @@ mod tests {
 
         let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
         assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitHub));
+    }
+
+    /// Build a repo with `remote_url` and a user config carrying the given
+    /// `[projects."<key>"].forge.platform` entries.
+    ///
+    /// Returns the `TestRepo` alongside the `Repository` so the caller keeps
+    /// the checkout's tempdir alive for the duration of the test.
+    fn repo_with_user_forge(
+        remote_url: &str,
+        entries: &[(&str, &str)],
+    ) -> (crate::testing::TestRepo, Repository) {
+        let test = crate::testing::TestRepo::new();
+        test.run_git(&["remote", "add", "origin", remote_url]);
+
+        let mut user_config = crate::config::UserConfig::default();
+        for (key, platform) in entries {
+            user_config
+                .projects
+                .entry((*key).to_string())
+                .or_default()
+                .forge = crate::config::ProjectForgeConfig {
+                platform: Some((*platform).to_string()),
+                hostname: None,
+            };
+        }
+
+        let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
+        repo.cache
+            .user_config
+            .set(user_config)
+            .expect("user config not yet initialized");
+        (test, repo)
+    }
+
+    #[test]
+    fn test_user_project_pattern_names_platform_for_a_whole_host() {
+        // The motivating case: a self-hosted forge whose hostname carries no
+        // brand resolves for every repo on it, with no `[forge]` block in any
+        // of them. Built-in inference alone gives `None` here.
+        let (_test, repo) = repo_with_user_forge(
+            "https://git.company.example/owner/repo.git",
+            &[("git.company.example/*", "gitlab")],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitLab));
+    }
+
+    #[test]
+    fn test_user_project_pattern_covers_nested_groups() {
+        let (_test, repo) = repo_with_user_forge(
+            "https://git.company.example/group/team/repo.git",
+            &[("git.company.example/*", "gitlab")],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitLab));
+    }
+
+    #[test]
+    fn test_more_specific_user_pattern_wins() {
+        // The Gitea instance lives under one namespace on an otherwise-GitLab
+        // host, and the narrower entry is the one that applies.
+        let (_test, repo) = repo_with_user_forge(
+            "https://git.company.example/tools/repo.git",
+            &[
+                ("git.company.example/*", "gitlab"),
+                ("git.company.example/tools/*", "gitea"),
+            ],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::Gitea));
+    }
+
+    #[test]
+    fn test_project_forge_overrides_user_pattern() {
+        // A repository that names its own forge is more specific than an entry
+        // describing the host.
+        let test = crate::testing::TestRepo::new();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://git.company.example/owner/repo.git",
+        ]);
+        test.write_project_config("[forge]\nplatform = \"github\"\n");
+
+        let mut user_config = crate::config::UserConfig::default();
+        user_config
+            .projects
+            .entry("git.company.example/*".to_string())
+            .or_default()
+            .forge
+            .platform = Some("gitlab".to_string());
+
+        let repo = Repository::at(test.root_path().to_path_buf()).unwrap();
+        repo.cache.user_config.set(user_config).unwrap();
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitHub));
+    }
+
+    #[test]
+    fn test_unmatched_user_pattern_falls_through_to_inference() {
+        let (_test, repo) = repo_with_user_forge(
+            "https://gitlab.com/owner/repo.git",
+            &[("git.company.example/*", "github")],
+        );
+        assert_eq!(repo.ci_platform(None), Some(ForgeKind::GitLab));
+    }
+
+    #[test]
+    fn test_invalid_user_platform_leaves_the_host_unresolved() {
+        // An unrecognized value warns once and is dropped, rather than
+        // resolving the host to a forge that doesn't exist.
+        let (_test, repo) = repo_with_user_forge(
+            "https://git.company.example/owner/repo.git",
+            &[("git.company.example/*", "bitbucket")],
+        );
+        assert_eq!(repo.ci_platform(None), None);
     }
 }

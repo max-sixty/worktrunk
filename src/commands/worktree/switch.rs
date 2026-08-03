@@ -84,7 +84,9 @@ fn format_ref_context(info: &RemoteRefInfo) -> String {
 /// Choose which provider should handle `pr:<number>` resolution.
 ///
 /// Priority:
-/// 1. `forge.platform` config (`github` / `gitea` / `azure-devops`)
+/// 1. The configured `forge.platform` (`github` / `gitea` / `azure-devops`) —
+///    the repository's own, else a matching user-config `[projects."…"]`
+///    entry, via [`Repository::configured_forge_platform`]
 /// 2. Every configured raw remote, in GitHub > Gitea > Azure DevOps > GitLab
 ///    order. [`ForgeKind::from_host`] classifies exact forge labels and Azure
 ///    DevOps service-domain suffixes.
@@ -96,10 +98,7 @@ fn format_ref_context(info: &RemoteRefInfo) -> String {
 /// GitHub error (with hint to set `forge.platform = "gitea"`), instead of a
 /// wrapped two-provider error.
 fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRefProvider> {
-    if let Some(platform_raw) = repo
-        .load_project_config()?
-        .and_then(|c| c.forge_platform().map(str::to_string))
-    {
+    if let Some(platform_raw) = repo.configured_forge_platform() {
         match platform_raw.to_ascii_lowercase().parse::<ForgeKind>() {
             Ok(ForgeKind::GitHub) => return Ok(&GITHUB_PROVIDER),
             Ok(ForgeKind::Gitea) => return Ok(&GITEA_PROVIDER),
@@ -108,7 +107,8 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRe
                 bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
             }
             Err(_) => bail!(
-                "Invalid forge.platform value `{platform_raw}` in .config/wt.toml; \
+                "Invalid forge.platform value `{platform_raw}` (from `[forge]` in project \
+                 config or a `[projects]` entry in user config); \
                  expected one of: github, gitlab, gitea, azure-devops"
             ),
         }

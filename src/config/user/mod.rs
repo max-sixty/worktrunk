@@ -7,6 +7,7 @@ mod merge;
 pub(crate) mod mutation;
 mod path;
 mod persistence;
+pub(crate) mod project_match;
 mod resolved;
 mod schema;
 mod sections;

@@ -13,7 +13,7 @@ Workflows check `user.login == 'worktrunk-bot'` directly.
 
 | Token | Purpose |
 |-------|---------|
-| `TEND_BOT_TOKEN` | All Claude workflows — consistent bot identity |
+| `TEND_BOT_TOKEN` | Every workflow acting as `worktrunk-bot`, including the winget and Homebrew publish jobs |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates Claude Code to the Anthropic API |
 
 ## Merge restriction
@@ -25,8 +25,17 @@ Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 
 ## Environment protection
 
-`AUR_SSH_PRIVATE_KEY` is in a protected GitHub Environment (`release`) requiring
-deployment approval from `@max-sixty`, restricted to `v*` tags.
+Release credentials live in GitHub Environments so no other workflow the repo
+runs can read them. Each environment holds what one phase needs, since a job
+that joins an environment can read every secret in it:
+
+| Environment | Secret | Read by |
+|-------------|--------|---------|
+| `release` | `AUR_SSH_PRIVATE_KEY` | `publish-aur` |
+| `signing` | `SIGNPATH_API_TOKEN` | `build-local-artifacts` |
+
+Both restrict deployments to `v*` tags and neither has a reviewer rule, so
+joining a job to one costs no approval step.
 
 crates.io publishing holds no stored token — it uses Trusted Publishing.
 crates.io mints a short-lived one only for an OIDC claim from `release.yaml`

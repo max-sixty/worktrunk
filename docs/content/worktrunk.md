@@ -125,6 +125,8 @@ Shell integration allows commands to change directories.
 
 Alternatively, disable Windows Terminal's alias (Settings → Apps → Advanced app settings → App execution aliases → "Terminal"/"Terminal Preview") to use `wt` directly.
 
+> Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) — [policy](@/code-signing.md).
+
 **Arch Linux:**
 
 {{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
@@ -156,9 +158,9 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
-  <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-auth  <span class=c>+</span>   <span class=d>↑</span>      <span class=g>+27</span>   <span class=r>-8</span>   <span class=g>↑1</span>       <span class=g>+31</span>                <span class=d>4bc72dc9</span>  <span class=d>2h</span>    <span class=d>Add authenticat…</span>
-^ main              <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+  <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>   <b>Age</b>   <b>Message</b>
+@ feature-auth  <span class=c>+</span>   <span class=d>↑</span>      <span class=g>+27</span>   <span class=r>-8</span>   <span class=g>↑1</span>       <span class=g>+31</span>                <span class=d>4bc72dc</span>  <span class=d>2h</span>    <span class=d>Add authenticati…</span>
+^ main              <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      <span class=d>0e631ad</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden</span>
 {% end %}

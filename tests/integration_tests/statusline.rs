@@ -485,8 +485,11 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
     // The SHA also tells two detached worktrees apart, which one shared
     // "(detached)" label cannot.
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    let head = repo.git_output(&["rev-parse", "HEAD"]);
-    let short_head = &head.trim()[..8];
+    // Ask git for the abbreviation instead of slicing a fixed width: the
+    // statusline prints git's own `%h`, so the length follows `core.abbrev` and
+    // stretches further still when a prefix is ambiguous.
+    let head = repo.git_output(&["rev-parse", "--short", "HEAD"]);
+    let short_head = head.trim();
     assert!(
         output.contains(short_head),
         "statusline should show the abbreviated HEAD ({short_head}) for detached HEAD, got: {output}"

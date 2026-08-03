@@ -1,11 +1,20 @@
-//! Config-driven mock executable for integration tests.
+//! Config-driven playback mode for the mock commands the test suite puts on
+//! `PATH`.
 //!
-//! Reads a JSON config file to determine responses. When invoked as `gh`,
-//! looks for `gh.json` and responds based on config.
+//! [`mock_commands`](super::mock_commands) links the `wt` binary itself into a
+//! test's mock bin dir under names like `gh` or `glab`. `main()` calls
+//! [`maybe_run`] before anything else, and an invocation whose argv\[0\] is such
+//! a name plays back the JSON config instead of running wt. The mocks being
+//! the binary under test is what keeps them fresh: every runner rebuilds `wt`
+//! whenever the integration tests build, so there is no separate helper
+//! binary to go missing or stale.
 //!
-//! Config location: `WORKTRUNK_TEST_MOCK_CONFIG_DIR` env var (set by test harness)
+//! Config location: `WORKTRUNK_TEST_MOCK_CONFIG_DIR` env var, set by the test
+//! harness on the wt under test and inherited by the commands it spawns.
+//! Production wt never sees the variable, so the dispatch is inert outside the
+//! suite.
 //!
-//! Config format:
+//! Config format (`<command>.json` in the config dir):
 //! ```json
 //! {
 //!   "version": "gh version 2.0.0 (mock)",
@@ -40,7 +49,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::thread::sleep;
 use std::time::Duration;
@@ -62,21 +71,61 @@ struct CommandResponse {
     wait_for_file: Option<String>,
 }
 
-/// Get command name from argv\[0\].
-fn command_name() -> String {
-    let argv0 = env::args().next().expect("mock: no argv[0]");
-    std::path::Path::new(&argv0)
-        .file_stem()
-        .expect("mock: argv[0] has no file stem")
-        .to_string_lossy()
-        .into_owned()
+/// Play back the mock config and exit when this invocation is a mock command:
+/// `WORKTRUNK_TEST_MOCK_CONFIG_DIR` is set, argv\[0\] is not wt's own name, and
+/// the config dir holds a `<argv0>.json` for it. Returns (doing nothing)
+/// otherwise. Must run before argument parsing — a mock's arguments are the
+/// mocked tool's, not wt's.
+pub fn maybe_run() {
+    let Some(dir) = env::var_os("WORKTRUNK_TEST_MOCK_CONFIG_DIR") else {
+        return;
+    };
+    let Some(name) = command_name() else {
+        return;
+    };
+    // The wt under test runs with the variable set too (that's how its mock
+    // children inherit it); its own names never select playback, whatever a
+    // config dir contains — a `wt.json` would otherwise shadow the binary
+    // under test. Case-insensitive, because the config probe below goes
+    // through the filesystem, which matches names case-insensitively on
+    // macOS and Windows — an exact comparison would let argv[0] `WT` reach
+    // a `wt.json`. `MockConfig::new` rejects these names on the harness side.
+    if name.eq_ignore_ascii_case("wt") || name.eq_ignore_ascii_case("git-wt") {
+        return;
+    }
+    let config_dir = PathBuf::from(dir);
+    // Playback is only for commands the harness registered, and a registered
+    // mock always has its config: `MockConfig::write` writes `<name>.json`
+    // before linking the binary, and is the only way to create a mock link.
+    // So a foreign argv[0] with no config is not a half-configured mock —
+    // it's wt itself under another name, e.g. the argv0-validation tests'
+    // `wt;touch` symlink, and it must run as wt.
+    if !config_dir.join(format!("{name}.json")).exists() {
+        return;
+    }
+    run(&name, &config_dir);
 }
 
-fn config_dir() -> PathBuf {
-    PathBuf::from(
-        env::var_os("WORKTRUNK_TEST_MOCK_CONFIG_DIR")
-            .expect("mock: WORKTRUNK_TEST_MOCK_CONFIG_DIR not set"),
-    )
+/// Command name from argv\[0\]: the link name the harness gave this binary,
+/// with the platform's executable suffix (`.exe`) stripped. Stripping the
+/// suffix rather than taking `file_stem` keeps a dotted mock name
+/// (`python3.11`) intact, and identical across platforms. `None` when
+/// argv\[0\] is missing or degenerate — the caller treats that as "not a
+/// mock" rather than panicking inside wt's `main()`.
+///
+/// The bin crate's `invocation::binary_name` reads the same argv\[0\] to name
+/// wt in its own help output; keep the two derivations aligned.
+fn command_name() -> Option<String> {
+    // args_os, not args: `env::args()` panics during iteration on a
+    // non-Unicode argument, and this runs inside wt's `main()` on every
+    // invocation. A non-UTF8 argv[0] lossily converts, matches no config
+    // name, and falls through to "not a mock".
+    let argv0 = env::args_os().next()?;
+    let name = Path::new(&argv0).file_name()?.to_string_lossy();
+    let name = name
+        .strip_suffix(std::env::consts::EXE_SUFFIX)
+        .unwrap_or(&name);
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Append this invocation's argv to
@@ -107,12 +156,18 @@ fn log_invocation(cmd_name: &str, args: &[String]) {
     }
 }
 
-fn main() {
-    let cmd_name = command_name();
-    let config_dir = config_dir();
+fn run(cmd_name: &str, config_dir: &Path) -> ! {
     let config_path = config_dir.join(format!("{}.json", cmd_name));
 
-    log_invocation(&cmd_name, &env::args().skip(1).collect::<Vec<_>>());
+    // Lossy for the same reason as `command_name`: a non-UTF8 argument can't
+    // match a config key (JSON keys are UTF-8), and the mock must not panic
+    // on one.
+    let args: Vec<String> = env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    log_invocation(cmd_name, &args);
 
     let content = fs::read_to_string(&config_path).unwrap_or_else(|e| {
         eprintln!("mock: failed to read {}: {}", config_path.display(), e);
@@ -123,8 +178,6 @@ fn main() {
         eprintln!("mock: failed to parse {}: {}", config_path.display(), e);
         exit(1);
     });
-
-    let args: Vec<String> = env::args().skip(1).collect();
 
     // Handle --version flag
     if args.first().map(|s| s.as_str()) == Some("--version")
