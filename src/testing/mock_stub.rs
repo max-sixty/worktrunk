@@ -116,7 +116,11 @@ pub fn maybe_run() {
 /// The bin crate's `invocation::binary_name` reads the same argv\[0\] to name
 /// wt in its own help output; keep the two derivations aligned.
 fn command_name() -> Option<String> {
-    let argv0 = env::args().next()?;
+    // args_os, not args: `env::args()` panics during iteration on a
+    // non-Unicode argument, and this runs inside wt's `main()` on every
+    // invocation. A non-UTF8 argv[0] lossily converts, matches no config
+    // name, and falls through to "not a mock".
+    let argv0 = env::args_os().next()?;
     let name = Path::new(&argv0).file_name()?.to_string_lossy();
     let name = name
         .strip_suffix(std::env::consts::EXE_SUFFIX)
@@ -155,7 +159,15 @@ fn log_invocation(cmd_name: &str, args: &[String]) {
 fn run(cmd_name: &str, config_dir: &Path) -> ! {
     let config_path = config_dir.join(format!("{}.json", cmd_name));
 
-    log_invocation(cmd_name, &env::args().skip(1).collect::<Vec<_>>());
+    // Lossy for the same reason as `command_name`: a non-UTF8 argument can't
+    // match a config key (JSON keys are UTF-8), and the mock must not panic
+    // on one.
+    let args: Vec<String> = env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    log_invocation(cmd_name, &args);
 
     let content = fs::read_to_string(&config_path).unwrap_or_else(|e| {
         eprintln!("mock: failed to read {}: {}", config_path.display(), e);
@@ -166,8 +178,6 @@ fn run(cmd_name: &str, config_dir: &Path) -> ! {
         eprintln!("mock: failed to parse {}: {}", config_path.display(), e);
         exit(1);
     });
-
-    let args: Vec<String> = env::args().skip(1).collect();
 
     // Handle --version flag
     if args.first().map(|s| s.as_str()) == Some("--version")
