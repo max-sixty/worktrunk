@@ -3,7 +3,7 @@
 //! Run `wt-perf --help` (and `wt-perf <subcommand> --help`) for usage.
 
 use std::io::{IsTerminal, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -232,25 +232,82 @@ fn main() {
     }
 }
 
-/// Resolve the `wt` binary as a sibling of the current executable
-/// (`target/{debug,release}/wt-perf` → `target/{debug,release}/wt`).
-/// `EXE_SUFFIX` keeps this correct on Windows, where Cargo builds
-/// `wt-perf.exe` next to `wt.exe`.
+/// Build the `wt` binary and return the path to the artifact. `cargo run -p
+/// wt-perf` rebuilds wt-perf and the worktrunk lib but not the `wt` bin
+/// target, so without this build a timeline run after a `src/` edit would
+/// silently measure a stale binary. The path comes from cargo's own artifact
+/// report (`--message-format=json`) rather than a derived sibling location,
+/// so a `CARGO_TARGET_DIR`, config `build.target-dir`, or default-target
+/// override can't divert the build away from where it's resolved. The
+/// profile follows the running wt-perf's own profile dir, so a release
+/// wt-perf measures a release wt; other layouts (an installed wt-perf) have
+/// no enclosing workspace to rebuild from and are rejected.
 fn resolve_wt_binary() -> PathBuf {
     let me = std::env::current_exe().unwrap_or_else(|e| {
         eprintln!("Failed to resolve current executable: {e}");
         std::process::exit(1);
     });
-    let exe = format!("wt{}", std::env::consts::EXE_SUFFIX);
-    let candidate = me.parent().map(|p| p.join(&exe)).unwrap_or_default();
-    if !candidate.is_file() {
-        eprintln!(
-            "wt binary not found at {} — run `cargo build --release --bin wt` (or `cargo build --bin wt`) first.",
-            candidate.display()
-        );
-        std::process::exit(1);
+    let profile = match me
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+    {
+        Some("debug") => "dev",
+        Some("release") => "release",
+        _ => {
+            eprintln!(
+                "wt-perf must run from a cargo target dir (`cargo run -p wt-perf`, or \
+                 target/{{debug,release}}/wt-perf): {} isn't one, so it can't rebuild wt \
+                 from the workspace.",
+                me.display()
+            );
+            std::process::exit(1);
+        }
+    };
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("wt-perf crate sits three levels below the workspace root");
+    // $CARGO names the exact cargo that built wt-perf (set for `cargo run`
+    // children); PATH lookup is the fallback for a directly-executed binary.
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    // stderr stays inherited: a real rebuild can take a while, and cargo's
+    // progress there is what shows it isn't hung. stdout carries the JSON
+    // artifact messages, so the timeline's own stdout contract (`--chrome`
+    // pipes JSON) is untouched.
+    let output = Command::new(&cargo)
+        .current_dir(workspace_root)
+        .args(["build", "--bin", "wt", "--profile", profile])
+        .arg("--message-format=json")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "Failed to run cargo build in {}: {e}",
+                workspace_root.display()
+            );
+            std::process::exit(1);
+        });
+    if !output.status.success() {
+        eprintln!("`cargo build --bin wt` failed; timeline needs a current wt binary.");
+        std::process::exit(output.status.code().unwrap_or(1));
     }
-    candidate
+    // Cargo reports every requested artifact, fresh or rebuilt, so the `wt`
+    // executable message is always present on success.
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|msg| {
+            (msg["reason"] == "compiler-artifact" && msg["target"]["name"] == "wt")
+                .then(|| msg["executable"].as_str().map(PathBuf::from))
+                .flatten()
+        })
+        .unwrap_or_else(|| {
+            eprintln!("cargo build succeeded but reported no `wt` executable artifact");
+            std::process::exit(1);
+        })
 }
 
 /// Run a `wt -vv` command and render the `trace.jsonl` it writes.
