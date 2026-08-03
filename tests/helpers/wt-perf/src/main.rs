@@ -7,12 +7,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use clap::{Parser, Subcommand, ValueEnum};
-use wt_perf::{
-    FixtureRecipe, LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES, LargeRepositoryPruneFixture,
-    PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS, PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS, canonicalize,
-    invalidate_caches_auto, remove_fixture_for_rebuild, wt_perf_fixture_dir,
-};
+use clap::{Parser, Subcommand};
+use wt_perf::{FixtureRecipe, canonicalize, invalidate_caches_auto};
 
 #[derive(Parser)]
 #[command(name = "wt-perf")]
@@ -27,17 +23,11 @@ enum Commands {
     /// Set up a benchmark repository
     Setup {
         #[command(subcommand)]
-        recipe: SetupRecipe,
+        recipe: FixtureRecipe,
 
-        /// Primary worktree path (default: target/wt-perf/<recipe>)
+        /// Primary worktree path; must not already exist
         #[arg(long, global = true)]
         path: Option<PathBuf>,
-    },
-
-    /// Invalidate git caches for cold benchmarks
-    Invalidate {
-        /// Path to the repository
-        repo: PathBuf,
     },
 
     /// Parse a trace.jsonl and output Chrome Trace Format JSON
@@ -77,7 +67,7 @@ enum Commands {
   wt-perf timeline --cold -- list
 
   # Cold run against a specific repo (setup prints the exact path)
-  wt-perf timeline --cold -- -C target/wt-perf/typical-1 list
+  wt-perf timeline --cold -- -C /tmp/wt-typical-1 list
 
   # Chrome Trace Format JSON for Perfetto
   wt-perf timeline --chrome -- list > trace.json
@@ -97,238 +87,53 @@ enum Commands {
     },
 }
 
-#[derive(Clone, Copy, Debug, Subcommand)]
-enum SetupRecipe {
-    /// Standard synthetic history, files, and feature worktrees
-    Typical {
-        /// Total worktrees, including the primary worktree
-        #[arg(value_parser = positive_usize)]
-        total_worktrees: usize,
-    },
-    /// Minimal synthetic history with configurable branch/worktree populations
-    Minimal {
-        /// Branches without linked worktrees
-        branchless_branches: usize,
-        /// Linked worktrees, excluding the primary worktree
-        linked_worktrees: usize,
-    },
-    /// Fixed 200-branch deep-divergence stress fixture
-    SyntheticDivergence,
-    /// Pinned large corpus with standard feature worktrees
-    LargeRepositoryWorktrees {
-        /// Total worktrees, including the primary worktree
-        #[arg(value_parser = positive_usize)]
-        total_worktrees: usize,
-    },
-    /// Pinned large corpus with branches spread across history
-    LargeRepositoryHistorySpread {
-        /// Branches without linked worktrees (maximum: 5000)
-        #[arg(value_parser = history_spread_branch_count)]
-        branchless_branches: usize,
-    },
-    /// Varied branch and worktree states
-    Mixed {
-        /// Linked worktrees, excluding the primary worktree
-        linked_worktrees: usize,
-        /// Branches without linked worktrees
-        branchless_branches: usize,
-        /// Additional remote-tracking refs
-        #[arg(default_value_t = 0)]
-        remote_tracking_refs: usize,
-    },
-    /// Squash-merged prune candidates plus an unintegrated backdrop
-    Prune {
-        /// Squash-merged worktree/branch pairs
-        #[arg(default_value_t = PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS)]
-        candidate_pairs: usize,
-        /// Unintegrated worktree/branch pairs
-        #[arg(default_value_t = PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS)]
-        backdrop_pairs: usize,
-        /// Repository corpus and ownership model
-        #[arg(long, value_enum, default_value_t = PruneBase::Synthetic)]
-        base: PruneBase,
-    },
-    /// Fixed interactive picker debugging fixture
-    PickerTest,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-enum PruneBase {
-    Synthetic,
-    LargeRepository,
-}
-
-fn positive_usize(value: &str) -> Result<usize, String> {
-    let value = value
-        .parse::<usize>()
-        .map_err(|_| "expected a positive integer".to_string())?;
-    (value >= 1)
-        .then_some(value)
-        .ok_or_else(|| "expected a positive integer".to_string())
-}
-
-fn history_spread_branch_count(value: &str) -> Result<usize, String> {
-    let value = value
-        .parse::<usize>()
-        .map_err(|_| "expected a non-negative integer".to_string())?;
-    (value <= LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES)
-        .then_some(value)
-        .ok_or_else(|| {
-            format!("expected at most {LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES} branches")
-        })
-}
-
-impl SetupRecipe {
-    fn fixture_recipe(&self) -> FixtureRecipe {
-        match *self {
-            Self::Typical { total_worktrees } => FixtureRecipe::Typical { total_worktrees },
-            Self::Minimal {
-                branchless_branches,
-                linked_worktrees,
-            } => FixtureRecipe::Minimal {
-                branchless_branches,
-                linked_worktrees,
-            },
-            Self::SyntheticDivergence => FixtureRecipe::SyntheticDivergence,
-            Self::LargeRepositoryWorktrees { total_worktrees } => {
-                FixtureRecipe::LargeRepositoryWorktrees { total_worktrees }
-            }
-            Self::LargeRepositoryHistorySpread {
-                branchless_branches,
-            } => FixtureRecipe::LargeRepositoryHistorySpread {
-                branchless_branches,
-            },
-            Self::Mixed {
-                linked_worktrees,
-                branchless_branches,
-                remote_tracking_refs,
-            } => FixtureRecipe::Mixed {
-                linked_worktrees,
-                branchless_branches,
-                remote_tracking_refs,
-            },
-            Self::Prune {
-                candidate_pairs,
-                backdrop_pairs,
-                ..
-            } => FixtureRecipe::Prune {
-                candidate_pairs,
-                backdrop_pairs,
-            },
-            Self::PickerTest => FixtureRecipe::PickerTest,
-        }
-    }
-
-    fn directory_name(&self) -> String {
-        match *self {
-            Self::Typical { total_worktrees } => format!("typical-{total_worktrees}"),
-            Self::Minimal {
-                branchless_branches,
-                linked_worktrees,
-            } => format!("minimal-{branchless_branches}-{linked_worktrees}"),
-            Self::SyntheticDivergence => "synthetic-divergence".to_string(),
-            Self::LargeRepositoryWorktrees { total_worktrees } => {
-                format!("large-repository-worktrees-{total_worktrees}")
-            }
-            Self::LargeRepositoryHistorySpread {
-                branchless_branches,
-            } => format!("large-repository-history-spread-{branchless_branches}"),
-            Self::Mixed {
-                linked_worktrees,
-                branchless_branches,
-                remote_tracking_refs,
-            } => {
-                format!("mixed-{linked_worktrees}-{branchless_branches}-{remote_tracking_refs}")
-            }
-            Self::Prune {
-                candidate_pairs,
-                backdrop_pairs,
-                base,
-            } => format!(
-                "prune-{}-{candidate_pairs}-{backdrop_pairs}",
-                match base {
-                    PruneBase::Synthetic => "synthetic",
-                    PruneBase::LargeRepository => "large-repository",
-                }
-            ),
-            Self::PickerTest => "picker-test".to_string(),
-        }
-    }
-}
-
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Setup { recipe, path } => {
-            if let SetupRecipe::Prune {
-                candidate_pairs,
-                backdrop_pairs,
-                base,
-            } = recipe
-                && base == PruneBase::LargeRepository
-            {
-                if path.is_some() {
+            let Some(path) = path else {
+                eprintln!("Missing required --path for benchmark fixture setup.");
+                std::process::exit(2);
+            };
+            let absolute_path = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir().unwrap().join(path)
+            };
+            let parent = absolute_path.parent().unwrap();
+            let base_path = canonicalize(parent)
+                .unwrap_or_else(|error| {
                     eprintln!(
-                        "large-repository prune fixtures are managed under {}; --path is not supported",
-                        wt_perf_fixture_dir().join("bench-repos").display()
+                        "Could not resolve destination parent {}: {error}",
+                        parent.display()
                     );
                     std::process::exit(1);
+                })
+                .join(absolute_path.file_name().unwrap());
+            if let Err(error) = std::fs::create_dir(&base_path) {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    eprintln!(
+                        "Destination already exists: {}. Choose a new --path or remove it first.",
+                        base_path.display()
+                    );
+                } else {
+                    eprintln!(
+                        "Could not reserve destination {}: {error}",
+                        base_path.display()
+                    );
                 }
-                let fixture = LargeRepositoryPruneFixture::acquire(candidate_pairs, backdrop_pairs);
-                let repo = fixture.path();
-                eprintln!(
-                    "Ready: main @ {}, {} worktrees, {} branches",
-                    repo.display(),
-                    candidate_pairs + backdrop_pairs + 1,
-                    candidate_pairs + backdrop_pairs
-                );
-                eprintln!();
-                eprintln!(
-                    "  wt-perf timeline -- -C {} step prune --dry-run --min-age 0s",
-                    repo.display()
-                );
-                eprintln!(
-                    "  wt-perf timeline -- -C {} step prune --min-age 0s   # live; next setup/bench run re-creates the candidates",
-                    repo.display()
-                );
-                return;
+                std::process::exit(1);
             }
 
-            let directory_name = recipe.directory_name();
-            let fixture_recipe = recipe.fixture_recipe();
-            let base_path = if let Some(p) = path {
-                std::fs::create_dir_all(&p).unwrap();
-                canonicalize(&p).unwrap()
-            } else {
-                let dir = wt_perf_fixture_dir().join(&directory_name);
-                remove_fixture_for_rebuild(&dir);
-                std::fs::create_dir_all(&dir).unwrap();
-                canonicalize(&dir).unwrap()
-            };
-
-            eprintln!("Creating {directory_name} repo...");
-            let summary = fixture_recipe.create_at(&base_path);
-
-            let mut parts = vec![format!("main @ {}", base_path.display())];
-            if summary.total_worktrees > 1 {
-                parts.push(format!("{} worktrees", summary.total_worktrees));
-            }
-            if summary.branchless_branches > 0 {
-                parts.push(format!(
-                    "{} branchless branches",
-                    summary.branchless_branches
-                ));
-            }
-            if summary.remote_tracking_refs > 0 {
-                parts.push(format!(
-                    "{} remote-tracking refs",
-                    summary.remote_tracking_refs
-                ));
-            }
-            eprintln!("Created: {}", parts.join(", "));
+            eprintln!("Creating fixture at {}...", base_path.display());
+            recipe.create_at(&base_path);
+            eprintln!("Created: main @ {}", base_path.display());
             eprintln!();
-            let example_args = if matches!(fixture_recipe, FixtureRecipe::Prune { .. }) {
+            let example_args = if matches!(
+                recipe,
+                FixtureRecipe::Prune { .. } | FixtureRecipe::LargeRepositoryPrune { .. }
+            ) {
                 "step prune --dry-run --min-age 0s"
             } else {
                 "list --progressive"
@@ -343,22 +148,11 @@ fn main() {
                 base_path.display(),
                 example_args
             );
-            eprintln!("  wt-perf invalidate {}", base_path.display());
-        }
-
-        Commands::Invalidate { repo } => {
-            let repo = canonicalize(&repo).unwrap_or_else(|e| {
-                eprintln!("Invalid repo path {}: {}", repo.display(), e);
-                std::process::exit(1);
-            });
-
-            if !repo.join(".git").exists() {
-                eprintln!("Not a git repository: {}", repo.display());
-                std::process::exit(1);
-            }
-
-            invalidate_caches_auto(&repo);
-            eprintln!("Invalidated caches for {}", repo.display());
+            eprintln!(
+                "  wt-perf timeline --cold -- -C {} {}",
+                base_path.display(),
+                example_args
+            );
         }
 
         Commands::Trace { file } => {

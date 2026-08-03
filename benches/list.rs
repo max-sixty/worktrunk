@@ -7,10 +7,8 @@
 //       in varied states, with branch divergence spread across history depth.
 //       The realistic "everything at once" workload (warm + cold).
 //   - divergent_branches: 200 branches × 20 commits / GH #461 deep-divergence stress (warm + cold)
-//   - large_repository_worktrees: pinned large corpus (8 worktrees; warm + cold)
-//   - large_repository_history_spread: 50 branches at different history depths / GH #461
-//       - warm: all branches (first run expensive; subsequent runs hit persistent cache)
-//       - warm_worktrees_only: no branch enumeration (~600ms)
+//   - large_repository: one pinned large corpus with 8 worktrees and 50 branches
+//       spread through history; default list (warm + cold) and --branches (warm)
 //
 // Attribution: a `full` wall time can't be split by side (worktree- and
 // branch-side git subprocesses overlap on the rayon pool), so to see where a
@@ -23,11 +21,12 @@
 //   cargo bench --bench list                         # All benchmarks
 //   cargo bench --bench list skeleton                # Progressive rendering
 //   cargo bench --bench list full                    # Combined full-surface fixture
-//   cargo bench --bench list large_repository_history_spread # GH #461 scenario
+//   cargo bench --bench list large_repository        # Canonical large repo
 //   cargo bench --bench list warm                    # Warm-cache variants (every group's warm rows)
 //   cargo bench --bench list skeleton/warm           # Skeleton group, warm only
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::cell::OnceCell;
 use std::path::Path;
 use wt_perf::{
     CacheState, FixtureRecipe, bench_wt, run_git, standard_benchmark_profile, wt_command,
@@ -106,41 +105,42 @@ fn bench_worktree_scaling(c: &mut Criterion) {
 }
 
 fn bench_large_repository(c: &mut Criterion) {
-    let mut group = c.benchmark_group("large_repository_worktrees");
-    // `wt list` on rust-lang/rust runs ~2s warm — dominated by one deep
-    // `git for-each-ref %(ahead-behind:main)` walk — and several times
-    // that for cold, where each iteration clears the commit graph and
-    // worktrunk caches while preserving all eight 59k-entry worktree indexes.
-    // Warm-path variance is that slowest single subprocess, not measurement
-    // noise, so the inherited 30-sample / 15s default just burns time: at
-    // >1s/iter Criterion can't fit 30 samples in 15s, so it runs 30
-    // single-iteration samples regardless. 10 is Criterion's minimum
-    // (`sample_size` < 10 panics).
+    let mut group = c.benchmark_group("large_repository");
+    // On rust-lang/rust these rows take seconds. Variance is dominated by the
+    // slowest git history walk rather than measurement noise, so Criterion's
+    // minimum 10 samples is enough. All rows use one canonical state: eight
+    // worktrees and fifty branches spread through history.
     //
-    // 8 worktrees only: the worktree-count scaling shape is tracked at
-    // criterion cadence by `worktree_scaling` (synthetic, 1/4/8); what's
-    // unique here is large-repository magnitude and the cold penalty, which the
-    // 8-worktree endpoints keep — each extra variant costs a fresh local
-    // clone of rust-lang/rust plus its measurement window.
+    // Default `list` still captures the repository's refs and ahead/behind
+    // state, but creates tasks only for worktree rows. `--branches` adds every
+    // local branch row and its integration work. The default warm/cold pair
+    // measures the large-repository cache penalty; the warm `--branches` row
+    // covers the GH #461 history-depth workload without duplicating the warm
+    // default row.
     group.measurement_time(std::time::Duration::from_secs(20));
     group.sample_size(10);
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-    let total_worktrees = 8;
+    let fixture = OnceCell::new();
 
-    for cache in CacheState::WARM_AND_COLD {
+    // Cold goes last because it removes the commit graph. Each warm row has
+    // its own Criterion warm-up, so sharing the repository doesn't share the
+    // command-specific cache state being measured.
+    for (mode, cache, args) in [
+        ("default", CacheState::Warm, &["list"][..]),
+        ("branches", CacheState::Warm, &["list", "--branches"][..]),
+        ("default", CacheState::Cold, &["list"][..]),
+    ] {
         group.bench_with_input(
-            BenchmarkId::new(cache.label(), total_worktrees),
+            BenchmarkId::new(mode, cache.label()),
             &cache,
             |b, &cache| {
-                let fixture = FixtureRecipe::LargeRepositoryWorktrees { total_worktrees }.create();
-                run_git(fixture.path(), &["status"]);
-
-                bench_wt(b, fixture.path(), cache, || {
-                    let mut cmd = wt_command(binary, fixture.path(), None);
-                    cmd.arg("list");
-                    cmd
+                let fixture = fixture.get_or_init(|| {
+                    let fixture = FixtureRecipe::LargeRepository.create();
+                    run_git(fixture.path(), &["status"]);
+                    fixture
                 });
+                run_benchmark(b, binary, fixture.path(), cache, args, None);
             },
         );
     }
@@ -169,81 +169,6 @@ fn bench_divergent_branches(c: &mut Criterion) {
             );
         });
     }
-
-    group.finish();
-}
-
-/// Benchmark GH #461 scenario: the large-repository corpus with branches at different
-/// historical points.
-///
-/// This reproduces the `wt switch` interactive picker delay reported in #461. The key factor
-/// is NOT commits per branch, but rather how far back in history branches diverge from each other.
-///
-/// Benchmarks two modes:
-/// - `warm`: with all branches (first run expensive, subsequent runs hit the persistent cache)
-/// - `warm_worktrees_only`: no branch enumeration (~600ms)
-///
-/// Key insight: `git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs).
-/// It must walk the commit graph to compute divergence, so it takes ~2s on rust-lang/rust
-/// regardless of how many refs are queried. Skipping branch enumeration entirely avoids this.
-fn bench_large_repository_history_spread(c: &mut Criterion) {
-    let mut group = c.benchmark_group("large_repository_history_spread");
-    // rust-lang/rust runs ~3.7s per `wt list --branches` iteration; warm-path
-    // variance is dominated by the slowest single subprocess (a deep
-    // `git merge-base` walking history), not measurement noise, so 10 samples
-    // (criterion's minimum — `sample_size` < 10 panics) suffices. A 20s budget
-    // is ≈ one iteration per sample (~37s/function), down from the
-    // ~74s/function criterion spent filling the old 60s budget.
-    group.measurement_time(std::time::Duration::from_secs(20));
-    group.sample_size(10);
-
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-
-    // Setup function - each bench_function creates its own fresh workspace
-    // Uses the large-repository fixture plus a worktree for worktrees_only.
-    let setup_workspace = || {
-        let fixture = FixtureRecipe::LargeRepositoryHistorySpread {
-            branchless_branches: 50,
-        }
-        .create();
-        run_git(fixture.path(), &["status"]);
-
-        // Add a second worktree (needed for worktrees_only to not auto-show branches)
-        let wt_path = fixture.root().join("wt-test");
-        run_git(
-            fixture.path(),
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "test-worktree",
-                wt_path.to_str().unwrap(),
-                "HEAD",
-            ],
-        );
-
-        fixture
-    };
-
-    // Baseline: all branches
-    group.bench_function("warm", |b| {
-        let fixture = setup_workspace();
-        bench_wt(b, fixture.path(), CacheState::Warm, || {
-            let mut cmd = wt_command(binary, fixture.path(), None);
-            cmd.args(["list", "--branches"]);
-            cmd
-        });
-    });
-
-    // Worktrees only: no branch enumeration, skips expensive %(ahead-behind) batch
-    group.bench_function("warm_worktrees_only", |b| {
-        let fixture = setup_workspace();
-        bench_wt(b, fixture.path(), CacheState::Warm, || {
-            let mut cmd = wt_command(binary, fixture.path(), None);
-            cmd.arg("list"); // no --branches
-            cmd
-        });
-    });
 
     group.finish();
 }
@@ -316,6 +241,6 @@ fn bench_full(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = standard_benchmark_profile();
-    targets = bench_skeleton, bench_worktree_scaling, bench_full, bench_large_repository, bench_divergent_branches, bench_large_repository_history_spread
+    targets = bench_skeleton, bench_worktree_scaling, bench_full, bench_large_repository, bench_divergent_branches
 }
 criterion_main!(benches);

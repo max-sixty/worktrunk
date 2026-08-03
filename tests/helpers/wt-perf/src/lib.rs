@@ -20,99 +20,29 @@
 //!
 //! See `wt-perf --help` for CLI usage.
 
+use clap::Subcommand;
 use fs2::FileExt;
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::OnceLock;
 use tempfile::TempDir;
 use worktrunk::testing::{allow_network_transports, configure_git_cmd, isolate_subprocess_env};
 
-const LARGE_REPOSITORY_FIXTURE_MANIFEST: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../benches/large-repository-fixture"
-));
-static LARGE_REPOSITORY_IDENTITY: OnceLock<LargeRepositoryIdentity> = OnceLock::new();
-const LARGE_REPOSITORY_BASE_REF: &str = "refs/wt-perf/large-repository-base";
-/// The history window sampled by [`FixtureRecipe::LargeRepositoryHistorySpread`].
-pub const LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES: usize = 5_000;
-
-/// The pinned identity of the corpus used for large-repository benchmarks.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LargeRepositoryIdentity {
-    /// Fixture-layout schema.
-    pub schema: u32,
-    /// Upstream `owner/repository`.
-    pub corpus: String,
-    /// Full pinned commit object ID.
-    pub revision: String,
+mod large_repository_fixture {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../benches/large-repository-fixture"
+    ));
 }
-
-/// Read the one tracked identity shared by fixture acquisition, CI caching,
-/// and benchmark result metadata.
-pub fn large_repository_identity() -> &'static LargeRepositoryIdentity {
-    LARGE_REPOSITORY_IDENTITY.get_or_init(|| {
-        parse_large_repository_identity(LARGE_REPOSITORY_FIXTURE_MANIFEST)
-            .unwrap_or_else(|error| panic!("invalid benches/large-repository-fixture: {error}"))
-    })
-}
-
-fn parse_large_repository_identity(content: &str) -> Result<LargeRepositoryIdentity, String> {
-    let mut schema = None;
-    let mut corpus = None;
-    let mut revision = None;
-
-    for (index, line) in content.lines().enumerate() {
-        let line_number = index + 1;
-        let (key, value) = line
-            .split_once('=')
-            .ok_or_else(|| format!("line {line_number} must be key=value"))?;
-        if value.is_empty() {
-            return Err(format!("line {line_number} has an empty value"));
-        }
-        match key {
-            "schema" => {
-                let parsed = value
-                    .parse::<u32>()
-                    .map_err(|_| format!("line {line_number} has an invalid schema"))?;
-                if schema.replace(parsed).is_some() {
-                    return Err("duplicate schema".to_string());
-                }
-            }
-            "corpus" => {
-                if corpus.replace(value.to_string()).is_some() {
-                    return Err("duplicate corpus".to_string());
-                }
-            }
-            "revision" => {
-                if revision.replace(value.to_string()).is_some() {
-                    return Err("duplicate revision".to_string());
-                }
-            }
-            _ => return Err(format!("line {line_number} has unknown key {key:?}")),
-        }
-    }
-
-    let identity = LargeRepositoryIdentity {
-        schema: schema.ok_or_else(|| "missing schema".to_string())?,
-        corpus: corpus.ok_or_else(|| "missing corpus".to_string())?,
-        revision: revision.ok_or_else(|| "missing revision".to_string())?,
-    };
-    if identity.schema != 1 {
-        return Err(format!("unsupported schema {}", identity.schema));
-    }
-    if identity.revision.len() != 40
-        || !identity
-            .revision
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err("revision must be a 40-character hexadecimal object ID".to_string());
-    }
-    Ok(identity)
-}
+use large_repository_fixture::{
+    CORPUS as LARGE_REPOSITORY_CORPUS, REVISION as LARGE_REPOSITORY_REVISION,
+};
+/// Worktrees in the canonical read-only large-repository fixture, including
+/// the primary worktree.
+const LARGE_REPOSITORY_TOTAL_WORKTREES: usize = 8;
+/// Branches in the canonical read-only large-repository fixture, spread over
+/// the most recent 5,000 commits.
+const LARGE_REPOSITORY_HISTORY_SPREAD_BRANCHES: usize = 50;
 
 /// An owned temporary benchmark fixture.
 ///
@@ -130,6 +60,29 @@ impl FixtureRepo {
     /// Create a fixture with its primary worktree at `<temp>/repo`.
     fn create(build: impl FnOnce(&Path)) -> Self {
         let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        build(&repo);
+        Self { root, repo }
+    }
+
+    /// Create a fixture in `parent`, keeping large temporary fixtures on the
+    /// same volume as the shared source cache.
+    fn create_in(parent: &Path, build: impl FnOnce(&Path)) -> Self {
+        std::fs::create_dir_all(parent).unwrap_or_else(|error| {
+            panic!(
+                "failed to create fixture directory {}: {error}",
+                parent.display()
+            )
+        });
+        let root = tempfile::Builder::new()
+            .prefix("fixture-")
+            .tempdir_in(parent)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to create temporary fixture in {}: {error}",
+                    parent.display()
+                )
+            });
         let repo = root.path().join("repo");
         build(&repo);
         Self { root, repo }
@@ -228,83 +181,84 @@ impl FlatRepoConfig {
             worktree_uncommitted_files: 0,
         }
     }
-
-    /// Config for testing `wt switch` interactive picker (6 worktrees with varying commits).
-    const fn picker_test() -> Self {
-        Self {
-            commits_on_main: 3,
-            files: 3,
-            branchless_branches: 2, // feature-000, feature-001 (no worktree)
-            commits_per_branch: 0,
-            total_worktrees: 6,
-            worktree_commits_ahead: 15, // feature worktree has many commits
-            worktree_uncommitted_files: 1,
-        }
-    }
 }
 
 /// The benchmark fixture catalog.
 ///
 /// Variants are sparse, named repository states rather than combinations of
-/// independent base, shape, and storage axes. Acquisition is selected
-/// separately by `wt-perf setup` only where ownership differs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// independent base, shape, and storage axes. Large-corpus recipes reuse the
+/// same pinned source while every mutable fixture remains caller-owned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Subcommand)]
 pub enum FixtureRecipe {
     /// Standard synthetic history, files, and feature worktrees.
-    Typical { total_worktrees: usize },
+    Typical {
+        /// Total worktrees, including the primary worktree.
+        #[arg(value_parser = positive_usize)]
+        total_worktrees: usize,
+    },
     /// Minimal history and files with configurable branch/worktree populations.
     Minimal {
+        /// Branches without linked worktrees.
         branchless_branches: usize,
+        /// Linked worktrees, excluding the primary worktree.
         linked_worktrees: usize,
     },
     /// Fixed deep-divergence branch stress.
     SyntheticDivergence,
-    /// Pinned large corpus with standard feature worktrees.
-    LargeRepositoryWorktrees { total_worktrees: usize },
-    /// Pinned large corpus with branches spread across history depth.
-    LargeRepositoryHistorySpread { branchless_branches: usize },
+    /// Pinned large corpus with worktrees and branches spread across history.
+    LargeRepository,
     /// Varied branch and worktree state rotation.
     Mixed {
+        /// Linked worktrees, excluding the primary worktree.
         linked_worktrees: usize,
+        /// Branches without linked worktrees.
         branchless_branches: usize,
+        /// Additional remote-tracking refs.
+        #[arg(default_value_t = 0)]
         remote_tracking_refs: usize,
     },
     /// Prune candidates and the unintegrated scan backdrop.
     Prune {
+        /// Squash-merged worktree/branch pairs.
         candidate_pairs: usize,
+        /// Unintegrated worktree/branch pairs.
         backdrop_pairs: usize,
     },
-    /// Fixed interactive picker debugging fixture.
-    PickerTest,
+    /// Pinned large corpus with prune candidates and an unintegrated backdrop.
+    LargeRepositoryPrune {
+        /// Squash-merged worktree/branch pairs.
+        candidate_pairs: usize,
+        /// Unintegrated worktree/branch pairs.
+        backdrop_pairs: usize,
+    },
 }
 
-/// Population summary printed by `wt-perf setup`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FixtureSummary {
-    pub total_worktrees: usize,
-    pub branchless_branches: usize,
-    pub remote_tracking_refs: usize,
+fn positive_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "expected a positive integer".to_string())?;
+    (value >= 1)
+        .then_some(value)
+        .ok_or_else(|| "expected a positive integer".to_string())
 }
 
 impl FixtureRecipe {
     /// Build an owned ephemeral fixture.
     pub fn create(self) -> FixtureRepo {
-        FixtureRepo::create(|repo| {
-            self.create_at(repo);
-        })
+        let build = |repo: &Path| self.create_at(repo);
+        if matches!(self, Self::LargeRepositoryPrune { .. }) {
+            FixtureRepo::create_in(&large_repository_cache_dir().join("runs"), build)
+        } else {
+            FixtureRepo::create(build)
+        }
     }
 
     /// Build an ephemeral fixture at a caller-chosen primary-worktree path.
-    pub fn create_at(self, base_path: &Path) -> FixtureSummary {
+    pub fn create_at(self, base_path: &Path) {
         match self {
             Self::Typical { total_worktrees } => {
                 assert!(total_worktrees >= 1, "a fixture has a primary worktree");
                 build_flat_repo_at(&FlatRepoConfig::typical(total_worktrees), base_path);
-                FixtureSummary {
-                    total_worktrees,
-                    branchless_branches: 0,
-                    remote_tracking_refs: 0,
-                }
             }
             Self::Minimal {
                 branchless_branches,
@@ -314,46 +268,15 @@ impl FixtureRecipe {
                     &FlatRepoConfig::minimal(branchless_branches, linked_worktrees, 0),
                     base_path,
                 );
-                FixtureSummary {
-                    total_worktrees: linked_worktrees + 1,
-                    branchless_branches,
-                    remote_tracking_refs: 0,
-                }
             }
             Self::SyntheticDivergence => {
                 let config = FlatRepoConfig::synthetic_divergence();
                 build_flat_repo_at(&config, base_path);
-                FixtureSummary {
-                    total_worktrees: config.total_worktrees,
-                    branchless_branches: config.branchless_branches,
-                    remote_tracking_refs: 0,
-                }
             }
-            Self::LargeRepositoryWorktrees { total_worktrees } => {
-                assert!(total_worktrees >= 1, "a fixture has a primary worktree");
+            Self::LargeRepository => {
                 clone_large_repository_at(base_path);
-                add_flat_worktrees(&FlatRepoConfig::typical(total_worktrees), base_path);
-                FixtureSummary {
-                    total_worktrees,
-                    branchless_branches: 0,
-                    remote_tracking_refs: 0,
-                }
-            }
-            Self::LargeRepositoryHistorySpread {
-                branchless_branches,
-            } => {
-                assert!(
-                    branchless_branches <= LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES,
-                    "large-repository history spread supports at most \
-                     {LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES} branches"
-                );
-                clone_large_repository_at(base_path);
-                add_history_spread_branches(base_path, branchless_branches);
-                FixtureSummary {
-                    total_worktrees: 1,
-                    branchless_branches,
-                    remote_tracking_refs: 0,
-                }
+                add_history_spread_branches(base_path, LARGE_REPOSITORY_HISTORY_SPREAD_BRANCHES);
+                add_typical_linked_worktrees(base_path, LARGE_REPOSITORY_TOTAL_WORKTREES - 1);
             }
             Self::Mixed {
                 linked_worktrees,
@@ -366,31 +289,19 @@ impl FixtureRecipe {
                     remote_tracking_refs,
                     base_path,
                 );
-                FixtureSummary {
-                    total_worktrees: linked_worktrees + 1,
-                    branchless_branches,
-                    remote_tracking_refs,
-                }
             }
             Self::Prune {
                 candidate_pairs,
                 backdrop_pairs,
             } => {
                 build_prune_repo_at(candidate_pairs, backdrop_pairs, base_path);
-                FixtureSummary {
-                    total_worktrees: candidate_pairs + backdrop_pairs + 1,
-                    branchless_branches: candidate_pairs + backdrop_pairs,
-                    remote_tracking_refs: 0,
-                }
             }
-            Self::PickerTest => {
-                let config = FlatRepoConfig::picker_test();
-                build_flat_repo_at(&config, base_path);
-                FixtureSummary {
-                    total_worktrees: config.total_worktrees,
-                    branchless_branches: config.branchless_branches,
-                    remote_tracking_refs: 0,
-                }
+            Self::LargeRepositoryPrune {
+                candidate_pairs,
+                backdrop_pairs,
+            } => {
+                clone_large_repository_at(base_path);
+                add_prune_populations(base_path, candidate_pairs, backdrop_pairs);
             }
         }
     }
@@ -402,70 +313,6 @@ impl FixtureRecipe {
 /// configuration on the primary worktree but before recording a candidate.
 pub fn add_typical_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
     add_flat_worktrees(&FlatRepoConfig::typical(linked_worktrees + 1), repo_path);
-}
-
-/// Remove a generated fixture before rebuilding it at the same default path.
-///
-/// Linked worktrees live beside the primary worktree, not underneath it.
-/// Resolve their exact registered paths before removing the primary so setup
-/// can rebuild without globbing over unrelated siblings.
-pub fn remove_fixture_for_rebuild(repo_path: &Path) {
-    if !path_exists(repo_path) {
-        return;
-    }
-
-    if path_exists(&repo_path.join(".git")) {
-        let primary = std::fs::canonicalize(repo_path).unwrap_or_else(|error| {
-            panic!(
-                "failed to resolve fixture primary worktree {}: {error}",
-                repo_path.display()
-            )
-        });
-        let registered = registered_worktrees(repo_path).unwrap_or_else(|| {
-            panic!(
-                "refusing to remove fixture {}: worktree registrations are not an intact generated fixture",
-                repo_path.display()
-            )
-        });
-        assert_eq!(
-            registered.get("main"),
-            Some(&primary),
-            "refusing to remove fixture {}: its primary worktree is not main",
-            repo_path.display()
-        );
-
-        // Validate the complete deletion set before removing any path. A
-        // manually-added or corrupted worktree may point anywhere; only the
-        // sibling path derived from its branch is inside this generated
-        // fixture's namespace.
-        let mut linked = Vec::new();
-        for (branch, worktree) in registered {
-            if branch == "main" {
-                continue;
-            }
-            let expected = linked_worktree_path(&primary, &branch);
-            let expected = std::fs::canonicalize(&expected).unwrap_or_else(|error| {
-                panic!(
-                    "refusing to remove fixture {}: expected linked worktree {} is missing: {error}",
-                    repo_path.display(),
-                    expected.display()
-                )
-            });
-            assert_eq!(
-                worktree,
-                expected,
-                "refusing to remove fixture {}: branch {branch} is registered outside its generated path",
-                repo_path.display()
-            );
-            linked.push(worktree);
-        }
-
-        for worktree in linked {
-            remove_dir_if_exists(&worktree);
-        }
-    }
-
-    remove_dir_if_exists(repo_path);
 }
 
 /// Build a `git` command isolated from host context, with the host's
@@ -980,34 +827,6 @@ fn remove_dir_if_exists(path: &Path) {
     }
 }
 
-/// Rebuild every worktree's index via `git reset -q`.
-///
-/// Used by [`LargeRepositoryPruneFixture::acquire`] to heal a fixture whose
-/// indexes were deleted by legacy `wt-perf invalidate` behavior or other
-/// damage (a missing index reads as all-tracked-files-deleted and flips
-/// prune's clean-worktree gate). `git reset --mixed` discards
-/// staged-but-uncommitted index state, so this is safe only on fixtures whose
-/// dirt is untracked files.
-fn restore_worktree_indexes(repo_path: &Path) {
-    let output = git_command()
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git worktree list failed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parallel: each reset rebuilds one worktree's index from its own HEAD,
-    // fully independent of the others. On the large-repository fixture a
-    // rebuild is ~2.5 s per worktree — serially that would dominate repair.
-    std::thread::scope(|s| {
-        for line in stdout.lines() {
-            if let Some(path) = line.strip_prefix("worktree ") {
-                s.spawn(move || run_git(Path::new(path), &["reset", "-q"]));
-            }
-        }
-    });
-}
-
 /// Resolve git's common directory for `repo_path` from the filesystem.
 ///
 /// - Normal repo: `<repo>/.git` is a directory — use it directly.
@@ -1127,36 +946,9 @@ fn path_exists(path: &Path) -> bool {
         .unwrap_or_else(|error| panic!("failed to inspect {}: {error}", path.display()))
 }
 
-fn ready_marker_matches(marker: &Path) -> bool {
-    match std::fs::read_to_string(marker) {
-        Ok(content) => content == LARGE_REPOSITORY_FIXTURE_MANIFEST,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => panic!(
-            "failed to read fixture marker {}: {error}",
-            marker.display()
-        ),
-    }
-}
-
-fn write_ready_marker(path: &Path) {
-    let parent = path.parent().unwrap();
-    let mut marker = tempfile::NamedTempFile::new_in(parent)
-        .unwrap_or_else(|error| panic!("failed to create fixture ready marker: {error}"));
-    marker
-        .write_all(LARGE_REPOSITORY_FIXTURE_MANIFEST.as_bytes())
-        .unwrap_or_else(|error| panic!("failed to write fixture ready marker: {error}"));
-    marker
-        .as_file()
-        .sync_all()
-        .unwrap_or_else(|error| panic!("failed to sync fixture ready marker: {error}"));
-    marker
-        .persist(path)
-        .unwrap_or_else(|error| panic!("failed to publish fixture ready marker: {}", error.error));
-}
-
 fn repository_head(repo: &Path) -> Option<String> {
     let output = git_command()
-        .args(["rev-parse", "HEAD"])
+        .args(["rev-parse", "--verify", "HEAD^{commit}"])
         .current_dir(repo)
         .output()
         .unwrap_or_else(|error| {
@@ -1186,23 +978,26 @@ fn repository_is_on_main(repo: &Path) -> bool {
 }
 
 fn large_repository_source_matches(repo: &Path) -> bool {
-    let marker = large_repository_cache_dir().join("source.ready");
-    ready_marker_matches(&marker)
-        && path_exists(repo)
-        && repository_head(repo).as_deref() == Some(large_repository_identity().revision.as_str())
+    path_exists(repo)
+        && repository_head(repo).as_deref() == Some(LARGE_REPOSITORY_REVISION)
         && repository_is_on_main(repo)
+        && run_git_ok(repo, &["fsck", "--connectivity-only", "--no-dangling"])
 }
 
 /// Get or build the immutable source for large-repository benchmarks.
 ///
-/// The build lock covers validation and construction. A ready marker is
-/// published only after the exact pinned revision is checked out, so an
-/// interrupted clone is rebuilt by the next caller.
+/// The revision is part of the cache path. Construction happens in a temporary
+/// sibling and is atomically renamed into place after validation, so an
+/// interrupted clone never looks like a usable cache entry.
 fn ensure_large_repository_source() -> PathBuf {
     let cache_dir = large_repository_cache_dir();
-    let source = cache_dir.join("source");
-    let ready_marker = cache_dir.join("source.ready");
-    let _build_lock = acquire_exclusive_lock(&cache_dir.join("source.lock"));
+    let source = cache_dir.join(format!("source-{LARGE_REPOSITORY_REVISION}"));
+    let staged_source = cache_dir.join(format!("source-{LARGE_REPOSITORY_REVISION}.building"));
+    let _build_lock =
+        acquire_exclusive_lock(&cache_dir.join(format!("source-{LARGE_REPOSITORY_REVISION}.lock")));
+    if path_exists(&staged_source) {
+        remove_dir_if_exists(&staged_source);
+    }
 
     if large_repository_source_matches(&source) {
         eprintln!(
@@ -1212,45 +1007,47 @@ fn ensure_large_repository_source() -> PathBuf {
         return source;
     }
     if path_exists(&source) {
-        eprintln!("Cached large-repository source does not match the fixture manifest; rebuilding");
+        eprintln!("Cached large-repository source is invalid; rebuilding");
         remove_dir_if_exists(&source);
     }
-    remove_file_if_exists(&ready_marker);
 
-    let identity = large_repository_identity();
-    let url = format!("https://github.com/{}.git", identity.corpus);
+    let url = format!("https://github.com/{LARGE_REPOSITORY_CORPUS}.git");
     eprintln!(
         "Cloning {} at {} (this will take several minutes)...",
-        identity.corpus, identity.revision
+        LARGE_REPOSITORY_CORPUS, LARGE_REPOSITORY_REVISION
     );
     let mut clone = git_command();
     allow_network_transports(&mut clone);
     let output = clone
         .args(["clone", "--no-checkout", &url])
-        .arg(&source)
+        .arg(&staged_source)
         .output()
         .unwrap_or_else(|error| panic!("failed to spawn large-repository clone: {error}"));
     assert!(
         output.status.success(),
         "failed to clone {}:\n{}",
-        identity.corpus,
+        LARGE_REPOSITORY_CORPUS,
         String::from_utf8_lossy(&output.stderr)
     );
     run_git(
-        &source,
-        &["checkout", "--detach", identity.revision.as_str()],
+        &staged_source,
+        &["checkout", "--detach", LARGE_REPOSITORY_REVISION],
     );
     run_git(
-        &source,
-        &["branch", "-f", "main", identity.revision.as_str()],
+        &staged_source,
+        &["branch", "-f", "main", LARGE_REPOSITORY_REVISION],
     );
-    run_git(&source, &["checkout", "main"]);
-    assert_eq!(
-        repository_head(&source).as_deref(),
-        Some(identity.revision.as_str()),
-        "large-repository source did not check out the pinned revision"
+    run_git(&staged_source, &["checkout", "main"]);
+    assert!(
+        large_repository_source_matches(&staged_source),
+        "large-repository source failed validation after checkout"
     );
-    write_ready_marker(&ready_marker);
+    std::fs::rename(&staged_source, &source).unwrap_or_else(|error| {
+        panic!(
+            "failed to publish large-repository source {}: {error}",
+            source.display()
+        )
+    });
     eprintln!("Large-repository source cloned successfully");
     source
 }
@@ -1280,7 +1077,7 @@ fn clone_large_repository_at(dest: &Path) {
     run_git(dest, &["config", "user.email", "bench@test.com"]);
     assert_eq!(
         repository_head(dest).as_deref(),
-        Some(large_repository_identity().revision.as_str()),
+        Some(LARGE_REPOSITORY_REVISION),
         "large-repository clone did not retain the pinned revision"
     );
     assert!(
@@ -1664,31 +1461,20 @@ fn build_prune_repo_at(candidate_pairs: usize, backdrop_pairs: usize, base_path:
 /// `git merge --squash` commit — integrated by content, so `wt step prune`
 /// detects it via the merge-tree probes and removes it.
 ///
-/// `round` uniquifies the committed file names. The cached large-repository
-/// fixture increments it when repairing candidates consumed by a live prune;
-/// reusing a round would make the squash merge empty because the content is
-/// already on main. Branch names intentionally do not carry the round, so a
-/// name collision fails loudly.
-pub fn add_squash_merged(repo_path: &Path, count: usize, round: usize) {
+pub fn add_squash_merged(repo_path: &Path, count: usize) {
     let default_branch = capture_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
-    // Two commits in `dir`, each adding a round-uniquified file (the branch
-    // name already carries the candidate index). The add is targeted — a bare
-    // `git add .` would rescan the whole tree, which on rust-lang/rust costs
-    // seconds per commit.
+    // Two commits in `dir`, each adding a branch-uniquified file. The add is
+    // targeted — a bare `git add .` would rescan the whole tree, which on
+    // rust-lang/rust costs seconds per commit.
     let commit_branch_content = |dir: &Path, branch: &str| {
         for j in 0..2 {
-            let name = format!("{}_{round}_{j}.rs", branch.replace('-', "_"));
-            std::fs::write(dir.join(&name), format!("// {branch} {round}/{j}\n")).unwrap();
+            let name = format!("{}_{j}.rs", branch.replace('-', "_"));
+            std::fs::write(dir.join(&name), format!("// {branch} {j}\n")).unwrap();
             run_git(dir, &["add", &name]);
             run_git(
                 dir,
-                &[
-                    "commit",
-                    "-q",
-                    "-m",
-                    &format!("{branch} commit {j} (round {round})"),
-                ],
+                &["commit", "-q", "-m", &format!("{branch} commit {j}")],
             );
         }
     };
@@ -1697,12 +1483,7 @@ pub fn add_squash_merged(repo_path: &Path, count: usize, round: usize) {
         run_git(repo_path, &["merge", "--squash", "-q", branch]);
         run_git(
             repo_path,
-            &[
-                "commit",
-                "-q",
-                "-m",
-                &format!("Squash-merge {branch} (round {round})"),
-            ],
+            &["commit", "-q", "-m", &format!("Squash-merge {branch}")],
         );
     };
 
@@ -1739,12 +1520,11 @@ pub fn add_squash_merged(repo_path: &Path, count: usize, round: usize) {
 /// — the backdrop prune scans every run but never removes) and `candidate_pairs`
 /// squash-merged candidate pairs (`add_squash_merged` — what prune removes).
 ///
-/// The base repo is the only thing the synthetic (`build_prune_repo_at`) and
-/// large-repository (`create_large_repository_prune_at`) prune fixtures differ
-/// in. Both layer these populations on top.
+/// The base repo is the only thing the synthetic and large-repository prune
+/// recipes differ in. Both layer these populations on top.
 fn add_prune_populations(base_path: &Path, candidate_pairs: usize, backdrop_pairs: usize) {
     add_diverged_backdrop(base_path, backdrop_pairs, backdrop_pairs);
-    add_squash_merged(base_path, candidate_pairs, 0);
+    add_squash_merged(base_path, candidate_pairs);
 }
 
 /// Default populations for the large-repository prune fixture:
@@ -1754,345 +1534,6 @@ fn add_prune_populations(base_path: &Path, candidate_pairs: usize, backdrop_pair
 /// lots removed, lots kept" shape where prune takes multiple seconds.
 pub const PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS: usize = 12;
 pub const PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS: usize = 24;
-
-/// Create a large-repository `wt step prune` workload at `base_path`.
-///
-/// Local-clones the pinned corpus (the first call may clone from the network)
-/// and adds the same two populations as
-/// `build_prune_repo_at`: squash-merged candidates of each kind
-/// ([`add_squash_merged`]) against a two-sided-diverged backdrop
-/// worktrees and branches forked across the last 5000 commits
-/// (`add_diverged_backdrop`). This is the shape where prune's costs are
-/// real — merge-base walks over deep history, `merge-tree` three-ways over
-/// ~400 MiB trees, `git status` over ~60k files per worktree — and reproduces
-/// the "prune takes seconds" experience that small synthetic fixtures can't
-/// (their probes bottom out at subprocess-spawn cost).
-///
-/// Each linked worktree materializes a full working tree: ~400 MiB and ~3 s
-/// per worktree, so the default populations build in minutes and take ~15 GiB.
-/// Prefer [`LargeRepositoryPruneFixture::acquire`], which builds once into
-/// `target/wt-perf/bench-repos` and repairs consumed candidates on later runs.
-fn create_large_repository_prune_at(
-    candidate_pairs: usize,
-    backdrop_pairs: usize,
-    base_path: &Path,
-) {
-    clone_large_repository_at(base_path);
-    run_git(
-        base_path,
-        &[
-            "update-ref",
-            LARGE_REPOSITORY_BASE_REF,
-            large_repository_identity().revision.as_str(),
-        ],
-    );
-    add_prune_populations(base_path, candidate_pairs, backdrop_pairs);
-}
-
-/// How a cached prune fixture compares to its expected populations.
-#[derive(Debug, PartialEq, Eq)]
-enum PruneFixtureState {
-    /// Backdrop and candidates all present.
-    Intact,
-    /// Backdrop intact, candidates fully consumed — a live prune ran.
-    /// Repairable by re-running [`add_squash_merged`] with a fresh round.
-    Consumed,
-    /// Anything else (partial removal, corruption) — rebuild from scratch.
-    Broken,
-}
-
-/// Classify a prune fixture (`build_prune_repo_at` /
-/// `create_large_repository_prune_at` layout) against its expected populations.
-///
-/// Exact ref names, branch registrations, and canonical worktree paths are the
-/// fixture invariants. A live prune removes exactly the `merged-*` refs and
-/// registrations, which is the [`PruneFixtureState::Consumed`] signature.
-/// `expected_base_revision` additionally pins the managed large-repository
-/// fixture's private base ref and requires that base to remain an ancestor of
-/// `main`.
-fn prune_fixture_state(
-    repo: &Path,
-    candidate_pairs: usize,
-    backdrop_pairs: usize,
-    expected_base_revision: Option<&str>,
-) -> PruneFixtureState {
-    if !repository_is_on_main(repo) {
-        return PruneFixtureState::Broken;
-    }
-
-    if let Some(revision) = expected_base_revision
-        && (capture_git_oid(repo, LARGE_REPOSITORY_BASE_REF).as_deref() != Some(revision)
-            || !run_git_ok(repo, &["merge-base", "--is-ancestor", revision, "main"]))
-    {
-        return PruneFixtureState::Broken;
-    }
-
-    let Some(actual_worktrees) = registered_worktrees(repo) else {
-        return PruneFixtureState::Broken;
-    };
-    let actual_branches = capture_git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads"])
-        .lines()
-        .map(str::to_string)
-        .collect::<BTreeSet<_>>();
-
-    let backdrop_branches = expected_prune_branches(0, backdrop_pairs);
-    let backdrop_worktrees = expected_prune_worktrees(repo, 0, backdrop_pairs);
-    let intact_branches = expected_prune_branches(candidate_pairs, backdrop_pairs);
-    let intact_worktrees = expected_prune_worktrees(repo, candidate_pairs, backdrop_pairs);
-
-    if actual_branches == intact_branches && actual_worktrees == intact_worktrees {
-        PruneFixtureState::Intact
-    } else if actual_branches == backdrop_branches && actual_worktrees == backdrop_worktrees {
-        PruneFixtureState::Consumed
-    } else {
-        PruneFixtureState::Broken
-    }
-}
-
-fn capture_git_oid(repo: &Path, reference: &str) -> Option<String> {
-    let output = git_command()
-        .args(["rev-parse", "--verify", reference])
-        .current_dir(repo)
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to inspect {reference} in {}: {error}",
-                repo.display()
-            )
-        });
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn registered_worktrees(repo: &Path) -> Option<BTreeMap<String, PathBuf>> {
-    let output = git_command()
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(repo)
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to inspect worktree registrations in {}: {error}",
-                repo.display()
-            )
-        });
-    if !output.status.success() {
-        return None;
-    }
-
-    let mut registrations = BTreeMap::new();
-    for record in String::from_utf8_lossy(&output.stdout).trim().split("\n\n") {
-        let path = record
-            .lines()
-            .find_map(|line| line.strip_prefix("worktree "))
-            .map(PathBuf::from)?;
-        let branch = record
-            .lines()
-            .find_map(|line| line.strip_prefix("branch refs/heads/"))?
-            .to_string();
-        let path = std::fs::canonicalize(&path).ok()?;
-        if registrations.insert(branch, path).is_some() {
-            return None;
-        }
-    }
-    Some(registrations)
-}
-
-fn expected_prune_branches(candidate_pairs: usize, backdrop_pairs: usize) -> BTreeSet<String> {
-    let mut branches = BTreeSet::from(["refs/heads/main".to_string()]);
-    for i in 0..backdrop_pairs {
-        branches.insert(format!("refs/heads/feature-{i:03}"));
-        branches.insert(format!("refs/heads/feature-wt-{i}"));
-    }
-    for i in 0..candidate_pairs {
-        branches.insert(format!("refs/heads/merged-br-{i}"));
-        branches.insert(format!("refs/heads/merged-wt-{i}"));
-    }
-    branches
-}
-
-fn expected_prune_worktrees(
-    repo: &Path,
-    candidate_pairs: usize,
-    backdrop_pairs: usize,
-) -> BTreeMap<String, PathBuf> {
-    let mut worktrees = BTreeMap::new();
-    worktrees.insert(
-        "main".to_string(),
-        std::fs::canonicalize(repo).unwrap_or_else(|error| {
-            panic!(
-                "failed to resolve primary worktree {}: {error}",
-                repo.display()
-            )
-        }),
-    );
-    for i in 0..backdrop_pairs {
-        insert_expected_worktree(repo, &mut worktrees, format!("feature-wt-{i}"));
-    }
-    for i in 0..candidate_pairs {
-        insert_expected_worktree(repo, &mut worktrees, format!("merged-wt-{i}"));
-    }
-    worktrees
-}
-
-fn insert_expected_worktree(
-    repo: &Path,
-    worktrees: &mut BTreeMap<String, PathBuf>,
-    branch: String,
-) {
-    let path = linked_worktree_path(repo, &branch);
-    let path = std::fs::canonicalize(&path).unwrap_or(path);
-    worktrees.insert(branch, path);
-}
-
-fn large_repository_prune_fixture_state(
-    repo: &Path,
-    candidate_pairs: usize,
-    backdrop_pairs: usize,
-) -> PruneFixtureState {
-    prune_fixture_state(
-        repo,
-        candidate_pairs,
-        backdrop_pairs,
-        Some(large_repository_identity().revision.as_str()),
-    )
-}
-
-/// The next [`add_squash_merged`] round for a fixture repo, derived from the
-/// repo itself: each completed round leaves `merged_br_0_<round>_*.rs` files
-/// on the default branch's tip tree (the squash commits survive candidate
-/// removal), so the number of distinct rounds already landed IS the next
-/// round index. Derived rather than stored — a sidecar counter can desync
-/// from the repo (interrupted repair, hand cleanup) and turn a ~1-minute
-/// repair into a name-collision panic.
-fn next_squash_round(repo: &Path) -> usize {
-    capture_git(repo, &["ls-tree", "--name-only", "HEAD"])
-        .lines()
-        .filter(|l| l.starts_with("merged_br_0_") && l.ends_with("_0.rs"))
-        .count()
-}
-
-/// An exclusive lease on the mutable large-repository prune fixture.
-///
-/// Dropping the value releases the cross-process lock. Callers keep it alive
-/// for every read or mutation of [`Self::path`].
-pub struct LargeRepositoryPruneFixture {
-    repo: PathBuf,
-    _lock: File,
-}
-
-impl LargeRepositoryPruneFixture {
-    /// Acquire the cached mutable fixture and hold its exclusive lease.
-    pub fn acquire(candidate_pairs: usize, backdrop_pairs: usize) -> Self {
-        acquire_large_repository_prune_fixture(candidate_pairs, backdrop_pairs)
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.repo
-    }
-}
-
-/// Get or build the cached large-repository prune fixture.
-///
-/// The fixture lives at
-/// `target/wt-perf/bench-repos/large-repository/prune-<candidate_pairs>-<backdrop_pairs>/repo`
-/// (worktrees as siblings) so its minutes-long build is paid once, not per
-/// bench run. On reuse it is validated by
-/// `prune_fixture_state`:
-///
-/// - `Intact` → returned as-is (dry runs don't mutate it).
-/// - `Consumed` — a live `wt step prune` removed the candidates — → repaired
-///   in place by re-running [`add_squash_merged`] with the next round
-///   (`next_squash_round`), so a live-prune measurement costs a ~1-minute
-///   repair, not a full rebuild.
-/// - `Broken` (interrupted prune or build, corruption) → wiped and rebuilt.
-///
-/// Worktree indexes missing from a legacy cache invalidation or other damage
-/// are healed first with `restore_worktree_indexes` — without an index, `git
-/// status` reports every tracked file as a staged deletion and prune's
-/// clean-worktree gate silently drops the worktree candidates. Safe here
-/// because the fixture's only dirt is untracked files.
-///
-/// The returned lease holds an exclusive lock across validation, repair,
-/// rebuild, and caller use. A ready marker is published only after a complete
-/// build and must match the tracked corpus identity on every reuse.
-fn acquire_large_repository_prune_fixture(
-    candidate_pairs: usize,
-    backdrop_pairs: usize,
-) -> LargeRepositoryPruneFixture {
-    let base = large_repository_cache_dir();
-    let cache_dir = base.join(format!("prune-{candidate_pairs}-{backdrop_pairs}"));
-    let repo = cache_dir.join("repo");
-    let ready_marker = cache_dir.join("ready");
-    let lock = acquire_exclusive_lock(
-        &base.join(format!("prune-{candidate_pairs}-{backdrop_pairs}.lock")),
-    );
-
-    if ready_marker_matches(&ready_marker) {
-        let worktrees_dir = repo.join(".git/worktrees");
-        let linked_index_missing = match std::fs::read_dir(&worktrees_dir) {
-            Ok(mut entries) => entries.any(|entry| {
-                let entry = entry.unwrap_or_else(|error| {
-                    panic!(
-                        "failed to inspect worktree metadata in {}: {error}",
-                        worktrees_dir.display()
-                    )
-                });
-                !path_exists(&entry.path().join("index"))
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(error) => panic!(
-                "failed to read worktree metadata {}: {error}",
-                worktrees_dir.display()
-            ),
-        };
-        let index_missing = !path_exists(&repo.join(".git/index")) || linked_index_missing;
-        if index_missing {
-            eprintln!("Restoring invalidated worktree indexes...");
-            restore_worktree_indexes(&repo);
-        }
-        match large_repository_prune_fixture_state(&repo, candidate_pairs, backdrop_pairs) {
-            PruneFixtureState::Intact => {
-                eprintln!("Using cached prune fixture at {}", repo.display());
-                return LargeRepositoryPruneFixture { repo, _lock: lock };
-            }
-            PruneFixtureState::Consumed => {
-                let round = next_squash_round(&repo);
-                eprintln!(
-                    "Re-creating {candidate_pairs} consumed squash-merged candidate pairs (round {round})..."
-                );
-                add_squash_merged(&repo, candidate_pairs, round);
-                assert_eq!(
-                    large_repository_prune_fixture_state(&repo, candidate_pairs, backdrop_pairs),
-                    PruneFixtureState::Intact,
-                    "repaired large-repository prune fixture did not match its recipe"
-                );
-                return LargeRepositoryPruneFixture { repo, _lock: lock };
-            }
-            PruneFixtureState::Broken => {
-                eprintln!("Cached prune fixture unusable, rebuilding...");
-            }
-        }
-    } else if path_exists(&cache_dir) {
-        eprintln!("Cached prune fixture does not match the fixture manifest, rebuilding...");
-    }
-
-    eprintln!(
-        "Building large-repository prune fixture: {} linked worktrees (one-time, cached)...",
-        candidate_pairs + backdrop_pairs
-    );
-    // Clear remnants unconditionally: an interrupted build or rebuild can
-    // leave sibling worktree dirs without `repo`, and `git worktree add`
-    // fails on an existing non-empty destination.
-    if path_exists(&cache_dir) {
-        remove_dir_if_exists(&cache_dir);
-    }
-    std::fs::create_dir_all(&cache_dir).unwrap();
-    create_large_repository_prune_at(candidate_pairs, backdrop_pairs, &repo);
-    write_ready_marker(&ready_marker);
-    LargeRepositoryPruneFixture { repo, _lock: lock }
-}
 
 /// Canonicalize path without Windows `\\?\` prefix.
 pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
@@ -2168,65 +1609,6 @@ mod tests {
     }
 
     #[test]
-    fn large_repository_manifest_has_one_strict_identity() {
-        assert_eq!(
-            parse_large_repository_identity(
-                "schema=1\ncorpus=example/project\nrevision=0123456789abcdef0123456789abcdef01234567\n"
-            ),
-            Ok(LargeRepositoryIdentity {
-                schema: 1,
-                corpus: "example/project".to_string(),
-                revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
-            })
-        );
-        assert_eq!(
-            parse_large_repository_identity(
-                "schema=1\ncorpus=example/project\ncorpus=other/project\nrevision=0123456789abcdef0123456789abcdef01234567\n"
-            ),
-            Err("duplicate corpus".to_string())
-        );
-        assert_eq!(
-            parse_large_repository_identity("schema=1\ncorpus=example/project\nrevision=short\n"),
-            Err("revision must be a 40-character hexadecimal object ID".to_string())
-        );
-        assert_eq!(
-            large_repository_identity(),
-            &LargeRepositoryIdentity {
-                schema: 1,
-                corpus: "rust-lang/rust".to_string(),
-                revision: "be3d26db984c6f96335faca1f254dc04873cb1c1".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn fixture_ready_marker_matches_only_the_tracked_identity() {
-        let temp = tempfile::tempdir().unwrap();
-        let marker = temp.path().join("ready");
-
-        assert!(!ready_marker_matches(&marker));
-        write_ready_marker(&marker);
-        assert!(ready_marker_matches(&marker));
-
-        std::fs::write(
-            &marker,
-            LARGE_REPOSITORY_FIXTURE_MANIFEST.replace("schema=1", "schema=2"),
-        )
-        .unwrap();
-        assert!(!ready_marker_matches(&marker));
-    }
-
-    #[test]
-    #[should_panic(expected = "failed to read fixture marker")]
-    fn fixture_ready_marker_reports_read_errors() {
-        let temp = tempfile::tempdir().unwrap();
-        let marker = temp.path().join("ready");
-        std::fs::create_dir(&marker).unwrap();
-
-        ready_marker_matches(&marker);
-    }
-
-    #[test]
     fn fixture_lock_excludes_an_independent_handle() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("fixture.lock");
@@ -2243,43 +1625,18 @@ mod tests {
     }
 
     #[test]
-    fn fixture_rebuild_refuses_registered_worktrees_outside_its_namespace() {
-        let fixture = FixtureRecipe::Minimal {
-            branchless_branches: 0,
-            linked_worktrees: 1,
-        }
-        .create();
-        let external_root = tempfile::tempdir().unwrap();
-        let external = external_root.path().join("manual-worktree");
-        run_git(
-            fixture.path(),
-            &[
-                "worktree",
-                "add",
-                "-q",
-                "-b",
-                "manual",
-                external.to_str().unwrap(),
-            ],
-        );
-        std::fs::write(external.join("sentinel"), "keep").unwrap();
+    fn large_repository_source_rejects_a_missing_pinned_commit_object() {
+        let temp = tempfile::tempdir().unwrap();
+        init_bench_repo(temp.path());
+        std::fs::write(
+            temp.path().join(".git/refs/heads/main"),
+            format!("{LARGE_REPOSITORY_REVISION}\n"),
+        )
+        .unwrap();
 
-        let result = std::panic::catch_unwind(|| remove_fixture_for_rebuild(fixture.path()));
         assert!(
-            result.is_err(),
-            "rebuild must fail rather than delete a registered external worktree"
-        );
-        assert!(
-            fixture.path().is_dir(),
-            "primary must survive failed validation"
-        );
-        assert!(
-            fixture.worktree_path("feature-wt-1").is_dir(),
-            "generated linked worktrees must survive failed validation"
-        );
-        assert_eq!(
-            std::fs::read_to_string(external.join("sentinel")).unwrap(),
-            "keep"
+            !large_repository_source_matches(temp.path()),
+            "a textual ref without its commit object is not a usable clone source"
         );
     }
 
@@ -2524,8 +1881,7 @@ mod tests {
     /// integrated *by content* — `git merge-tree --write-tree main <branch>`
     /// yields main's own tree (merging it adds nothing). That's exactly the
     /// probe `wt step prune`'s integration check runs, so if this drifts, the
-    /// prune benchmark stops removing anything. Round 1 re-creation must keep
-    /// the property (unique file content per round).
+    /// prune benchmark stops removing anything.
     #[test]
     fn squash_merged_fixture_is_content_integrated() {
         let fixture = create_flat(&FlatRepoConfig {
@@ -2539,162 +1895,26 @@ mod tests {
         });
         let repo_path = fixture.path().to_path_buf();
 
-        for round in 0..2 {
-            add_squash_merged(&repo_path, 1, round);
+        add_squash_merged(&repo_path, 1);
 
-            let main_tree = git_command()
-                .args(["rev-parse", "main^{tree}"])
+        let main_tree = git_command()
+            .args(["rev-parse", "main^{tree}"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        for branch in ["merged-wt-0", "merged-br-0"] {
+            let merged_tree = git_command()
+                .args(["merge-tree", "--write-tree", "main", branch])
                 .current_dir(&repo_path)
                 .output()
                 .unwrap();
-            for branch in ["merged-wt-0", "merged-br-0"] {
-                let merged_tree = git_command()
-                    .args(["merge-tree", "--write-tree", "main", branch])
-                    .current_dir(&repo_path)
-                    .output()
-                    .unwrap();
-                assert!(
-                    merged_tree.status.success(),
-                    "merge-tree failed (round {round})"
-                );
-                assert_eq!(
-                    String::from_utf8_lossy(&merged_tree.stdout).trim(),
-                    String::from_utf8_lossy(&main_tree.stdout).trim(),
-                    "{branch} must merge into main without adding changes (round {round})"
-                );
-            }
-
-            // Simulate the live benchmark's per-iteration cleanup before the
-            // next round re-creates the candidates.
-            let wt_path = fixture.worktree_path("merged-wt-0");
-            run_git(
-                &repo_path,
-                &["worktree", "remove", "--force", wt_path.to_str().unwrap()],
+            assert!(merged_tree.status.success(), "merge-tree failed");
+            assert_eq!(
+                String::from_utf8_lossy(&merged_tree.stdout).trim(),
+                String::from_utf8_lossy(&main_tree.stdout).trim(),
+                "{branch} must merge into main without adding changes"
             );
-            run_git(&repo_path, &["branch", "-D", "merged-wt-0", "merged-br-0"]);
         }
-    }
-
-    /// The classifier that decides whether the cached large-repository fixture
-    /// is reusable, repairable, or must be rebuilt
-    /// ([`LargeRepositoryPruneFixture::acquire`]).
-    /// Exercised on the synthetic fixture, which shares the exact layout.
-    #[test]
-    fn prune_fixture_state_classifies_lifecycle() {
-        let fixture = FixtureRecipe::Prune {
-            candidate_pairs: 1,
-            backdrop_pairs: 2,
-        }
-        .create();
-        let repo_path = fixture.path().to_path_buf();
-
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, None),
-            PruneFixtureState::Intact
-        );
-        let base = capture_git(&repo_path, &["rev-parse", "main~1"]);
-        run_git(
-            &repo_path,
-            &["update-ref", LARGE_REPOSITORY_BASE_REF, &base],
-        );
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, Some(&base)),
-            PruneFixtureState::Intact
-        );
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, Some(&head_sha(&repo_path))),
-            PruneFixtureState::Broken,
-            "the managed fixture base ref must match its declared identity"
-        );
-        run_git(&repo_path, &["update-ref", "-d", LARGE_REPOSITORY_BASE_REF]);
-        run_git(&repo_path, &["checkout", "-q", "-b", "unexpected-primary"]);
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, None),
-            PruneFixtureState::Broken,
-            "the primary worktree must remain on main"
-        );
-        run_git(&repo_path, &["checkout", "-q", "main"]);
-        run_git(&repo_path, &["branch", "-D", "unexpected-primary"]);
-
-        // Wrong expected populations don't match this repo.
-        assert_eq!(
-            prune_fixture_state(&repo_path, 2, 2, None),
-            PruneFixtureState::Broken
-        );
-
-        // Partial consumption (worktree candidate gone, branches still there)
-        // is Broken — an interrupted live prune needs a rebuild.
-        let wt_path = fixture.worktree_path("merged-wt-0");
-        run_git(
-            &repo_path,
-            &["worktree", "remove", "--force", wt_path.to_str().unwrap()],
-        );
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, None),
-            PruneFixtureState::Broken
-        );
-
-        // Full consumption — exactly what a live prune leaves behind.
-        run_git(&repo_path, &["branch", "-D", "merged-wt-0", "merged-br-0"]);
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, None),
-            PruneFixtureState::Consumed
-        );
-
-        // Repair restores Intact, with the round derived from the repo
-        // itself (round 0's squash commits survive candidate removal).
-        assert_eq!(next_squash_round(&repo_path), 1);
-        add_squash_merged(&repo_path, 1, next_squash_round(&repo_path));
-        assert_eq!(next_squash_round(&repo_path), 2);
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, None),
-            PruneFixtureState::Intact
-        );
-
-        // A missing backdrop branch is Broken.
-        run_git(&repo_path, &["branch", "-D", "feature-000"]);
-        assert_eq!(
-            prune_fixture_state(&repo_path, 1, 2, None),
-            PruneFixtureState::Broken
-        );
-    }
-
-    #[test]
-    fn prune_fixture_state_rejects_a_same_count_population_substitution() {
-        let fixture = FixtureRecipe::Prune {
-            candidate_pairs: 1,
-            backdrop_pairs: 2,
-        }
-        .create();
-        let repo = fixture.path();
-
-        // Counts alone are insufficient validation for the mutable cached
-        // fixture: replacing an expected backdrop ref with another ref under
-        // the same prefix changes the measured workload without changing any
-        // of the classifier's totals.
-        run_git(repo, &["branch", "-m", "feature-000", "feature-substitute"]);
-        assert_eq!(
-            prune_fixture_state(repo, 1, 2, None),
-            PruneFixtureState::Broken
-        );
-
-        run_git(repo, &["branch", "-m", "feature-substitute", "feature-000"]);
-        let original = fixture.worktree_path("feature-wt-0");
-        let moved = fixture.root().join("moved-feature-wt-0");
-        run_git(
-            repo,
-            &[
-                "worktree",
-                "move",
-                original.to_str().unwrap(),
-                moved.to_str().unwrap(),
-            ],
-        );
-        assert_eq!(
-            prune_fixture_state(repo, 1, 2, None),
-            PruneFixtureState::Broken,
-            "registered worktrees must use the recipe's canonical paths"
-        );
     }
 
     /// A zero-size spread is valid and must not divide by zero.
@@ -2712,16 +1932,6 @@ mod tests {
         let repo_path = fixture.path().to_path_buf();
 
         add_history_spread_branches(&repo_path, 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "supports at most 5000 branches")]
-    fn history_spread_recipe_rejects_counts_beyond_its_window_before_acquisition() {
-        let root = tempfile::tempdir().unwrap();
-        FixtureRecipe::LargeRepositoryHistorySpread {
-            branchless_branches: LARGE_REPOSITORY_HISTORY_SPREAD_MAX_BRANCHES + 1,
-        }
-        .create_at(&root.path().join("repo"));
     }
 
     /// The `mixed` fixture's population contract. Either local dimension may

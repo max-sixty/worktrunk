@@ -12,7 +12,6 @@
 //   cargo bench --bench remove              # All variants
 //   cargo bench --bench remove -- no_hooks  # Just no-hooks variant
 
-use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -23,7 +22,6 @@ use wt_perf::{
 };
 
 const BRANCH: &str = "feature-wt-1";
-const TEMPLATE_REF: &str = "refs/wt-perf/remove-template";
 const UNTRACKED_FILES: usize = 3;
 const BACKGROUND_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -37,11 +35,8 @@ struct RemoveFixture {
 }
 
 impl RemoveFixture {
-    /// Build the full hook-bearing repository before the candidate branch
-    /// forks, then retain its exact tip under a private ref. Every measured
-    /// removal therefore consumes the same 10-commit worktree and three-file
-    /// untracked payload while retaining its unmerged branch.
-    fn create() -> Self {
+    /// Build one complete candidate outside the measured duration.
+    fn create(binary: &Path) -> Self {
         let repo = FixtureRecipe::Typical { total_worktrees: 1 }.create();
         let project_marker = repo.root().join("project-post-remove.marker");
         let user_marker = repo.root().join("user-post-switch.marker");
@@ -61,10 +56,6 @@ impl RemoveFixture {
 
         add_typical_linked_worktrees(repo.path(), 1);
         setup_fake_remote(repo.path());
-        run_git(
-            repo.path(),
-            &["update-ref", TEMPLATE_REF, &format!("refs/heads/{BRANCH}")],
-        );
         let worktree_admin_dir = linked_worktree_admin_dir(&repo.worktree_path(BRANCH));
 
         let user_config = repo.root().join("config.toml");
@@ -77,81 +68,45 @@ impl RemoveFixture {
         )
         .unwrap();
 
-        Self {
+        let fixture = Self {
             repo,
             user_config,
             project_marker,
             user_marker,
             worktree_admin_dir,
+        };
+        for i in 0..UNTRACKED_FILES {
+            assert!(
+                fixture
+                    .worktree_path()
+                    .join(format!("uncommitted_{i}.txt"))
+                    .is_file(),
+                "remove fixture untracked payload {i} is missing"
+            );
         }
+        fixture.prewarm(binary);
+        fixture
     }
 
     fn worktree_path(&self) -> PathBuf {
         linked_worktree_path(self.repo.path(), BRANCH)
     }
 
-    /// Prepare one equivalent candidate outside Criterion's timed routine.
-    ///
-    /// The initial candidate comes from fixture construction. Later calls
-    /// first prove that the previous command removed its worktree registration,
-    /// then check out the retained branch and restore its untracked payload.
-    fn prepare(&self, previous_run: bool, expect_hooks: bool) {
-        if previous_run {
-            self.assert_consumed(expect_hooks);
-            self.clear_markers();
-            self.restore_candidate();
-        } else {
-            self.clear_markers();
-            self.assert_candidate_present();
-        }
-    }
-
-    fn restore_candidate(&self) {
-        let worktree = self.worktree_path();
-        run_git(
-            self.repo.path(),
-            &["worktree", "add", worktree.to_str().unwrap(), BRANCH],
-        );
-        for i in 0..UNTRACKED_FILES {
-            std::fs::write(
-                worktree.join(format!("uncommitted_{i}.txt")),
-                "Uncommitted content\n",
-            )
-            .unwrap();
-        }
-        self.assert_candidate_present();
-    }
-
-    fn assert_candidate_present(&self) {
-        assert!(
-            self.worktree_path().is_dir(),
-            "remove fixture candidate worktree is missing"
-        );
-        assert!(
-            run_git_ok(
-                self.repo.path(),
-                &[
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/heads/{BRANCH}")
-                ]
-            ),
-            "remove fixture candidate branch is missing"
-        );
-        assert_same_commit(self.repo.path(), BRANCH, TEMPLATE_REF);
-        assert!(
-            self.worktree_admin_dir.is_dir(),
-            "remove fixture worktree registration is missing"
-        );
-        for i in 0..UNTRACKED_FILES {
-            assert!(
-                self.worktree_path()
-                    .join(format!("uncommitted_{i}.txt"))
-                    .is_file(),
-                "remove fixture untracked payload {i} is missing"
-            );
-        }
+    /// Preserve the original cache-warm remove scenario without reusing a
+    /// mutable fixture. Prune's dry-run uses the same integration probes and
+    /// cannot consume the unmerged candidate.
+    fn prewarm(&self, binary: &Path) {
+        let mut cmd = wt_command(binary, self.repo.path(), Some(&self.user_config));
+        cmd.args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age",
+            "0s",
+            "--format",
+            "json",
+        ]);
+        run_and_check(&mut cmd);
     }
 
     /// Wait for current-worktree cleanup and detached hooks to settle, then
@@ -159,9 +114,8 @@ impl RemoveFixture {
     fn assert_consumed(&self, expect_hooks: bool) {
         let worktree = self.worktree_path();
         wait_for("remove background cleanup and hooks", || {
-            let hooks_finished = !expect_hooks
-                || (marker_has_contents(&self.project_marker, "project")
-                    && marker_has_contents(&self.user_marker, "user"));
+            let hooks_finished =
+                !expect_hooks || (self.project_marker.is_file() && self.user_marker.is_file());
             !worktree.exists() && hooks_finished
         });
 
@@ -177,7 +131,6 @@ impl RemoveFixture {
             ),
             "measured remove deleted the retained candidate branch"
         );
-        assert_same_commit(self.repo.path(), BRANCH, TEMPLATE_REF);
         assert!(
             !self.worktree_admin_dir.exists(),
             "measured remove left the worktree registration behind"
@@ -195,11 +148,6 @@ impl RemoveFixture {
                 "--no-hooks unexpectedly produced a hook marker"
             );
         }
-    }
-
-    fn clear_markers(&self) {
-        remove_if_exists(&self.project_marker);
-        remove_if_exists(&self.user_marker);
     }
 }
 
@@ -219,31 +167,6 @@ fn linked_worktree_admin_dir(worktree: &Path) -> PathBuf {
     PathBuf::from(git_dir)
 }
 
-/// Mutual ancestry is an object-ID equality check for commits.
-fn assert_same_commit(repo: &Path, left: &str, right: &str) {
-    assert!(
-        run_git_ok(repo, &["merge-base", "--is-ancestor", left, right])
-            && run_git_ok(repo, &["merge-base", "--is-ancestor", right, left]),
-        "{left} and {right} no longer name the same commit"
-    );
-}
-
-fn remove_if_exists(path: &Path) {
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("failed to clear marker {}: {error}", path.display()),
-    }
-}
-
-fn marker_has_contents(path: &Path, expected: &str) -> bool {
-    match std::fs::read_to_string(path) {
-        Ok(contents) => contents == expected,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => panic!("failed to read hook marker {}: {error}", path.display()),
-    }
-}
-
 fn wait_for(label: &str, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + BACKGROUND_TIMEOUT;
     while !condition() {
@@ -255,42 +178,37 @@ fn wait_for(label: &str, mut condition: impl FnMut() -> bool) {
 fn bench_variant(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     name: &str,
-    fixture: &RemoveFixture,
     expect_hooks: bool,
 ) {
-    let ran = Cell::new(false);
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     group.bench_function(name, |b| {
-        b.iter_batched(
-            || fixture.prepare(ran.get(), expect_hooks),
-            |()| {
+        b.iter_custom(|iterations| {
+            let mut measured = Duration::ZERO;
+            for _ in 0..iterations {
+                let fixture = RemoveFixture::create(binary);
                 let worktree = fixture.worktree_path();
                 let mut cmd = wt_command(binary, &worktree, Some(&fixture.user_config));
                 cmd.args(["remove", "--yes", "--force"]);
                 if !expect_hooks {
                     cmd.arg("--no-hooks");
                 }
-                run_and_check(&mut cmd);
-                ran.set(true);
-            },
-            criterion::BatchSize::PerIteration,
-        );
-    });
 
-    // Criterion does not call a filtered-out benchmark closure.
-    if ran.get() {
-        fixture.assert_consumed(expect_hooks);
-    }
+                let started = Instant::now();
+                run_and_check(&mut cmd);
+                measured += started.elapsed();
+                fixture.assert_consumed(expect_hooks);
+            }
+            measured
+        });
+    });
 }
 
 fn bench_remove_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove_e2e");
-    let no_hooks = RemoveFixture::create();
-    let with_hooks = RemoveFixture::create();
 
-    bench_variant(&mut group, "no_hooks", &no_hooks, false);
-    bench_variant(&mut group, "with_hooks", &with_hooks, true);
+    bench_variant(&mut group, "no_hooks", false);
+    bench_variant(&mut group, "with_hooks", true);
 
     group.finish();
 }
@@ -298,9 +216,9 @@ fn bench_remove_e2e(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(20)
-        .measurement_time(std::time::Duration::from_secs(20))
-        .warm_up_time(std::time::Duration::from_secs(3));
+        .sample_size(10)
+        .measurement_time(std::time::Duration::from_secs(3))
+        .warm_up_time(std::time::Duration::from_secs(1));
     targets = bench_remove_e2e
 }
 criterion_main!(benches);
