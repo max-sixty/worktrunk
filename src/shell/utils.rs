@@ -5,24 +5,20 @@
 
 use super::Shell;
 
-/// Extract executable name from a path, stripping `.exe` on Windows.
+/// Extract executable name from a path, stripping a trailing `.exe`.
 ///
 /// Uses `std::path::Path` for platform-native path handling:
 /// - Unix: `/usr/bin/bash` -> "bash"
 /// - Windows: `C:\Program Files\Git\usr\bin\bash.exe` -> "bash"
 ///
-/// Only strips `.exe` extension (not other extensions like `.9` in `zsh-5.9`).
+/// Only `.exe`, and on every platform — a version suffix like the `.9` in
+/// `zsh-5.9` stays, which is why this isn't `file_stem`.
+///
+/// `None` when the path names nothing, or names nothing but the suffix.
 pub fn extract_filename_from_path(path: &str) -> Option<&str> {
     let filename = std::path::Path::new(path).file_name()?.to_str()?;
-
-    // Strip .exe extension (case-insensitive for Windows)
-    // Don't use file_stem() because it would strip version numbers like ".9" from "zsh-5.9"
-    // Handle all case variants: .exe, .EXE, .Exe, .eXe, etc.
-    if filename.len() > 4 && filename[filename.len() - 4..].eq_ignore_ascii_case(".exe") {
-        Some(&filename[..filename.len() - 4])
-    } else {
-        Some(filename)
-    }
+    let name = crate::path::strip_suffix_ignoring_case(filename, ".exe");
+    (!name.is_empty()).then_some(name)
 }
 
 /// Determine Shell variant from a shell name (without path or extension).
@@ -417,7 +413,15 @@ mod tests {
     #[case::mixed_case_exe_title("bash.Exe", Some("bash"))]
     #[case::mixed_case_exe_upper("bash.EXE", Some("bash"))]
     #[case::mixed_case_exe_camel("bash.eXe", Some("bash"))]
+    // Multibyte names are ordinary input: `ps_snapshot` feeds every process
+    // name on the machine through here. `日本語`'s last four bytes start
+    // mid-character; `café.exe`'s do not, and still strip.
+    #[case::multibyte("日本語", Some("日本語"))]
+    #[case::multibyte_exe("café.exe", Some("café"))]
     #[case::empty("", None)]
+    // Nothing but the suffix names no command, so callers fall back to their
+    // next detection source rather than reporting an empty shell name.
+    #[case::suffix_only(".exe", None)]
     fn test_extract_filename_from_path_common(#[case] path: &str, #[case] expected: Option<&str>) {
         assert_eq!(extract_filename_from_path(path), expected);
     }

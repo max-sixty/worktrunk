@@ -276,14 +276,18 @@ pub fn executable_name(path: &Path) -> Option<String> {
 
 /// Strip `suffix` from the end of `name`, matching it case-insensitively.
 ///
-/// The suffix is a parameter rather than [`std::env::consts::EXE_SUFFIX`] read
-/// in place so that a test on any platform can exercise the Windows answer: the
-/// constant is empty on Unix, where this can only ever be a no-op, and the
-/// merge gate runs one platform.
+/// The suffix is a parameter because the two callers strip different ones:
+/// [`executable_name`] strips the running platform's
+/// [`std::env::consts::EXE_SUFFIX`], while
+/// [`shell::extract_filename_from_path`](crate::shell::extract_filename_from_path)
+/// strips `.exe` on every platform. It also lets a test on any platform exercise
+/// the Windows answer, which `EXE_SUFFIX` — empty on Unix — cannot.
 ///
 /// `str::get` rather than a byte slice, so a name whose trailing bytes fall
-/// mid-character yields the name unchanged instead of panicking.
-fn strip_suffix_ignoring_case<'a>(name: &'a str, suffix: &str) -> &'a str {
+/// mid-character yields the name unchanged instead of panicking. The macOS `ps`
+/// snapshot feeds every process name on the machine through here, so a name
+/// like `日本語` is ordinary input rather than a hypothetical.
+pub(crate) fn strip_suffix_ignoring_case<'a>(name: &'a str, suffix: &str) -> &'a str {
     let stem_len = name.len().saturating_sub(suffix.len());
     match name.get(stem_len..) {
         Some(tail) if tail.eq_ignore_ascii_case(suffix) => &name[..stem_len],
