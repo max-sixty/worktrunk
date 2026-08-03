@@ -90,7 +90,8 @@ When `claude -p` exits non-zero the harness opens (or appends to) a `tend-outage
 Drain the open outage issue as part of the daily `review-runs` sweep:
 
 ```bash
-OUTAGE=$(gh issue list --state open --label tend-outage --json number --jq '.[0].number')
+# Empty on most days — no open outage issue means nothing stranded; skip the rest.
+OUTAGE=$(gh issue list --state open --label tend-outage --json number --jq '.[0].number // empty')
 gh issue view "$OUTAGE" --json body,comments --jq '.body, .comments[].body' \
   | grep -oE 'runs/[0-9]+|\| #[0-9]+'
 ```
@@ -103,9 +104,9 @@ gh pr view <n> --json state,headRefOid,reviews \
 gh run rerun <run-id> --failed
 ```
 
-Re-running the bot's own failed workflow is restorative, not destructive — no maintainer approval needed.
+Re-running the bot's own failed workflow is restorative, not destructive — no maintainer approval needed. Close the issue once every row is drained (`gh issue close "$OUTAGE"`): the harness only auto-closes duplicates from a create-create race, never the surviving issue, so one left open makes tomorrow's sweep re-check the same rows and folds the next outage into a stale incident.
 
-**Diagnose the cause before calling it an outage.** The issue body says only "The bot failed to process a request"; the real cause is in the session log. A subscription session-limit exhaustion surfaces as a `<synthetic>` assistant message:
+**Diagnose the cause before calling it an outage.** The issue body says only "The bot failed to process a request". tend's nightly enrichment posts a per-run comment carrying each failed job's failure annotation, which is the cheapest first look — but for this class it reads `claude -p exited non-zero (exit=1) — see the session-logs artifact` (or `claude -p turn ended in failure (…) — rate limit, auth, max turns, or server error` when the CLI exits 0 with an error result), and neither says whether it was quota, auth, or a server error. It's also absent whenever `tend-nightly` was itself one of the stranded runs. To narrow it, read the session log: a subscription session-limit exhaustion surfaces as a `<synthetic>` assistant message:
 
 ```bash
 gh run download <run-id> --pattern '*session-logs*' --dir /tmp/outage
