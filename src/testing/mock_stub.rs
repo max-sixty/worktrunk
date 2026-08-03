@@ -80,7 +80,14 @@ pub fn maybe_run() {
     let Some(dir) = env::var_os("WORKTRUNK_TEST_MOCK_CONFIG_DIR") else {
         return;
     };
-    let Some(name) = command_name() else {
+    // args_os, not args: `env::args()` panics during iteration on a
+    // non-Unicode argument, and this runs inside wt's `main()` on every
+    // invocation. A non-UTF8 or degenerate argv[0] yields a name matching no
+    // config, so the invocation falls through to "not a mock" instead.
+    let Some(name) = env::args_os()
+        .next()
+        .and_then(|arg0| crate::path::executable_name(Path::new(&arg0)))
+    else {
         return;
     };
     // The wt under test runs with the variable set too (that's how its mock
@@ -104,28 +111,6 @@ pub fn maybe_run() {
         return;
     }
     run(&name, &config_dir);
-}
-
-/// Command name from argv\[0\]: the link name the harness gave this binary,
-/// with the platform's executable suffix (`.exe`) stripped. Stripping the
-/// suffix rather than taking `file_stem` keeps a dotted mock name
-/// (`python3.11`) intact, and identical across platforms. `None` when
-/// argv\[0\] is missing or degenerate — the caller treats that as "not a
-/// mock" rather than panicking inside wt's `main()`.
-///
-/// The bin crate's `invocation::binary_name` reads the same argv\[0\] to name
-/// wt in its own help output; keep the two derivations aligned.
-fn command_name() -> Option<String> {
-    // args_os, not args: `env::args()` panics during iteration on a
-    // non-Unicode argument, and this runs inside wt's `main()` on every
-    // invocation. A non-UTF8 argv[0] lossily converts, matches no config
-    // name, and falls through to "not a mock".
-    let argv0 = env::args_os().next()?;
-    let name = Path::new(&argv0).file_name()?.to_string_lossy();
-    let name = name
-        .strip_suffix(std::env::consts::EXE_SUFFIX)
-        .unwrap_or(&name);
-    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Append this invocation's argv to
@@ -159,7 +144,7 @@ fn log_invocation(cmd_name: &str, args: &[String]) {
 fn run(cmd_name: &str, config_dir: &Path) -> ! {
     let config_path = config_dir.join(format!("{}.json", cmd_name));
 
-    // Lossy for the same reason as `command_name`: a non-UTF8 argument can't
+    // Lossy for the same reason as the name above: a non-UTF8 argument can't
     // match a config key (JSON keys are UTF-8), and the mock must not panic
     // on one.
     let args: Vec<String> = env::args_os()

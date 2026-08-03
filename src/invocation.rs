@@ -9,16 +9,17 @@
 ///
 /// Used as the default for `--cmd` in shell integration commands.
 /// When invoked as `git-wt`, returns "git-wt"; when invoked as `wt`, returns "wt".
-/// On Windows, strips `.exe` extension — users should use `wt` not `wt.exe` in aliases.
+/// On Windows, strips the `.exe` suffix — users should use `wt` not `wt.exe` in aliases.
+///
+/// The derivation is [`worktrunk::path::executable_name`], shared with the mock
+/// dispatch that reads the same `argv[0]`. A dotted name keeps its dot, since
+/// `.` is a valid shell command name character and the wrapper wt generates has
+/// to name the command the user actually runs. The "wt" fallback covers only an
+/// `argv[0]` with no name in it at all.
 pub fn binary_name() -> String {
     std::env::args_os()
         .next()
-        .and_then(|arg0| {
-            std::path::Path::new(&arg0)
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .map(String::from)
-        })
+        .and_then(|arg0| worktrunk::path::executable_name(std::path::Path::new(&arg0)))
         .unwrap_or_else(|| "wt".to_string())
 }
 
