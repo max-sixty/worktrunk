@@ -128,7 +128,7 @@ jobs:
         save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.85.4
+      uses: taiki-e/install-action@v2.85.5
       with:
         tool: cargo-hack
 
