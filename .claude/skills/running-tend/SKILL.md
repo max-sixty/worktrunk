@@ -83,6 +83,38 @@ Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
 - `automated-fix` — fix PRs from triage and ci-fix workflows
 - `nightly-cleanup` — nightly sweep issues and PRs
 
+## Outage Recovery: Re-run Triggers Stranded by a Failed Session
+
+When `claude -p` exits non-zero the harness opens (or appends to) a `tend-outage`-labelled **"Bot temporarily unavailable"** issue, one table row per failure with the run link and the triggering `#N`. It records the failure; **nothing re-runs it.** `tend-review` fires only on `pull_request_target`, so a PR whose one review attempt died is silently never reviewed until someone happens to push again.
+
+Drain the open outage issue as part of the daily `review-runs` sweep:
+
+```bash
+OUTAGE=$(gh issue list --state open --label tend-outage --json number --jq '.[0].number')
+gh issue view "$OUTAGE" --json body,comments --jq '.body, .comments[].body' \
+  | grep -oE 'runs/[0-9]+|\| #[0-9]+'
+```
+
+Only event-triggered runs strand — `tend-nightly` and `tend-notifications` recover on their next cron tick, so leave those alone. For a `tend-review` / `tend-mention` / `tend-triage` run, confirm the work is still missing before re-running; a later push often re-triggers the workflow on its own, and re-running a job that already happened burns quota for nothing:
+
+```bash
+gh pr view <n> --json state,headRefOid,reviews \
+  --jq '{state, headRefOid, bot: ([.reviews[] | select(.author.login == "worktrunk-bot")] | length)}'
+gh run rerun <run-id> --failed
+```
+
+Re-running the bot's own failed workflow is restorative, not destructive — no maintainer approval needed.
+
+**Diagnose the cause before calling it an outage.** The issue body says only "The bot failed to process a request"; the real cause is in the session log. A subscription session-limit exhaustion surfaces as a `<synthetic>` assistant message:
+
+```bash
+gh run download <run-id> --pattern '*session-logs*' --dir /tmp/outage
+jq -r 'select(.type == "assistant") | .message.content[]?.text // empty' /tmp/outage/*/*/*.jsonl
+# → You've hit your session limit · resets 8:30am (UTC)
+```
+
+A cluster of these is quota exhaustion across a 5-hour window, not a bug — don't open a fix PR. Record the window's spend in the tracking issue and re-run the stranded triggers once the window resets.
+
 ## CI Fix: Prefer Rerun for Transient Infrastructure Failures
 
 Before opening a `fix/ci-*` PR, classify the failure:
