@@ -2320,21 +2320,19 @@ mod tests {
 
     #[test]
     fn test_shell_cwd_from_prefers_absolute_inherited_value() {
-        let fallback = PathBuf::from(if cfg!(windows) {
-            r"C:\fallback"
-        } else {
-            "/fallback"
-        });
-        let absolute = if cfg!(windows) {
-            r"C:\shell\cwd"
-        } else {
-            "/shell/cwd"
-        };
+        // Built from `temp_dir()` rather than platform literals: `/shell/cwd`
+        // isn't absolute on Windows (no prefix), and a `cfg!(windows)` pair
+        // would leave whichever arm this platform didn't take uncovered.
+        // Neither path is touched — the predicate only inspects its shape.
+        let root = std::env::temp_dir();
+        let fallback = root.join("wt-shell-cwd-fallback");
+        let absolute = root.join("wt-shell-cwd");
+        assert!(absolute.is_absolute(), "temp_dir() should be absolute");
 
         // An absolute inherited value wins over the process cwd.
         assert_eq!(
-            shell_cwd_from(Some(OsString::from(absolute)), Some(&fallback)),
-            Some(PathBuf::from(absolute))
+            shell_cwd_from(Some(OsString::from(&absolute)), Some(&fallback)),
+            Some(absolute.clone())
         );
         // A relative one names nothing from a child that runs elsewhere.
         assert_eq!(
