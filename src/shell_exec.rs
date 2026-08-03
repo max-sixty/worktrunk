@@ -528,9 +528,13 @@ pub const RETIRED_DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 /// ones that need to know where it currently is. Nesting composes because
 /// [`shell_cwd`] prefers the inherited value over the process cwd, so each
 /// layer forwards the shell's directory rather than its own. See issue #3723.
-pub const SHELL_CWD_ENV_VAR: &str = "WORKTRUNK_SHELL_CWD";
+///
+/// Private, unlike the directive-file vars above: the setter, the scrubber and
+/// the reader all live in this module, and a name spells the coupling between
+/// them that a repeated literal would leave to a spelling match.
+const SHELL_CWD_ENV_VAR: &str = "WORKTRUNK_SHELL_CWD";
 
-/// The directory the user's shell is in: the inherited [`SHELL_CWD_ENV_VAR`]
+/// The directory the user's shell is in: the inherited `WORKTRUNK_SHELL_CWD`
 /// when a parent `wt` set it, otherwise this process's own startup cwd.
 ///
 /// Callers that ask "where is the user physically standing?" use this rather
@@ -563,7 +567,7 @@ fn shell_cwd_from(inherited: Option<OsString>, fallback: Option<&PathBuf>) -> Op
 /// files. Called by every code path that spawns external commands (Cmd,
 /// help pager, picker pager, background hooks, git credential helpers).
 ///
-/// [`SHELL_CWD_ENV_VAR`] goes with them: it is meaningful only to a child that
+/// `WORKTRUNK_SHELL_CWD` goes with them: it is meaningful only to a child that
 /// can act on the shell's position, and those children get it back from
 /// [`apply_cd_directive_env`].
 pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
