@@ -104,8 +104,8 @@ fn test_init_rejects_unsafe_cmd(#[case] shell: &str, repo: TestRepo) {
 }
 
 /// A degenerate argv\[0\] — empty here, so it has no file name — never selects
-/// mock playback: `command_name()` yields `None` and the process runs as wt,
-/// rather than panicking inside `main()` or probing the config dir.
+/// mock playback: `path::executable_name` yields `None` and the process runs as
+/// wt, rather than panicking inside `main()` or probing the config dir.
 #[test]
 fn test_mock_dispatch_ignores_degenerate_argv0() {
     use std::os::unix::process::CommandExt;
