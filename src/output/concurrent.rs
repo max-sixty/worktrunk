@@ -46,7 +46,7 @@ use anyhow::Context;
 use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::{
-    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, ShellConfig, scrub_directive_env_vars,
+    DIRECTIVE_EXEC_FILE_ENV_VAR, ShellConfig, apply_cd_directive_env, scrub_directive_env_vars,
     scrub_git_discovery_env_vars,
 };
 #[cfg(unix)]
@@ -305,7 +305,7 @@ fn spawn_child(
     // Scrub all directive env vars, then re-add the passthroughs.
     scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
-        command.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+        apply_cd_directive_env(&mut command, path);
     }
     if let Some(path) = &cmd.directives.exec_file {
         command.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);

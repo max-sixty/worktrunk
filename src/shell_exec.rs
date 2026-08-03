@@ -514,15 +514,70 @@ pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 /// that its parent shell will source.
 pub const RETIRED_DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 
+/// Environment variable carrying the directory the user's shell is in.
+///
+/// A top-level `wt` reads that directory from its own process cwd, which is
+/// what subdirectory preservation resolves the user's position against (from
+/// `monorepo.feature/subproject/`, `wt switch main` lands in
+/// `monorepo/subproject/`). A `wt` nested inside an alias or hook body cannot:
+/// those bodies run with a wt-chosen working directory (the worktree root), so
+/// the nested process would resolve the user to that root and drop them there.
+///
+/// [`apply_cd_directive_env`] therefore sets this alongside the CD directive
+/// file — the same children that are allowed to move the user's shell are the
+/// ones that need to know where it currently is. Nesting composes because
+/// [`shell_cwd`] prefers the inherited value over the process cwd, so each
+/// layer forwards the shell's directory rather than its own. See issue #3723.
+pub const SHELL_CWD_ENV_VAR: &str = "WORKTRUNK_SHELL_CWD";
+
+/// The directory the user's shell is in: the inherited [`SHELL_CWD_ENV_VAR`]
+/// when a parent `wt` set it, otherwise this process's own startup cwd.
+///
+/// Callers that ask "where is the user physically standing?" use this rather
+/// than [`std::env::current_dir`]. `-C` is deliberately not consulted: it sets
+/// git's discovery path without moving the shell.
+pub fn shell_cwd() -> Option<PathBuf> {
+    if let Some(value) = std::env::var_os(SHELL_CWD_ENV_VAR) {
+        let path = PathBuf::from(value);
+        // A relative value can't name the shell's position from a child that
+        // runs elsewhere, so fall through to the process cwd. A stale absolute
+        // one needs no guard here: the subdirectory it resolves to has to exist
+        // in the destination before anything `cd`s there.
+        if path.is_absolute() {
+            return Some(path);
+        }
+    }
+    startup_cwd().cloned()
+}
+
 /// Scrub all directive file env vars from a `std::process::Command`.
 ///
 /// Prevents child processes from writing to the parent shell's directive
 /// files. Called by every code path that spawns external commands (Cmd,
 /// help pager, picker pager, background hooks, git credential helpers).
+///
+/// [`SHELL_CWD_ENV_VAR`] goes with them: it is meaningful only to a child that
+/// can act on the shell's position, and those children get it back from
+/// [`apply_cd_directive_env`].
 pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
     cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
     cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
     cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
+    cmd.env_remove(SHELL_CWD_ENV_VAR);
+}
+
+/// Re-add the CD directive file to a trusted child's environment, together
+/// with the shell cwd that makes its `cd` land where the user actually is.
+///
+/// The two travel together by construction: a child that can redirect the
+/// parent shell resolves the user's subdirectory against [`shell_cwd`], and
+/// without it every nested `wt switch` / `wt remove` inside an alias or hook
+/// body would `cd` to a worktree root (issue #3723).
+pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::path::Path) {
+    cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, cd_file);
+    if let Some(cwd) = shell_cwd() {
+        cmd.env(SHELL_CWD_ENV_VAR, cwd);
+    }
 }
 
 /// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from a child
@@ -1854,7 +1909,7 @@ impl Cmd {
         // aliases and hooks leave it scrubbed so their bodies cannot inject
         // shell into the parent session.
         if let Some(ref path) = self.directive_cd_file {
-            cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+            apply_cd_directive_env(&mut cmd, path);
         }
         if let Some(ref path) = self.directive_exec_file {
             cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
