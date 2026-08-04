@@ -123,9 +123,28 @@ export def --env --wrapped {{ cmd }} [...args] {
             ^sh -c $script
         }
 
-        rm -f $cd_file $exec_file
         let output = (open $stdout_file --raw)
-        rm -f $stdout_file
+
+        # Clean up all three temp files at once, after the last read of any of them.
+        #
+        # A bare `rm` here is shadowable by the user's own `alias rm = ...`:
+        # nushell resolves aliases at parse time, and `config.nu` runs before the
+        # vendor autoload dir this file lives in, so the alias is already in scope
+        # when this `def` is parsed. A `trash`-style alias then leaks the temp
+        # files, and an alias that exits non-zero raises a ShellError that aborts
+        # the wrapper before it can return `$output` — swallowing the command's
+        # stdout entirely.
+        #
+        # `^rm` bypasses aliases, but it's external-only, so Windows (where the
+        # nushell builtin is the only `rm`) keeps the builtin. `try` covers both
+        # branches so cleanup can never abort the wrapper. `hide rm` is not an
+        # option: it's a parse-time keyword that leaks out of this function into
+        # the user's session, silently unbinding their alias.
+        if $nu.os-info.family == "windows" {
+            try { rm -f $cd_file $exec_file $stdout_file }
+        } else {
+            try { ^rm -f $cd_file $exec_file $stdout_file }
+        }
 
         # Return stdout or propagate failure as the function's last expression.
         # Using a failing external command (not `error make`) so nushell treats it
