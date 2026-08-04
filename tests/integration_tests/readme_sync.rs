@@ -1116,12 +1116,20 @@ fn transform_config_source_to_toml(source: &str) -> String {
 /// Config files aren't rendered as markdown, so links need to be readable as plain text.
 /// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
 /// - `[Link text](https://example.com)` → `Link text (https://example.com)`
+///
+/// The link text may itself contain a bracketed span — a TOML section name in
+/// backticks (``[pattern-keyed `[projects]` entry](@/config.md#…)``) is the
+/// shape that occurs here. A link that isn't converted survives as raw
+/// markdown into the generated example file, which `wt config create` writes
+/// to the user's config and `wt config create --help` prints, so a Zola `@/`
+/// target reaches the user verbatim. One nesting level is enough for that
+/// shape; a deeper one would need a real parser.
 fn convert_markdown_links_for_config(line: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
 
     static MARKDOWN_LINK: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+        LazyLock::new(|| Regex::new(r"\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\(([^)]+)\)").unwrap());
 
     MARKDOWN_LINK
         .replace_all(line, |caps: &regex::Captures| {
@@ -1146,6 +1154,59 @@ fn convert_markdown_links_for_config(line: &str) -> String {
             format!("{text} ({url})")
         })
         .to_string()
+}
+
+/// Every link form the config sections use converts to plain text, including
+/// one whose text carries a bracketed span of its own.
+///
+/// The generated file is what `wt config create` writes and what `wt config
+/// create --help` prints, so a link this misses ships a raw `@/page.md` target
+/// to the user. Nothing downstream catches that: the sync test compares the
+/// example against this same transform, so an unconverted link is "in sync".
+#[test]
+fn test_config_markdown_links_convert_to_plain_text() {
+    let cases = [
+        // Zola page link, and the same with an anchor.
+        (
+            "See [hooks](@/hook.md) for details",
+            "See hooks (https://worktrunk.dev/hook/) for details",
+        ),
+        (
+            "See [forge platform](@/config.md#forge-platform).",
+            "See forge platform (https://worktrunk.dev/config/#forge-platform).",
+        ),
+        // An absolute URL passes through untouched.
+        (
+            "See [the spec](https://example.com/a) too",
+            "See the spec (https://example.com/a) too",
+        ),
+        // Link text containing a bracketed span — a TOML section name in
+        // backticks. The pre-fix regex stopped at the inner `]` and left the
+        // whole link as raw markdown.
+        (
+            "name it once with a [pattern-keyed `[projects]` entry](@/config.md#user-project-specific-settings) instead",
+            "name it once with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead",
+        ),
+        // Two links on one line still both convert.
+        (
+            "[a](@/hook.md) and [b](@/config.md)",
+            "a (https://worktrunk.dev/hook/) and b (https://worktrunk.dev/config/)",
+        ),
+        // A bare bracketed span is not a link and must survive verbatim —
+        // `[forge]` and `[list]` appear all over these sections.
+        (
+            "A repository's own `[forge]` still wins, field by field.",
+            "A repository's own `[forge]` still wins, field by field.",
+        ),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            convert_markdown_links_for_config(input),
+            expected,
+            "input: {input}"
+        );
+    }
 }
 
 /// Extract a config section from src/cli/mod.rs by marker pattern.

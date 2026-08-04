@@ -27,7 +27,7 @@
 # platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 # hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 #
-# When many repositories share one self-hosted host, name it once in user config with a [pattern-keyed `[projects]` entry](@/config.md#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.
+# When many repositories share one self-hosted host, name it once in user config with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.
 #
 # ## Commit-message append [experimental]
 #

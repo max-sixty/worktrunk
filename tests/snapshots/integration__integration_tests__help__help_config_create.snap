@@ -525,7 +525,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# When many repositories share one self-hosted host, name it once in user config with a [pattern-keyed `[projects]` entry](@/config.md#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.[0m
+[107m [0m [2m# When many repositories share one self-hosted host, name it once in user config with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Commit-message append [experimental][0m
 [107m [0m [2m#[0m
