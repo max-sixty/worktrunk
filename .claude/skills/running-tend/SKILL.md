@@ -220,30 +220,15 @@ closed in error, they can let us know and we'll reopen it.
 
 ### Check `--config-set` before calling a setting unpinnable
 
-`wt --config-set '<toml>'` overrides **any** user config key for a single
-invocation, at higher priority than both config files and `WORKTRUNK_` env
-vars; `WORKTRUNK_SECTION__KEY` does the same one layer down. See [inline
-config overrides](https://worktrunk.dev/config/#inline-config-overrides-config-set)
-(primary source: `after_long_help` in `src/cli/mod.rs`). So a request shaped
-"let me select `<some existing config value>` per invocation without changing
-my stored config" is usually **already met**, and the reply is a
-`--config-set` recipe — plus, where the docs never connect the flag to that
-setting, a docs fix. "Already met" covers the pinning, not the whole
-request: on #3696 max-sixty also took two residual gaps — the docs gap, and
-JSON mode degrading to schema 1 instead of erroring on an out-of-range
-value — so weigh the rest of the ask on its own merits rather than closing
-it as answered.
-
-Reading the resolver won't reveal this: it reads `repo.config().<key>` and
-shows no sign of the layer above it. So before writing "there's no way to do
-X today", ask whether X is a config key.
-
-This is the same flag-growth limit the alias deflection below serves. On
-[#3696](https://github.com/max-sixty/worktrunk/issues/3696) the bot posted
-"there's no way to pin it per-invocation independent of that config" for
-`[list] json-schema`; max-sixty corrected it with `wt --config-set
-'list.json-schema = 2' list --format=json` and declined the proposed flag as
-"a third spelling of the same thing on a surface I deliberately keep small".
+`wt --config-set '<toml>'` overrides any user config key for one invocation,
+above both config files and `WORKTRUNK_SECTION__KEY` env vars ([inline config
+overrides](https://worktrunk.dev/config/#inline-config-overrides-config-set)).
+The resolver just reads `repo.config().<key>` and shows no sign of that layer,
+so before writing "there's no way to do X per invocation", ask whether X is a
+config key: the ask is usually already met, and the reply is a `--config-set`
+recipe plus a docs fix where the docs don't connect the flag to the setting.
+Pinning is all that covers — weigh the request's residual asks on their own
+merits.
 
 ### Suggesting Aliases for Niche Feature Requests
 
