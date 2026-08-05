@@ -291,6 +291,11 @@ $ wt list --format=json | jq '.items[] | select(.display.state == "integrated" o
 $ wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'
 ```
 
+A JSON Schema for the envelope is published at
+[worktrunk.dev/schema/list-v2.json](https://worktrunk.dev/schema/list-v2.json).
+It describes what `wt` writes, so a field the absence rule can omit is
+optional there rather than required-and-null.
+
 ### Schema 1
 
 The original bare-array format, and the default while unset:

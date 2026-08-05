@@ -5,6 +5,13 @@
 //! quarantined under `display`. Selected by `[list] json-schema = 2`;
 //! schema 1 is the bare-array format in [`super::json_output`].
 //!
+//! A JSON Schema derived from these types is published at
+//! `https://worktrunk.dev/schema/list-v2.json`, regenerated from
+//! `wt list --print-schema` by `test_docs_are_in_sync`. It is generated under
+//! schemars' *serialize* contract, so `skip_serializing_if` fields are
+//! optional there — adding a field whose absence the schema should allow
+//! needs that attribute, not just an `Option`.
+//!
 //! ## The absence rule
 //!
 //! - **Absent** — nothing to report: not applicable to this row, not
@@ -31,7 +38,7 @@ use worktrunk::git::{
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
 use super::json_output::{JsonDiff, format_raw_symbols};
-use super::model::{BranchScope, Collected, ItemKind, ListItem, WorktreeData};
+use super::model::{BranchScope, Collected, ItemKind, ListItem, MainState, WorktreeData};
 
 /// Tri-state field encoding the absence rule (see module docs).
 #[derive(Debug, Clone, PartialEq)]
@@ -278,10 +285,35 @@ pub struct JsonDefaultBranch {
 /// Why committed content counts as integrated.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct JsonIntegration {
-    /// Which check matched: `"same_commit"`, `"ancestor"`,
-    /// `"no_added_changes"`, `"trees_match"`, `"merge_adds_nothing"`, or
-    /// `"patch_id_match"`.
-    pub reason: &'static str,
+    /// Which check matched.
+    pub reason: JsonIntegrationReason,
+}
+
+/// `IntegrationReason` wire values. Schema 2 uses snake_case throughout; the
+/// enum's own serde rename (kebab-case) is shared with other surfaces, so the
+/// mapping lives here instead of on the enum.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonIntegrationReason {
+    SameCommit,
+    Ancestor,
+    NoAddedChanges,
+    TreesMatch,
+    MergeAddsNothing,
+    PatchIdMatch,
+}
+
+impl From<IntegrationReason> for JsonIntegrationReason {
+    fn from(reason: IntegrationReason) -> Self {
+        match reason {
+            IntegrationReason::SameCommit => Self::SameCommit,
+            IntegrationReason::Ancestor => Self::Ancestor,
+            IntegrationReason::NoAddedChanges => Self::NoAddedChanges,
+            IntegrationReason::TreesMatch => Self::TreesMatch,
+            IntegrationReason::MergeAddsNothing => Self::MergeAddsNothing,
+            IntegrationReason::PatchIdMatch => Self::PatchIdMatch,
+        }
+    }
 }
 
 /// Tracking-branch relation.
@@ -327,15 +359,41 @@ pub struct JsonPr {
 /// CI pipeline facts.
 #[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct JsonChecks {
-    /// `"passed"`, `"running"`, or `"failed"`; null when a conflicts report
-    /// masked the pipeline outcome.
-    pub status: Option<&'static str>,
+    /// Pipeline outcome; null when a conflicts report masked it.
+    pub status: Option<JsonCheckStatus>,
 
     /// `"pr"` or `"branch"` (branch workflow).
     pub source: CiSource,
 
     /// Local HEAD is not what CI ran against.
     pub stale: bool,
+}
+
+/// The pipeline outcomes that reach JSON. [`CiStatus`] carries three more
+/// that never appear here, because each is reported by the shape of `checks`
+/// rather than by a value inside it: `Error` makes both `pr` and `checks`
+/// unknown, `NoCI` makes `checks` absent, and `Conflicts` leaves `status`
+/// null (the conflict itself surfaces as `pr.mergeable`). See
+/// [`pr_and_checks`].
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonCheckStatus {
+    Passed,
+    Running,
+    Failed,
+}
+
+impl JsonCheckStatus {
+    /// `None` for the statuses the shape of `checks` reports instead (see the
+    /// type docs). `Error` and `NoCI` never reach a constructed `JsonChecks`.
+    fn from_ci_status(status: CiStatus) -> Option<Self> {
+        match status {
+            CiStatus::Passed => Some(Self::Passed),
+            CiStatus::Running => Some(Self::Running),
+            CiStatus::Failed => Some(Self::Failed),
+            CiStatus::Conflicts | CiStatus::NoCI | CiStatus::Error => None,
+        }
+    }
 }
 
 /// Dev server facts.
@@ -355,7 +413,7 @@ pub struct JsonDisplay {
     /// The table's collapsed default-branch state (one value per row,
     /// highest priority wins); absent when none applies or unresolved.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<&'static str>,
+    pub state: Option<JsonMainState>,
 
     /// Raw status glyphs without ANSI (e.g. `"+!⊂"`).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,17 +429,39 @@ pub struct JsonDisplay {
     pub columns: BTreeMap<String, String>,
 }
 
-/// `IntegrationReason` wire values. Schema 2 uses snake_case throughout;
-/// the enum's own serde rename (kebab-case) is shared with other surfaces,
-/// so the mapping lives here instead of on the enum.
-fn integration_reason_str(reason: IntegrationReason) -> &'static str {
-    match reason {
-        IntegrationReason::SameCommit => "same_commit",
-        IntegrationReason::Ancestor => "ancestor",
-        IntegrationReason::NoAddedChanges => "no_added_changes",
-        IntegrationReason::TreesMatch => "trees_match",
-        IntegrationReason::MergeAddsNothing => "merge_adds_nothing",
-        IntegrationReason::PatchIdMatch => "patch_id_match",
+/// [`MainState`] wire values. `MainState::None` renders as no value at all,
+/// so it has no variant here — `display.state` is absent instead. The
+/// `Integrated` payload is dropped: the reason it carries is already reported
+/// as `default_branch.integration.reason`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonMainState {
+    IsMain,
+    WouldConflict,
+    Empty,
+    SameCommit,
+    Integrated,
+    Orphan,
+    Diverged,
+    Ahead,
+    Behind,
+}
+
+impl JsonMainState {
+    /// `None` for [`MainState::None`], which the table renders as no symbol.
+    fn from_main_state(state: MainState) -> Option<Self> {
+        match state {
+            MainState::None => None,
+            MainState::IsMain => Some(Self::IsMain),
+            MainState::WouldConflict => Some(Self::WouldConflict),
+            MainState::Empty => Some(Self::Empty),
+            MainState::SameCommit => Some(Self::SameCommit),
+            MainState::Integrated(_) => Some(Self::Integrated),
+            MainState::Orphan => Some(Self::Orphan),
+            MainState::Diverged => Some(Self::Diverged),
+            MainState::Ahead => Some(Self::Ahead),
+            MainState::Behind => Some(Self::Behind),
+        }
     }
 }
 
@@ -542,7 +622,10 @@ impl JsonItemV2 {
         let columns = columns_map(custom_columns, &item.custom_values);
 
         let display = JsonDisplay {
-            state: item.status_symbols.main_state.and_then(|s| s.as_json_str()),
+            state: item
+                .status_symbols
+                .main_state
+                .and_then(JsonMainState::from_main_state),
             symbols: Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty()),
             statusline: item.statusline.clone(),
             columns,
@@ -655,7 +738,7 @@ fn json_default_branch(item: &ListItem, worktree_data: Option<&WorktreeData>) ->
         // seeded: every seed points the negative direction, so a match can
         // only come from a computed signal.
         Some(reason) => Tri::Known(JsonIntegration {
-            reason: integration_reason_str(reason),
+            reason: reason.into(),
         }),
         // "Not integrated" is a determination only when every signal was
         // genuinely computed — a seeded signal means a probe never ran.
@@ -695,18 +778,16 @@ fn pr_and_checks(
         // the pipeline did.
         CiStatus::Error => return (Tri::Unknown, Tri::Unknown),
         CiStatus::NoCI => Tri::Absent,
-        CiStatus::Conflicts => Tri::Known(JsonChecks {
-            // The fetch discards the pipeline outcome when the forge
-            // reports conflicts (see `pr.mergeable`).
-            status: None,
-            source: status.source,
-            stale: status.is_stale,
-        }),
-        CiStatus::Passed | CiStatus::Running | CiStatus::Failed => Tri::Known(JsonChecks {
-            status: Some(status.ci_status.into()),
-            source: status.source,
-            stale: status.is_stale,
-        }),
+        // Conflicts lands here with a null `status`: the fetch discards the
+        // pipeline outcome when the forge reports conflicts, which surfaces
+        // as `pr.mergeable` instead.
+        CiStatus::Conflicts | CiStatus::Passed | CiStatus::Running | CiStatus::Failed => {
+            Tri::Known(JsonChecks {
+                status: JsonCheckStatus::from_ci_status(status.ci_status),
+                source: status.source,
+                stale: status.is_stale,
+            })
+        }
     };
 
     let pr = if status.source == CiSource::PullRequest {
@@ -876,7 +957,7 @@ mod tests {
         assert_eq!(
             checks,
             Tri::Known(JsonChecks {
-                status: Some("passed"),
+                status: Some(JsonCheckStatus::Passed),
                 source: CiSource::PullRequest,
                 stale: true,
             })
@@ -927,7 +1008,7 @@ mod tests {
         assert_eq!(
             checks,
             Tri::Known(JsonChecks {
-                status: Some("failed"),
+                status: Some(JsonCheckStatus::Failed),
                 source: CiSource::Branch,
                 stale: false,
             })
@@ -1129,13 +1210,6 @@ mod tests {
     /// delegation to `Option<T>` is only exercised here until the schema
     /// export ships.
     #[test]
-    fn test_schema_generates() {
-        let schema = schemars::schema_for!(JsonEnvelope);
-        let json = serde_json::to_value(&schema).unwrap();
-        assert!(json["properties"]["items"].is_object());
-    }
-
-    #[test]
     fn test_integration_reason_str_covers_every_reason() {
         let cases = [
             (IntegrationReason::SameCommit, "same_commit"),
@@ -1146,7 +1220,39 @@ mod tests {
             (IntegrationReason::PatchIdMatch, "patch_id_match"),
         ];
         for (reason, expected) in cases {
-            assert_eq!(integration_reason_str(reason), expected);
+            let wire = serde_json::to_value(JsonIntegrationReason::from(reason)).unwrap();
+            assert_eq!(wire, expected);
+        }
+    }
+
+    /// Every [`MainState`] the table can show reaches `display.state` with a
+    /// wire name, and `None` reaches it as absent.
+    #[test]
+    fn test_main_state_wire_names() {
+        let cases = [
+            (MainState::None, None),
+            (MainState::IsMain, Some("is_main")),
+            (MainState::WouldConflict, Some("would_conflict")),
+            (MainState::Empty, Some("empty")),
+            (MainState::SameCommit, Some("same_commit")),
+            (
+                MainState::Integrated(IntegrationReason::Ancestor),
+                Some("integrated"),
+            ),
+            (MainState::Orphan, Some("orphan")),
+            (MainState::Diverged, Some("diverged")),
+            (MainState::Ahead, Some("ahead")),
+            (MainState::Behind, Some("behind")),
+        ];
+        for (state, expected) in cases {
+            let wire = JsonMainState::from_main_state(state).map(|s| {
+                serde_json::to_value(s)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            });
+            assert_eq!(wire.as_deref(), expected, "for {state:?}");
         }
     }
 
