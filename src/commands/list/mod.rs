@@ -133,11 +133,12 @@ pub(crate) mod render;
 
 // Layout is calculated in collect/mod.rs
 use anstyle::Style;
-use anyhow::Context;
 use model::{BranchScope, ItemKind, ListData, ListItem};
 use progressive::RenderTarget;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
+
+use crate::output::print_json;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
@@ -189,13 +190,6 @@ pub fn handle_list(
         Some(_) => print_json(&json_output::to_json_items(&items, &custom_columns, &repo))?,
     }
 
-    Ok(())
-}
-
-/// Serialize a JSON answer to stdout (pretty, one trailing newline).
-pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
-    let json = serde_json::to_string_pretty(value).context("Failed to serialize to JSON")?;
-    println!("{}", json);
     Ok(())
 }
 

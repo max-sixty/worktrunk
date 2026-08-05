@@ -3,8 +3,9 @@
 //! # Architecture
 //!
 //! For regular output, use `eprintln!`/`println!` directly (from `worktrunk::styling`
-//! for color support). This module handles shell integration directives (cd, exec)
-//! that need to be communicated to the parent shell.
+//! for color support); [`print_json`] serializes a `--format=json` answer to stdout.
+//! This module handles shell integration directives (cd, exec) that need to be
+//! communicated to the parent shell.
 //!
 //! ## Usage
 //!
@@ -32,6 +33,7 @@ pub(crate) mod commit_generation;
 pub(crate) mod concurrent;
 mod global;
 pub(crate) mod handlers;
+mod json;
 pub(crate) mod prompt;
 pub(crate) mod shell_integration;
 
@@ -55,3 +57,5 @@ pub(crate) use shell_integration::{
 };
 // Re-export commit generation functions
 pub(crate) use commit_generation::prompt_commit_generation;
+// Re-export the JSON answer printer
+pub(crate) use json::print_json;
