@@ -439,7 +439,7 @@ const GIT_ALLOWED_PROTOCOLS: &str = "file";
 
 /// Restore git's default protocol set on a command built by
 /// [`configure_git_cmd`], for a caller whose job is to fetch a fixture from
-/// upstream — the real-repo benchmark clone. Grep for this to enumerate
+/// upstream — the large-repository benchmark corpus. Grep for this to enumerate
 /// everything that may reach the wire; tests are not among them.
 pub fn allow_network_transports(cmd: &mut Command) {
     cmd.env_remove("GIT_ALLOW_PROTOCOL");

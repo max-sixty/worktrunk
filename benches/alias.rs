@@ -33,11 +33,13 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
 use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, run_and_check, wt_command};
+use wt_perf::{
+    CacheState, FixtureRecipe, bench_wt, run_and_check, standard_benchmark_profile, wt_command,
+};
 
 /// Alias body is a shell builtin so the wall-clock is dominated by the
 /// parent's dispatch — not by running a real subcommand.
-const STUB_CONFIG: &str = "[aliases]\nstub = \"echo hello\"\n";
+const STUB_CONFIG: &str = "[aliases]\nstub = \": fixed fixed fixed fixed fixed fixed\"\n";
 
 /// Alias body references vars that drive the expensive paths in
 /// `build_hook_context`: `commit` / `short_commit` (`rev-parse <branch>`
@@ -45,20 +47,11 @@ const STUB_CONFIG: &str = "[aliases]\nstub = \"echo hello\"\n";
 /// (lookup). `branch` and `worktree_path` are nearly free but kept so a
 /// future filter sees them as "referenced". `upstream` is omitted because
 /// fixture branches have no configured upstream — adding one would change
-/// what the stub variant measures and break label continuity.
+/// what the stub variant measures and break label continuity. Both aliases
+/// use the same no-output builtin and argument count.
 const WITH_VARS_CONFIG: &str = r#"[aliases]
-with_vars = "echo {{ branch }} {{ default_branch }} {{ commit }} {{ short_commit }} {{ primary_worktree_path }} {{ worktree_path }}"
+with_vars = ": {{ branch }} {{ default_branch }} {{ commit }} {{ short_commit }} {{ primary_worktree_path }} {{ worktree_path }}"
 "#;
-
-/// Lean repo config for the scaling rows — alias dispatch doesn't care
-/// about commit history depth, so minimal everything keeps setup under
-/// 10s at 100 worktrees (vs. ~60s for `RepoConfig::typical(100)`).
-const fn lean_worktrees(worktrees: usize) -> RepoConfig {
-    RepoConfig {
-        worktrees,
-        ..RepoConfig::branches(0, 0)
-    }
-}
 
 /// Build an isolated `wt` invocation pointed at a fixture user config.
 fn wt_cmd(binary: &Path, repo: &Path, user_config: &Path, args: &[&str]) -> Command {
@@ -83,8 +76,12 @@ fn bench_dispatch(c: &mut Criterion) {
         });
     });
 
-    for worktrees in [1usize, 100] {
-        let fixture = create_repo(&lean_worktrees(worktrees));
+    for total_worktrees in [1usize, 100] {
+        let fixture = FixtureRecipe::Minimal {
+            branchless_branches: 0,
+            linked_worktrees: total_worktrees - 1,
+        }
+        .create();
         let stub_config = fixture.root().join("stub-config.toml");
         let vars_config = fixture.root().join("with-vars-config.toml");
         std::fs::write(&stub_config, STUB_CONFIG).unwrap();
@@ -104,14 +101,18 @@ fn bench_dispatch(c: &mut Criterion) {
                     None => cache_label.to_string(),
                 };
 
-                group.bench_with_input(BenchmarkId::new(id, worktrees), &worktrees, |b, _| {
-                    // Cold matters here: `build_hook_context` resolves the
-                    // default branch, which writes `worktrunk.default-branch`
-                    // and would otherwise be a cache hit on iters 2-N.
-                    bench_wt(b, fixture.path(), cache, || {
-                        wt_cmd(binary, fixture.path(), user_config, &[alias_name])
-                    });
-                });
+                group.bench_with_input(
+                    BenchmarkId::new(id, total_worktrees),
+                    &total_worktrees,
+                    |b, _| {
+                        // Cold matters here: `build_hook_context` resolves the
+                        // default branch, which writes `worktrunk.default-branch`
+                        // and would otherwise be a cache hit on iters 2-N.
+                        bench_wt(b, fixture.path(), cache, || {
+                            wt_cmd(binary, fixture.path(), user_config, &[alias_name])
+                        });
+                    },
+                );
             }
         }
     }
@@ -121,10 +122,7 @@ fn bench_dispatch(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default()
-        .sample_size(30)
-        .measurement_time(std::time::Duration::from_secs(15))
-        .warm_up_time(std::time::Duration::from_secs(3));
+    config = standard_benchmark_profile();
     targets = bench_dispatch
 }
 criterion_main!(benches);

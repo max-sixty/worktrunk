@@ -4486,6 +4486,7 @@ dependencies = [
  "clap",
  "criterion",
  "dunce",
+ "fs2",
  "serde_json",
  "tempfile",
  "worktrunk",

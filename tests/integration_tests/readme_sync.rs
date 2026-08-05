@@ -132,10 +132,36 @@ static ZOLA_LINK_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
 
 /// Regex guardrail: any leftover `](@/...md...)` link that the transform
-/// above failed to rewrite. Used by the sync test to fail loudly on stray
-/// Zola internal links in generated skill content.
+/// above failed to rewrite. Used by [`assert_no_untransformed_zola_links`] to
+/// fail loudly on stray Zola internal links in generated content.
 static UNTRANSFORMED_ZOLA_LINK_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\]\(@/[^)]+\.md").unwrap());
+
+/// Guardrail for every generated surface that rewrites Zola internal links.
+///
+/// A `@/page.md` target is meaningful only to Zola: it resolves when the docs
+/// site builds and is dead text anywhere else. Both link rewrites here are
+/// regexes over link *text*, so their failure mode is silence — an
+/// unanticipated character makes the pattern decline to match and the raw
+/// markdown survives into the generated file. Neither sync test can see it,
+/// because each compares the generated file against the same transform that
+/// produced it, so an unconverted link is "in sync" by construction.
+///
+/// So each surface asserts the negative afterwards: no `](@/…md` may remain.
+/// `surface` names the generated content for the failure message.
+fn assert_no_untransformed_zola_links(content: &str, surface: &str) {
+    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(content) {
+        let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+        let snippet_end = content[m.end()..]
+            .find('\n')
+            .map_or(content.len(), |i| m.end() + i);
+        panic!(
+            "Failed to transform a Zola internal link in {surface} — likely an \
+             unsupported character in the link text. Offending line:\n{}",
+            &content[snippet_start..snippet_end]
+        );
+    }
+}
 
 /// Regex to convert Zola rawcode shortcode to HTML pre tags
 /// Matches: {% rawcode() %}...{% end %}
@@ -1108,7 +1134,15 @@ fn transform_config_source_to_toml(source: &str) -> String {
         result.pop();
     }
 
-    result.join("\n")
+    let result = result.join("\n");
+
+    // Guardrail: a link `convert_markdown_links_for_config` declined to match
+    // survives as raw markdown into the generated example file, which
+    // `wt config create` writes to the user's config and `wt config create
+    // --help` prints — so the `@/` target would reach the user verbatim.
+    assert_no_untransformed_zola_links(&result, "a generated config example");
+
+    result
 }
 
 /// Convert markdown links to plain text with URL in parentheses.
@@ -1116,12 +1150,22 @@ fn transform_config_source_to_toml(source: &str) -> String {
 /// Config files aren't rendered as markdown, so links need to be readable as plain text.
 /// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
 /// - `[Link text](https://example.com)` → `Link text (https://example.com)`
+///
+/// The link text may itself contain a bracketed span — a TOML section name in
+/// backticks (``[pattern-keyed `[projects]` entry](@/config.md#…)``) is the
+/// shape that occurs here. A link that isn't converted survives as raw
+/// markdown into the generated example file, which `wt config create` writes
+/// to the user's config and `wt config create --help` prints, so a Zola `@/`
+/// target reaches the user verbatim. Brackets in these link texts always sit
+/// inside a backticked code span, so the text class alternates a code span
+/// with any non-`]`-non-backtick char — the same rule `ZOLA_LINK_PATTERN`
+/// uses above, which also covers `[[…]]` array-of-tables names.
 fn convert_markdown_links_for_config(line: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
 
     static MARKDOWN_LINK: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+        LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(([^)]+)\)").unwrap());
 
     MARKDOWN_LINK
         .replace_all(line, |caps: &regex::Captures| {
@@ -1146,6 +1190,81 @@ fn convert_markdown_links_for_config(line: &str) -> String {
             format!("{text} ({url})")
         })
         .to_string()
+}
+
+/// Every link form the config sections use converts to plain text, including
+/// one whose text carries a bracketed span of its own.
+///
+/// The generated file is what `wt config create` writes and what `wt config
+/// create --help` prints, so a link this misses ships a raw `@/page.md` target
+/// to the user. Nothing downstream catches that: the sync test compares the
+/// example against this same transform, so an unconverted link is "in sync".
+#[test]
+fn test_config_markdown_links_convert_to_plain_text() {
+    let cases = [
+        // Zola page link, and the same with an anchor.
+        (
+            "See [hooks](@/hook.md) for details",
+            "See hooks (https://worktrunk.dev/hook/) for details",
+        ),
+        (
+            "See [forge platform](@/config.md#forge-platform).",
+            "See forge platform (https://worktrunk.dev/config/#forge-platform).",
+        ),
+        // An absolute URL passes through untouched.
+        (
+            "See [the spec](https://example.com/a) too",
+            "See the spec (https://example.com/a) too",
+        ),
+        // Link text containing a bracketed span — a TOML section name in
+        // backticks. The pre-fix regex stopped at the inner `]` and left the
+        // whole link as raw markdown.
+        (
+            "name it once with a [pattern-keyed `[projects]` entry](@/config.md#user-project-specific-settings) instead",
+            "name it once with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead",
+        ),
+        // The same shape naming an array-of-tables. These sections document
+        // `[[projects."…".post-start]]` pipelines, so a link naming one is the
+        // next form to arrive; the code-span class covers it.
+        (
+            "see [`[[projects.\"…\".post-start]]` hooks](@/config.md#hooks) for the pipeline form",
+            "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#hooks) for the pipeline form",
+        ),
+        // Two links on one line still both convert.
+        (
+            "[a](@/hook.md) and [b](@/config.md)",
+            "a (https://worktrunk.dev/hook/) and b (https://worktrunk.dev/config/)",
+        ),
+        // A bare bracketed span is not a link and must survive verbatim —
+        // `[forge]` and `[list]` appear all over these sections.
+        (
+            "A repository's own `[forge]` still wins, field by field.",
+            "A repository's own `[forge]` still wins, field by field.",
+        ),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            convert_markdown_links_for_config(input),
+            expected,
+            "input: {input}"
+        );
+    }
+}
+
+/// A link shape the rewrite declines to match fails loudly rather than
+/// shipping its `@/` target.
+///
+/// This is the backstop for the case the test above can't anticipate: the next
+/// unsupported link text. The generated config example runs through
+/// `transform_config_source_to_toml`, so the assertion is what turns "the
+/// regex silently declined" into a test failure naming the line.
+#[test]
+#[should_panic(expected = "a generated config example")]
+fn test_untransformed_zola_link_fails_the_config_transform() {
+    // An unbalanced backtick in the link text: the code-span alternative can't
+    // close, so the rewrite declines and the raw `@/` target would survive.
+    transform_config_source_to_toml("See [a `broken span](@/config.md#hooks) here");
 }
 
 /// Extract a config section from src/cli/mod.rs by marker pattern.
@@ -2173,20 +2292,8 @@ fn finalize_skill_content(content: &str) -> String {
         .into_owned();
 
     // Guardrail: ZOLA_LINK_PATTERN must catch every Zola internal link before
-    // we ship skill content. A stray `](@/...md...)` means the regex failed to
-    // match — usually because of unexpected chars in the link text — and the
-    // skill file would ship a dead link. Fail loudly instead.
-    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(&content) {
-        let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
-        let snippet_end = content[m.end()..]
-            .find('\n')
-            .map_or(content.len(), |i| m.end() + i);
-        panic!(
-            "ZOLA_LINK_PATTERN failed to transform a Zola internal link in skill content — \
-             likely an unsupported character in the link text. Offending line:\n{}",
-            &content[snippet_start..snippet_end]
-        );
-    }
+    // we ship skill content, which would otherwise carry a dead link.
+    assert_no_untransformed_zola_links(&content, "skill content");
 
     // Remove "See also" section (just contains links to other pages)
     let content = remove_section(&content, "## See also");

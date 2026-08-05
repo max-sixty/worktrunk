@@ -133,7 +133,10 @@ pub fn step_relocate(
 
     // Phase 3 & 4: Create executor (classifies targets) and execute relocations
     let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
-    let cwd = std::env::current_dir().ok();
+    // Where the user's shell stands — inherited from the parent `wt` when this
+    // runs inside an alias or hook body, whose process cwd is the worktree
+    // root (#3723).
+    let cwd = worktrunk::shell_exec::shell_cwd();
     executor.execute(&default_branch, cwd.as_deref())?;
 
     if json_mode {

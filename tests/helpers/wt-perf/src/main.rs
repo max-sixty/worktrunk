@@ -8,10 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use wt_perf::{
-    PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED, canonicalize, ensure_prune_real_repo,
-    invalidate_caches_auto, parse_config, parse_pair, wt_perf_fixture_dir,
-};
+use wt_perf::{FixtureRecipe, canonicalize, invalidate_caches_auto};
 
 #[derive(Parser)]
 #[command(name = "wt-perf")]
@@ -25,18 +22,12 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, mixed-W-B, prune-M-U, prune-real[-M-U], picker-test
-        config: String,
+        #[command(subcommand)]
+        recipe: FixtureRecipe,
 
-        /// Directory to create repo in (default: target/wt-perf)
-        #[arg(long)]
+        /// Primary worktree path; must not already exist
+        #[arg(long, global = true)]
         path: Option<PathBuf>,
-    },
-
-    /// Invalidate git caches for cold benchmarks
-    Invalidate {
-        /// Path to the repository
-        repo: PathBuf,
     },
 
     /// Parse a trace.jsonl and output Chrome Trace Format JSON
@@ -76,7 +67,7 @@ enum Commands {
   wt-perf timeline --cold -- list
 
   # Cold run against a specific repo (setup prints the exact path)
-  wt-perf timeline --cold -- -C target/wt-perf/typical-1 list
+  wt-perf timeline --cold -- -C /tmp/wt-typical-1 list
 
   # Chrome Trace Format JSON for Perfetto
   wt-perf timeline --chrome -- list > trace.json
@@ -100,93 +91,49 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Setup { config, path } => {
-            // `prune-real[-M-U]`: cache-managed rust-scale fixture (built once
-            // under target/wt-perf/bench-repos, repaired after a live prune consumes
-            // its candidates) — takes no --path and never offers cleanup.
-            // Tested before parse_config so its `prune-` arm never sees it.
-            let prune_real = if config == "prune-real" {
-                Some((PRUNE_REAL_MERGED, PRUNE_REAL_UNMERGED))
-            } else {
-                parse_pair(&config, "prune-real-")
+        Commands::Setup { recipe, path } => {
+            let Some(path) = path else {
+                eprintln!("Missing required --path for benchmark fixture setup.");
+                std::process::exit(2);
             };
-            if let Some((merged, unmerged)) = prune_real {
-                if path.is_some() {
+            let absolute_path = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir().unwrap().join(path)
+            };
+            let parent = absolute_path.parent().unwrap();
+            let base_path = canonicalize(parent)
+                .unwrap_or_else(|error| {
                     eprintln!(
-                        "prune-real fixtures are managed under {}; --path is not supported",
-                        wt_perf_fixture_dir().join("bench-repos").display()
+                        "Could not resolve destination parent {}: {error}",
+                        parent.display()
                     );
                     std::process::exit(1);
+                })
+                .join(absolute_path.file_name().unwrap());
+            if let Err(error) = std::fs::create_dir(&base_path) {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    eprintln!(
+                        "Destination already exists: {}. Choose a new --path or remove it first.",
+                        base_path.display()
+                    );
+                } else {
+                    eprintln!(
+                        "Could not reserve destination {}: {error}",
+                        base_path.display()
+                    );
                 }
-                let repo = ensure_prune_real_repo(merged, unmerged);
-                eprintln!(
-                    "Ready: main @ {}, {} worktrees, {} branches",
-                    repo.display(),
-                    merged + unmerged + 1,
-                    merged + unmerged
-                );
-                eprintln!();
-                eprintln!(
-                    "  wt-perf timeline -- -C {} step prune --dry-run --min-age 0s",
-                    repo.display()
-                );
-                eprintln!(
-                    "  wt-perf timeline -- -C {} step prune --min-age 0s   # live; next setup/bench run re-creates the candidates",
-                    repo.display()
-                );
-                // No `wt-perf invalidate` hint: deleting this fixture's
-                // worktree indexes flips prune's clean-worktree gate and
-                // degrades every later run (ensure_prune_real_repo heals it,
-                // but only on the next setup/bench call).
-                return;
-            }
-
-            let spec = parse_config(&config).unwrap_or_else(|| {
-                eprintln!("Unknown config: {}", config);
-                eprintln!();
-                eprintln!("Available configs:");
-                eprintln!(
-                    "  typical-N       - Typical repo with N worktrees (500 commits, 100 files)"
-                );
-                eprintln!("  branches-N      - N branches with 1 commit each");
-                eprintln!("  branches-N-M    - N branches with M commits each");
-                eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
-                eprintln!("  mixed-W-B       - W worktrees + B branches in varied states");
-                eprintln!(
-                    "  prune-M-U       - M squash-merged candidates + U unmerged worktrees/branches (wt step prune workload)"
-                );
-                eprintln!(
-                    "  prune-real[-M-U] - rust-lang/rust clone + M squash-merged candidates + U unmerged worktrees/branches, cached under target/wt-perf/bench-repos (default {PRUNE_REAL_MERGED}-{PRUNE_REAL_UNMERGED}; first run clones from network)"
-                );
-                eprintln!("  picker-test     - Config for wt switch interactive picker testing");
                 std::process::exit(1);
-            });
-
-            let base_path = if let Some(p) = path {
-                std::fs::create_dir_all(&p).unwrap();
-                canonicalize(&p).unwrap()
-            } else {
-                let dir = wt_perf_fixture_dir().join(&config);
-                if dir.exists() {
-                    std::fs::remove_dir_all(&dir).unwrap();
-                }
-                std::fs::create_dir_all(&dir).unwrap();
-                canonicalize(&dir).unwrap()
-            };
-
-            eprintln!("Creating {} repo...", config);
-            let (worktrees, branches) = spec.create_at(&base_path);
-
-            let mut parts = vec![format!("main @ {}", base_path.display())];
-            if worktrees > 1 {
-                parts.push(format!("{} worktrees", worktrees));
             }
-            if branches > 0 {
-                parts.push(format!("{} branches", branches));
-            }
-            eprintln!("Created: {}", parts.join(", "));
+
+            eprintln!("Creating fixture at {}...", base_path.display());
+            recipe.create_at(&base_path);
+            eprintln!("Created: main @ {}", base_path.display());
             eprintln!();
-            let example_args = if matches!(spec, wt_perf::SetupConfig::Prune { .. }) {
+            let example_args = if matches!(
+                recipe,
+                FixtureRecipe::Prune { .. } | FixtureRecipe::LargeRepositoryPrune { .. }
+            ) {
                 "step prune --dry-run --min-age 0s"
             } else {
                 "list --progressive"
@@ -201,22 +148,11 @@ fn main() {
                 base_path.display(),
                 example_args
             );
-            eprintln!("  wt-perf invalidate {}", base_path.display());
-        }
-
-        Commands::Invalidate { repo } => {
-            let repo = canonicalize(&repo).unwrap_or_else(|e| {
-                eprintln!("Invalid repo path {}: {}", repo.display(), e);
-                std::process::exit(1);
-            });
-
-            if !repo.join(".git").exists() {
-                eprintln!("Not a git repository: {}", repo.display());
-                std::process::exit(1);
-            }
-
-            invalidate_caches_auto(&repo);
-            eprintln!("Invalidated caches for {}", repo.display());
+            eprintln!(
+                "  wt-perf timeline --cold -- -C {} {}",
+                base_path.display(),
+                example_args
+            );
         }
 
         Commands::Trace { file } => {

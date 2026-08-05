@@ -48,22 +48,21 @@ jobs:
         cache-bin: "false"
         save-if: false
 
-    - name: Install shells (zsh, fish)
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
+    - name: Install shells and jq
+      run: sudo apt-get update && sudo apt-get install -y zsh fish jq
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
         version: '0.114.1'
 
-    - name: 💰 Rust repo cache
+    - name: 💰 Large-repository fixture cache
       uses: actions/cache@v6
       with:
-        # wt-perf builds real-repo fixtures under target/wt-perf/bench-repos at
-        # the workspace root. `cargo clean` would wipe them, so this cache
-        # restores the ~15 GiB rust clone across runs.
+        # The fixture file pins the corpus revision. Including its hash keeps
+        # a prior corpus out of the cache after either constant changes.
         path: target/wt-perf/bench-repos
-        key: bench-repos-rust-${{ runner.os }}
+        key: bench-repos-large-repository-${{ runner.os }}-${{ hashFiles('benches/large-repository-fixture') }}
 
     - name: 📊 Run benchmarks
       run: cargo bench
@@ -86,7 +85,23 @@ jobs:
         GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
       run: |
         set -euo pipefail
-        python3 .github/scripts/criterion-to-jsonl.py --sha "$GITHUB_SHA" > new-rows.jsonl
+        timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        find target/criterion -path '*/new/estimates.json' -print0 \
+          | sort -z \
+          | xargs -0 -r jq -c --arg ts "$timestamp" --arg sha "$GITHUB_SHA" '
+              {
+                ts: $ts,
+                sha: $sha,
+                bench: (
+                  input_filename
+                  | sub("^target/criterion/"; "")
+                  | sub("/new/estimates\\.json$"; "")
+                ),
+                mean_ns: .mean.point_estimate,
+                stddev_ns: .std_dev.point_estimate
+              }
+            ' > new-rows.jsonl
+        test -s new-rows.jsonl
         git clone "https://x-access-token:${GITHUB_TOKEN}@gist.github.com/${GIST_ID}.git" /tmp/gist
         cat new-rows.jsonl >> /tmp/gist/results.jsonl
         git -C /tmp/gist \

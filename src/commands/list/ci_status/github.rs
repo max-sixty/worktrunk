@@ -449,7 +449,29 @@ impl GitHubPrInfo {
 ///
 /// Priority: running > failed > passed > no-ci.
 /// Handles both `statusCheckRollup` (uppercase) and check-runs API (lowercase).
-/// Skipped/neutral checks don't contribute to pass/fail.
+///
+/// Each field draws from its own GitHub enum, and every non-terminal value in
+/// each one has to reach `has_running` — a check the aggregate reads as
+/// terminal when it isn't turns the whole row green early:
+///
+/// - `status` — `CheckStatusState`: `REQUESTED`, `QUEUED`, `IN_PROGRESS`,
+///   `COMPLETED`, `WAITING`, `PENDING`. All but `COMPLETED` are non-terminal.
+///   `WAITING` is the one a deployment-protection rule or required reviewer
+///   parks a run in, so it can sit there for hours with every other check green.
+/// - `state` — `StatusState`: `EXPECTED`, `ERROR`, `FAILURE`, `PENDING`,
+///   `SUCCESS`. `EXPECTED` is a required context branch protection knows about
+///   but no one has posted yet, so it is non-terminal too.
+/// - `conclusion` — `CheckConclusionState`: `ACTION_REQUIRED`, `TIMED_OUT`,
+///   `CANCELLED`, `FAILURE`, `SUCCESS`, `NEUTRAL`, `SKIPPED`,
+///   `STARTUP_FAILURE`, `STALE`. `STARTUP_FAILURE` is a run that never got off
+///   the ground, which is a failure like any other.
+///
+/// `SKIPPED` and `NEUTRAL` deliberately contribute to neither pass nor fail, and
+/// `STALE` joins them: it marks a result GitHub itself no longer considers
+/// current, so it is not a verdict on this commit. Each branch also tolerates
+/// the other fields' vocabulary (`expected` under `status`, `error` under
+/// `conclusion`) — those combinations don't occur, but the cross-checks cost
+/// nothing and keep a mislabeled payload from being read as terminal.
 pub(super) fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
     let mut has_running = false;
     let mut has_failure = false;
@@ -461,7 +483,7 @@ pub(super) fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
             let s = status.to_ascii_lowercase();
             if matches!(
                 s.as_str(),
-                "in_progress" | "queued" | "pending" | "expected"
+                "in_progress" | "queued" | "pending" | "waiting" | "requested" | "expected"
             ) {
                 has_running = true;
             }
@@ -470,7 +492,7 @@ pub(super) fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
         // StatusContext: state field indicates pending
         if let Some(state) = &check.state {
             let s = state.to_ascii_lowercase();
-            if s == "pending" {
+            if matches!(s.as_str(), "pending" | "expected") {
                 has_running = true;
             } else if matches!(s.as_str(), "failure" | "error") {
                 has_failure = true;
@@ -483,13 +505,14 @@ pub(super) fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
         if let Some(conclusion) = &check.conclusion {
             let c = conclusion.to_ascii_lowercase();
             match c.as_str() {
-                "failure" | "error" | "cancelled" | "timed_out" | "action_required" => {
+                "failure" | "error" | "cancelled" | "timed_out" | "action_required"
+                | "startup_failure" => {
                     has_failure = true;
                 }
                 "success" => {
                     has_success = true;
                 }
-                // "skipped", "neutral" - ignored
+                // "skipped", "neutral", "stale" - ignored
                 _ => {}
             }
         }
@@ -796,15 +819,20 @@ mod tests {
         // Empty checks = NoCI
         assert_eq!(aggregate_github_checks(&[]), CiStatus::NoCI);
 
-        // All skipped = NoCI (skipped doesn't count as success)
+        // All skipped = NoCI (skipped doesn't count as success). "stale" joins
+        // them: GitHub marks a result stale when it no longer reflects the
+        // commit, so it is not a verdict either way.
         let checks = vec![
             check("completed", Some("skipped")),
             check("completed", Some("neutral")),
+            check("completed", Some("stale")),
         ];
         assert_eq!(aggregate_github_checks(&checks), CiStatus::NoCI);
 
-        // Any running = Running
-        for status in ["in_progress", "queued", "pending"] {
+        // Any running = Running. Every CheckStatusState but COMPLETED is
+        // non-terminal — "waiting" is a run parked by a deployment-protection
+        // rule, "requested" one created but not yet queued.
+        for status in ["in_progress", "queued", "pending", "waiting", "requested"] {
             let checks = vec![check("completed", Some("success")), check(status, None)];
             assert_eq!(
                 aggregate_github_checks(&checks),
@@ -813,8 +841,27 @@ mod tests {
             );
         }
 
-        // Any failure among completed checks = Failed
-        for conclusion in ["failure", "cancelled", "timed_out", "action_required"] {
+        // A required context branch protection expects but nobody has posted
+        // yet is non-terminal, same as a pending one.
+        let checks = vec![
+            check("completed", Some("success")),
+            GitHubCheck {
+                status: None,
+                conclusion: None,
+                state: Some("EXPECTED".into()),
+            },
+        ];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Running);
+
+        // Any failure among completed checks = Failed. "startup_failure" is a
+        // run that never got off the ground.
+        for conclusion in [
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+        ] {
             let checks = vec![
                 check("completed", Some("success")),
                 check("completed", Some(conclusion)),

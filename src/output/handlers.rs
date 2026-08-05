@@ -6,7 +6,7 @@ use std::process::Stdio;
 
 use anstyle::AnsiColor;
 use color_print::cformat;
-use worktrunk::shell_exec::Cmd;
+use worktrunk::shell_exec::{Cmd, shell_cwd};
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
@@ -1752,9 +1752,12 @@ fn prepare_remove_directory_change(
         // `worktree/apps/gateway/` and `main/apps/gateway/` exists, cd there
         // instead of the main worktree root. Falls back to the root when the
         // subdir is absent in the destination or the cwd can't be read.
-        let cd_target = std::env::current_dir()
+        // `shell_cwd()` rather than the process cwd, so the preservation
+        // survives a `wt remove` nested in an alias or hook body, whose
+        // process cwd is the worktree root (#3723).
+        let cd_target = shell_cwd()
             .map(|cwd| resolve_subdir_in_target(main_path, Some(worktree_path), &cwd))
-            .unwrap_or_else(|_| main_path.to_path_buf());
+            .unwrap_or_else(|| main_path.to_path_buf());
         super::change_directory(&cd_target)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
         // Mark that the CWD worktree is being removed, so the error handler

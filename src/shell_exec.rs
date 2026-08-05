@@ -514,15 +514,81 @@ pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 /// that its parent shell will source.
 pub const RETIRED_DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 
+/// Environment variable carrying the directory the user's shell is in.
+///
+/// A top-level `wt` reads that directory from its own process cwd, which is
+/// what subdirectory preservation resolves the user's position against (from
+/// `monorepo.feature/subproject/`, `wt switch main` lands in
+/// `monorepo/subproject/`). A `wt` nested inside an alias or hook body cannot:
+/// those bodies run with a wt-chosen working directory (the worktree root), so
+/// the nested process would resolve the user to that root and drop them there.
+///
+/// [`apply_cd_directive_env`] therefore sets this alongside the CD directive
+/// file — the same children that are allowed to move the user's shell are the
+/// ones that need to know where it currently is. Nesting composes because
+/// [`shell_cwd`] prefers the inherited value over the process cwd, so each
+/// layer forwards the shell's directory rather than its own. See issue #3723.
+///
+/// Private, unlike the directive-file vars above: the setter, the scrubber and
+/// the reader all live in this module, and a name spells the coupling between
+/// them that a repeated literal would leave to a spelling match.
+const SHELL_CWD_ENV_VAR: &str = "WORKTRUNK_SHELL_CWD";
+
+/// The directory the user's shell is in: the inherited `WORKTRUNK_SHELL_CWD`
+/// when a parent `wt` set it, otherwise this process's own startup cwd.
+///
+/// Callers that ask "where is the user physically standing?" use this rather
+/// than [`std::env::current_dir`]. `-C` is deliberately not consulted: it sets
+/// git's discovery path without moving the shell.
+pub fn shell_cwd() -> Option<PathBuf> {
+    shell_cwd_from(std::env::var_os(SHELL_CWD_ENV_VAR), startup_cwd())
+}
+
+/// Pure form of [`shell_cwd`], split out so the relative-value fall-through is
+/// unit-testable without mutating process-wide state — the same split
+/// [`compute_git_env_overrides`] makes for [`inherited_git_env_overrides`].
+fn shell_cwd_from(inherited: Option<OsString>, fallback: Option<&PathBuf>) -> Option<PathBuf> {
+    if let Some(value) = inherited {
+        let path = PathBuf::from(value);
+        // A relative value can't name the shell's position from a child that
+        // runs elsewhere, so fall through to the process cwd. A stale absolute
+        // one needs no guard here: the subdirectory it resolves to has to exist
+        // in the destination before anything `cd`s there.
+        if path.is_absolute() {
+            return Some(path);
+        }
+    }
+    fallback.cloned()
+}
+
 /// Scrub all directive file env vars from a `std::process::Command`.
 ///
 /// Prevents child processes from writing to the parent shell's directive
 /// files. Called by every code path that spawns external commands (Cmd,
 /// help pager, picker pager, background hooks, git credential helpers).
+///
+/// `WORKTRUNK_SHELL_CWD` goes with them: it is meaningful only to a child that
+/// can act on the shell's position, and those children get it back from
+/// [`apply_cd_directive_env`].
 pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
     cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
     cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
     cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
+    cmd.env_remove(SHELL_CWD_ENV_VAR);
+}
+
+/// Re-add the CD directive file to a trusted child's environment, together
+/// with the shell cwd that makes its `cd` land where the user actually is.
+///
+/// The two travel together by construction: a child that can redirect the
+/// parent shell resolves the user's subdirectory against [`shell_cwd`], and
+/// without it every nested `wt switch` / `wt remove` inside an alias or hook
+/// body would `cd` to a worktree root (issue #3723).
+pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::path::Path) {
+    cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, cd_file);
+    if let Some(cwd) = shell_cwd() {
+        cmd.env(SHELL_CWD_ENV_VAR, cwd);
+    }
 }
 
 /// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from a child
@@ -1854,7 +1920,7 @@ impl Cmd {
         // aliases and hooks leave it scrubbed so their bodies cannot inject
         // shell into the parent session.
         if let Some(ref path) = self.directive_cd_file {
-            cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+            apply_cd_directive_env(&mut cmd, path);
         }
         if let Some(ref path) = self.directive_exec_file {
             cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
@@ -2227,7 +2293,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scrub_directive_env_vars_includes_retired_variable() {
+    fn test_scrub_directive_env_vars_covers_every_directive_variable() {
         assert_eq!(RETIRED_DIRECTIVE_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_FILE");
 
         let mut cmd = std::process::Command::new("child");
@@ -2235,6 +2301,7 @@ mod tests {
             DIRECTIVE_CD_FILE_ENV_VAR,
             DIRECTIVE_EXEC_FILE_ENV_VAR,
             RETIRED_DIRECTIVE_FILE_ENV_VAR,
+            SHELL_CWD_ENV_VAR,
         ] {
             cmd.env(var, "directive");
         }
@@ -2245,6 +2312,7 @@ mod tests {
             DIRECTIVE_CD_FILE_ENV_VAR,
             DIRECTIVE_EXEC_FILE_ENV_VAR,
             RETIRED_DIRECTIVE_FILE_ENV_VAR,
+            SHELL_CWD_ENV_VAR,
         ] {
             assert!(
                 cmd.get_envs()
@@ -2252,6 +2320,37 @@ mod tests {
                 "{var} should be removed from the child environment"
             );
         }
+    }
+
+    #[test]
+    fn test_shell_cwd_from_prefers_absolute_inherited_value() {
+        // Built from `temp_dir()` rather than platform literals: `/shell/cwd`
+        // isn't absolute on Windows (no prefix), and a `cfg!(windows)` pair
+        // would leave whichever arm this platform didn't take uncovered.
+        // Neither path is touched — the predicate only inspects its shape.
+        let root = std::env::temp_dir();
+        let fallback = root.join("wt-shell-cwd-fallback");
+        let absolute = root.join("wt-shell-cwd");
+        assert!(absolute.is_absolute(), "temp_dir() should be absolute");
+
+        // An absolute inherited value wins over the process cwd.
+        assert_eq!(
+            shell_cwd_from(Some(OsString::from(&absolute)), Some(&fallback)),
+            Some(absolute.clone())
+        );
+        // A relative one names nothing from a child that runs elsewhere.
+        assert_eq!(
+            shell_cwd_from(Some(OsString::from("apps/gateway")), Some(&fallback)),
+            Some(fallback.clone())
+        );
+        assert_eq!(
+            shell_cwd_from(None, Some(&fallback)),
+            Some(fallback.clone())
+        );
+        assert_eq!(
+            shell_cwd_from(Some(OsString::from("apps/gateway")), None),
+            None
+        );
     }
 
     /// The only test allowed to set `FOREGROUND_THREAD` (a process-wide

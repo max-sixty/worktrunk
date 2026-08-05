@@ -840,6 +840,62 @@ mod unix_tests {
         });
     }
 
+    /// A user's `alias rm = ...` must not intercept the nushell wrapper's
+    /// temp-file cleanup.
+    ///
+    /// Nushell resolves aliases at parse time, and `config.nu` runs before the
+    /// vendor autoload dir the wrapper is installed into — so an alias declared
+    /// there is already in scope when the wrapper's `def` is parsed. Before the
+    /// fix, an alias that exits non-zero raised a ShellError mid-cleanup that
+    /// aborted the wrapper before it returned the command's stdout, and left
+    /// every temp file behind. `^false` stands in for the realistic aliases
+    /// (`trash`, a wrapper that prompts, one that isn't installed on this box).
+    ///
+    /// The POSIX wrappers use `command rm` for the same reason; nushell has no
+    /// `command` builtin, so the template branches on `$nu.os-info.family`.
+    #[rstest]
+    fn test_nu_wrapper_cleanup_survives_rm_alias(repo: TestRepo) {
+        // A dedicated TMPDIR so the wrapper's `mktemp` files are the only
+        // occupants, and a leak is directly observable.
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp_path = tmp.path().to_string_lossy().to_string();
+
+        let mut script = String::new();
+        // Must precede the wrapper's `def`: alias resolution is parse-time.
+        script.push_str("alias rm = ^false\n");
+        append_wrapper_setup(&mut script, "nu", &repo);
+        // `config show` writes to stdout, which the wrapper returns as the
+        // function's value — the part a mid-cleanup abort swallows. `switch`
+        // wouldn't show it: its output is on stderr, which streams to the
+        // terminal before cleanup runs either way.
+        script.push_str("let out = (wt config show)\n");
+        script.push_str("print $\"WRAPPER_STDOUT_EMPTY:($out | is-empty)\"\n");
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let mut env_vars = build_test_env_vars(&config_path, &approvals_path);
+        env_vars.push(("TMPDIR", &tmp_path));
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+
+        assert!(
+            combined.contains("WRAPPER_STDOUT_EMPTY:false"),
+            "wrapper returned no stdout — the marker is missing entirely when cleanup \
+             aborted the wrapper, and reads `true` when it returned an empty value.\nOutput:\n{combined}"
+        );
+        assert_eq!(exit_code, 0, "Output:\n{combined}");
+
+        let leftover: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "wrapper leaked temp files past cleanup: {leftover:?}"
+        );
+    }
+
     #[rstest]
     #[case("bash")]
     #[case("zsh")]

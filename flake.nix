@@ -40,10 +40,10 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Filter source to include Cargo files plus templates (needed by askama)
-        # and the Gemini extension manifest (embedded via include_str! in
-        # src/testing/mod.rs; lives at the repo root because Gemini's loader
-        # reads it only from the clone root — see #2807).
+        # Filter source to include Cargo files, askama templates, and compile-time data.
+        # Gemini's loader requires its manifest at the repo root (see #2807).
+        # The benchmark fixture definition stays extensionless so Cargo does not
+        # auto-discover it as a bench target.
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter =
@@ -53,7 +53,8 @@
             || (baseNameOf (dirOf p) == "templates")
             || (pkgs.lib.hasInfix "/dev/" p)
             || (baseNameOf (dirOf p) == "dev")
-            || (baseNameOf p == "gemini-extension.json");
+            || (baseNameOf p == "gemini-extension.json")
+            || (baseNameOf p == "large-repository-fixture");
         };
 
         # Common arguments for crane builds

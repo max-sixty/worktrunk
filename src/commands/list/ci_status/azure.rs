@@ -239,15 +239,29 @@ pub(super) fn detect_azure_pipeline(
 }
 
 /// Map Azure Pipelines run status/result to [`CiStatus`].
+///
+/// `completed` is the only terminal status, so it alone consults `result`; the
+/// rest of the documented [build status
+/// enum](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get?view=azure-devops-rest-7.1)
+/// (`inProgress`, `notStarted`, `cancelling`, `postponed`) is a run still on
+/// its way there and groups as `Running` — matching how
+/// `parse_gitlab_status` groups GitLab's non-terminal statuses. In particular
+/// `cancelling` is not the terminal cancellation: that one arrives as
+/// `completed` with result `canceled`, and is already `Failed` below.
+///
+/// Of the `BuildResult` values a `completed` run reports, `partiallySucceeded`
+/// ("completed compilation successfully but had other errors") groups with
+/// `Failed`, matching how `parse_gitea_status_state` classifies Gitea's
+/// equivalent `warning`. Only `none` stays `NoCI` — a finished run with no
+/// result carries no verdict to show.
 fn parse_azure_pipeline_status(status: Option<&str>, result: Option<&str>) -> CiStatus {
     match status {
-        Some("inProgress" | "notStarted") => CiStatus::Running,
+        Some("inProgress" | "notStarted" | "cancelling" | "postponed") => CiStatus::Running,
         Some("completed") => match result {
             Some("succeeded") => CiStatus::Passed,
-            Some("failed" | "canceled") => CiStatus::Failed,
+            Some("failed" | "canceled" | "partiallySucceeded") => CiStatus::Failed,
             _ => CiStatus::NoCI,
         },
-        Some("cancelling") => CiStatus::Failed,
         _ => CiStatus::NoCI,
     }
 }
@@ -373,29 +387,34 @@ mod tests {
 
     #[test]
     fn test_parse_azure_pipeline_status() {
-        assert_eq!(
-            parse_azure_pipeline_status(Some("inProgress"), None),
-            CiStatus::Running
-        );
-        assert_eq!(
-            parse_azure_pipeline_status(Some("notStarted"), None),
-            CiStatus::Running
-        );
+        // Non-terminal statuses. "cancelling" is cancellation in flight — the
+        // terminal form is "completed" with result "canceled"; "postponed" is a
+        // run sitting inactive in the queue.
+        for status in ["inProgress", "notStarted", "cancelling", "postponed"] {
+            assert_eq!(
+                parse_azure_pipeline_status(Some(status), None),
+                CiStatus::Running,
+                "status={status}"
+            );
+        }
         assert_eq!(
             parse_azure_pipeline_status(Some("completed"), Some("succeeded")),
             CiStatus::Passed
         );
+        // Terminal verdicts. "partiallySucceeded" completed with errors, so it
+        // reads as a failure rather than as no CI — same call gitea.rs makes
+        // for "warning".
+        for result in ["failed", "canceled", "partiallySucceeded"] {
+            assert_eq!(
+                parse_azure_pipeline_status(Some("completed"), Some(result)),
+                CiStatus::Failed,
+                "result={result}"
+            );
+        }
+        // A completed run with no result carries no verdict.
         assert_eq!(
-            parse_azure_pipeline_status(Some("completed"), Some("failed")),
-            CiStatus::Failed
-        );
-        assert_eq!(
-            parse_azure_pipeline_status(Some("completed"), Some("canceled")),
-            CiStatus::Failed
-        );
-        assert_eq!(
-            parse_azure_pipeline_status(Some("cancelling"), None),
-            CiStatus::Failed
+            parse_azure_pipeline_status(Some("completed"), Some("none")),
+            CiStatus::NoCI
         );
         assert_eq!(parse_azure_pipeline_status(None, None), CiStatus::NoCI);
     }

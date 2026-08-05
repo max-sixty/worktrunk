@@ -29,14 +29,16 @@
 //!
 //! ```bash
 //! cargo bench --bench completion
-//! cargo run -p wt-perf -- setup mixed-80-80-1400 --path /tmp/clone   # same repo, by hand
+//! cargo run -p wt-perf -- setup mixed 80 80 1400 --path /tmp/clone
 //! ```
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::collections::BTreeSet;
 use std::path::Path;
-use wt_perf::{create_mixed_repo, run_and_check, wt_command};
+use std::process::Output;
+use wt_perf::{FixtureRecipe, run_and_check, wt_command};
 
-fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
+fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) -> Output {
     let index = words.len().saturating_sub(1);
     let mut cmd = wt_command(binary, repo_path, None);
     cmd.arg("--").args(words);
@@ -45,7 +47,28 @@ fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
         .env("_CLAP_COMPLETE_COMP_TYPE", "9")
         .env("_CLAP_COMPLETE_SPACE", "true")
         .env("_CLAP_IFS", "\n");
-    run_and_check(&mut cmd);
+    run_and_check(&mut cmd)
+}
+
+fn expected_branches(branchless_branches: usize, linked_worktrees: usize) -> BTreeSet<String> {
+    std::iter::once("main".to_string())
+        .chain((0..branchless_branches).map(|i| format!("br-{i:04}")))
+        .chain((0..linked_worktrees).map(|i| format!("wt-{i:04}")))
+        .collect()
+}
+
+fn assert_completion_candidates(binary: &Path, repo_path: &Path, expected: &BTreeSet<String>) {
+    let output = run_completion(binary, repo_path, &["wt", "switch", ""]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let candidates: Vec<String> = stdout.lines().map(str::to_string).collect();
+    let actual: BTreeSet<String> = candidates.iter().cloned().collect();
+
+    assert_eq!(
+        actual.len(),
+        candidates.len(),
+        "completion returned duplicate candidates: {candidates:?}"
+    );
+    assert_eq!(&actual, expected, "unexpected completion candidates");
 }
 
 fn bench_completion_switch(c: &mut Criterion) {
@@ -53,7 +76,13 @@ fn bench_completion_switch(c: &mut Criterion) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     group.bench_function("mixed", |b| {
-        let fixture = create_mixed_repo(80, 80, 1400);
+        let fixture = FixtureRecipe::Mixed {
+            linked_worktrees: 80,
+            branchless_branches: 80,
+            remote_tracking_refs: 1400,
+        }
+        .create();
+        assert_completion_candidates(binary, fixture.path(), &expected_branches(80, 80));
         b.iter(|| run_completion(binary, fixture.path(), &["wt", "switch", ""]));
     });
 

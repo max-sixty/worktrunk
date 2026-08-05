@@ -107,7 +107,7 @@
 //! - Dominated by git command overhead, not Rust code
 //! - Cold caches: ~150-300ms per worktree (typical repo, 500 commits, 100 files)
 //! - Warm caches: ~20-50ms per worktree
-//! - Real-world: rust-lang/rust repo with 8 worktrees: ~400ms (warm caches)
+//! - Large-repository corpus (currently rust-lang/rust), 8 worktrees: ~400ms warm
 //!
 //! Bottlenecks:
 //! 1. `git status --porcelain` - Slowest when index is cold or many files changed

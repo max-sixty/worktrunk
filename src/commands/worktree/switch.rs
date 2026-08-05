@@ -23,7 +23,9 @@ use worktrunk::git::remote_ref::{
 use worktrunk::git::{
     ForgeKind, GitError, GitRemoteUrl, RefType, Repository, SwitchSuggestionCtx, current_or_recover,
 };
-use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
+use worktrunk::shell_exec::{
+    ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
+};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
@@ -1676,13 +1678,17 @@ impl SwitchPipeline<'_> {
         // user's shell won't be in the worktree, and shows the worktree-path
         // hint on first --create (before the shell integration warning).
         //
-        // When the user's CWD has been deleted, `std::env::current_dir()`
-        // fails — fall back to `repo_path()` (the main worktree root).
-        // `current_worktree().root()` resolves against the Repository's
+        // `shell_cwd()` is where the user's shell stands: the process cwd,
+        // unless a parent `wt` passed its own down (an alias or hook body runs
+        // from the worktree root, so a nested switch would otherwise resolve
+        // the user to that root — #3723). When the shell's CWD was already
+        // gone when `wt` started, `startup_cwd()` never captured one and this
+        // reads as absent — fall back to `repo_path()` (the main worktree
+        // root). `current_worktree().root()` resolves against the Repository's
         // discovery path, which is alive even after recovery, but we keep the
         // same fallback for any pathological case where rev-parse fails.
         let fallback_path = repo.repo_path()?.to_path_buf();
-        let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
+        let cwd = shell_cwd().unwrap_or(fallback_path.clone());
         let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
         let hooks_display_path =
             handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;

@@ -7,10 +7,11 @@ When debugging TUI commands like `wt switch` (interactive picker), use the `tmux
 ### 1. Create Test Environment
 
 ```bash
-cargo run -p wt-perf -- setup picker-test
+cargo run -p wt-perf -- setup mixed 5 2 0 --path /tmp/wt-picker-test
 ```
 
-This creates a reproducible test repo at `target/wt-perf/picker-test/` (under the workspace root, reaped by `cargo clean`). `wt-perf setup` also prints the exact path.
+This creates a varied repository with linked worktrees and branch-only rows for
+the picker.
 
 ### 2. Test Interactively
 
@@ -21,7 +22,7 @@ Load the `tmux-cli` skill, then use the `tmux-cli` tool. Install if needed: `uv 
 ```bash
 # Launch shell in test repo
 pane=$(tmux-cli launch "zsh")
-tmux-cli send "cd target/wt-perf/picker-test" --pane=$pane
+tmux-cli send "cd /tmp/wt-picker-test" --pane=$pane
 tmux-cli wait_idle --pane=$pane
 
 # Run with debug logging
@@ -43,7 +44,7 @@ MCP terminals use pseudo-TTY, not real terminals. If tests pass in MCP but users
 ```typescript
 // Create terminal and navigate to test repo
 mcp__node-terminal__terminal_create({ sessionId: "test" })
-mcp__node-terminal__terminal_write({ sessionId: "test", input: "cd target/wt-perf/picker-test" })
+mcp__node-terminal__terminal_write({ sessionId: "test", input: "cd /tmp/wt-picker-test" })
 mcp__node-terminal__terminal_send_key({ sessionId: "test", key: "enter" })
 
 // Run with debug logging
