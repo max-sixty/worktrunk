@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Improved
+
+- **`remote_repo` names the repository the way the remote spells it**: Templates had `owner` for the namespace in the primary remote URL but nothing for the repo name that follows it, so anything wanting the forge's name for the repository had to settle for `repo` — the directory on disk, which differs whenever a clone was renamed locally (`git clone git@github.com:company-org/project.git work` gives `repo = work`). `{{ remote_repo }}` resolves to the URL's repo component with the `.git` suffix stripped (`project`), and is available everywhere `owner` is: hook and alias bodies, `--execute` payloads, `wt step eval`, and the `worktree-path` template. Like `owner`, it is set only when a primary remote exists and its URL parses, so a template that must survive a remote-less repo guards it with `{% if remote_repo %}`.
+
 ## 0.71.0
 
 ### Improved

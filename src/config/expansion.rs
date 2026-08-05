@@ -51,6 +51,7 @@ pub const REPO_VARS: &[&str] = &[
     "repo",
     "repo_path",
     "owner",
+    "remote_repo",
     "primary_worktree_path",
     "default_branch",
     "remote",
@@ -2931,6 +2932,20 @@ mod tests {
             .is_ok()
         );
 
+        // Remote-derived repo vars validate in every scope
+        assert!(
+            validate_template("{{ owner }}/{{ remote_repo }}", hook, &test.repo, "test").is_ok()
+        );
+        assert!(
+            validate_template(
+                "{{ remote_repo }}",
+                ValidationScope::Alias,
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
         // Deprecated vars still valid in every scope
         assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
 
@@ -3155,6 +3170,7 @@ mod tests {
         repo                  = demo
         repo_path             = /tmp/demo
         owner                 = (unset)
+        remote_repo           = (unset)
         primary_worktree_path = (unset)
         default_branch        = (unset)
         remote                = (unset)

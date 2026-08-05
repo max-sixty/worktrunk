@@ -69,6 +69,7 @@ exit_code: 0
 [107m [0m repo                  = repo
 [107m [0m repo_path             = _REPO_
 [107m [0m owner                 = (unset)
+[107m [0m remote_repo           = (unset)
 [107m [0m primary_worktree_path = _REPO_
 [107m [0m default_branch        = main
 [107m [0m remote                = origin
