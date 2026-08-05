@@ -124,6 +124,8 @@ use worktrunk::git::{ErrorExt, Repository, current_or_recover};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, error_message, hint_message, info_message, warning_message};
 
+use crate::output::print_json;
+
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
@@ -2088,7 +2090,7 @@ pub fn handle_picker(
                 "rows": rows,
                 "entries": orchestrator.cache_entries_json(),
             });
-            println!("{}", serde_json::to_string_pretty(&dump)?);
+            print_json(&dump)?;
         }
         return Ok(());
     }

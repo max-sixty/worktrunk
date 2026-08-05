@@ -35,6 +35,8 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::{OutputFormat, StatuslineFormat};
 
+use crate::output::print_json;
+
 use commands::commit::HookGate;
 use commands::handle_picker;
 use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
@@ -215,7 +217,7 @@ fn handle_step_command(
                     "message": outcome.message,
                     "stage_mode": outcome.stage_mode,
                 });
-                println!("{}", serde_json::to_string_pretty(&payload)?);
+                print_json(&payload)?;
             }
             Ok(())
         }
@@ -273,7 +275,7 @@ fn handle_step_command(
                             "outcome": "no_net_changes",
                         }),
                     };
-                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                    print_json(&payload)?;
                 } else {
                     match result {
                         SquashResult::Squashed { .. } | SquashResult::NoNetChanges => {}
@@ -327,7 +329,7 @@ fn handle_step_command(
                 if let PushOutcome::MergeCommit { merge_sha } = outcome {
                     payload["merge_sha"] = serde_json::Value::String(merge_sha);
                 }
-                println!("{}", serde_json::to_string_pretty(&payload)?);
+                print_json(&payload)?;
             }
             Ok(())
         }
@@ -347,7 +349,7 @@ fn handle_step_command(
                         "outcome": "up_to_date",
                     }),
                 };
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                print_json(&output)?;
             } else if let RebaseResult::UpToDate(branch) = &result {
                 eprintln!(
                     "{}",
@@ -399,7 +401,7 @@ fn handle_step_command(
                         "branch": branch,
                     }),
                 };
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                print_json(&output)?;
             } else if let commands::PromoteResult::AlreadyInMain(branch) = &result {
                 eprintln!(
                     "{}",

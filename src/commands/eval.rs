@@ -11,6 +11,7 @@ use worktrunk::styling::{eprintln, format_with_gutter, info_message, println, ve
 
 use crate::cli::SwitchFormat;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::output::print_json;
 
 /// Template name reported in errors, the `-v` expansion view, and JSON output.
 const EVAL_NAME: &str = "eval";
@@ -63,7 +64,7 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
                 "template": template,
                 "result": result,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         }
     }
     Ok(())

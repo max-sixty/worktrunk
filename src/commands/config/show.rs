@@ -30,6 +30,7 @@ use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
+use crate::output::print_json;
 
 /// Handle the config show command
 pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()> {
@@ -157,7 +158,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "exists": system_exists,
         },
     });
-    worktrunk::styling::println!("{}", serde_json::to_string_pretty(&output)?);
+    print_json(&output)?;
     Ok(())
 }
 
