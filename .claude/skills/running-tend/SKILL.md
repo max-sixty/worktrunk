@@ -228,7 +228,11 @@ config overrides](https://worktrunk.dev/config/#inline-config-overrides-config-s
 "let me select `<some existing config value>` per invocation without changing
 my stored config" is usually **already met**, and the reply is a
 `--config-set` recipe — plus, where the docs never connect the flag to that
-setting, a docs fix.
+setting, a docs fix. "Already met" covers the pinning, not the whole
+request: on #3696 max-sixty also took two residual gaps — the docs gap, and
+JSON mode degrading to schema 1 instead of erroring on an out-of-range
+value — so weigh the rest of the ask on its own merits rather than closing
+it as answered.
 
 Reading the resolver won't reveal this: it reads `repo.config().<key>` and
 shows no sign of the layer above it. So before writing "there's no way to do
