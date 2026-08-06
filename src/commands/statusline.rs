@@ -935,8 +935,7 @@ fn run_json() -> Result<()> {
             let envelope = list::json_v2::envelope_with_items(&repo, None, collected, vec![]);
             print_json(&envelope)
         } else {
-            println!("[]");
-            Ok(())
+            print_json(&serde_json::json!([]))
         }
     };
 
