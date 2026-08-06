@@ -429,8 +429,9 @@ jobs:
     environment:
       name: tend
       # A secret scope, not a deploy target — see .github/CLAUDE.md. The cron
-      # gate above keeps this off the workflow's push and pull_request
-      # triggers, whose refs the `tend` policy would refuse.
+      # gate above keeps this off the workflow's pull_request and
+      # workflow_dispatch triggers, whose refs the `tend` policy can refuse;
+      # its push trigger is `main`-only, which the policy already admits.
       deployment: false
     permissions:
       contents: read

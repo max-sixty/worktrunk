@@ -15,7 +15,7 @@ Workflows check `user.login == 'worktrunk-bot'` directly.
 |-------|---------|-----------|
 | `TEND_BOT_TOKEN` | Every workflow acting as `worktrunk-bot`, including the winget and Homebrew publish jobs | `tend` and `release` environments |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates Claude Code to the Anthropic API | repo level |
-| `CODECOV_TOKEN` | Uploads coverage from `coverage.yaml` | repo level, allowlisted in `.config/tend.yaml` |
+| `CODECOV_TOKEN` | Uploads coverage from `ci.yaml` and `coverage.yaml` | repo level, allowlisted in `.config/tend.yaml` |
 
 ## Merge restriction
 
@@ -32,10 +32,10 @@ needs, since a job that joins an environment can read every secret in it:
 
 | Environment | Admits | Secret | Read by |
 |-------------|--------|--------|---------|
-| `tend` | `main` | `TEND_BOT_TOKEN` | every `tend-*.yaml` job, `append-gist`, both `create-issue-on-*-failure` jobs |
+| `tend` | `main` | `TEND_BOT_TOKEN` | every `tend-*.yaml` job but `relay`, `append-gist`, both `create-issue-on-*-failure` jobs |
 | `release` | `v*` tags | `AUR_SSH_PRIVATE_KEY`, `TEND_BOT_TOKEN` | `publish-aur`, `publish-winget`, `publish-homebrew` |
 | `signing` | `v*` tags | `SIGNPATH_API_TOKEN` | `build-local-artifacts` |
-| `github-pages` | `main` | none — OIDC only | `publish-docs` |
+| `github-pages` | `main` | none — OIDC only | `deploy-docs` |
 
 The deployment branch policy is the gate: a job naming an environment runs
 only from a ref the policy admits, so a workflow pushed to a feature branch is
