@@ -485,6 +485,17 @@
       ],
       "type": "string"
     },
+    "JsonOperation": {
+      "description": "[`InProgressOperation`] wire values. The domain enum's `strum` names are\nthe same strings, but going through an exhaustive match is what makes a\nsixth variant a compile error here instead of a value that appears in\npublished output with nothing to catch it.",
+      "enum": [
+        "merge",
+        "rebase",
+        "cherry_pick",
+        "revert",
+        "bisect"
+      ],
+      "type": "string"
+    },
     "JsonPr": {
       "description": "Open PR/MR facts.",
       "properties": {
@@ -662,8 +673,8 @@
           "type": "boolean"
         },
         "operation": {
-          "$ref": "#/$defs/Nullable_string",
-          "description": "In-progress operation: `\"rebase\"`, `\"merge\"`, `\"cherry_pick\"`,\n`\"revert\"`, or `\"bisect\"`; absent when none, null while unresolved."
+          "$ref": "#/$defs/Nullable_JsonOperation",
+          "description": "In-progress operation; absent when none, null while unresolved."
         },
         "path": {
           "description": "Filesystem path.",
@@ -721,6 +732,16 @@
       "anyOf": [
         {
           "$ref": "#/$defs/JsonIntegration"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "Nullable_JsonOperation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JsonOperation"
         },
         {
           "type": "null"

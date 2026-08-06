@@ -32,7 +32,8 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::{
-    GitRepoInfo, IntegrationReason, IntegrationSignals, Repository, check_integration,
+    GitRepoInfo, InProgressOperation, IntegrationReason, IntegrationSignals, Repository,
+    check_integration,
 };
 
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
@@ -249,13 +250,38 @@ pub struct JsonWorktreeV2 {
     /// Another worktree has the same branch checked out.
     pub duplicate_branch: bool,
 
-    /// In-progress operation: `"rebase"`, `"merge"`, `"cherry_pick"`,
-    /// `"revert"`, or `"bisect"`; absent when none, null while unresolved.
+    /// In-progress operation; absent when none, null while unresolved.
     #[serde(skip_serializing_if = "Tri::is_absent")]
-    pub operation: Tri<&'static str>,
+    pub operation: Tri<JsonOperation>,
 
     /// Working-tree state; null while unresolved.
     pub changes: Option<JsonChanges>,
+}
+
+/// [`InProgressOperation`] wire values. The domain enum's `strum` names are
+/// the same strings, but going through an exhaustive match is what makes a
+/// sixth variant a compile error here instead of a value that appears in
+/// published output with nothing to catch it.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonOperation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
+impl From<InProgressOperation> for JsonOperation {
+    fn from(operation: InProgressOperation) -> Self {
+        match operation {
+            InProgressOperation::Merge => Self::Merge,
+            InProgressOperation::Rebase => Self::Rebase,
+            InProgressOperation::CherryPick => Self::CherryPick,
+            InProgressOperation::Revert => Self::Revert,
+            InProgressOperation::Bisect => Self::Bisect,
+        }
+    }
 }
 
 /// Reason payload for `locked` / `prunable`.
@@ -1235,11 +1261,10 @@ mod tests {
         item
     }
 
-    /// The derived schema must generate cleanly — `Tri<T>`'s JsonSchema
-    /// delegation to `Option<T>` is only exercised here until the schema
-    /// export ships.
+    /// `JsonIntegrationReason` covers every `IntegrationReason`, under the
+    /// snake_case wire names schema 2 publishes.
     #[test]
-    fn test_integration_reason_str_covers_every_reason() {
+    fn test_integration_reason_wire_names() {
         let cases = [
             (IntegrationReason::SameCommit, "same_commit"),
             (IntegrationReason::Ancestor, "ancestor"),
@@ -1431,6 +1456,18 @@ mod tests {
             },
         ));
 
+        // A worktree row: `worktree` and its subtree appear nowhere else.
+        items.push(convert(
+            &worktree_item(
+                "worktree",
+                WorktreeData {
+                    git_operation: Some(Some(InProgressOperation::Rebase)),
+                    ..Default::default()
+                },
+            ),
+            collected,
+        ));
+
         // Every CI status, over both sources.
         for source in [CiSource::PullRequest, CiSource::Branch] {
             for ci in [
@@ -1489,6 +1526,17 @@ mod tests {
         let schema = schema_document();
         let validator = jsonschema::validator_for(&schema).expect("schema compiles");
         let instance = serde_json::to_value(&envelope).unwrap();
+
+        // A battery built only from branch rows would omit `worktree`
+        // entirely, and validate a document the schema never had to describe.
+        assert!(
+            instance["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| !item["worktree"]["operation"].is_null()),
+            "battery no longer covers the worktree subtree"
+        );
         let errors: Vec<String> = validator
             .iter_errors(&instance)
             .map(|e| format!("{}: {e}", e.instance_path()))
