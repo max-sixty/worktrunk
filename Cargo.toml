@@ -324,6 +324,7 @@ vt100 = "0.16.2"
 ansi-to-html = "0.2.3"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
+jsonschema = { version = "0.49", default-features = false }
 
 [[bench]]
 name = "alias"

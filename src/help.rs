@@ -466,31 +466,10 @@ Commands with schemas: list"
         process::exit(2);
     }
 
-    // The serialize contract, not schemars' default deserialize one: this
-    // describes a document `wt` writes. The two disagree on `required` —
-    // under the deserialize contract a `skip_serializing_if` field is
-    // required (nothing supplies it on the way in), so the schema would
-    // reject the very output it documents.
-    let settings = schemars::generate::SchemaSettings::default().for_serialize();
-    let schema = schemars::SchemaGenerator::new(settings)
-        .into_root_schema_for::<crate::commands::list::json_v2::JsonEnvelope>();
-
-    let mut value = serde_json::to_value(&schema).expect("schema serializes");
-    let object = value.as_object_mut().expect("schema is an object");
-    // Zola serves docs/static/ at the site root, so this is where the file
-    // the docs sync commits to docs/static/schema/list-v2.json is reachable.
-    object.insert(
-        "$id".to_string(),
-        serde_json::Value::String("https://worktrunk.dev/schema/list-v2.json".to_string()),
-    );
-    object.insert(
-        "title".to_string(),
-        serde_json::Value::String("wt list --format=json (schema 2)".to_string()),
-    );
-
+    let schema = crate::commands::list::json_v2::schema_document();
     println!(
         "{}",
-        serde_json::to_string_pretty(&value).expect("schema serializes")
+        serde_json::to_string_pretty(&schema).expect("schema serializes")
     );
 }
 

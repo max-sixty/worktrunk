@@ -99,6 +99,35 @@ pub struct JsonEnvelope {
     pub items: Vec<JsonItemV2>,
 }
 
+/// The published JSON Schema for [`JsonEnvelope`], as a JSON value.
+///
+/// `wt list --print-schema` prints this and `test_docs_are_in_sync` commits it
+/// to `docs/static/schema/list-v2.json`; it lives here so the document and the
+/// types it describes stay in one place, and so `test_schema_accepts_envelopes`
+/// checks the same document that ships.
+///
+/// Generated under schemars' *serialize* contract. The default deserialize
+/// contract marks a `skip_serializing_if` field required — nothing supplies it
+/// on the way in — which would make the schema reject the output it documents.
+pub fn schema_document() -> serde_json::Value {
+    let settings = schemars::generate::SchemaSettings::default().for_serialize();
+    let schema = schemars::SchemaGenerator::new(settings).into_root_schema_for::<JsonEnvelope>();
+
+    let mut value = serde_json::to_value(&schema).expect("schema serializes");
+    let object = value.as_object_mut().expect("schema is an object");
+    // Zola serves docs/static/ at the site root, so this is where the
+    // committed docs/static/schema/list-v2.json is reachable.
+    object.insert(
+        "$id".to_string(),
+        "https://worktrunk.dev/schema/list-v2.json".into(),
+    );
+    object.insert(
+        "title".to_string(),
+        "wt list --format=json (schema 2)".into(),
+    );
+    value
+}
+
 /// Repo-wide facts.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct JsonRepo {
@@ -1368,6 +1397,105 @@ mod tests {
                 mergeable: None,
                 repo: None,
             })
+        );
+    }
+
+    /// The published schema must accept what `wt list --format=json`
+    /// actually writes.
+    ///
+    /// schemars derives the document from the types without ever seeing
+    /// output, so nothing else pins the two together. This caught the schema
+    /// being generated under the deserialize contract, where every
+    /// `skip_serializing_if` field is required and the document rejects its
+    /// own output.
+    ///
+    /// The battery walks the axes the schema is most likely to get wrong:
+    /// every `CiStatus` (which drives the `pr`/`checks` tri-state arms and
+    /// `JsonCheckStatus`) and every `MainState` (which drives
+    /// `JsonMainState`).
+    #[test]
+    fn test_schema_accepts_envelopes() {
+        let collected = Collected {
+            ci: true,
+            summary: true,
+        };
+
+        let mut items = Vec::new();
+
+        // Bare row: every gated family absent.
+        items.push(convert(
+            &item_with("bare"),
+            Collected {
+                ci: false,
+                summary: false,
+            },
+        ));
+
+        // Every CI status, over both sources.
+        for source in [CiSource::PullRequest, CiSource::Branch] {
+            for ci in [
+                CiStatus::Passed,
+                CiStatus::Running,
+                CiStatus::Failed,
+                CiStatus::Conflicts,
+                CiStatus::NoCI,
+                CiStatus::Error,
+            ] {
+                let mut item = item_with("ci");
+                item.pr_status = Some(Some(PrStatus {
+                    url: Some("https://github.com/org/repo/pull/7".to_string()),
+                    number: Some(PrRef::pr(7)),
+                    review_state: Some(ReviewState::Approved),
+                    ..pr_status(ci, source)
+                }));
+                items.push(convert(&item, collected));
+            }
+        }
+
+        // Every collapsed default-branch state.
+        for state in [
+            MainState::None,
+            MainState::IsMain,
+            MainState::WouldConflict,
+            MainState::Empty,
+            MainState::SameCommit,
+            MainState::Integrated(IntegrationReason::PatchIdMatch),
+            MainState::Orphan,
+            MainState::Diverged,
+            MainState::Ahead,
+            MainState::Behind,
+        ] {
+            let mut item = item_with("state");
+            item.status_symbols.main_state = Some(state);
+            items.push(convert(&item, collected));
+        }
+
+        // Requested-but-undetermined: the null arm of the absence rule.
+        let mut seeded = item_with("seeded");
+        seeded.summary = Some(None);
+        seeded.pr_status = Some(None);
+        items.push(convert(&seeded, collected));
+
+        let envelope = JsonEnvelope {
+            schema: 2,
+            repo: JsonRepo {
+                default_branch: Some("main".to_string()),
+                forge: None,
+            },
+            collected,
+            items,
+        };
+
+        let schema = schema_document();
+        let validator = jsonschema::validator_for(&schema).expect("schema compiles");
+        let instance = serde_json::to_value(&envelope).unwrap();
+        let errors: Vec<String> = validator
+            .iter_errors(&instance)
+            .map(|e| format!("{}: {e}", e.instance_path()))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "schema rejected its own output:\n{errors:#?}"
         );
     }
 
