@@ -31,16 +31,12 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "statusline.rs",
     // Table and summary output for wt list
     "list/collect/mod.rs",
-    // JSON output for wt list --format=json
-    "list/mod.rs",
     // State data output (branch names, previous worktree, etc.)
     "config/state.rs",
     // Hint list output
     "config/hints.rs",
     // Alias introspection output (show / dry-run), intended to be pipeable
     "config/alias.rs",
-    // Alias --help hint output (conventional `--help` destination)
-    "alias.rs",
     // Template evaluation output for scripting
     "eval.rs",
     // LLM prompt output for wt step commit --show-prompt and squash --show-prompt
@@ -50,27 +46,15 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "step/copy_ignored.rs",
     // wt step prune dry-run plan (human preview + --format=json)
     "step/prune.rs",
-    // JSON output for wt step relocate --format=json
-    "step/relocate.rs",
     // wt step relocate dry-run human preview (show_dry_run_preview)
     "relocate.rs",
     // wt config shell install/uninstall --dry-run preview (the interactive
     // `?` re-preview still goes to stderr)
     "configure_shell.rs",
-    // Dry-run cache inventory dump (WORKTRUNK_PICKER_DRY_RUN)
-    "picker/mod.rs",
     // JSON output for wt switch --format=json
     "worktree/switch.rs",
-    // JSON output for wt config show --format=json
-    "config/show.rs",
     // Migrated TOML output for wt config update --print (pipeable)
     "config/update.rs",
-    // JSON output for wt step for-each --format=json
-    "for_each.rs",
-    // JSON output for wt merge --format=json
-    "merge.rs",
-    // JSON output for wt remove --format=json
-    "remove.rs",
     // Hook listing for wt hook show (paged), and the wt hook --dry-run preview
     "hook_commands.rs",
 ];
