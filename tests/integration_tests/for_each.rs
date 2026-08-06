@@ -259,10 +259,6 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_json_emitted_on_signal_abort(repo: TestRepo) {
-    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
-    let marker_path = marker_dir.path().to_string_lossy().to_string();
-    let shell_cmd = format!("touch {marker_path}/$(basename \"$(pwd)\") && kill -TERM $$");
-
     let output = repo
         .wt_command()
         .args([
@@ -272,7 +268,7 @@ fn test_for_each_json_emitted_on_signal_abort(repo: TestRepo) {
             "--",
             "sh",
             "-c",
-            &shell_cmd,
+            "kill -TERM $$",
         ])
         .output()
         .expect("run wt step for-each");
