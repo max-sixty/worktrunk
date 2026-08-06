@@ -64,10 +64,10 @@ pre-rendered ANSI survives a non-tty stdout.
 **`--format=json` answers** go through `crate::output::print_json`, never a
 hand-rolled `println!("{}", serde_json::to_string_pretty(&v)?)`. It serializes
 pretty with one trailing newline and prints through anstream, so no
-`--format=json` surface panics when its consumer stops reading. Thirty call
-sites had open-coded those two lines and twenty-six of those picked std's
-macro, which is what made `wt config state get --format=json | head -3` panic
-while `wt config show --format=json | head -3` exited cleanly. `wt switch
+`--format=json` surface panics when its consumer stops reading. Before that,
+thirty call sites had open-coded those two lines, and whether any one of them
+panicked under `| head -3` came down to which `println!` its module happened
+to import. `wt switch
 --format=json` is the one non-caller: it emits its single result as one
 compact line (still through anstream's `println!`), because that is what a
 shell loop reads.
