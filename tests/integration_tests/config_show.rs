@@ -4080,8 +4080,7 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(repo: TestRepo) {
         String::from_utf8_lossy(&created.stderr)
     );
     let stdout = String::from_utf8(created.stdout).unwrap();
-    let created_json: serde_json::Value =
-        serde_json::from_str(stdout.lines().last().expect("wt printed no JSON")).unwrap();
+    let created_json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let live = std::path::PathBuf::from(created_json["path"].as_str().unwrap());
     assert!(live.join(".git").exists(), "a linked worktree has a .git");
 

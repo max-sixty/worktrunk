@@ -204,6 +204,9 @@
             bash
             zsh
             fish
+            # The plugin hooks parse their stdin with jq, and the
+            # WorktreeRemove hook test runs the real command
+            jq
 
             # Development tools
             git
