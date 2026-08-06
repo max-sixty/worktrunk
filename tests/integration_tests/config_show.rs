@@ -3986,6 +3986,116 @@ fn test_claude_hook_commands_parse_in_all_shells() {
     }
 }
 
+/// Claude Code fires `WorktreeRemove` with the path it recorded at creation,
+/// and that path can outlive the worktree in more than one way. #3493 covered
+/// the recorded path being gone (`[ -e "$p" ]`). The third state is a path that
+/// *exists* but holds no worktree — a skeleton directory left behind by an
+/// interrupted create or remove: no `.git`, invisible to both `git worktree
+/// list` and `wt list`, and never cleaned up by prune. The existence guard let
+/// it through to `wt remove <path>`, which resolves a path naming no worktree as
+/// a branch name and exits 1 (`No branch named …`); Claude Code reads that as a
+/// failed removal and keeps the session row forever, so it can never be deleted
+/// with Ctrl+X (#3753).
+///
+/// The guard therefore tests for git's marker rather than for the directory:
+/// every linked worktree carries a `.git` file, and a dirty / locked / unmerged
+/// one still does, so genuine failures keep surfacing loudly (#2939). Both
+/// directions are pinned below — a skeleton is a no-op, a live worktree is still
+/// removed — so a blanket `exit 0` can't satisfy this test. It runs the real
+/// command out of `hooks.json`, which parses its stdin with `jq`.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[rstest]
+fn test_worktree_remove_hook_skips_path_holding_no_worktree(repo: TestRepo) {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let command = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeRemove hook must define a command")
+        .to_owned();
+
+    // Fire the hook exactly as Claude Code does: the recorded path on stdin,
+    // the plugin root and project dir in the environment.
+    let run_hook = |worktree_path: &std::path::Path| {
+        let mut cmd = std::process::Command::new("bash");
+        repo.configure_wt_cmd(&mut cmd);
+        let mut child = cmd
+            .args(["-c", &command])
+            .env("WORKTRUNK_BIN", crate::common::wt_bin())
+            .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
+            .env("CLAUDE_PROJECT_DIR", repo.root_path())
+            .current_dir(repo.root_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn bash");
+        let payload = serde_json::json!({ "worktree_path": worktree_path.to_str().unwrap() });
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+
+    // A skeleton directory: exists, holds no worktree, has no `.git`.
+    let skeleton = repo.root_path().join(".claude/worktrees/ghost");
+    fs::create_dir_all(skeleton.join("apps")).unwrap();
+    let output = run_hook(&skeleton);
+    assert!(
+        output.status.success(),
+        "hook must be a no-op for a path holding no worktree, got {}:\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        skeleton.exists(),
+        "the hook must leave a directory it doesn't own in place"
+    );
+
+    // A live worktree is still removed — leniency is scoped to "no worktree
+    // here", not a blanket success.
+    let created = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "hook-live",
+            "--no-cd",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "failed to create the worktree under test:\n{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let stdout = String::from_utf8(created.stdout).unwrap();
+    let created_json: serde_json::Value =
+        serde_json::from_str(stdout.lines().last().expect("wt printed no JSON")).unwrap();
+    let live = std::path::PathBuf::from(created_json["path"].as_str().unwrap());
+    assert!(live.join(".git").exists(), "a linked worktree has a .git");
+
+    let output = run_hook(&live);
+    assert!(
+        output.status.success(),
+        "hook must still remove a live worktree, got {}:\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!live.exists(), "the hook must remove a real worktree");
+}
+
 // ==================== Plugin Install-Statusline Tests ====================
 
 #[rstest]
