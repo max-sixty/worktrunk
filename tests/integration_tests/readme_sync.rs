@@ -2578,6 +2578,52 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
     (errors, updated_files)
 }
 
+/// Generate `docs/static/schema/list-v2.json` from `wt list --print-schema`,
+/// publishing it at the `$id` the document carries
+/// (`https://worktrunk.dev/schema/list-v2.json`).
+///
+/// Shells out rather than calling `schema_for!` directly: the `JsonEnvelope`
+/// it derives from lives in the bin-only `crate::commands` tree, which an
+/// integration test can't import. Same reason `sync_command_pages` runs
+/// `--help-page`.
+///
+/// A schemars upgrade rewrites this file. That shows up here as an ordinary
+/// out-of-sync failure, which is the intent — a consumer's schema changing
+/// under a dependency bump should be a reviewed diff.
+fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut updated_files = Vec::new();
+
+    let output = wt_command()
+        .args(["list", "--print-schema"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt list --print-schema");
+
+    if !output.status.success() {
+        errors.push(format!(
+            "'wt list --print-schema' failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+        return (errors, updated_files);
+    }
+
+    let generated = String::from_utf8_lossy(&output.stdout).to_string();
+    if generated.trim().is_empty() {
+        errors.push("Empty output from 'wt list --print-schema'".to_string());
+        return (errors, updated_files);
+    }
+
+    let rel_path = "docs/static/schema/list-v2.json";
+    let dst = project_root.join(rel_path);
+    if fs::read_to_string(&dst).unwrap_or_default() != generated {
+        write_tracked(&dst, &generated, rel_path, &mut updated_files);
+    }
+
+    (errors, updated_files)
+}
+
 /// Generate `docs/static/llms.txt` from `docs/content/*.md` front-matter,
 /// following the llms.txt spec (https://llmstxt.org/): H1, blockquote summary,
 /// optional intro prose, H2 section headings with bulleted link lists.
@@ -2816,6 +2862,13 @@ fn test_docs_are_in_sync() {
     // Step 5: Generate docs/static/llms.txt from docs/content front-matter
     let (llms_errors, llms_files) = sync_llms_txt(project_root);
     tag("llms.txt", llms_errors, llms_files);
+
+    // Step 5b: Generate docs/static/schema/list-v2.json from the derived
+    // schema. Grouped here because it also writes docs/static/, but it reads
+    // the binary rather than the markdown pipeline, so it has no ordering
+    // dependency on the steps above.
+    let (schema_errors, schema_files) = sync_json_schema(project_root);
+    tag("json schema", schema_errors, schema_files);
 
     // Step 6: Sync README from the now-fresh docs files. Runs last because
     // section extraction depends on docs/content/*.md being current.

@@ -180,6 +180,13 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
         process::exit(0);
     }
 
+    // Check for --print-schema flag (output the JSON Schema for a command's
+    // --format=json payload)
+    if args.iter().any(|a| a == "--print-schema") {
+        handle_print_schema(&args);
+        process::exit(0);
+    }
+
     // Check for --help-description flag (output meta description for docs)
     if args.iter().any(|a| a == "--help-description") {
         handle_help_description(&args);
@@ -429,6 +436,41 @@ fn handle_help_description(args: &[String]) {
     };
 
     print!("{description}");
+}
+
+/// Print the JSON Schema for a command's `--format=json` payload.
+///
+/// A developer entry point in the same family as `--help-page`: it exists so
+/// the docs sync (`test_docs_are_in_sync`) can regenerate a committed schema
+/// file by running the binary, which is the only way a `tests/` integration
+/// test can reach a type in the bin-only `crate::commands` tree.
+///
+/// One command has a schema today, because one payload is versioned. The
+/// subcommand is the axis a second would arrive on.
+fn handle_print_schema(args: &[String]) {
+    let subcommand = args
+        .iter()
+        .filter(|a| !a.starts_with('-') && !a.ends_with("/wt"))
+        .find(|a| !a.contains("target/") && *a != "wt");
+
+    let Some(subcommand) = subcommand else {
+        eprintln!(
+            "Usage: wt <command> --print-schema
+Commands with schemas: list"
+        );
+        process::exit(2);
+    };
+
+    if subcommand != "list" {
+        eprintln!("No JSON schema for '{subcommand}'; commands with schemas: list");
+        process::exit(2);
+    }
+
+    let schema = crate::commands::list::json_v2::schema_document();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&schema).expect("schema serializes")
+    );
 }
 
 /// Generate a full documentation page for a command.

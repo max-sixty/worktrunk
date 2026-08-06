@@ -294,6 +294,11 @@ and the per-item `repo` moves to the envelope's `repo.forge`.
 
 {{ terminal(cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.items[] | select(.display.state == __WT_QUOT__integrated__WT_QUOT__ or .display.state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Worktrees ahead of upstream (needs pushing)|||wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'") }}
 
+A JSON Schema for the envelope is published at
+[worktrunk.dev/schema/list-v2.json](https://worktrunk.dev/schema/list-v2.json).
+It describes what `wt` writes, so a field the absence rule can omit is
+optional there rather than required-and-null.
+
 ### Schema 1
 
 The original bare-array format, and the default while unset:

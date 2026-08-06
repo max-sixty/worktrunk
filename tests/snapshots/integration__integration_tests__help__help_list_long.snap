@@ -365,6 +365,11 @@ and the per-item [2mrepo[0m moves to the envelope's [2mrepo.forge[0m.
 [107m [0m [2m# Worktrees ahead of upstream (needs pushing)[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.upstream.ahead > 0) | .branch'[0m
 
+A JSON Schema for the envelope is published at
+worktrunk.dev/schema/list-v2.json.
+It describes what [2mwt[0m writes, so a field the absence rule can omit is
+optional there rather than required-and-null.
+
 [32mSchema 1[0m
 
 The original bare-array format, and the default while unset:
