@@ -426,6 +426,12 @@ jobs:
       - link-check
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
+    environment:
+      name: tend
+      # A secret scope, not a deploy target — see .github/CLAUDE.md. The cron
+      # gate above keeps this off the workflow's push and pull_request
+      # triggers, whose refs the `tend` policy would refuse.
+      deployment: false
     permissions:
       contents: read
       issues: write
