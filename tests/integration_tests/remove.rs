@@ -3750,6 +3750,32 @@ cleanup = "flyctl scale count 0"
 // --format=json
 // ============================================================================
 
+/// Removing the current worktree by omitting the branch takes a separate
+/// single-worktree path from the named removals above, with its own
+/// `--format=json` emission. The shape must match: one array, one item.
+#[rstest]
+fn test_remove_json_current_worktree_no_args(mut repo: TestRepo) {
+    repo.commit("initial");
+    let feature_wt = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--format=json", "--yes", "--foreground"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1, "one worktree removed, one item:\n{stderr}");
+    assert_eq!(items[0]["branch"], "feature");
+}
+
 #[rstest]
 fn test_remove_json(mut repo: TestRepo) {
     repo.commit("initial");
