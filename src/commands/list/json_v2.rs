@@ -1425,6 +1425,37 @@ mod tests {
         );
     }
 
+    /// Every path in `value` holding a non-null value, with array indices
+    /// collapsed to `*` so a path matches whichever battery row supplies it.
+    fn non_null_paths(value: &serde_json::Value) -> std::collections::BTreeSet<String> {
+        fn walk(
+            value: &serde_json::Value,
+            path: &str,
+            out: &mut std::collections::BTreeSet<String>,
+        ) {
+            if value.is_null() {
+                return;
+            }
+            out.insert(path.to_string());
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, child) in map {
+                        walk(child, &format!("{path}/{key}"), out);
+                    }
+                }
+                serde_json::Value::Array(entries) => {
+                    for child in entries {
+                        walk(child, &format!("{path}/*"), out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = std::collections::BTreeSet::new();
+        walk(value, "", &mut out);
+        out
+    }
+
     /// The published schema must accept what `wt list --format=json`
     /// actually writes.
     ///
@@ -1456,17 +1487,50 @@ mod tests {
             },
         ));
 
-        // A worktree row: `worktree` and its subtree appear nowhere else.
+        // A fully-populated worktree row. `worktree` and everything under it
+        // appear nowhere else in the battery, and each field left at its
+        // default takes one more type out of the validator's reach: git
+        // records a lock with or without a message, so both `JsonReason` arms
+        // need a row.
         items.push(convert(
             &worktree_item(
                 "worktree",
                 WorktreeData {
                     git_operation: Some(Some(InProgressOperation::Rebase)),
+                    locked: Some("manual lock".to_string()),
+                    prunable: Some(String::new()),
+                    working_tree_status: Some(Default::default()),
+                    has_conflicts: Some(true),
+                    working_tree_diff: Some(worktrunk::git::LineDiff {
+                        added: 3,
+                        deleted: 1,
+                    }),
                     ..Default::default()
                 },
             ),
             collected,
         ));
+
+        // An integrated row with an upstream and a dev server. Without the
+        // signals `check_integration` returns `None` and `integration` is
+        // null throughout, so `JsonIntegration` and `JsonIntegrationReason`
+        // would never meet a real object.
+        let mut integrated = item_with("integrated");
+        integrated.is_ancestor = Some(true);
+        integrated.is_orphan = Some(false);
+        integrated.has_file_changes = Some(false);
+        integrated.committed_trees_match = Some(true);
+        integrated.would_merge_add = Some(false);
+        integrated.is_patch_id_match = Some(true);
+        integrated.upstream = Some(UpstreamStatus {
+            remote: Some("origin".to_string()),
+            upstream_short: Some("origin/integrated".to_string()),
+            ahead: 2,
+            behind: 1,
+        });
+        integrated.url = Some("http://127.0.0.1:3000".to_string());
+        integrated.url_active = Some(true);
+        items.push(convert(&integrated, collected));
 
         // Every CI status, over both sources.
         for source in [CiSource::PullRequest, CiSource::Branch] {
@@ -1517,7 +1581,17 @@ mod tests {
             schema: 2,
             repo: JsonRepo {
                 default_branch: Some("main".to_string()),
-                forge: None,
+                // `forge` is the only place `GitRepoInfo` and
+                // `GitRepoProvider` appear in the document.
+                forge: Some(GitRepoInfo {
+                    url: "https://github.com/org/repo".to_string(),
+                    provider: worktrunk::git::GitRepoProvider::GitHub,
+                    host: "github.com".to_string(),
+                    owner: "org".to_string(),
+                    name: "repo".to_string(),
+                    project: None,
+                    remote: Some("origin".to_string()),
+                }),
             },
             collected,
             items,
@@ -1527,15 +1601,69 @@ mod tests {
         let validator = jsonschema::validator_for(&schema).expect("schema compiles");
         let instance = serde_json::to_value(&envelope).unwrap();
 
-        // A battery built only from branch rows would omit `worktree`
-        // entirely, and validate a document the schema never had to describe.
+        // Validating proves nothing about a type the battery never
+        // instantiates: a document can accept an envelope while whole
+        // subtrees of it go unexercised. Pin every type the document defines
+        // to a path that must carry a real value, so a new `Json*` type fails
+        // here until the battery reaches it, and a row that stops populating
+        // one fails too.
+        let reached = non_null_paths(&instance);
+        let pinned: &[(&str, &str)] = &[
+            ("CiSource", "/items/*/checks/source"),
+            ("Collected", "/collected"),
+            ("GitRepoInfo", "/repo/forge"),
+            ("GitRepoProvider", "/repo/forge/provider"),
+            ("JsonChanges", "/items/*/worktree/changes"),
+            ("JsonCheckStatus", "/items/*/checks/status"),
+            ("JsonChecks", "/items/*/checks"),
+            ("JsonDefaultBranch", "/items/*/default_branch"),
+            ("JsonDevServer", "/items/*/dev_server"),
+            ("JsonDiff", "/items/*/worktree/changes/diff"),
+            ("JsonDisplay", "/items/*/display"),
+            ("JsonHead", "/items/*/head"),
+            ("JsonIntegration", "/items/*/default_branch/integration"),
+            (
+                "JsonIntegrationReason",
+                "/items/*/default_branch/integration/reason",
+            ),
+            ("JsonItemV2", "/items/*"),
+            ("JsonMainState", "/items/*/display/state"),
+            ("JsonOperation", "/items/*/worktree/operation"),
+            ("JsonPr", "/items/*/pr"),
+            ("JsonReason", "/items/*/worktree/locked"),
+            ("JsonRepo", "/repo"),
+            ("JsonUpstream", "/items/*/upstream"),
+            ("JsonWorktreeV2", "/items/*/worktree"),
+            ("ReviewState", "/items/*/pr/review"),
+        ];
+
+        // `Nullable_X` is a schemars wrapper over `X`, which carries its own
+        // row, so it needs no path of its own.
+        let defined: Vec<&str> = schema["$defs"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !name.starts_with("Nullable_"))
+            .collect();
+        let unpinned: Vec<&str> = defined
+            .iter()
+            .copied()
+            .filter(|name| !pinned.iter().any(|(pinned_name, _)| pinned_name == name))
+            .collect();
         assert!(
-            instance["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|item| !item["worktree"]["operation"].is_null()),
-            "battery no longer covers the worktree subtree"
+            unpinned.is_empty(),
+            "published types with no path pinned here: {unpinned:?}"
+        );
+
+        let unreached: Vec<&str> = pinned
+            .iter()
+            .filter(|(_, path)| !reached.contains(*path))
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(
+            unreached.is_empty(),
+            "published types the battery never instantiates: {unreached:?}"
         );
         let errors: Vec<String> = validator
             .iter_errors(&instance)
