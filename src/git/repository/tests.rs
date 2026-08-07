@@ -1447,19 +1447,125 @@ fn resolve_worktree_falls_through_to_branch_only() {
 
     let test = TestRepo::with_initial_commit();
 
-    let resolved = test.repo.resolve_worktree("../nowhere").unwrap();
+    let resolved = test.repo.resolve_worktree("nowhere").unwrap();
     let ResolvedWorktree::BranchOnly { branch } = resolved else {
         panic!("an unmatched selector should resolve to branch-only");
     };
-    assert_eq!(branch, "../nowhere");
+    assert_eq!(branch, "nowhere");
 
     // A selector matching nothing names neither, so the error claims neither —
-    // suggesting `wt switch ../nowhere` to create a worktree would only fail.
-    let err = test.repo.require_worktree("../nowhere").unwrap_err();
+    // suggesting `wt switch nowhere` to create a worktree would only fail.
+    let err = test.repo.require_worktree("nowhere").unwrap_err();
     assert!(
         err.to_string().contains("No branch or worktree named"),
         "expected an unmatched-selector error, got: {err}"
     );
+}
+
+/// A selector git could never accept as a branch name is reported as the path
+/// it is, not as a missing branch — the `wt list --branches` the branch error
+/// suggests would never list it.
+#[test]
+fn unmatched_path_selector_is_reported_as_a_path() {
+    use crate::git::{ErrorExt, ResolvedWorktree};
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let ghost = test.root_path().join("ghost");
+    std::fs::create_dir(&ghost).unwrap();
+
+    // Resolution still falls through to branch-only; the selector's shape is
+    // read where the failure is reported, not where it is resolved.
+    let selector = ghost.to_str().unwrap();
+    let resolved = test.repo.resolve_worktree(selector).unwrap();
+    assert!(matches!(resolved, ResolvedWorktree::BranchOnly { .. }));
+
+    let rendered = test
+        .repo
+        .require_worktree(selector)
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("No worktree @") && rendered.contains("is not a worktree"),
+        "expected a directory-holds-no-worktree error, got: {rendered}"
+    );
+
+    // The same selector with nothing on disk drops the directory clause.
+    let rendered = test
+        .repo
+        .require_worktree(ghost.join("deeper").to_str().unwrap())
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("No worktree @") && !rendered.contains("is not a worktree"),
+        "expected a bare no-worktree error, got: {rendered}"
+    );
+
+    // A branch is what a state key names, so a path is refused rather than
+    // silently stored as one.
+    let err = test
+        .repo
+        .require_selected_branch(selector, "set marker")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("No worktree @"),
+        "expected a path selector to be refused as a branch, got: {err}"
+    );
+}
+
+/// The branch-name rules are git's, so git decides them.
+#[test]
+fn branch_name_matches_git_check_ref_format() {
+    use super::is_valid_branch_name;
+    use crate::shell_exec::Cmd;
+
+    let names = [
+        // Ordinary branch names, including the ones that look like paths.
+        "main",
+        "feature/auth",
+        "release/1.2/rc",
+        "-x",
+        "@",
+        "nowhere",
+        // Path spellings.
+        "/abs/path/ghost",
+        "./ghost",
+        "../ghost",
+        "~/code/myproject",
+        "ghost/",
+        ".claude/worktrees/ghost",
+        "C:\\code\\myproject",
+        // The remaining ref-format rules, one name each.
+        "",
+        "a//b",
+        "a..b",
+        "a.lock",
+        "a.lock/b",
+        "a.",
+        "a@{b",
+        "a b",
+        "a\tb",
+        "a~b",
+        "a^b",
+        "a:b",
+        "a?b",
+        "a*b",
+        "a[b",
+    ];
+
+    for name in names {
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
+            .args(["check-ref-format", &format!("refs/heads/{name}")])
+            .run()
+            .unwrap();
+        assert_eq!(
+            is_valid_branch_name(name),
+            out.status.success(),
+            "disagreed with git check-ref-format on {name:?}"
+        );
+    }
 }
 
 /// A branch that exists without a checkout is the one case where offering to

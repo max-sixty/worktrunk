@@ -313,6 +313,12 @@ impl Repository {
     ///    relative to `-C` (see [`resolve_input_path`])
     /// 5. otherwise the branch alone, which may or may not exist
     ///
+    /// A path that named no worktree lands in `BranchOnly` too, since step 5
+    /// asks nothing of the token. Whether a selector could have been a branch is
+    /// read where the failure is reported, by
+    /// [`GitError::for_path_selector`](crate::git::GitError::for_path_selector)
+    /// — the callers that go on to succeed never need the answer.
+    ///
     /// # Returns
     /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
     /// - `BranchOnly { branch }` when nothing is checked out under that name
@@ -375,8 +381,13 @@ impl Repository {
             ResolvedWorktree::Worktree {
                 branch: Some(branch),
                 ..
-            }
-            | ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            } => Ok(branch),
+            // A path selector reaches here only when it named no worktree, and
+            // it can't be the branch the caller is about to key state by.
+            ResolvedWorktree::BranchOnly { branch } => match GitError::for_path_selector(&branch) {
+                Some(err) => Err(err.into()),
+                None => Ok(branch),
+            },
             ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
                 action: Some(cformat!(
                     "{action} — <bold>{}</> is detached",
@@ -406,6 +417,9 @@ impl Repository {
 
     /// The error for a selector that resolved to a branch with no checkout.
     fn no_worktree_error(&self, branch: String) -> anyhow::Error {
+        if let Some(err) = GitError::for_path_selector(&branch) {
+            return err.into();
+        }
         match self.branch(&branch).exists_locally() {
             Ok(true) => GitError::WorktreeNotFound { branch }.into(),
             // A ref lookup that fails says nothing about the branch, so fall

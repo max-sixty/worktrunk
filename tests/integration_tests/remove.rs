@@ -418,6 +418,23 @@ fn test_remove_nonexistent_branch(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["nonexistent"], None));
 }
 
+/// A directory holding no worktree — a skeleton left behind by an interrupted
+/// create — is reported as the path it is. Resolution falls through to a branch
+/// name, and reporting that would send the user to a branch listing the path
+/// could never appear in.
+#[rstest]
+fn test_remove_path_holding_no_worktree(repo: TestRepo) {
+    let ghost = repo.root_path().join(".claude/worktrees/ghost");
+    std::fs::create_dir_all(&ghost).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[ghost.to_str().unwrap()],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_partial_success(mut repo: TestRepo) {
     // Create one valid worktree

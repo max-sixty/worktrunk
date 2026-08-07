@@ -158,6 +158,12 @@ impl RepositoryCliExt for Repository {
 
         let resolved = match target {
             RemoveTarget::BranchOnly(branch) => {
+                // A path that named no worktree lands here too, having fallen
+                // through resolution as a branch name. Nothing below applies to
+                // it: it has no local branch to delete and no remote to check.
+                if let Some(err) = GitError::for_path_selector(&branch) {
+                    return Err(err.into());
+                }
                 // The caller established there was no worktree, so one here
                 // appeared in between. Falling through would remove it — the
                 // wrong operation, and on a worktree nobody named — so the

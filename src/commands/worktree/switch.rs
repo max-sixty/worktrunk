@@ -851,16 +851,22 @@ fn plan_switch(
     // argument is the name of a branch that does not exist yet, and not when
     // Phase 1 rewrote the argument (a shortcut, `pr:`/`mr:`, a stripped remote
     // prefix), which is exactly when the literal token would be a nonsense path.
-    if !create
-        && target.branch == branch
-        && let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)?
-    {
-        let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
-        return Ok(SwitchPlan::Existing {
-            path: canonical,
-            branch: wt_branch,
-            new_previous,
-        });
+    if !create && target.branch == branch {
+        if let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)? {
+            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+            return Ok(SwitchPlan::Existing {
+                path: canonical,
+                branch: wt_branch,
+                new_previous,
+            });
+        }
+        // Nothing is registered there, and a path is all the argument could
+        // have been — so stop here rather than carrying it to Phase 4, which
+        // would report a missing branch and offer to create one under a name
+        // git rejects.
+        if let Some(err) = GitError::for_path_selector(branch) {
+            return Err(err.into());
+        }
     }
 
     // Phase 3: Compute expected path (only needed for create)

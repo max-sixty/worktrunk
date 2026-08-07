@@ -561,6 +561,9 @@ impl Repository {
                 }
                 return Err(GitError::StaleDefaultBranch { branch }.into());
             }
+            if let Some(err) = GitError::for_path_selector(&branch) {
+                return Err(err.into());
+            }
             return Err(GitError::BranchNotFound {
                 branch,
                 show_create_hint: true,

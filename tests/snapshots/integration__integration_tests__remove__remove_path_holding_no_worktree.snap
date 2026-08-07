@@ -1,10 +1,10 @@
 ---
-source: tests/integration_tests/security.rs
+source: tests/integration_tests/remove.rs
 info:
   program: wt
   args:
-    - switch
-    - __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6
+    - remove
+    - _REPO_/.claude/worktrees/ghost
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -35,8 +35,6 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
-    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -60,6 +58,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mNo worktree @ [1m'__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6'[22m[39m
-[2m↳[22m [2mTo list worktrees, run [4mwt list[24m[22m
-[0m
+[31m✗[39m [31mNo worktree @ [1m_REPO_/.claude/worktrees/ghost[22m[39m
+[2m↳[22m [2mThe directory exists but is not a worktree; to list worktrees, run [4mwt list[24m[22m
