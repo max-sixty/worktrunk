@@ -2,7 +2,7 @@
 
 use super::Repository;
 
-/// Whether git would accept `name` as a branch name.
+/// Whether `refs/heads/<name>` is a well-formed ref, which is what a branch is.
 ///
 /// A worktree selector is tried as a branch first and as a path second (see
 /// [`Repository::resolve_worktree`](super::Repository::resolve_worktree)), so

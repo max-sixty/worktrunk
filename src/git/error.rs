@@ -583,17 +583,16 @@ pub enum GitError {
     WorktreeSelectorNotFound {
         selector: String,
     },
-    /// A selector git could never read as a branch name matched no worktree.
+    /// A directory that holds no worktree, named by a selector no branch could
+    /// answer to.
     ///
     /// The third member of the family: [`GitError::WorktreeNotFound`] is a
     /// branch without a checkout, [`GitError::WorktreeSelectorNotFound`] a
-    /// token that could have been either, and this one a token that could only
-    /// have been a path. `directory_exists` separates a leftover directory —
-    /// which `wt list` will never show, and which only the user can delete —
-    /// from a path with nothing at it at all.
+    /// token that could have been either, and this one a directory `wt list`
+    /// will never show and only the user can delete. Built solely by
+    /// [`GitError::for_path_selector`], which owns both halves of that test.
     WorktreeNotFoundAtPath {
         path: PathBuf,
-        directory_exists: bool,
     },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
@@ -653,31 +652,46 @@ pub fn format_unresolved_conflicts(count: usize) -> String {
 }
 
 impl GitError {
-    /// The not-found error for a selector that could only ever have been a path.
+    /// The not-found error for a selector naming a directory that holds no
+    /// worktree — the skeleton an interrupted create or remove leaves behind.
     ///
     /// Every argument naming a worktree is tried as a branch first and as a
     /// path second, so each place that reports "no such thing" has to say which
-    /// of the two it was looking for. Calling this first answers that once:
-    /// `Some` when git could never accept the selector as a branch name, and
-    /// `None` when it could, leaving the caller's branch error — and its offer
-    /// to create the branch — in place.
+    /// of the two it was looking for. Answering that takes both halves below,
+    /// and neither alone is enough:
     ///
-    /// Without it a leftover directory reports as a missing *branch*, sending
-    /// the user to `wt list --branches` for a name that was never a branch, and
-    /// `wt switch` offers to create a branch git then rejects.
+    /// - Git could never accept the selector as a branch name, so branch-first
+    ///   never had a candidate. Alone this over-claims, because `~`, `^`, `:`
+    ///   and `@{` are ordinary revision syntax as well as characters no branch
+    ///   name may hold — `HEAD@{1}` would report as a path.
+    /// - A directory is there to name, which is what makes "the user meant a
+    ///   path" more than a guess. Alone this shadows a branch: `wt remove docs`
+    ///   means the branch even when `docs/` sits beside it.
+    ///
+    /// `None` when either half fails, leaving the caller's own error in place.
+    ///
+    /// Callers must already have established that no worktree is registered at
+    /// the path; each reaches this only after its own worktree lookup came up
+    /// empty. Skipping that makes the message false rather than merely vague —
+    /// a detached worktree is addressable only by its path, and calling one "no
+    /// worktree" contradicts the `wt list` the hint sends the user to.
     pub fn for_path_selector(selector: &str) -> Option<Self> {
         if super::repository::is_valid_branch_name(selector) {
             return None;
         }
-        // Lexical normalization only, so `wt remove ./x` names `<base>/x`
-        // rather than `<base>/./x`; the path is displayed, never opened.
-        let path =
-            normalize_path::NormalizePath::normalize(super::resolve_input_path(selector).as_path());
-        let directory_exists = path.is_dir();
-        Some(GitError::WorktreeNotFoundAtPath {
-            path,
-            directory_exists,
-        })
+        let path = super::resolve_input_path(selector);
+        // Lexical normalization, so `wt remove ./x` under `-C` names `<base>/x`
+        // rather than `<base>/./x`. Absolute paths only: popping `..` lexically
+        // off a relative path drops a component the cwd was going to supply, and
+        // `../repo.feature` — worktrunk's own sibling layout — would then both
+        // display wrong and probe the wrong directory.
+        let path = if path.is_absolute() {
+            normalize_path::NormalizePath::normalize(path.as_path())
+        } else {
+            path
+        };
+        path.is_dir()
+            .then_some(GitError::WorktreeNotFoundAtPath { path })
     }
 
     /// Styled title for this variant (first line, with inline `<bold>`
@@ -1428,19 +1442,17 @@ impl GitError {
                 )
             }
 
-            GitError::WorktreeNotFoundAtPath {
-                directory_exists, ..
-            } => {
+            GitError::WorktreeNotFoundAtPath { .. } => {
                 let title = self.title();
                 let list_cmd = suggest_command("list", &[], &[]);
-                let hint = if *directory_exists {
-                    cformat!(
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
                         "The directory exists but is not a worktree; to list worktrees, run <underline>{list_cmd}</>"
-                    )
-                } else {
-                    cformat!("To list worktrees, run <underline>{list_cmd}</>")
-                };
-                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+                    ))
+                )
             }
 
             GitError::RefCreateConflict {

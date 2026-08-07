@@ -97,15 +97,6 @@ fn worktree_errors_render() {
             "no worktree at a leftover directory",
             GitError::WorktreeNotFoundAtPath {
                 path: PathBuf::from("/tmp/repo/.claude/worktrees/ghost"),
-                directory_exists: true,
-            }
-            .render(),
-        ),
-        (
-            "no worktree at a path with nothing on it",
-            GitError::WorktreeNotFoundAtPath {
-                path: PathBuf::from("/tmp/repo/.claude/worktrees/ghost"),
-                directory_exists: false,
             }
             .render(),
         ),

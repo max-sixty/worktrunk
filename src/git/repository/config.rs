@@ -526,6 +526,13 @@ impl Repository {
     ///
     /// `resolved` is `target` after shortcut expansion; an expansion means the
     /// literal token was a symbol rather than a path.
+    ///
+    /// `None` covers both "no worktree there" and "a detached worktree there",
+    /// which is why neither caller reports an unresolved target as a path via
+    /// [`GitError::for_path_selector`] — that error asserts no worktree is
+    /// registered, and a detached one is reachable by path alone. A target is
+    /// also spelled in a wider vocabulary than a worktree selector, so
+    /// `HEAD@{1}` and `main^` reach here as ordinary revision syntax.
     fn target_branch_at_path(
         &self,
         target: Option<&str>,
@@ -560,9 +567,6 @@ impl Repository {
                     return Err(GitError::UnbornDefaultBranch { branch }.into());
                 }
                 return Err(GitError::StaleDefaultBranch { branch }.into());
-            }
-            if let Some(err) = GitError::for_path_selector(&branch) {
-                return Err(err.into());
             }
             return Err(GitError::BranchNotFound {
                 branch,

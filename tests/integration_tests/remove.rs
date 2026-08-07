@@ -419,18 +419,22 @@ fn test_remove_nonexistent_branch(repo: TestRepo) {
 }
 
 /// A directory holding no worktree — a skeleton left behind by an interrupted
-/// create — is reported as the path it is. Resolution falls through to a branch
-/// name, and reporting that would send the user to a branch listing the path
-/// could never appear in.
+/// create — is reported as the directory it is. Resolution falls through to a
+/// branch name, and reporting that would send the user to a branch listing the
+/// path could never appear in.
+///
+/// Spelled `../<sibling>`, which is both worktrunk's own layout and the shape
+/// that resolves against the cwd rather than against `-C`; the absolute form is
+/// covered at the unit boundary.
 #[rstest]
 fn test_remove_path_holding_no_worktree(repo: TestRepo) {
-    let ghost = repo.root_path().join(".claude/worktrees/ghost");
-    std::fs::create_dir_all(&ghost).unwrap();
+    let leftover = repo.root_path().parent().unwrap().join("repo.leftover");
+    std::fs::create_dir_all(&leftover).unwrap();
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
-        &[ghost.to_str().unwrap()],
+        &["../repo.leftover"],
         None
     ));
 }

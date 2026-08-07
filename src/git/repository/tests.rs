@@ -1462,11 +1462,16 @@ fn resolve_worktree_falls_through_to_branch_only() {
     );
 }
 
-/// A selector git could never accept as a branch name is reported as the path
-/// it is, not as a missing branch — the `wt list --branches` the branch error
-/// suggests would never list it.
+/// A directory holding no worktree is reported as the directory it is, rather
+/// than as a missing branch — the `wt list --branches` the branch error suggests
+/// would never list it.
+///
+/// Both halves of the test are exercised, since either alone over-claims: a
+/// selector git could accept as a branch name keeps the branch error even with a
+/// directory beside it, and a selector it could not keeps the branch error when
+/// nothing is on disk.
 #[test]
-fn unmatched_path_selector_is_reported_as_a_path() {
+fn directory_holding_no_worktree_is_reported_as_a_directory() {
     use crate::git::{ErrorExt, ResolvedWorktree};
     use crate::testing::TestRepo;
 
@@ -1491,19 +1496,7 @@ fn unmatched_path_selector_is_reported_as_a_path() {
         "expected a directory-holds-no-worktree error, got: {rendered}"
     );
 
-    // The same selector with nothing on disk drops the directory clause.
-    let rendered = test
-        .repo
-        .require_worktree(ghost.join("deeper").to_str().unwrap())
-        .unwrap_err()
-        .render_diagnostic()
-        .unwrap();
-    assert!(
-        rendered.contains("No worktree @") && !rendered.contains("is not a worktree"),
-        "expected a bare no-worktree error, got: {rendered}"
-    );
-
-    // A branch is what a state key names, so a path is refused rather than
+    // A branch is what a state key names, so a directory is refused rather than
     // silently stored as one.
     let err = test
         .repo
@@ -1511,8 +1504,56 @@ fn unmatched_path_selector_is_reported_as_a_path() {
         .unwrap_err();
     assert!(
         err.to_string().contains("No worktree @"),
-        "expected a path selector to be refused as a branch, got: {err}"
+        "expected a directory selector to be refused as a branch, got: {err}"
     );
+
+    // Nothing on disk: wt cannot tell a mistyped path from a mistyped branch,
+    // so the error claims neither.
+    let err = test
+        .repo
+        .require_worktree(ghost.join("deeper").to_str().unwrap())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {err}"
+    );
+
+    // A name git would accept as a branch is a branch, whatever sits beside it:
+    // `wt remove docs` means the branch even when `docs/` is right there.
+    std::fs::create_dir(test.root_path().join("docs")).unwrap();
+    let err = test.repo.require_worktree("docs").unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "a directory must not shadow a branch name, got: {err}"
+    );
+}
+
+/// A detached worktree is addressable only by its path, so a caller that has not
+/// established the path holds no worktree must not report one as absent.
+#[test]
+fn detached_worktree_path_is_never_reported_as_absent() {
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    test.detach_head_in_worktree("feature");
+    let selector = worktree_path.to_str().unwrap();
+
+    // The merge/rebase target accessors resolve a wider vocabulary than a
+    // worktree selector and cannot tell "no worktree here" from "a detached
+    // worktree here", so they leave the directory claim alone.
+    for err in [
+        test.repo.require_target_branch(Some(selector)).err(),
+        test.repo.require_target_ref(Some(selector)).err(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        assert!(
+            !err.to_string().contains("No worktree @"),
+            "a registered worktree must never be reported as absent, got: {err}"
+        );
+    }
 }
 
 /// The branch-name rules are git's, so git decides them.
@@ -1529,6 +1570,10 @@ fn branch_name_matches_git_check_ref_format() {
         "-x",
         "@",
         "nowhere",
+        // The `.lock` rule is case-sensitive and non-ASCII is fine — both are
+        // easy to over-reject when re-deriving the rules from prose.
+        "a.LOCK",
+        "café",
         // Path spellings.
         "/abs/path/ghost",
         "./ghost",
@@ -1547,6 +1592,7 @@ fn branch_name_matches_git_check_ref_format() {
         "a@{b",
         "a b",
         "a\tb",
+        "a\u{7f}b",
         "a~b",
         "a^b",
         "a:b",
