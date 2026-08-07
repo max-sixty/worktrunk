@@ -14,8 +14,11 @@
 /// came to exit 101 on the surface a prompt redraws on.
 ///
 /// Output a person reads is not this: `wt list` and the rest go through
-/// anstream, which strips on a pipe and honors `NO_COLOR` / `CLICOLOR_FORCE`
-/// as `wt --help` documents.
+/// anstream, which strips color when stdout isn't a terminal unless
+/// `CLICOLOR_FORCE` says otherwise. `NO_COLOR` doesn't reach the `wt list`
+/// table, whose terminal rendering is `ProgressiveTable` writing to a raw
+/// `std::io::stdout()` — `RenderTarget::detect` picks that path for every tty,
+/// so anstream only ever sees the piped case, where color is already off.
 ///
 /// A `BrokenPipe` is dropped and any other write error still panics — the
 /// same policy anstream's macros apply, so both printers fail the same way on
