@@ -79,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'p=$(jq -er .worktree_path) || exit 1; [ -e \"$p\" ] || exit 0; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$p\" remove --foreground \"$p\"'"
+            "command": "bash -c 'p=$(jq -er .worktree_path) || exit 1; [ -e \"$p/.git\" ] || exit 0; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$p\" remove --foreground \"$p\"'"
           }
         ]
       }

@@ -4003,6 +4003,132 @@ fn test_claude_hook_commands_parse_in_all_shells() {
     }
 }
 
+/// Claude Code fires `WorktreeRemove` with the path it recorded at creation, and
+/// that path can outlive the worktree in more than one way. #3493 covered the
+/// recorded path being gone. The third state is a path that *exists* but holds
+/// no worktree — a skeleton directory left by an interrupted create or remove:
+/// no `.git`, invisible to both `git worktree list` and `wt list`, and never
+/// cleaned up by prune. An existence guard let it through to `wt remove <path>`,
+/// which resolves a path naming no worktree as a branch name and exits 1 (`No
+/// branch named …` in-tree, `fatal: not a git repository` outside the repo).
+/// Claude Code reads that as a failed removal and keeps the session row, so the
+/// finished background session can never be deleted with Ctrl+X (#3753).
+///
+/// The guard therefore tests for git's marker rather than for the directory:
+/// every linked worktree carries a `.git` file, and a dirty / locked / unmerged
+/// one still does, so genuine failures keep surfacing loudly (#2939). All three
+/// directions are pinned below — a skeleton is a no-op, a clean worktree is
+/// still removed, a dirty one still fails — so neither a blanket `exit 0` nor a
+/// swallowed `wt remove` failure can satisfy this test. It runs the real command
+/// out of `hooks.json`, which parses its stdin with `jq`.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[rstest]
+fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) {
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::{Output, Stdio};
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let command = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeRemove hook must define a command")
+        .to_owned();
+
+    // Branched from `main` at HEAD, so its removal is the unremarkable case:
+    // clean worktree, merged branch, both go. Created before `run_hook` below
+    // takes its shared borrow of `repo`.
+    let live = repo.add_worktree("hook-live");
+
+    // Fire the hook exactly as Claude Code does: the recorded path on stdin, the
+    // plugin root in the environment. No `CLAUDE_PROJECT_DIR` — the hook
+    // resolves the repository from the worktree path via `-C "$p"` and must
+    // never consult a project dir (#3754), so setting one here would be dead
+    // setup.
+    let run_hook = |worktree_path: &Path| -> Output {
+        let mut cmd = std::process::Command::new("bash");
+        repo.configure_wt_cmd(&mut cmd);
+        let mut child = cmd
+            .args(["-c", &command])
+            .env("WORKTRUNK_BIN", crate::common::wt_bin())
+            .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
+            .current_dir(repo.root_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn bash");
+        let payload = serde_json::json!({ "worktree_path": worktree_path.to_str().unwrap() });
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let describe = |output: &Output| {
+        format!(
+            "got {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    };
+
+    // A skeleton directory: exists, holds no worktree, has no `.git`. Both
+    // shapes the issue reports — nested inside the repository, where git
+    // discovery walks up and answers for the *parent* (which is why
+    // `rev-parse --is-inside-work-tree` is not a usable test), and outside it,
+    // where git has nothing to walk up to.
+    for skeleton in [
+        repo.root_path().join(".claude/worktrees/ghost"),
+        repo.home_path().join("outside/ghost"),
+    ] {
+        fs::create_dir_all(skeleton.join("apps")).unwrap();
+        let output = run_hook(&skeleton);
+        assert!(
+            output.status.success(),
+            "hook must be a no-op for a path holding no worktree ({}); {}",
+            skeleton.display(),
+            describe(&output)
+        );
+        assert!(
+            skeleton.exists(),
+            "hook must leave a directory it doesn't own in place: {}",
+            skeleton.display()
+        );
+    }
+
+    // Leniency is scoped to "no worktree lives here", so a dirty worktree —
+    // which has a `.git` like any other — must still fail loudly rather than be
+    // swallowed alongside the skeletons.
+    assert!(live.join(".git").exists(), "a linked worktree has a .git");
+    fs::write(live.join("file.txt"), "uncommitted\n").unwrap();
+    let output = run_hook(&live);
+    assert!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("uncommitted changes"),
+        "hook must still refuse a dirty worktree, and for that reason; {}",
+        describe(&output)
+    );
+    assert!(live.exists(), "a refused removal must leave the worktree");
+
+    // And the same worktree, once clean, is still removed — so a blanket
+    // `exit 0` can't satisfy this test either.
+    repo.run_git_in(&live, &["checkout", "--", "file.txt"]);
+    let output = run_hook(&live);
+    assert!(
+        output.status.success(),
+        "hook must remove a live worktree; {}",
+        describe(&output)
+    );
+    assert!(!live.exists(), "the hook must remove a real worktree");
+}
+
 // ==================== Plugin Install-Statusline Tests ====================
 
 #[rstest]
