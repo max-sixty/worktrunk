@@ -40,7 +40,7 @@
 //   cargo bench --bench prune --features large-repository-benches prune_large_repository
 //
 // For phase attribution (scan vs per-candidate removal), trace one invocation
-// instead: `wt-perf setup generated --prune-candidates 4
+// instead: `wt-perf setup generated 0 0 --prune-candidates 4
 // --prune-backdrop 8 --path target/wt-prune-generated`, then
 // `wt-perf timeline -- -C target/wt-prune-generated step prune --dry-run --min-age 0s`
 // and read the `prune-gather` / `prune-scan` / `prune-check:*` /

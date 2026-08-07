@@ -192,7 +192,7 @@ impl FixtureRecipe {
             Self::Imported => {
                 clone_imported_at(base_path);
                 add_history_spread_branches(base_path, IMPORTED_HISTORY_SPREAD_BRANCHES);
-                add_heterogeneous_linked_worktrees(base_path, IMPORTED_TOTAL_WORKTREES - 1);
+                add_imported_linked_worktrees(base_path, IMPORTED_TOTAL_WORKTREES - 1);
             }
         }
     }
@@ -205,6 +205,24 @@ impl FixtureRecipe {
 pub fn add_heterogeneous_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
     let base_tip = head_sha(repo_path);
     add_heterogeneous_worktrees(repo_path, linked_worktrees, &base_tip);
+}
+
+/// Add the heterogeneous imported worktree population without leaving a clean
+/// worktree integrated into the default branch. The generated corpus retains
+/// that state; imported prune overlays need every pre-existing worktree to
+/// remain backdrop rather than becoming an incidental candidate.
+fn add_imported_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
+    add_heterogeneous_linked_worktrees(repo_path, linked_worktrees);
+    for i in (3..linked_worktrees).step_by(4) {
+        let worktree = linked_worktree_path(repo_path, &format!("wt-{i:04}"));
+        let marker = format!("imported_wt_{i}.txt");
+        std::fs::write(worktree.join(&marker), format!("imported worktree {i}\n")).unwrap();
+        run_git(&worktree, &["add", &marker]);
+        run_git(
+            &worktree,
+            &["commit", "-m", &format!("Advance imported worktree {i}")],
+        );
+    }
 }
 
 /// Build a `git` command isolated from host context, with the host's
@@ -1758,7 +1776,7 @@ mod tests {
     }
 
     #[test]
-    fn history_spread_branches_do_not_become_prune_candidates() {
+    fn imported_populations_do_not_become_prune_candidates() {
         let fixture = create_simple(&SimpleRepoConfig {
             commits_on_main: 12,
             files: 2,
@@ -1768,6 +1786,7 @@ mod tests {
         });
         let repo = fixture.path().to_path_buf();
         add_history_spread_branches(&repo, 4);
+        add_imported_linked_worktrees(&repo, 4);
 
         let mut fork_depths = Vec::new();
         for i in 0..4 {
@@ -1806,6 +1825,15 @@ mod tests {
                 "{branch} became content-integrated after the prune overlay"
             );
         }
+        assert!(
+            !run_git_ok(&repo, &["merge-base", "--is-ancestor", "wt-0003", "main"]),
+            "clean imported worktree became integrated after the prune overlay"
+        );
+        assert_ne!(
+            capture_git(&repo, &["merge-tree", "--write-tree", "main", "wt-0003"]),
+            main_tree,
+            "clean imported worktree became content-integrated after the prune overlay"
+        );
     }
 
     /// The generated fixture's population contract. Either local dimension may

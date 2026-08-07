@@ -257,7 +257,7 @@ metadata-pruning — `removal_needs_write` in `src/commands/step/prune.rs`) also
 wait for every in-flight check and removal to drain first.
 
 ```bash
-cargo run -p wt-perf -- setup generated --prune-candidates 4 --prune-backdrop 8 --path target/wt-prune-generated
+cargo run -p wt-perf -- setup generated 0 0 --prune-candidates 4 --prune-backdrop 8 --path target/wt-prune-generated
 # A freshly built fixture is already probe-cold (empty sha_cache).
 cargo run -p wt-perf -- timeline -- -C target/wt-prune-generated step prune --dry-run --min-age 0s
 cargo run -p wt-perf -- timeline -- -C target/wt-prune-generated step prune --min-age 0s
