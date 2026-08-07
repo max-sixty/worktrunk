@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree};
+use worktrunk::git::{BranchDeletionMode, ErrorExt, Repository, ResolvedWorktree};
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
@@ -132,7 +132,7 @@ fn validate_remove_targets(
             // the user's own token is still in hand — the picker and `wt step
             // prune` reach `prepare_worktree_removal` with a branch read off a
             // row, which is nobody's typed path.
-            ResolvedWorktree::BranchOnly { branch } => match GitError::for_path_selector(&branch) {
+            ResolvedWorktree::BranchOnly { branch } => match repo.path_selector_error(&branch) {
                 Some(err) => {
                     plans.record_error(err.into());
                     continue;

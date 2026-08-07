@@ -1557,6 +1557,34 @@ fn detached_worktree_target_is_reported_as_detached() {
     }
 }
 
+/// The directory claim checks for itself that nothing is registered at the path,
+/// rather than trusting the caller to have looked.
+///
+/// A shortcut is the case that breaks the trust: `resolve_worktree` skips its
+/// path lookup whenever one rewrote the argument, so `-` expanding to a
+/// worktree's own path arrives having matched nothing at all.
+#[test]
+fn path_selector_error_checks_for_a_registered_worktree() {
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    let selector = worktree_path.to_str().unwrap();
+
+    assert!(
+        test.repo.path_selector_error(selector).is_none(),
+        "a registered worktree's own path must never be reported as holding none"
+    );
+
+    // Reached through the shortcut, which is the route with no prior lookup.
+    test.repo.set_switch_previous(Some(selector)).unwrap();
+    let err = test.repo.require_worktree("-").unwrap_err();
+    assert!(
+        !err.to_string().contains("No worktree @"),
+        "an expanded shortcut naming a live worktree must not report it as absent, got: {err}"
+    );
+}
+
 /// A merge target naming a directory that holds no worktree gets the same
 /// answer as every other worktree argument, rather than an offer to create a
 /// branch git would reject.

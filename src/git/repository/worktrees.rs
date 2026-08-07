@@ -7,8 +7,11 @@ use std::sync::{LazyLock, Mutex};
 use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
+use normalize_path::NormalizePath;
 
-use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo, resolve_input_path};
+use super::{
+    GitError, Repository, ResolvedWorktree, WorktreeInfo, is_valid_branch_name, resolve_input_path,
+};
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
@@ -314,10 +317,11 @@ impl Repository {
     /// 5. otherwise the branch alone, which may or may not exist
     ///
     /// A path that named no worktree lands in `BranchOnly` too, since step 5
-    /// asks nothing of the token. Whether a selector could have been a branch is
-    /// read where the failure is reported, by
-    /// [`GitError::for_path_selector`](crate::git::GitError::for_path_selector)
-    /// — the callers that go on to succeed never need the answer.
+    /// asks nothing of the token — as does a shortcut whose expansion matched
+    /// nothing, which never reached step 4 at all. What the selector could have
+    /// meant is worked out where the failure is reported, by
+    /// [`path_selector_error`](Self::path_selector_error); the callers that go
+    /// on to succeed never need the answer.
     ///
     /// # Returns
     /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
@@ -384,7 +388,7 @@ impl Repository {
             } => Ok(branch),
             // A path selector reaches here only when it named no worktree, and
             // it can't be the branch the caller is about to key state by.
-            ResolvedWorktree::BranchOnly { branch } => match GitError::for_path_selector(&branch) {
+            ResolvedWorktree::BranchOnly { branch } => match self.path_selector_error(&branch) {
                 Some(err) => Err(err.into()),
                 None => Ok(branch),
             },
@@ -415,9 +419,61 @@ impl Repository {
         }
     }
 
+    /// The not-found error for a selector naming a directory that holds no
+    /// worktree — the skeleton an interrupted create or remove leaves behind.
+    ///
+    /// Every argument naming a worktree is tried as a branch first and as a
+    /// path second, so each place that reports "no such thing" has to say which
+    /// of the two it was looking for. Answering that takes all three tests
+    /// below, and no two of them are enough:
+    ///
+    /// - Git could never accept the selector as a branch name, so branch-first
+    ///   never had a candidate. Without this, revision syntax reports as a
+    ///   path: `~`, `^`, `:` and `@{` are ordinary vocabulary for naming a
+    ///   commit as well as characters no branch name may hold.
+    /// - A directory is there to name, which is what makes "the user meant a
+    ///   path" more than a guess. Without this, a name shadows a branch:
+    ///   `wt remove docs` means the branch even when `docs/` sits beside it.
+    /// - No worktree is registered there, which is what the error asserts. A
+    ///   detached worktree is reachable by its path and by nothing else, so
+    ///   without this the message contradicts the `wt list` its hint points at.
+    ///   The check is here rather than left to callers because a caller cannot
+    ///   be relied on to have made it: `resolve_worktree` skips the path lookup
+    ///   whenever a shortcut rewrote the argument, so `-` expanding to a
+    ///   worktree's path arrives having matched nothing.
+    ///
+    /// `None` when any test fails, leaving the caller's own error in place.
+    pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
+        if is_valid_branch_name(selector) {
+            return None;
+        }
+        let path = resolve_input_path(selector);
+        // Tidy the join, so `wt remove ./x` under `-C` names `<base>/x` rather
+        // than `<base>/./x`. Only an absolute path may have its `..` popped:
+        // doing that to a relative one drops a component the cwd was going to
+        // supply, and `../repo.feature` — worktrunk's own sibling layout —
+        // would then both display wrong and probe the wrong directory.
+        // `Path::components` drops the interior `.` either way, keeping a
+        // leading one and every `..`.
+        let path: PathBuf = if path.is_absolute() {
+            NormalizePath::normalize(path.as_path())
+        } else {
+            path.components().collect()
+        };
+        if !path.is_dir() {
+            return None;
+        }
+        // A failed listing says nothing about what is registered, so it falls
+        // back to the message that claims less.
+        if self.worktree_at_path(&path).ok().flatten().is_some() {
+            return None;
+        }
+        Some(GitError::WorktreeNotFoundAtPath { path })
+    }
+
     /// The error for a selector that resolved to a branch with no checkout.
     fn no_worktree_error(&self, branch: String) -> anyhow::Error {
-        if let Some(err) = GitError::for_path_selector(&branch) {
+        if let Some(err) = self.path_selector_error(&branch) {
             return err.into();
         }
         match self.branch(&branch).exists_locally() {

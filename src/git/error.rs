@@ -590,7 +590,8 @@ pub enum GitError {
     /// branch without a checkout, [`GitError::WorktreeSelectorNotFound`] a
     /// token that could have been either, and this one a directory `wt list`
     /// will never show and only the user can delete. Built solely by
-    /// [`GitError::for_path_selector`], which owns both halves of that test.
+    /// [`Repository::path_selector_error`](crate::git::Repository::path_selector_error),
+    /// which owns every test that has to pass before this claim is safe.
     WorktreeNotFoundAtPath {
         path: PathBuf,
     },
@@ -652,50 +653,6 @@ pub fn format_unresolved_conflicts(count: usize) -> String {
 }
 
 impl GitError {
-    /// The not-found error for a selector naming a directory that holds no
-    /// worktree — the skeleton an interrupted create or remove leaves behind.
-    ///
-    /// Every argument naming a worktree is tried as a branch first and as a
-    /// path second, so each place that reports "no such thing" has to say which
-    /// of the two it was looking for. Answering that takes both halves below,
-    /// and neither alone is enough:
-    ///
-    /// - Git could never accept the selector as a branch name, so branch-first
-    ///   never had a candidate. Alone this over-claims, because `~`, `^`, `:`
-    ///   and `@{` are ordinary revision syntax as well as characters no branch
-    ///   name may hold — `HEAD@{1}` would report as a path.
-    /// - A directory is there to name, which is what makes "the user meant a
-    ///   path" more than a guess. Alone this shadows a branch: `wt remove docs`
-    ///   means the branch even when `docs/` sits beside it.
-    ///
-    /// `None` when either half fails, leaving the caller's own error in place.
-    ///
-    /// Callers must already have established that no worktree is registered at
-    /// the path; each reaches this only after its own worktree lookup came up
-    /// empty. Skipping that makes the message false rather than merely vague —
-    /// a detached worktree is addressable only by its path, and calling one "no
-    /// worktree" contradicts the `wt list` the hint sends the user to.
-    pub fn for_path_selector(selector: &str) -> Option<Self> {
-        if super::repository::is_valid_branch_name(selector) {
-            return None;
-        }
-        let path = super::resolve_input_path(selector);
-        // Tidy the join, so `wt remove ./x` under `-C` names `<base>/x` rather
-        // than `<base>/./x`. Only an absolute path may have its `..` popped:
-        // doing that to a relative one drops a component the cwd was going to
-        // supply, and `../repo.feature` — worktrunk's own sibling layout —
-        // would then both display wrong and probe the wrong directory.
-        // `Path::components` drops the interior `.` either way, keeping a
-        // leading one and every `..`.
-        let path = if path.is_absolute() {
-            normalize_path::NormalizePath::normalize(path.as_path())
-        } else {
-            path.components().collect()
-        };
-        path.is_dir()
-            .then_some(GitError::WorktreeNotFoundAtPath { path })
-    }
-
     /// Styled title for this variant (first line, with inline `<bold>`
     /// highlights on entity names like branch and path).
     ///

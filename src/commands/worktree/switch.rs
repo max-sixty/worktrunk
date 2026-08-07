@@ -864,7 +864,7 @@ fn plan_switch(
         // have been — so stop here rather than carrying it to Phase 4, which
         // would report a missing branch and offer to create one under a name
         // git rejects.
-        if let Some(err) = GitError::for_path_selector(branch) {
+        if let Some(err) = repo.path_selector_error(branch) {
             return Err(err.into());
         }
     }

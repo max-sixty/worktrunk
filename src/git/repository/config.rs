@@ -580,7 +580,7 @@ impl Repository {
             }
             // Nothing is registered at the path, which is what this error
             // asserts; the arms above consumed both worktree cases.
-            if let Some(err) = GitError::for_path_selector(&branch) {
+            if let Some(err) = self.path_selector_error(&branch) {
                 return Err(err.into());
             }
             return Err(GitError::BranchNotFound {
