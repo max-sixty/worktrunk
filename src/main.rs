@@ -754,15 +754,22 @@ fn parse_cli() -> Cli {
     // Apply -C / --config before help handling so `wt -C other --help`
     // and `wt --config custom.toml step --help` resolve aliases against the
     // requested repo and user config (not the process cwd / default config).
-    // The same early parse also tells us whether this is help for the top
-    // level or `wt step`, so the splice path in `augment_help` has no
-    // separate arg scanner.
-    let (directory, config, config_overrides, alias_help_context) = parse_early_globals();
+    // The same early parse also names the command and tells us whether this is
+    // help for the top level or `wt step`, so neither the splice path in
+    // `augment_help` nor the doc-generation entry points has its own arg
+    // scanner.
+    let EarlyGlobals {
+        directory,
+        config,
+        config_overrides,
+        alias_help_context,
+        subcommand,
+    } = parse_early_globals();
     apply_global_options(directory, config, config_overrides);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
-    help::maybe_handle_help_with_pager(alias_help_context);
+    help::maybe_handle_help_with_pager(alias_help_context, subcommand.as_deref());
 
     // TODO: Enhance error messages to show possible values for missing enum arguments
     // Currently `wt config shell init` doesn't show available shells, but `wt config shell init invalid` does.
@@ -799,29 +806,41 @@ fn apply_global_options(
     }
 }
 
-/// Parse global options (`-C`, `--config`, `--config-set`) and detect whether this
-/// invocation renders help that should include the configured aliases — in a
-/// single pass against the real `Cli` definition.
+/// What the pre-clap pass reads off the real argv.
+#[derive(Default)]
+struct EarlyGlobals {
+    directory: Option<std::path::PathBuf>,
+    config: Option<std::path::PathBuf>,
+    config_overrides: Vec<String>,
+    alias_help_context: Option<commands::HelpContext>,
+    /// The top-level command, for the doc-generation entry points
+    /// (`--help-page`, `--help-description`, `--print-schema`); `None` when
+    /// argv names none. A name the `Cli` definition doesn't declare still
+    /// arrives, through the `external_subcommand` arm that carries user
+    /// aliases, so those entry points can name it back in their own errors.
+    subcommand: Option<String>,
+}
+
+/// Parse global options (`-C`, `--config`, `--config-set`), name the command,
+/// and detect whether this invocation renders help that should include the
+/// configured aliases — in a single pass against the real `Cli` definition.
 ///
 /// Uses `ignore_errors(true)` so unknown args, missing values, and `--help`
 /// don't abort parsing — we just read what matched. This lets `wt -C other
 /// --help` apply `-C` before the help path renders, so `augment_help`
 /// resolves aliases against the requested repo instead of the process cwd.
+/// It's also what lets the doc-generation flags, which the `Cli` definition
+/// doesn't declare, ride along without derailing the parse.
 ///
 /// Using `cli::build_command()` rather than a hand-rolled mini-command keeps
 /// the global-flag definitions in one place (the derive on `Cli`), so renaming
 /// `-C` or adding a value-taking global doesn't silently desync this path.
-fn parse_early_globals() -> (
-    Option<std::path::PathBuf>,
-    Option<std::path::PathBuf>,
-    Vec<String>,
-    Option<commands::HelpContext>,
-) {
+fn parse_early_globals() -> EarlyGlobals {
     let cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
     let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
-        return (None, None, Vec::new(), None);
+        return EarlyGlobals::default();
     };
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
@@ -838,7 +857,13 @@ fn parse_early_globals() -> (
         Some(("step", sub)) if sub.subcommand_name().is_none() => Some(commands::HelpContext::Step),
         _ => None,
     };
-    (directory, config, config_overrides, alias_help_context)
+    EarlyGlobals {
+        directory,
+        config,
+        config_overrides,
+        alias_help_context,
+        subcommand: matches.subcommand_name().map(str::to_owned),
+    }
 }
 
 fn init_command_log(command_line: &str) {

@@ -3882,6 +3882,23 @@ fn test_plugin_layout_is_consolidated() {
          hooks.json:\n{hooks}"
     );
 
+    // The WorktreeRemove hook must resolve against the worktree path Claude
+    // Code hands it, not the session's project dir. The `claude agents` view
+    // spans every repo with a background session and is often launched from a
+    // parent directory that merely contains them, so `CLAUDE_PROJECT_DIR` names
+    // the wrong repo or none at all, `wt remove <path>` dies with `fatal: not a
+    // git repository`, and the session row is left undeletable (#3754, after
+    // the #3489 anchor proved insufficient). `-C "$p"` is layout-independent: a
+    // linked worktree carries a `.git` file pointing at its owning repository.
+    assert!(
+        worktree_remove_cmd.contains("-C \"$p\"")
+            && !worktree_remove_cmd.contains("CLAUDE_PROJECT_DIR"),
+        "WorktreeRemove hook must resolve via -C \"$p\" (the worktree path Claude Code \
+         handed it), never CLAUDE_PROJECT_DIR — the agents view is multi-repo, so no \
+         single project dir is correct for every session (#3754). \
+         command:\n{worktree_remove_cmd}"
+    );
+
     // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
     // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
     // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
@@ -4019,8 +4036,10 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(repo: TestRepo) {
         .expect("WorktreeRemove hook must define a command")
         .to_owned();
 
-    // Fire the hook exactly as Claude Code does: the recorded path on stdin,
-    // the plugin root and project dir in the environment.
+    // Fire the hook exactly as Claude Code does: the recorded path on stdin, the
+    // plugin root in the environment. No `CLAUDE_PROJECT_DIR` — the hook resolves
+    // the repository from the worktree path via `-C "$p"` and must never consult
+    // a project dir (#3754), so setting one here would be dead setup.
     let run_hook = |worktree_path: &std::path::Path| {
         let mut cmd = std::process::Command::new("bash");
         repo.configure_wt_cmd(&mut cmd);
@@ -4028,7 +4047,6 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(repo: TestRepo) {
             .args(["-c", &command])
             .env("WORKTRUNK_BIN", crate::common::wt_bin())
             .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
-            .env("CLAUDE_PROJECT_DIR", repo.root_path())
             .current_dir(repo.root_path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
