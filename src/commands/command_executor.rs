@@ -291,6 +291,7 @@ pub fn build_hook_context(
 
     if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
         map.insert("owner".into(), parsed_remote.owner().to_string());
+        map.insert("remote_repo".into(), parsed_remote.repo().to_string());
     }
 
     // Default branch

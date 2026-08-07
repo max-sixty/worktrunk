@@ -61,6 +61,7 @@ hello foo bar baz
 [107m [0m repo                  = repo
 [107m [0m repo_path             = _REPO_
 [107m [0m [2mowner                 = (unused)[22m
+[107m [0m [2mremote_repo           = (unused)[22m
 [107m [0m [2mprimary_worktree_path = (unused)[22m
 [107m [0m [2mdefault_branch        = (unused)[22m
 [107m [0m [2mremote                = (unused)[22m

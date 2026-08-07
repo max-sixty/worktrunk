@@ -1672,6 +1672,7 @@ Hooks can use template variables that expand at runtime:
 | repo      | `{{ repo }}`                  | Repository directory name |
 |           | `{{ repo_path }}`             | Absolute path to repository root |
 |           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |
+|           | `{{ remote_repo }}`           | Repository name from the primary remote URL, without `.git` |
 |           | `{{ primary_worktree_path }}` | Primary worktree path |
 |           | `{{ default_branch }}`        | Default branch name |
 |           | `{{ remote }}`                | Primary remote name |
@@ -1682,7 +1683,7 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |
 | user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
 
-The `repo` variables (`repo`, `repo_path`, `owner`, `primary_worktree_path`, `default_branch`, `remote`, `remote_url`) are constant across the whole repository — `default_branch` is the same in every worktree. The `active` variables (`branch`, `worktree_path`, `worktree_name`, `commit`, `short_commit`, `upstream`) vary per worktree.
+The `repo` variables (`repo`, `repo_path`, `owner`, `remote_repo`, `primary_worktree_path`, `default_branch`, `remote`, `remote_url`) are constant across the whole repository — `default_branch` is the same in every worktree. The `active` variables (`branch`, `worktree_path`, `worktree_name`, `commit`, `short_commit`, `upstream`) vary per worktree.
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 
@@ -1968,6 +1969,7 @@ Controls where new worktrees are created.
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
+- `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
