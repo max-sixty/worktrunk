@@ -56,13 +56,13 @@ jobs:
       with:
         version: '0.114.1'
 
-    - name: 💰 Large-repository fixture cache
+    - name: 💰 Imported fixture cache
       uses: actions/cache@v6
       with:
         # The fixture file pins the corpus revision. Including its hash keeps
         # a prior corpus out of the cache after either constant changes.
         path: target/wt-perf/bench-repos
-        key: bench-repos-large-repository-${{ runner.os }}-${{ hashFiles('benches/large-repository-fixture') }}
+        key: bench-repos-imported-${{ runner.os }}-${{ hashFiles('benches/imported-fixture') }}
 
     - name: 📊 Run benchmarks
       run: cargo bench

@@ -23,7 +23,7 @@ fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    let fixture = FixtureRecipe::Typical { total_worktrees: 4 }.create();
+    let fixture = FixtureRecipe::generated(3).create();
 
     let make_cmd = |args: &[&str]| {
         let mut cmd = wt_command(binary, fixture.path(), None);
@@ -41,14 +41,14 @@ fn bench_first_output(c: &mut Criterion) {
     // timing would be warm cache, not the first-invocation TTFO a user sees.
     group.bench_function("remove", |b| {
         bench_wt(b, fixture.path(), CacheState::Cold, || {
-            make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
+            make_cmd(&["remove", "--yes", "--no-hooks", "--force", "wt-0000"])
         });
     });
 
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
         bench_wt(b, fixture.path(), CacheState::Warm, || {
-            make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
+            make_cmd(&["switch", "--yes", "--no-hooks", "wt-0000"])
         });
     });
 

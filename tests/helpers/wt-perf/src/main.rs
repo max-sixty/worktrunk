@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use wt_perf::{FixtureRecipe, canonicalize, invalidate_caches_auto};
+use wt_perf::{FixtureRecipe, add_prune_populations, canonicalize, invalidate_caches_auto};
 
 #[derive(Parser)]
 #[command(name = "wt-perf")]
@@ -28,6 +28,14 @@ enum Commands {
         /// Primary worktree path; must not already exist
         #[arg(long, global = true)]
         path: Option<PathBuf>,
+
+        /// Squash-merged worktree/branch pairs to add for prune investigation
+        #[arg(long, global = true, default_value_t = 0)]
+        prune_candidates: usize,
+
+        /// Unintegrated worktree/branch pairs to add as prune scan backdrop
+        #[arg(long, global = true, default_value_t = 0)]
+        prune_backdrop: usize,
     },
 
     /// Parse a trace.jsonl and output Chrome Trace Format JSON
@@ -67,7 +75,7 @@ enum Commands {
   wt-perf timeline --cold -- list
 
   # Cold run against a specific repo (setup prints the exact path)
-  wt-perf timeline --cold -- -C /tmp/wt-typical-1 list
+  wt-perf timeline --cold -- -C target/wt-generated list
 
   # Chrome Trace Format JSON for Perfetto
   wt-perf timeline --chrome -- list > trace.json
@@ -91,7 +99,12 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Setup { recipe, path } => {
+        Commands::Setup {
+            recipe,
+            path,
+            prune_candidates,
+            prune_backdrop,
+        } => {
             let Some(path) = path else {
                 eprintln!("Missing required --path for benchmark fixture setup.");
                 std::process::exit(2);
@@ -128,12 +141,10 @@ fn main() {
 
             eprintln!("Creating fixture at {}...", base_path.display());
             recipe.create_at(&base_path);
+            add_prune_populations(&base_path, prune_candidates, prune_backdrop);
             eprintln!("Created: main @ {}", base_path.display());
             eprintln!();
-            let example_args = if matches!(
-                recipe,
-                FixtureRecipe::Prune { .. } | FixtureRecipe::LargeRepositoryPrune { .. }
-            ) {
+            let example_args = if prune_candidates > 0 || prune_backdrop > 0 {
                 "step prune --dry-run --min-age 0s"
             } else {
                 "list --progressive"

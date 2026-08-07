@@ -54,7 +54,7 @@
             || (pkgs.lib.hasInfix "/dev/" p)
             || (baseNameOf (dirOf p) == "dev")
             || (baseNameOf p == "gemini-extension.json")
-            || (baseNameOf p == "large-repository-fixture");
+            || (baseNameOf p == "imported-fixture");
         };
 
         # Common arguments for crane builds
