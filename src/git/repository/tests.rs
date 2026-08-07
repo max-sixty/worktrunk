@@ -1531,13 +1531,37 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     // to another repository. worktrunk gathers every repo and worktree into one
     // parent, so a sibling is one `../` from any command, and calling a live
     // one "not a worktree" reads as an invitation to delete it.
-    let sibling = test.root_path().parent().unwrap().join("sibling");
+    let parent = test.root_path().parent().unwrap();
+    let sibling = parent.join("sibling");
     std::fs::create_dir_all(sibling.join(".git")).unwrap();
+
+    // And a bare repository, which is the git directory rather than holding
+    // one — worktrunk's bare layout sits it among the worktrees it serves, so
+    // it is as reachable as they are, and it holds every object.
+    let bare = parent.join("project.bare");
+    std::fs::create_dir_all(bare.join("objects")).unwrap();
+    std::fs::create_dir_all(bare.join("refs")).unwrap();
+    std::fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    for checkout in [&sibling, &bare] {
+        assert!(
+            test.repo
+                .path_selector_error(checkout.to_str().unwrap())
+                .is_none(),
+            "a directory holding git data must not be called a leftover: {}",
+            checkout.display()
+        );
+    }
+
+    // A lone `HEAD` is not git data — the skeleton keeps its report.
+    let decoy = test.root_path().join("decoy");
+    std::fs::create_dir(&decoy).unwrap();
+    std::fs::write(decoy.join("HEAD"), "").unwrap();
     assert!(
         test.repo
-            .path_selector_error(sibling.to_str().unwrap())
-            .is_none(),
-        "a directory holding a .git must not be called a leftover"
+            .path_selector_error(decoy.to_str().unwrap())
+            .is_some(),
+        "a directory that merely contains a HEAD file is still a leftover"
     );
 }
 

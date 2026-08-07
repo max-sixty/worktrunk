@@ -446,8 +446,9 @@ impl Repository {
     ///   every repo and every worktree into one parent, so a sibling's live
     ///   checkout is one `../` away from any command. Calling one "not a
     ///   worktree" reads as an invitation to delete it, and it may hold
-    ///   uncommitted work. A skeleton is what an interrupted create or remove
-    ///   leaves, which is a directory with no `.git` in it at all.
+    ///   uncommitted work or the only copy of an object. A skeleton is what an
+    ///   interrupted create or remove leaves, which holds no git data at all
+    ///   (see `holds_git_data`).
     ///
     /// `None` when any test fails, leaving the caller's own error in place.
     ///
@@ -469,9 +470,7 @@ impl Repository {
         if self.worktree_at_path(&path).ok().flatten().is_some() {
             return None;
         }
-        // A worktree's `.git` is a file and a repository's is a directory;
-        // either way its presence means this is somebody's checkout.
-        if path.join(".git").exists() {
+        if holds_git_data(&path) {
             return None;
         }
         Some(GitError::WorktreeNotFoundAtPath { path })
@@ -518,6 +517,27 @@ impl Repository {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
     }
+}
+
+/// Whether `path` is a directory git would find data in — somebody's checkout
+/// or repository, rather than a leftover skeleton.
+///
+/// Two shapes, because a repository is not always inside a working tree:
+/// a worktree and a non-bare repo carry a `.git` (a file for the first, a
+/// directory for the second), while a bare repo *is* the git directory and so
+/// carries none. The second is the one worth spelling out — under worktrunk's
+/// bare layout the repository sits among the worktrees it serves, one `../`
+/// from any command, and it holds every object.
+///
+/// The bare test is git's own from `is_git_directory()`: `HEAD`, plus `objects`
+/// and `refs` directories. It is deliberately shallow — this decides whether to
+/// *withhold* a claim, so a false positive costs a vaguer message and a false
+/// negative costs a wrong one.
+fn holds_git_data(path: &Path) -> bool {
+    path.join(".git").exists()
+        || (path.join("HEAD").exists()
+            && path.join("objects").is_dir()
+            && path.join("refs").is_dir())
 }
 
 /// Paths of every worktree checked out on `branch`, in git's listing order.
