@@ -55,9 +55,10 @@ use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
     SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
 };
-use worktrunk::styling::eprintln;
+use worktrunk::styling::{eprintln, print};
 
 use crate::cli;
+use crate::output::println_verbatim;
 
 /// Output format for a `--help-page`. Web pages keep Zola shortcodes, HTML
 /// spans, and demo GIF figures for the docs site; plain pages strip those for
@@ -122,19 +123,19 @@ impl PageMode {
     /// uses it as a region marker), or an H1 title for plain skill pages.
     fn emit_header(self, subcommand: &str) {
         match self {
-            Self::Web => std::println!(
+            Self::Web => println_verbatim!(
                 "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
-            Self::Plain => std::println!("# wt {subcommand}"),
+            Self::Plain => println_verbatim!("# wt {subcommand}"),
         }
-        std::println!();
+        println_verbatim!();
     }
 
     /// Emit the closing END marker (web only).
     fn emit_footer(self) {
         if matches!(self, Self::Web) {
-            std::println!();
-            std::println!("{MARKER_CLOSE}");
+            println_verbatim!();
+            println_verbatim!("{MARKER_CLOSE}");
         }
     }
 }
@@ -521,18 +522,19 @@ Commands with pages: merge, switch, remove, list"
     let main_help = mode.process_body(main_content);
     let reference_block = help_reference_with_color(&[subcommand], Some(100), mode.color());
 
-    // Use std::println! to preserve ANSI codes in output (the styling::println strips them)
+    // println_verbatim! preserves the ANSI the web mode's reference block
+    // carries — the docs pipeline converts those escapes into HTML spans, and
+    // anstream's println! would strip them off a piped stdout.
     mode.emit_header(subcommand);
-    std::println!("{}", main_help.trim());
-    std::println!();
+    println_verbatim!("{}", main_help.trim());
+    println_verbatim!();
 
     // Main command reference immediately after its content
-    std::println!("## Command reference");
-    std::println!();
-    std::println!("```");
-    std::print!("{}", reference_block.trim());
-    std::println!();
-    std::println!("```");
+    println_verbatim!("## Command reference");
+    println_verbatim!();
+    println_verbatim!("```");
+    println_verbatim!("{}", reference_block.trim());
+    println_verbatim!("```");
 
     // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
@@ -541,10 +543,10 @@ Commands with pages: merge, switch, remove, list"
         // inside format_subcommand_section, so re-running would double-convert.
         let subdocs = mode.process_subdoc_trailing(subdocs);
         let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
-        std::println!();
-        std::println!("# Subcommands");
-        std::println!();
-        std::println!("{}", subdocs_expanded.trim());
+        println_verbatim!();
+        println_verbatim!("# Subcommands");
+        println_verbatim!();
+        println_verbatim!("{}", subdocs_expanded.trim());
     }
 
     mode.emit_footer();

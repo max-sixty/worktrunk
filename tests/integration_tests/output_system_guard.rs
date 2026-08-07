@@ -14,21 +14,28 @@
 //! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS`
 //!
 //! When adding stdout output:
-//! - Use `worktrunk::styling::println` for color-aware output
+//! - Use `worktrunk::styling::println` for color-aware output, or
+//!   `crate::output::println_verbatim` where the consumer renders the escapes
+//!   and is never a tty (the statusline, `--help-page`)
 //! - Add the file path to `STDOUT_ALLOWED_PATHS` with a comment explaining why
+//!
+//! Neither printer panics when the consumer closes the pipe, which
+//! [`test_stdout_surfaces_survive_a_closed_consumer`] checks from the outside.
 
 use std::fs;
 use std::path::Path;
+use std::process::Stdio;
 
 use path_slash::PathExt as _;
+use rstest::rstest;
+
+use crate::common::{TestRepo, repo};
 
 /// Paths (relative to src/commands/) that are allowed to use println!/print! for stdout.
 /// These intentionally output data to stdout for scripting/piping.
 const STDOUT_ALLOWED_PATHS: &[&str] = &[
     // Shell integration code for: eval "$(wt config shell init bash)"
     "init.rs",
-    // Status line text for shell prompts (PS1)
-    "statusline.rs",
     // Table and summary output for wt list
     "list/collect/mod.rs",
     // State data output (branch names, previous worktree, etc.)
@@ -175,5 +182,61 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, comman
                 break; // Only report once per line
             }
         }
+    }
+}
+
+/// Every stdout surface exits cleanly when its consumer stops reading.
+///
+/// std's `print!`/`println!` panic on a `BrokenPipe`, so a command whose
+/// answer went out through them died with exit 101 and a Rust panic message
+/// the moment the reader left — `wt list | head -3`, and `wt list statusline`
+/// on the surface a shell prompt runs on every redraw. anstream's macros and
+/// `println_verbatim!` drop that error instead, and one of the two now carries
+/// every answer this binary writes to stdout.
+///
+/// Which of the two a surface uses is about color, not about this, so the
+/// cases below span both.
+///
+/// The child's stdout pipe is closed before it is waited on, so its first
+/// write has no reader. `--version` writes a few dozen bytes and still trips
+/// it: `EPIPE` is about whether a reader is attached, not about filling the
+/// pipe buffer.
+#[rstest]
+fn test_stdout_surfaces_survive_a_closed_consumer(repo: TestRepo) {
+    for args in [
+        &["--version"][..],
+        &["merge", "--help-page"][..],
+        &["merge", "--help-description"][..],
+        &["merge", "--help-md"][..],
+        &["list"][..],
+        &["list", "--full"][..],
+        &["list", "statusline"][..],
+        &["list", "--format=json"][..],
+        &["config", "update", "--print"][..],
+    ] {
+        let mut command = repo.wt_command();
+        let mut child = command
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("failed to spawn wt {args:?}: {e}"));
+
+        drop(child.stdout.take().expect("stdout was piped"));
+
+        let output = child
+            .wait_with_output()
+            .unwrap_or_else(|e| panic!("failed to wait for wt {args:?}: {e}"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "wt {args:?} exited {:?} with its consumer gone; stderr: {stderr}",
+            output.status.code()
+        );
+        assert!(
+            !stderr.contains("panicked"),
+            "wt {args:?} panicked with its consumer gone; stderr: {stderr}"
+        );
     }
 }
