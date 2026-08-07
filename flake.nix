@@ -201,12 +201,6 @@
             cargo-release
             cargo-llvm-cov
 
-            # Host tools the suite shells out to; the `worktrunk-tests` check
-            # above names what each one is for.
-            python3
-            procps
-            lsof
-
             # Shells the `shell-integration-tests` feature drives, plus the
             # `jq` its Claude-hook tests pipe the hook payload through. The
             # pre-merge gate runs `--all-features`, so a run here exercises
