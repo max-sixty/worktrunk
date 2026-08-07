@@ -424,17 +424,37 @@ fn test_push_dirty_target_overlap_in_untracked_dir(mut repo: TestRepo) {
     );
 }
 
-/// A target worktree parked mid-operation refuses the push.
+/// A target worktree parked mid-operation refuses the push, whether the
+/// operation left HEAD on the branch or detached it.
 ///
 /// `advance_target`'s `read-tree -m -u` refuses an unmerged index, but a
-/// stopped cherry-pick whose conflict has been staged has a merged one — so
+/// stopped operation whose conflict has been staged has a merged one — so
 /// without the upfront gate the sync writes the push range into a worktree
-/// partway through a pick, and the user's `--continue` commits the synced tree
-/// as the pick's result. The conflict is staged at a path the push range never
+/// partway through, and the user's `--continue` commits the synced tree as the
+/// operation's result. The conflict is staged at a path the push range never
 /// touches, so `ensure_no_target_conflicts` passes and only the operation gate
 /// can catch this.
+///
+/// Both shapes are pinned because they reach the gate differently. A stopped
+/// cherry-pick keeps HEAD on the branch, so `worktree_for_branch` finds the
+/// worktree directly; a rebase detaches HEAD, and `git worktree list
+/// --porcelain` reports that worktree with no branch at all — the lookup
+/// succeeds only because `finalize_worktree` backfills the branch from
+/// `rebase-merge/head-name`. Were that backfill to stop covering the rebase
+/// case, `target_worktree_path` would go `None`, the gate would be skipped, and
+/// `advance_target` would return right after its compare-and-swap: the ref
+/// moves, the worktree is never synced, and `git rebase --continue` then resets
+/// the branch to the rebase result with the pushed commits off it. The
+/// fast-forward path this replaced got that refusal from git itself, so the
+/// rebase arm is the one place the guarantee rests on a helper of ours.
 #[rstest]
-fn test_push_refuses_target_mid_operation(mut repo: TestRepo) {
+#[case::cherry_pick("cherry-pick", ".git/CHERRY_PICK_HEAD")]
+#[case::rebase("rebase", ".git/rebase-merge")]
+fn test_push_refuses_target_mid_operation(
+    mut repo: TestRepo,
+    #[case] operation: &str,
+    #[case] state_marker: &str,
+) {
     let root = repo.root_path().to_path_buf();
 
     // A side commit that conflicts with main at `conflict.txt`.
@@ -450,14 +470,22 @@ fn test_push_refuses_target_mid_operation(mut repo: TestRepo) {
     // feature descends from main and touches only `feature.txt`.
     let feature_wt = repo.add_feature();
 
-    // Stop a cherry-pick in main's worktree, then stage its resolution: the
+    // Stop the operation in main's worktree, then stage its resolution: the
     // operation stays open while the index goes clean.
-    let _ = repo.git_command().args(["cherry-pick", "side"]).run();
+    let _ = repo.git_command().args([operation, "side"]).run();
     repo.run_git(&["checkout", "--ours", "conflict.txt"]);
     repo.run_git(&["add", "conflict.txt"]);
     assert!(
-        root.join(".git/CHERRY_PICK_HEAD").exists(),
-        "the fixture must leave a cherry-pick open in the target worktree"
+        root.join(state_marker).exists(),
+        "the fixture must leave a {operation} open in the target worktree"
+    );
+    // The rebase arm proves nothing about the backfill unless its worktree is
+    // really detached, so assert the shape rather than assuming it.
+    let head_detached = repo.git_output(&["rev-parse", "--abbrev-ref", "HEAD"]) == "HEAD";
+    assert_eq!(
+        head_detached,
+        operation == "rebase",
+        "unexpected HEAD shape after stopping a {operation} in the target worktree"
     );
 
     let target_before = repo.git_output(&["rev-parse", "main"]);
