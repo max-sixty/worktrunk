@@ -1528,10 +1528,11 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     );
 }
 
-/// A detached worktree is addressable only by its path, so a caller that has not
-/// established the path holds no worktree must not report one as absent.
+/// A detached worktree is reachable by its path and by nothing else, so a merge
+/// target naming one is reported as detached rather than as absent — the claim
+/// `wt list` would contradict.
 #[test]
-fn detached_worktree_path_is_never_reported_as_absent() {
+fn detached_worktree_target_is_reported_as_detached() {
     use crate::testing::TestRepo;
 
     let mut test = TestRepo::with_initial_commit();
@@ -1539,19 +1540,56 @@ fn detached_worktree_path_is_never_reported_as_absent() {
     test.detach_head_in_worktree("feature");
     let selector = worktree_path.to_str().unwrap();
 
-    // The merge/rebase target accessors resolve a wider vocabulary than a
-    // worktree selector and cannot tell "no worktree here" from "a detached
-    // worktree here", so they leave the directory claim alone.
-    for err in [
-        test.repo.require_target_branch(Some(selector)).err(),
-        test.repo.require_target_ref(Some(selector)).err(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    let err = test.repo.require_target_branch(Some(selector)).unwrap_err();
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("detached") && !rendered.contains("No worktree @"),
+        "expected a detached-target error, got: {rendered}"
+    );
+
+    // A commit-ish target is spelled in a wider vocabulary than a worktree
+    // selector, so it claims nothing about paths either way.
+    if let Err(err) = test.repo.require_target_ref(Some(selector)) {
         assert!(
             !err.to_string().contains("No worktree @"),
             "a registered worktree must never be reported as absent, got: {err}"
+        );
+    }
+}
+
+/// A merge target naming a directory that holds no worktree gets the same
+/// answer as every other worktree argument, rather than an offer to create a
+/// branch git would reject.
+#[test]
+fn directory_merge_target_is_reported_as_a_directory() {
+    use crate::git::ErrorExt;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let ghost = test.root_path().join("ghost");
+    std::fs::create_dir(&ghost).unwrap();
+
+    let rendered = test
+        .repo
+        .require_target_branch(Some(ghost.to_str().unwrap()))
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("No worktree @") && !rendered.contains("--create"),
+        "expected a directory-holds-no-worktree error, got: {rendered}"
+    );
+
+    // Revision syntax is no more a branch name than a path is, and naming no
+    // directory is what keeps it out of the path claim.
+    for revspec in ["HEAD@{1}", "main^", "v1.0..v2.0", "pr:5"] {
+        let err = test
+            .repo
+            .require_target_branch(Some(revspec))
+            .expect_err(revspec);
+        assert!(
+            !err.to_string().contains("No worktree @"),
+            "{revspec} must not be reported as a path, got: {err}"
         );
     }
 }

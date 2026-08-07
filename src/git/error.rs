@@ -680,15 +680,17 @@ impl GitError {
             return None;
         }
         let path = super::resolve_input_path(selector);
-        // Lexical normalization, so `wt remove ./x` under `-C` names `<base>/x`
-        // rather than `<base>/./x`. Absolute paths only: popping `..` lexically
-        // off a relative path drops a component the cwd was going to supply, and
-        // `../repo.feature` — worktrunk's own sibling layout — would then both
-        // display wrong and probe the wrong directory.
+        // Tidy the join, so `wt remove ./x` under `-C` names `<base>/x` rather
+        // than `<base>/./x`. Only an absolute path may have its `..` popped:
+        // doing that to a relative one drops a component the cwd was going to
+        // supply, and `../repo.feature` — worktrunk's own sibling layout —
+        // would then both display wrong and probe the wrong directory.
+        // `Path::components` drops the interior `.` either way, keeping a
+        // leading one and every `..`.
         let path = if path.is_absolute() {
             normalize_path::NormalizePath::normalize(path.as_path())
         } else {
-            path
+            path.components().collect()
         };
         path.is_dir()
             .then_some(GitError::WorktreeNotFoundAtPath { path })
@@ -887,7 +889,7 @@ impl GitError {
                 cformat!("No branch or worktree named <bold>{selector}</>")
             }
 
-            GitError::WorktreeNotFoundAtPath { path, .. } => {
+            GitError::WorktreeNotFoundAtPath { path } => {
                 let path_display = format_path_for_display(path);
                 cformat!("No worktree @ <bold>{path_display}</>")
             }

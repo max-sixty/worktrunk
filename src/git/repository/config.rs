@@ -9,6 +9,7 @@ use color_print::cformat;
 use crate::config::ProjectConfig;
 
 use crate::git::CommandError;
+use crate::path::format_path_for_display;
 
 use super::{DefaultBranchName, GitError, Repository};
 
@@ -527,23 +528,20 @@ impl Repository {
     /// `resolved` is `target` after shortcut expansion; an expansion means the
     /// literal token was a symbol rather than a path.
     ///
-    /// `None` covers both "no worktree there" and "a detached worktree there",
-    /// which is why neither caller reports an unresolved target as a path via
-    /// [`GitError::for_path_selector`] — that error asserts no worktree is
-    /// registered, and a detached one is reachable by path alone. A target is
-    /// also spelled in a wider vocabulary than a worktree selector, so
-    /// `HEAD@{1}` and `main^` reach here as ordinary revision syntax.
-    fn target_branch_at_path(
+    /// The worktree is returned whole rather than just its branch, so `None`
+    /// means "nothing registered here" alone. A detached worktree — `Some` with
+    /// no branch — is the case that makes the distinction load-bearing: it is
+    /// reachable by path and by nothing else, so folding it into `None` would
+    /// let a caller report a worktree `wt list` shows as absent.
+    fn target_worktree_at_path(
         &self,
         target: Option<&str>,
         resolved: &str,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
         let Some(target) = target.filter(|t| *t == resolved) else {
             return Ok(None);
         };
-        Ok(self
-            .worktree_at_input_path(target)?
-            .and_then(|(_, branch)| branch))
+        self.worktree_at_input_path(target)
     }
 
     /// Resolve and validate a target that must be a branch.
@@ -559,14 +557,31 @@ impl Repository {
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
-            if let Some(from_path) = self.target_branch_at_path(target, &branch)? {
-                return Ok(from_path);
+            match self.target_worktree_at_path(target, &branch)? {
+                Some((_, Some(from_path))) => return Ok(from_path),
+                // A worktree is there, so the path resolved — it just has no
+                // branch to be the target of a merge or a push.
+                Some((path, None)) => {
+                    return Err(GitError::DetachedHead {
+                        action: Some(cformat!(
+                            "use <bold>{}</> as a target",
+                            format_path_for_display(&path)
+                        )),
+                    }
+                    .into());
+                }
+                None => {}
             }
             if target.is_none() {
                 if self.is_unborn_branch(&branch) {
                     return Err(GitError::UnbornDefaultBranch { branch }.into());
                 }
                 return Err(GitError::StaleDefaultBranch { branch }.into());
+            }
+            // Nothing is registered at the path, which is what this error
+            // asserts; the arms above consumed both worktree cases.
+            if let Some(err) = GitError::for_path_selector(&branch) {
+                return Err(err.into());
             }
             return Err(GitError::BranchNotFound {
                 branch,
@@ -591,9 +606,11 @@ impl Repository {
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
-            if let Some(from_path) = self.target_branch_at_path(target, &reference)? {
+            if let Some((_, Some(from_path))) = self.target_worktree_at_path(target, &reference)? {
                 return Ok(from_path);
             }
+            // No path claim here: a commit-ish is spelled in a wider vocabulary
+            // than a worktree selector, and `ReferenceNotFound` names all of it.
             if target.is_none() {
                 if self.is_unborn_branch(&reference) {
                     return Err(GitError::UnbornDefaultBranch { branch: reference }.into());
