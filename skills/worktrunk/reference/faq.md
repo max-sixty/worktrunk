@@ -284,7 +284,7 @@ cargo test
 
 ### Full integration tests
 
-Shell integration tests require bash, zsh, fish, and nushell:
+Shell integration tests require bash, zsh, fish, nushell, and pwsh, plus `jq`:
 
 ```bash
 cargo test --test integration --features shell-integration-tests

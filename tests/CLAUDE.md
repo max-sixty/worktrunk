@@ -427,7 +427,9 @@ fn test_fish_integration() {
 - CI can enable features when dependencies are installed
 
 **Existing feature flags:**
-- `shell-integration-tests` — Tests requiring bash/zsh/fish shells and PTY
+- `shell-integration-tests` — Tests that drive real shells over a PTY: bash,
+  zsh, fish, nushell, and pwsh, plus the `jq` the Claude hook commands in
+  `plugins/worktrunk/hooks/` pipe their payload through
 
 ## PTY Tests and README Examples
 
