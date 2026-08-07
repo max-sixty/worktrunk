@@ -15,10 +15,11 @@
 ///
 /// Output a person reads is not this: `wt list` and the rest go through
 /// anstream, which strips color when stdout isn't a terminal unless
-/// `CLICOLOR_FORCE` says otherwise. `NO_COLOR` doesn't reach the `wt list`
-/// table, whose terminal rendering is `ProgressiveTable` writing to a raw
-/// `std::io::stdout()` — `RenderTarget::detect` picks that path for every tty,
-/// so anstream only ever sees the piped case, where color is already off.
+/// `CLICOLOR_FORCE` says otherwise, and strips it on a terminal too under
+/// `NO_COLOR`. The `wt list` table's default terminal rendering is the one
+/// path that never reaches anstream — `RenderTarget::detect` hands every tty
+/// that didn't pass `--no-progressive` to `ProgressiveTable`, which writes to
+/// a raw `std::io::stdout()` with each row's escapes already baked in.
 ///
 /// A `BrokenPipe` is dropped and any other write error still panics — the
 /// same policy anstream's macros apply, so both printers fail the same way on
