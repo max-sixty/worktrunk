@@ -155,11 +155,18 @@ impl PageMode {
 /// On a help/version/doc-generation request, prints output and calls
 /// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
 ///
-/// `alias_help_context` is computed by the caller from the same early-parse
-/// pass that extracts global options. When `Some`, the configured aliases are
+/// `alias_help_context` and `subcommand` both come from the caller's
+/// early-parse pass over the real argv, the same one that extracts global
+/// options. When `alias_help_context` is `Some`, the configured aliases are
 /// spliced into the rendered output — at the top level for `wt --help`, or
-/// under the Aliases section for `wt step --help`.
-pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
+/// under the Aliases section for `wt step --help`. `subcommand` is the command
+/// the doc-generation entry points below render, taken from clap rather than
+/// re-scanned here, so `wt.exe`, a renamed binary, or `wt -C <path> list
+/// --print-schema` all name the same thing.
+pub fn maybe_handle_help_with_pager(
+    alias_help_context: Option<crate::commands::HelpContext>,
+    subcommand: Option<&str>,
+) {
     let args_os: Vec<OsString> = std::env::args_os().collect();
     let args: Vec<String> = args_os
         .iter()
@@ -176,20 +183,20 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
         } else {
             PageMode::Web
         };
-        handle_help_page(&args, mode);
+        handle_help_page(subcommand, mode);
         process::exit(0);
     }
 
     // Check for --print-schema flag (output the JSON Schema for a command's
     // --format=json payload)
     if args.iter().any(|a| a == "--print-schema") {
-        handle_print_schema(&args);
+        handle_print_schema(subcommand);
         process::exit(0);
     }
 
     // Check for --help-description flag (output meta description for docs)
     if args.iter().any(|a| a == "--help-description") {
-        handle_help_description(&args);
+        handle_help_description(subcommand);
         process::exit(0);
     }
 
@@ -407,15 +414,10 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 /// Combines the command's `about` (definition) and `long_about` subtitle into
 /// a single description suitable for `<meta name="description">`. This is used
 /// by the docs sync test to auto-populate the `description` field in frontmatter.
-fn handle_help_description(args: &[String]) {
+fn handle_help_description(subcommand: Option<&str>) {
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
-
-    let subcommand = args
-        .iter()
-        .filter(|a| *a != "--help-description" && !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| !a.contains("target/") && *a != "wt");
 
     let Some(subcommand) = subcommand else {
         eprintln!("Usage: wt <command> --help-description");
@@ -447,12 +449,7 @@ fn handle_help_description(args: &[String]) {
 ///
 /// One command has a schema today, because one payload is versioned. The
 /// subcommand is the axis a second would arrive on.
-fn handle_print_schema(args: &[String]) {
-    let subcommand = args
-        .iter()
-        .filter(|a| !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| !a.contains("target/") && *a != "wt");
-
+fn handle_print_schema(subcommand: Option<&str>) {
     let Some(subcommand) = subcommand else {
         eprintln!(
             "Usage: wt <command> --print-schema
@@ -467,10 +464,7 @@ Commands with schemas: list"
     }
 
     let schema = crate::commands::list::json_v2::schema_document();
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&schema).expect("schema serializes")
-    );
+    crate::output::print_json(&schema).expect("schema serializes");
 }
 
 /// Generate a full documentation page for a command.
@@ -495,19 +489,10 @@ Commands with schemas: list"
 /// ```
 ///
 /// This is used to generate docs/content/merge.md etc from the source.
-fn handle_help_page(args: &[String], mode: PageMode) {
+fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
-
-    // Find the subcommand name (the arg before --help-page, or after wt)
-    let subcommand = args
-        .iter()
-        .filter(|a| *a != "--help-page" && !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| {
-            // Skip the binary name
-            !a.contains("target/") && *a != "wt"
-        });
 
     let Some(subcommand) = subcommand else {
         eprintln!(
