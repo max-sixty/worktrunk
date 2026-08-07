@@ -533,6 +533,15 @@ impl Repository {
 /// and `refs` directories. It is deliberately shallow — this decides whether to
 /// *withhold* a claim, so a false positive costs a vaguer message and a false
 /// negative costs a wrong one.
+///
+/// A `.git` whose pointer dangles counts too, and following it to check would
+/// be the wrong refinement. Two very different directories carry a dangling
+/// `.git`: a `git worktree add` that died after writing it, holding nothing
+/// else; and a worktree a repo-wide prune unregistered while its volume was
+/// unmounted, holding all its files and any uncommitted work (the bystander
+/// case [`Repository::prune_worktree_entry`] documents). The pointer cannot
+/// tell them apart, so resolving it would license "this is a leftover" over the
+/// second.
 fn holds_git_data(path: &Path) -> bool {
     path.join(".git").exists()
         || (path.join("HEAD").exists()
