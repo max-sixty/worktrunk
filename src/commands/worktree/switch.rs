@@ -691,7 +691,10 @@ fn validate_worktree_creation(
     {
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
-            show_create_hint: true,
+            // Offering `--create` for a name git rejects sends the user to a
+            // command that fails; the argument was a path spelling, whether or
+            // not a directory happens to sit at it.
+            show_create_hint: worktrunk::git::is_valid_branch_name(branch),
             last_fetch_ago: format_last_fetch_ago(repo),
             pr_mr_platform: repo.detect_ref_type(),
         }

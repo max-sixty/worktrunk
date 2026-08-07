@@ -7,7 +7,6 @@ use std::sync::{LazyLock, Mutex};
 use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
-use normalize_path::NormalizePath;
 
 use super::{
     GitError, Repository, ResolvedWorktree, WorktreeInfo, is_valid_branch_name, resolve_input_path,
@@ -424,8 +423,8 @@ impl Repository {
     ///
     /// Every argument naming a worktree is tried as a branch first and as a
     /// path second, so each place that reports "no such thing" has to say which
-    /// of the two it was looking for. Answering that takes all three tests
-    /// below, and no two of them are enough:
+    /// of the two it was looking for. Answering that takes all four tests
+    /// below, and no three of them are enough:
     ///
     /// - Git could never accept the selector as a branch name, so branch-first
     ///   never had a candidate. Without this, revision syntax reports as a
@@ -434,38 +433,45 @@ impl Repository {
     /// - A directory is there to name, which is what makes "the user meant a
     ///   path" more than a guess. Without this, a name shadows a branch:
     ///   `wt remove docs` means the branch even when `docs/` sits beside it.
-    /// - No worktree is registered there, which is what the error asserts. A
-    ///   detached worktree is reachable by its path and by nothing else, so
-    ///   without this the message contradicts the `wt list` its hint points at.
-    ///   The check is here rather than left to callers because a caller cannot
-    ///   be relied on to have made it: `resolve_worktree` skips the path lookup
-    ///   whenever a shortcut rewrote the argument, so `-` expanding to a
-    ///   worktree's path arrives having matched nothing.
+    /// - No worktree of this repository is registered there, which is half of
+    ///   what the error asserts. A detached worktree is reachable by its path
+    ///   and by nothing else, so without this the message contradicts the
+    ///   `wt list` its hint points at. The check is here rather than left to
+    ///   callers because a caller cannot be relied on to have made it:
+    ///   `resolve_worktree` skips the path lookup whenever a shortcut rewrote
+    ///   the argument, so `-` expanding to a worktree's path arrives having
+    ///   matched nothing.
+    /// - Nothing there claims to be a git directory, which is the other half:
+    ///   `list_worktrees` covers only *this* repository, and worktrunk gathers
+    ///   every repo and every worktree into one parent, so a sibling's live
+    ///   checkout is one `../` away from any command. Calling one "not a
+    ///   worktree" reads as an invitation to delete it, and it may hold
+    ///   uncommitted work. A skeleton is what an interrupted create or remove
+    ///   leaves, which is a directory with no `.git` in it at all.
     ///
     /// `None` when any test fails, leaving the caller's own error in place.
+    ///
+    /// The path is reported as resolved but not tidied, so the message names
+    /// what the user typed. A trailing `/` is the reason: `docs/` and `docs`
+    /// are the same directory but not the same selector — only the second finds
+    /// the branch — and echoing back the spelling that works would hide the one
+    /// character that did not.
     pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
         if is_valid_branch_name(selector) {
             return None;
         }
         let path = resolve_input_path(selector);
-        // Tidy the join, so `wt remove ./x` under `-C` names `<base>/x` rather
-        // than `<base>/./x`. Only an absolute path may have its `..` popped:
-        // doing that to a relative one drops a component the cwd was going to
-        // supply, and `../repo.feature` — worktrunk's own sibling layout —
-        // would then both display wrong and probe the wrong directory.
-        // `Path::components` drops the interior `.` either way, keeping a
-        // leading one and every `..`.
-        let path: PathBuf = if path.is_absolute() {
-            NormalizePath::normalize(path.as_path())
-        } else {
-            path.components().collect()
-        };
         if !path.is_dir() {
             return None;
         }
         // A failed listing says nothing about what is registered, so it falls
         // back to the message that claims less.
         if self.worktree_at_path(&path).ok().flatten().is_some() {
+            return None;
+        }
+        // A worktree's `.git` is a file and a repository's is a directory;
+        // either way its presence means this is somebody's checkout.
+        if path.join(".git").exists() {
             return None;
         }
         Some(GitError::WorktreeNotFoundAtPath { path })

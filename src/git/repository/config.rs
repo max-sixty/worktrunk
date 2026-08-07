@@ -584,8 +584,11 @@ impl Repository {
                 return Err(err.into());
             }
             return Err(GitError::BranchNotFound {
+                // Offering `--create` for a name git rejects sends the user to
+                // a command that fails; the argument was a path spelling,
+                // whether or not a directory happens to sit at it.
+                show_create_hint: super::is_valid_branch_name(&branch),
                 branch,
-                show_create_hint: true,
                 last_fetch_ago: None,
                 pr_mr_platform: self.detect_ref_type(),
             }

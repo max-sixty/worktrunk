@@ -1526,6 +1526,19 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
         err.to_string().contains("No branch or worktree named"),
         "a directory must not shadow a branch name, got: {err}"
     );
+
+    // Somebody's checkout, which `list_worktrees` cannot see because it belongs
+    // to another repository. worktrunk gathers every repo and worktree into one
+    // parent, so a sibling is one `../` from any command, and calling a live
+    // one "not a worktree" reads as an invitation to delete it.
+    let sibling = test.root_path().parent().unwrap().join("sibling");
+    std::fs::create_dir_all(sibling.join(".git")).unwrap();
+    assert!(
+        test.repo
+            .path_selector_error(sibling.to_str().unwrap())
+            .is_none(),
+        "a directory holding a .git must not be called a leftover"
+    );
 }
 
 /// A detached worktree is reachable by its path and by nothing else, so a merge
@@ -1620,6 +1633,42 @@ fn directory_merge_target_is_reported_as_a_directory() {
             "{revspec} must not be reported as a path, got: {err}"
         );
     }
+}
+
+/// A mistyped path names no directory, so it keeps the branch error — but the
+/// offer to create a branch goes, because git would reject the name whether or
+/// not anything sits at the path.
+#[test]
+fn a_path_spelling_is_never_offered_as_a_branch_to_create() {
+    use crate::git::ErrorExt;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    for selector in ["../repo.mistyped", "./nowhere", "/abs/nowhere"] {
+        let rendered = test
+            .repo
+            .require_target_branch(Some(selector))
+            .unwrap_err()
+            .render_diagnostic()
+            .unwrap();
+        assert!(
+            !rendered.contains("--create"),
+            "{selector} must not be offered to --create, got: {rendered}"
+        );
+    }
+
+    // A name git would take keeps the offer.
+    let rendered = test
+        .repo
+        .require_target_branch(Some("new-branch"))
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("--create"),
+        "a usable branch name keeps the create hint, got: {rendered}"
+    );
 }
 
 /// The branch-name rules are git's, so git decides them.

@@ -16,7 +16,7 @@ use super::Repository;
 /// them; `branch_name_matches_git_check_ref_format` pins each one against that
 /// command. In-process because it runs wherever a selector fails to resolve,
 /// where a subprocess would buy nothing.
-pub(crate) fn is_valid_branch_name(name: &str) -> bool {
+pub fn is_valid_branch_name(name: &str) -> bool {
     if name.is_empty() || name.ends_with('.') || name.contains("..") || name.contains("@{") {
         return false;
     }
