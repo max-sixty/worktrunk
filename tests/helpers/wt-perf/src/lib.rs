@@ -209,8 +209,10 @@ pub fn add_heterogeneous_linked_worktrees(repo_path: &Path, linked_worktrees: us
 
 /// Add the heterogeneous imported worktree population without leaving a clean
 /// worktree integrated into the default branch. The generated corpus retains
-/// that state; imported prune overlays need every pre-existing worktree to
-/// remain backdrop rather than becoming an incidental candidate.
+/// that state; the imported prune overlay needs its candidate count exact, so
+/// the clean base-tip worktrees get a commit of their own. The dirty base-tip
+/// states stay integrated by ref and are excluded from the count only because
+/// `wt step prune` skips worktrees with working-tree changes.
 fn add_imported_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
     add_heterogeneous_linked_worktrees(repo_path, linked_worktrees);
     for i in (3..linked_worktrees).step_by(4) {
