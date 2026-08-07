@@ -14,7 +14,7 @@ Workflows check `user.login == 'worktrunk-bot'` directly.
 | Token | Purpose | Stored in |
 |-------|---------|-----------|
 | `TEND_BOT_TOKEN` | Every workflow acting as `worktrunk-bot`, including the winget and Homebrew publish jobs | `tend` and `release` environments |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates Claude Code to the Anthropic API | repo level |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates Claude Code to the Anthropic API | `tend` environment |
 | `CODECOV_TOKEN` | Uploads coverage from `ci.yaml` and `coverage.yaml` | repo level, allowlisted in `.config/tend.yaml` |
 
 ## Merge restriction
@@ -26,13 +26,14 @@ Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 
 ## Environment protection
 
-Credentials that grant write access live in a GitHub Environment so no other
-workflow the repo runs can read them. Each environment holds what one phase
-needs, since a job that joins an environment can read every secret in it:
+Every secret except `CODECOV_TOKEN` lives in a GitHub Environment, where no
+other workflow the repo runs can read it. A coverage upload grants nothing
+worth gating. Each environment holds what one phase needs, since a job that
+joins an environment can read every secret in it:
 
 | Environment | Admits | Secret | Read by |
 |-------------|--------|--------|---------|
-| `tend` | `main` | `TEND_BOT_TOKEN` | every `tend-*.yaml` job but `relay`, `append-gist`, both `create-issue-on-*-failure` jobs |
+| `tend` | `main` | `CLAUDE_CODE_OAUTH_TOKEN`, `TEND_BOT_TOKEN` | every `tend-*.yaml` job except `relay`; `append-gist`; both `create-issue-on-*-failure` jobs |
 | `release` | `v*` tags | `AUR_SSH_PRIVATE_KEY`, `TEND_BOT_TOKEN` | `publish-aur`, `publish-winget`, `publish-homebrew` |
 | `signing` | `v*` tags | `SIGNPATH_API_TOKEN` | `build-local-artifacts` |
 | `github-pages` | `main` | none — OIDC only | `deploy-docs` |
@@ -67,13 +68,6 @@ regen lands them on tend ≥ 0.1.14.
 crates.io publishing holds no stored token — it uses Trusted Publishing.
 crates.io mints a short-lived one only for an OIDC claim from `release.yaml`
 running in that same `release` environment.
-
-`CLAUDE_CODE_OAUTH_TOKEN` is still at repo level, so `tend check`'s
-`repo-secret-allowlist` fails until it moves. It cannot be read back from
-GitHub, so moving it means pasting the value or re-minting with
-`claude setup-token`; only the generated workflows read it, and all of them
-name the `tend` environment, so nothing else breaks when the repo-level copy
-goes.
 
 ## Build environment
 
