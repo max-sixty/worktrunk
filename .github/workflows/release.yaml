@@ -406,6 +406,7 @@ jobs:
       - plan
       - host
     runs-on: ubuntu-24.04
+    environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     env:
       GH_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
@@ -428,6 +429,7 @@ jobs:
       - plan
       - host
     runs-on: "ubuntu-24.04"
+    environment: release
     env:
       GITHUB_USER: "worktrunk-bot"
       GITHUB_EMAIL: "worktrunk-bot@users.noreply.github.com"

@@ -31,6 +31,7 @@ use worktrunk::styling::{
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::StatuslineFormat;
+use crate::output::print_json;
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -932,10 +933,9 @@ fn run_json() -> Result<()> {
             // report, and resolving it here could reach the network on a
             // fresh clone — this path runs on every prompt redraw.
             let envelope = list::json_v2::envelope_with_items(&repo, None, collected, vec![]);
-            list::print_json(&envelope)
+            print_json(&envelope)
         } else {
-            println!("[]");
-            Ok(())
+            print_json(&serde_json::json!([]))
         }
     };
 
@@ -982,7 +982,7 @@ fn run_json() -> Result<()> {
         );
         let envelope =
             list::json_v2::envelope_with_items(&repo, default_branch, collected, vec![json_item]);
-        list::print_json(&envelope)
+        print_json(&envelope)
     } else {
         let repo_metadata = repo.repo_info();
         let json_item = json_output::JsonItem::from_list_item(
@@ -992,7 +992,7 @@ fn run_json() -> Result<()> {
             ci_provider_override.as_deref(),
             &[],
         );
-        list::print_json(&[json_item])
+        print_json(&[json_item])
     }
 }
 

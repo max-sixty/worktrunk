@@ -3750,6 +3750,41 @@ cleanup = "flyctl scale count 0"
 // --format=json
 // ============================================================================
 
+/// Removing the current worktree by omitting the branch takes a separate
+/// single-worktree path from the named removals above, with its own
+/// `--format=json` emission. The shape must match: one array, one item.
+///
+/// Removal stays backgrounded: `wt` runs with the doomed worktree as its cwd,
+/// and Windows refuses to delete a directory a live process is sitting in, so
+/// `--foreground` would make this a Windows-only failure. The JSON is emitted
+/// either way — the execution mode picks who deletes, not who reports.
+#[rstest]
+fn test_remove_json_current_worktree_no_args(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    repo.commit("initial");
+    let feature_wt = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--format=json", "--yes"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1, "one worktree removed, one item:\n{stderr}");
+    assert_eq!(items[0]["branch"], "feature");
+
+    wait_for_worktree_removed(&feature_wt);
+}
+
 #[rstest]
 fn test_remove_json(mut repo: TestRepo) {
     repo.commit("initial");

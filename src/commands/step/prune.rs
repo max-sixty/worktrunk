@@ -40,6 +40,8 @@ use worktrunk::styling::{
 };
 use worktrunk::trace::Span;
 
+use crate::output::print_json;
+
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -799,7 +801,7 @@ fn render_dry_run(
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&items)?);
+        print_json(&items)?;
         return Ok(());
     }
 
@@ -1374,7 +1376,7 @@ pub fn step_prune(
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&items)?);
+        print_json(&items)?;
     } else if removed.is_empty() {
         if skipped_young.is_empty() && skipped_approval.is_empty() {
             eprintln!("{}", info_message("No merged worktrees to remove"));

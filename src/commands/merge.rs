@@ -7,6 +7,8 @@ use worktrunk::config::{MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
+use crate::output::print_json;
+
 use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
@@ -462,7 +464,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             "rebased": rebased,
             "removed": removed,
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        print_json(&output)?;
     }
 
     Ok(())

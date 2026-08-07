@@ -27,8 +27,8 @@ use worktrunk::shell_exec::{
     ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
 };
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
-    warning_message,
+    eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
+    suggest_command, warning_message,
 };
 
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
@@ -1314,6 +1314,11 @@ impl SwitchJsonOutput {
 }
 
 /// Emit the structured `--format=json` result to stdout when requested.
+///
+/// One compact line rather than [`crate::output::print_json`]'s pretty form —
+/// a switch reports a single result, and a line is what a shell loop reads.
+/// The `println!` is anstream's for the same reason `print_json` uses it: a
+/// consumer that stops reading must not panic the command.
 ///
 /// A no-op for `SwitchFormat::Text`.
 fn emit_switch_json(

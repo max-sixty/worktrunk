@@ -85,6 +85,8 @@ wt --source -C /path/to/repo switch
 3. Add an `after_long_help` attribute — it is the source of truth for `docs/content/{command}.md`.
 4. Run `cargo test --test integration test_docs_are_in_sync`. Editing help text also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept --test integration -- test_help` (or run the pre-merge hook, which does both).
 
+A `--format=json` mode prints its answer to stdout through anstream's `println!`, which drops a `BrokenPipe` write error where std's panics. `crate::output::print_json` is that printer for every surface but `wt switch --format=json`, which emits its single result as one compact line.
+
 ## Branch Argument Conventions
 
 Every branch-name argument carries a completer (shell completion) and the

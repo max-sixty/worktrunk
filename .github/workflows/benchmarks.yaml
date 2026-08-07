@@ -73,13 +73,37 @@ jobs:
         name: benchmark-results-${{ github.run_id }}
         path: target/criterion
 
-    # Time-series benchmark store, owned by worktrunk-bot:
-    # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
-    #
-    # Cron-only: workflow_dispatch runs aren't appended (would pollute the
-    # time series). Skipped on forks: `TEND_BOT_TOKEN` is not exposed there.
+  # Time-series benchmark store, owned by worktrunk-bot:
+  # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
+  #
+  # Cron-only: workflow_dispatch runs aren't appended (would pollute the
+  # time series). Skipped on forks: the environment's secrets aren't exposed
+  # there.
+  #
+  # Its own job so the token stays off `benchmarks`. The copy this job reads
+  # is in the `tend` environment, whose policy admits `main` alone, so a job
+  # naming it is refused on every other ref — which would take
+  # workflow_dispatch against a chosen branch with it. A job GitHub skips
+  # never requests its environment, so the cron gate above keeps the gate off
+  # the dispatch path.
+  append-gist:
+    needs: benchmarks
+    if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    environment:
+      name: tend
+      # A secret scope, not a deploy target — see .github/CLAUDE.md.
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+    - name: 📦 Download benchmark results
+      uses: actions/download-artifact@v8
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: target/criterion
+
     - name: 💾 Append results to gist
-      if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
       env:
         GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
         GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
@@ -111,9 +135,15 @@ jobs:
         git -C /tmp/gist push
 
   create-issue-on-benchmark-failure:
-    needs: benchmarks
+    needs:
+      - benchmarks
+      - append-gist
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
+    environment:
+      name: tend
+      # A secret scope, not a deploy target — see .github/CLAUDE.md.
+      deployment: false
     permissions:
       contents: read
       issues: write

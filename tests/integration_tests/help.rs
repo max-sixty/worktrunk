@@ -358,3 +358,30 @@ fn test_nested_subcommand_suggestion(
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
+
+/// `--print-schema` names one command's `--format=json` payload, so an
+/// unrecognized or missing command is a usage error rather than a silent
+/// empty document. `test_docs_are_in_sync` treats a non-zero exit as a sync
+/// failure, which is what keeps a renamed command from quietly publishing
+/// nothing.
+#[test]
+fn test_print_schema_rejects_unknown_command() {
+    for args in [&["--print-schema"][..], &["merge", "--print-schema"][..]] {
+        let output = wt_command()
+            .args(args)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run wt {args:?}: {e}"));
+
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "wt {args:?} should exit 2; stderr: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "wt {args:?} should print no schema, but stdout was: {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
