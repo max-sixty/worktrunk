@@ -424,6 +424,71 @@ fn test_push_dirty_target_overlap_in_untracked_dir(mut repo: TestRepo) {
     );
 }
 
+/// A target worktree parked mid-operation refuses the push.
+///
+/// `advance_target`'s `read-tree -m -u` refuses an unmerged index, but a
+/// stopped cherry-pick whose conflict has been staged has a merged one — so
+/// without the upfront gate the sync writes the push range into a worktree
+/// partway through a pick, and the user's `--continue` commits the synced tree
+/// as the pick's result. The conflict is staged at a path the push range never
+/// touches, so `ensure_no_target_conflicts` passes and only the operation gate
+/// can catch this.
+#[rstest]
+fn test_push_refuses_target_mid_operation(mut repo: TestRepo) {
+    let root = repo.root_path().to_path_buf();
+
+    // A side commit that conflicts with main at `conflict.txt`.
+    repo.run_git(&["checkout", "-b", "side"]);
+    std::fs::write(root.join("conflict.txt"), "side\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Side conflict"]);
+    repo.run_git(&["checkout", "main"]);
+    std::fs::write(root.join("conflict.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "-m", "Main conflict"]);
+
+    // feature descends from main and touches only `feature.txt`.
+    let feature_wt = repo.add_feature();
+
+    // Stop a cherry-pick in main's worktree, then stage its resolution: the
+    // operation stays open while the index goes clean.
+    let _ = repo.git_command().args(["cherry-pick", "side"]).run();
+    repo.run_git(&["checkout", "--ours", "conflict.txt"]);
+    repo.run_git(&["add", "conflict.txt"]);
+    assert!(
+        root.join(".git/CHERRY_PICK_HEAD").exists(),
+        "the fixture must leave a cherry-pick open in the target worktree"
+    );
+
+    let target_before = repo.git_output(&["rev-parse", "main"]);
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "main"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("failed to run push");
+
+    assert!(
+        !output.status.success(),
+        "a target worktree mid-operation must refuse the push: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("already in progress") && stderr.contains("main"),
+        "the refusal must name the target worktree holding the operation: {stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_before,
+        "the ref must not move"
+    );
+    assert!(
+        !root.join("feature.txt").exists(),
+        "the worktree sync must not have run"
+    );
+}
+
 /// A fast-forward whose target-worktree sync fails is rolled back whole.
 ///
 /// A locked index in the target worktree stands in for a sync failure in the

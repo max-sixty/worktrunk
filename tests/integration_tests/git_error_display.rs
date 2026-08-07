@@ -198,6 +198,7 @@ fn git_state_errors_render() {
             "rebase in progress",
             GitError::OperationInProgress {
                 action: "rebase".into(),
+                branch: None,
             }
             .render(),
         ),
@@ -205,6 +206,15 @@ fn git_state_errors_render() {
             "merge in progress",
             GitError::OperationInProgress {
                 action: "merge".into(),
+                branch: None,
+            }
+            .render(),
+        ),
+        (
+            "operation in progress in the target worktree",
+            GitError::OperationInProgress {
+                action: "push".into(),
+                branch: Some("main".into()),
             }
             .render(),
         ),

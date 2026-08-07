@@ -20,6 +20,10 @@ expression: render_cases(cases)
 
 [31m✗[39m [31mCannot merge: a git operation is already in progress[39m
 
+## operation in progress in the target worktree
+
+[31m✗[39m [31mCannot push: a git operation is already in progress in the [1mmain[22m worktree[39m
+
 ## uncommitted changes
 
 [31m✗[39m [31mCannot remove worktree: working tree has uncommitted changes[39m
