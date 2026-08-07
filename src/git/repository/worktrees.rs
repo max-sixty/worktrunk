@@ -452,11 +452,12 @@ impl Repository {
     ///
     /// `None` when any test fails, leaving the caller's own error in place.
     ///
-    /// The path is reported as resolved but not tidied, so the message names
-    /// what the user typed. A trailing `/` is the reason: `docs/` and `docs`
-    /// are the same directory but not the same selector — only the second finds
-    /// the branch — and echoing back the spelling that works would hide the one
-    /// character that did not.
+    /// The path is reported as the selector spells it, resolved against `-C`
+    /// but not otherwise tidied. A trailing `/` is the reason: `docs/` and
+    /// `docs` are the same directory but not the same selector — only the
+    /// second finds the branch — and echoing back the spelling that works would
+    /// hide the one character that did not. The cost is that a `-C` base and a
+    /// `./`-prefixed selector join to a visible `/./`.
     pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
         if is_valid_branch_name(selector) {
             return None;
@@ -465,9 +466,9 @@ impl Repository {
         if !path.is_dir() {
             return None;
         }
-        // A failed listing says nothing about what is registered, so it falls
-        // back to the message that claims less.
-        if self.worktree_at_path(&path).ok().flatten().is_some() {
+        // A failed listing says nothing about what is registered, so it counts
+        // against the claim exactly as a match does.
+        if !matches!(self.worktree_at_path(&path), Ok(None)) {
             return None;
         }
         if holds_git_data(&path) {
@@ -534,6 +535,13 @@ impl Repository {
 /// *withhold* a claim, so a false positive costs a vaguer message and a false
 /// negative costs a wrong one.
 ///
+/// Which is why absence has to be established rather than assumed. `Path::exists`
+/// answers `false` for every error alike, so a `.git` that cannot be statted —
+/// a clone the process may not traverse, a symlink whose target is gone —
+/// would read as "no git data" and the message would tell someone their live
+/// checkout is theirs to delete. Only a definite `NotFound` counts as nothing
+/// being there; anything else keeps the claim withheld.
+///
 /// A `.git` whose pointer dangles counts too, and following it to check would
 /// be the wrong refinement. Two very different directories carry a dangling
 /// `.git`: a `git worktree add` that died after writing it, holding nothing
@@ -543,10 +551,19 @@ impl Repository {
 /// tell them apart, so resolving it would license "this is a leftover" over the
 /// second.
 fn holds_git_data(path: &Path) -> bool {
-    path.join(".git").exists()
-        || (path.join("HEAD").exists()
-            && path.join("objects").is_dir()
-            && path.join("refs").is_dir())
+    // `symlink_metadata` reports on the entry itself, so a symlink counts even
+    // when its target is gone, and it surfaces a traversal error instead of
+    // swallowing it.
+    let no_git_entry = matches!(
+        std::fs::symlink_metadata(path.join(".git")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    );
+    if !no_git_entry {
+        return true;
+    }
+    // Reached only when that probe succeeded in saying "nothing there", so the
+    // directory is readable and the bare shape can be read plainly.
+    path.join("HEAD").exists() && path.join("objects").is_dir() && path.join("refs").is_dir()
 }
 
 /// Paths of every worktree checked out on `branch`, in git's listing order.

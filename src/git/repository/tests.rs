@@ -1565,6 +1565,45 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     );
 }
 
+/// A `.git` nobody can follow still marks somebody's checkout.
+///
+/// `Path::exists` answers `false` for every error alike and resolves symlinks,
+/// so both shapes here would read as "no git data" — and both are ways the
+/// bystander of a repo-wide prune presents: a `.git` symlink is how a git
+/// directory is put on another filesystem, which is the volume that gets
+/// unmounted.
+#[test]
+fn an_unresolvable_git_entry_still_counts_as_git_data() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let parent = test.root_path().parent().unwrap();
+
+    let dangling_file = parent.join("bystander-file");
+    std::fs::create_dir_all(&dangling_file).unwrap();
+    std::fs::write(dangling_file.join(".git"), "gitdir: /gone/worktrees/x\n").unwrap();
+
+    let checkouts = [dangling_file];
+
+    #[cfg(unix)]
+    let checkouts = {
+        let dangling_link = parent.join("bystander-link");
+        std::fs::create_dir_all(&dangling_link).unwrap();
+        std::os::unix::fs::symlink("/gone/worktrees/x", dangling_link.join(".git")).unwrap();
+        [checkouts[0].clone(), dangling_link]
+    };
+
+    for checkout in checkouts {
+        assert!(
+            test.repo
+                .path_selector_error(checkout.to_str().unwrap())
+                .is_none(),
+            "an unresolvable .git must still withhold the claim: {}",
+            checkout.display()
+        );
+    }
+}
+
 /// A detached worktree is reachable by its path and by nothing else, so a merge
 /// target naming one is reported as detached rather than as absent — the claim
 /// `wt list` would contradict.
