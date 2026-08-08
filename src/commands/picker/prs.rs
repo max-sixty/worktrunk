@@ -48,7 +48,9 @@ use serde::Deserialize;
 use skim::prelude::*;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::git::{ForgeKind, RefType, Repository};
-use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, warning_message};
+use worktrunk::styling::{
+    HINT_SYMBOL, INFO_SYMBOL, StyledLine, WARNING_SYMBOL, truncate_visible, warning_message,
+};
 
 use super::super::list::ci_status::{
     CiSource, CiStatus, GitHubComment, GitHubPrInfo, PrRef, PrStatus, ReviewState,
@@ -1070,7 +1072,7 @@ fn render_commit_lines(commits: &[(String, String)], abbrev: usize, width: usize
     for (oid, headline) in commits {
         let short: String = oid.chars().take(abbrev).collect();
         let budget = width.saturating_sub(short.width() + 2).max(8);
-        let headline = crate::display::truncate_to_width(headline, budget);
+        let headline = truncate_visible(headline, budget);
         out.push_str(&cformat!("<dim>{short}</>{reset}  {headline}\n"));
     }
     out
@@ -1306,7 +1308,7 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
     let pr_ref = entry.pr_ref();
     let prefix_plain = format!("{pr_ref}  ");
     let branch_budget = list_width.saturating_sub(prefix_plain.width()).max(8);
-    let head_branch = crate::display::truncate_to_width(&entry.head_branch, branch_budget);
+    let head_branch = truncate_visible(&entry.head_branch, branch_budget);
     cformat!("<bold>{pr_ref}</>  <cyan>{head_branch}</>")
 }
 

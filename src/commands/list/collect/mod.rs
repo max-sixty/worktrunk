@@ -318,7 +318,8 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
-    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, truncate_visible, warning_message,
+    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, terminal_width, truncate_visible,
+    warning_message,
 };
 
 use crate::commands::is_worktree_at_expected_path;
@@ -1350,9 +1351,7 @@ pub fn collect(
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane — and takes its rows
     // link-free because skim mangles OSC 8 (see `Destination`).
-    let width = list_width
-        .or_else(crate::display::terminal_width)
-        .unwrap_or(usize::MAX);
+    let width = list_width.or_else(terminal_width).unwrap_or(usize::MAX);
     let destination = if progressive_handler.is_some() {
         super::layout::Destination::picker(width)
     } else {
@@ -1373,7 +1372,7 @@ pub fn collect(
 
     // Single-line invariant: with no detectable width, an unlimited width
     // keeps rows untruncated rather than wrapping at a guessed width
-    let max_width = crate::display::terminal_width().unwrap_or(usize::MAX);
+    let max_width = terminal_width().unwrap_or(usize::MAX);
 
     // Which gated fact families the plan requested — recorded on `ListData`
     // so JSON output can distinguish "not requested" from "undetermined".

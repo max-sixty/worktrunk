@@ -51,7 +51,7 @@ exit_code: 0
 + feature-a
 + feature-b
 + feature-c
-+ feature/implement-oauth2-so…[0m
++ feature/implement-oauth2-so…
 
 ----- stderr -----
 

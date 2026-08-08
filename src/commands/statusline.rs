@@ -26,12 +26,13 @@ use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::{Repository, WorkingTree};
 use worktrunk::styling::{
-    fix_dim_after_color_reset, terminal_width_for_statusline, truncate_visible,
+    ColorChoice, fix_dim_after_color_reset, println, terminal_width_for_statusline,
+    truncate_visible,
 };
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::StatuslineFormat;
-use crate::output::{print_json, println_verbatim};
+use crate::output::print_json;
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -723,13 +724,21 @@ fn format_context_gauge(percentage: f64) -> String {
 
 /// Run the statusline command.
 ///
-/// Output goes through `println_verbatim!`, which bypasses anstream's color
-/// detection: shell prompts (PS1) and Claude Code always expect ANSI codes,
-/// and neither is a tty from this process's point of view.
+/// Output goes through anstream like every other stdout surface, with the
+/// process-global [`ColorChoice`] set to `Always` so the escapes survive:
+/// shell prompts (PS1) and Claude Code always expect ANSI codes, and neither
+/// is a tty from this process's point of view.
 pub fn run(format: StatuslineFormat) -> Result<()> {
     // Statusline runs on every prompt redraw — deprecation warnings on stderr
     // would appear above each prompt.
     worktrunk::config::suppress_warnings();
+
+    // A shell prompt or Claude Code captures this line and re-renders it, so
+    // the escapes are part of the answer rather than presentation this process
+    // chose. `Always` is the conventional `--color=always` semantic and
+    // overrides `NO_COLOR` by design — an explicit request for color wins
+    // (no-color.org).
+    ColorChoice::Always.write_global();
 
     // JSON format: output current worktree as JSON
     if matches!(format, StatuslineFormat::Json) {
@@ -846,7 +855,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     let output = fix_dim_after_color_reset(&output);
     let output = truncate_visible(&format!("{reset} {output}"), max_width);
 
-    println_verbatim!("{}", output);
+    println!("{}", output);
 
     Ok(())
 }

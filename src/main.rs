@@ -1,6 +1,6 @@
 use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
-use color_print::{ceprintln, cformat};
+use color_print::cformat;
 use std::process;
 use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
@@ -76,10 +76,15 @@ fn print_enhanced_clap_error(err: &clap::Error) {
     {
         let cmd = cli::build_command();
         if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, &unknown.to_string()) {
-            ceprintln!(
-                "{}
+            // anstream's eprintln, so the stream's resolved color choice
+            // governs cformat's escapes.
+            eprintln!(
+                "{}",
+                cformat!(
+                    "{}
   <yellow>tip:</>  perhaps <cyan,bold>{suggestion}</cyan,bold>?",
-                err.render().ansi()
+                    err.render().ansi()
+                )
             );
             return;
         }

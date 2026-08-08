@@ -189,7 +189,7 @@ pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> a
     let mut args = vec!["diff", "--color=always", "--stat"];
     // With no detectable width, omit the flag and let git use its default width.
     let stat_width_arg;
-    if let Some(term_width) = crate::display::terminal_width() {
+    if let Some(term_width) = worktrunk::styling::terminal_width() {
         let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
         stat_width_arg = format!("--stat-width={stat_width}");
         args.push(&stat_width_arg);
