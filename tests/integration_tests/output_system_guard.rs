@@ -199,6 +199,10 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, comman
 /// Every other file that writes to stderr must have the macro of that name in
 /// scope from `worktrunk::styling`, or qualify the call — see
 /// [`check_stderr_macros_come_from_styling`].
+///
+/// An entry exempts the **whole file**, not the call its comment names, so an
+/// entry added for one narrow site also covers whatever that file grows later.
+/// Keep the list to files where std's macro is right throughout.
 const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
     // Relays a stub's captured stderr verbatim; the bytes are the fixture's
     // data, so stripping their escapes would change what the test replays.
@@ -310,16 +314,22 @@ fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec
 /// Only `use` statements count. A qualified call site (`styling::eprintln!(…)`)
 /// carries the same `styling::` prefix but binds nothing, so counting it would
 /// let a file's *bare* calls silently fall through to std's macro.
+///
+/// **Only *top-level* `use` statements count** — ones at column 0. The caller
+/// tests coverage per file while Rust resolves imports per scope, so a
+/// function-local `use worktrunk::styling::eprintln;` would otherwise mark
+/// every other function in the file as covered when none of them is. Every
+/// styling import in `src/` is top-level, so the narrower rule costs nothing;
+/// a future function-local one fails this scan and gets hoisted.
 fn styling_imports(contents: &str) -> HashSet<String> {
     let mut imports = HashSet::new();
     let mut statement = String::new();
 
     for line in contents.lines() {
-        let trimmed = line.trim();
-        if statement.is_empty() && !(trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
-        {
+        if statement.is_empty() && !(line.starts_with("use ") || line.starts_with("pub use ")) {
             continue;
         }
+        let trimmed = line.trim();
         statement.push_str(trimmed);
         if !trimmed.ends_with(';') {
             continue;
