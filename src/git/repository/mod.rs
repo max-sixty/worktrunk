@@ -1602,6 +1602,7 @@ impl Repository {
         match self.operation_in_progress()? {
             Some(_) => Err(crate::git::GitError::OperationInProgress {
                 action: action.to_string(),
+                branch: None,
             }
             .into()),
             None => Ok(()),

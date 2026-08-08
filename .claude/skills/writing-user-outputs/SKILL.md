@@ -48,12 +48,38 @@ use worktrunk::styling::{eprintln, println, stderr};
 // Status messages to stderr
 eprintln!("{}", success_message("Created worktree"));
 
-// Primary output to stdout (tables, JSON, pipeable)
+// Primary output to stdout (tables, shell code, pipeable)
 println!("{}", table_output);
 
 // Flush before interactive prompts
 stderr().flush()?;
 ```
+
+Which `println!` is in scope decides whether a closed pipe panics: std's
+panics on the `BrokenPipe` write error, anstream's drops it. `wt … | head`
+closes the pipe, so command code imports the `worktrunk::styling` one and no
+`std::println!` is left in `src/`.
+
+**Output whose ANSI is already decided** goes through
+`crate::output::println_verbatim!` instead — the statusline a shell prompt or
+Claude Code renders, and the `--help-page` document whose escapes the docs
+pipeline turns into HTML. Neither consumer is ever a tty, so anstream would
+strip their color every time, and the test suite would not catch it because it
+forces color with `CLICOLOR_FORCE=1`. `println_verbatim!` writes the bytes
+through unchanged and drops a `BrokenPipe` the same way anstream does. Reach
+for it only when the pipe is a courier rather than the destination; anything a
+person reads directly stays on anstream, which is what strips color on a pipe
+and honors `NO_COLOR`.
+
+**`--format=json` answers** go through `crate::output::print_json`, never a
+hand-rolled `println!("{}", serde_json::to_string_pretty(&v)?)`. It serializes
+pretty with one trailing newline and prints through anstream, so no
+`--format=json` surface panics when its consumer stops reading. Before that,
+thirty call sites had open-coded those two lines, and whether any one of them
+panicked under `| head -3` came down to which `println!` its module happened to
+import. `wt switch --format=json` is the one non-caller: it emits its single
+result as one compact line (still through anstream's `println!`), because that
+is what a shell loop reads.
 
 **Shell integration functions** (`src/output/global.rs`):
 
