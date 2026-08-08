@@ -16,7 +16,7 @@ use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_outp
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::{BranchFate, RemovalPlan};
+use super::worktree::{BranchFate, RemovalPlan, compute_worktree_path};
 use super::{RemoveTarget, flag_pair};
 
 /// The execution mode `--foreground` selects; the background default falls
@@ -58,6 +58,49 @@ impl RemovePlans {
     }
 }
 
+/// The removable detached worktree sitting where `branch`'s worktree belongs,
+/// if any.
+///
+/// Detaching a worktree's HEAD severs the only link git records between it and
+/// the branch, so once that happens the `worktree-path` template is all that
+/// still connects the two. That is a stronger association than the rest of the
+/// module draws — `is_worktree_at_expected_path` returns false for a detached
+/// worktree, and [`worktree_display_name`] renders one as `dir_name (detached)`
+/// without consulting the template — and it is intentional here: the template
+/// match is what keeps the removal from stranding it. Three cases are
+/// deliberately not matched, because refusing on them would name a removal that
+/// can't happen or protect nothing:
+///
+/// - a worktree checked out on some *other* branch — that branch names it, so
+///   removing this one strands nothing;
+/// - the main worktree, which `wt remove <path>` refuses anyway. A detached
+///   main worktree matches the default branch, whose removal already reports
+///   the accurate [`CannotRemoveDefaultBranch`](worktrunk::git::GitError::CannotRemoveDefaultBranch);
+/// - a prunable entry, whose directory is already gone — stale metadata for
+///   `wt step prune` to sweep, not a worktree left on disk.
+///
+/// [`worktree_display_name`]: super::worktree::worktree_display_name
+fn detached_worktree_for<'a>(
+    repo: &Repository,
+    config: &UserConfig,
+    branch: &str,
+    worktrees: &'a [worktrunk::git::WorktreeInfo],
+) -> Option<&'a Path> {
+    let expected = compute_worktree_path(repo, branch, config).ok()?;
+    worktrees
+        .iter()
+        .find(|wt| {
+            wt.branch.is_none()
+                && !wt.is_prunable()
+                && worktrunk::path::paths_match(&wt.path, &expected)
+                // Fail closed: a `git_dir` lookup that fails says nothing about
+                // whether the worktree is linked, and skipping the guard there
+                // deletes the ref and strands the worktree — the #3769 outcome.
+                && repo.worktree_at(&wt.path).is_linked().unwrap_or(true)
+        })
+        .map(|wt| wt.path.as_path())
+}
+
 /// Validate all removal targets, returning categorized plans.
 ///
 /// Resolves each branch name, determines whether it's the current worktree,
@@ -65,6 +108,7 @@ impl RemovePlans {
 /// Errors are collected (not fatal) to support partial success.
 fn validate_remove_targets(
     repo: &Repository,
+    config: &UserConfig,
     branches: Vec<String>,
     keep_branch: bool,
     force_delete: bool,
@@ -126,7 +170,34 @@ fn validate_remove_targets(
                 // otherwise (see its shared-branch handling).
                 RemoveTarget::WorktreePath(path_canonical)
             }
-            ResolvedWorktree::BranchOnly { branch } => RemoveTarget::BranchOnly(branch),
+            ResolvedWorktree::BranchOnly { branch } => {
+                // A detached worktree is invisible to the branch-first lookup,
+                // so a branch whose worktree has since been detached resolves
+                // here and would have its ref deleted with the worktree left
+                // registered (#3769). Refuse instead, and name the path — the
+                // only spelling that still reaches it.
+                //
+                // The guard belongs to this command rather than to
+                // `prepare_worktree_removal`, which every producer of a
+                // `BranchOnly` target shares: `wt step prune` plans its whole
+                // sweep from one worktree-list snapshot, so a detached
+                // worktree it is about to remove as its own candidate is still
+                // registered when the branch's plan is built. Refusing there
+                // would leave prune unable to clean up either half.
+                if let Some(detached) =
+                    worktrees.and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
+                {
+                    plans.record_error(
+                        worktrunk::git::GitError::DetachedWorktreeForBranch {
+                            branch,
+                            path: detached.to_path_buf(),
+                        }
+                        .into(),
+                    );
+                    continue;
+                }
+                RemoveTarget::BranchOnly(branch)
+            }
         };
 
         match repo.prepare_worktree_removal(
@@ -376,6 +447,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 let plans = validate_remove_targets(
                     &repo,
+                    &config,
                     branches,
                     !delete_branch,
                     args.force_delete,
@@ -483,6 +555,7 @@ mod tests {
 
         let plans = validate_remove_targets(
             &repo,
+            &UserConfig::default(),
             vec!["missing-worktree".to_string(), "branch-only".to_string()],
             false,
             false,
