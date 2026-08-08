@@ -18,9 +18,12 @@ delete, or edits a file that contains one:
 
 The hold is for what a user can't get back: a worktree, a repository, a branch,
 uncommitted work, or a file worktrunk writes on their behalf (its own config and
-state, an rc file, another tool's settings). A deletion confined to a directory
-the same code just created, or to a throwaway CI or development environment,
-reaches none of that.
+state, an rc file, another tool's settings). A deletion reaches none of that when
+everything under its target can be regenerated, or when it is confined to a
+throwaway CI or development environment. The test is the contents rather than the
+directory's age: `wt step promote` creates its staging directory and removes it
+inside one operation, and in between the directory holds the user's only copy of
+both worktrees' ignored files.
 
 Hold on what the diff can reach, not co-location. In source, a change near the
 force-delete path holds even when the destructive line isn't in the diff. In
