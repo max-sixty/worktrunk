@@ -58,9 +58,10 @@ tasks:
         echo "Installing shell-integration test dependencies..."
         if command -v apt-get &> /dev/null; then
             export DEBIAN_FRONTEND=noninteractive
-            # An `if` rather than an `&&` chain: with no `.list` files to
-            # match, the glob leaves `$f` as the pattern itself, the chain
-            # ends false, and `set -e` takes the whole task down.
+            # An `if` rather than an `&&` chain: under `set -e` a chain
+            # ending false takes the whole task down, and this one ends
+            # false both on an unmatched glob and on a `.list` file with
+            # no `[` line.
             for f in /etc/apt/sources.list.d/*.list; do
                 if [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null; then
                     rm -f "$f"
