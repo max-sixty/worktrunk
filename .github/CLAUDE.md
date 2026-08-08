@@ -50,8 +50,10 @@ The tag policies admit every tag rather than a `v*` pattern. "Tag operations"
 covers `~ALL` tags, so the pattern carries no part of the gate — it only
 duplicates `release.yaml`'s own tag filter, and the two are easy to drift
 apart. They already had: the workflow fires on `**[0-9]+.[0-9]+.[0-9]+*`,
-which matches an unprefixed `1.2.3` that a `v*` policy would then refuse, so a
-release cut under that name would have failed at the first publish job.
+which matches an unprefixed `1.2.3` that a `v*` policy would then refuse. A
+release cut under that name would have stopped at `build-local-artifacts`,
+which names `signing` and waits only on `plan` — before an artifact was built,
+let alone published.
 
 `TEND_BOT_TOKEN` is stored in two environments rather than shared, because a
 policy admits branches or tags but the token is needed under both: the bot's
