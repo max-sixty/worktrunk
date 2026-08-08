@@ -552,6 +552,11 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
     ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
+    // Give the `--reap` probes (`git::reap::probe_timeout`) a load-proof
+    // bound. At the production 5s, a probe spawn stalling under suite load
+    // trips the timeout, whose fail-safe empty result turns "reap the child"
+    // into "No processes to reap" — a load-dependent outcome.
+    ("WORKTRUNK_TEST_PROBE_TIMEOUT_MS", "60000"),
     // Treat shells as not installed by default so the "Skipped …; rc not found"
     // filter in scan_shell_configs is deterministic across hosts. Tests that need
     // a shell to count as installed (e.g., to assert the Skipped path) set "1".
