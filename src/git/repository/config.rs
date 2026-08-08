@@ -130,6 +130,42 @@ impl Repository {
         Ok(existed)
     }
 
+    /// The `worktrunk.config.*` entries from the merged effective git config,
+    /// with the prefix stripped (experimental project-config source, #3454).
+    ///
+    /// An in-memory prefix scan over the bulk config map — no subprocess.
+    /// Git has already merged the scopes (system → global → local, plus any
+    /// includes) before `--list` emits, and for a repeated key the last
+    /// value wins, so the returned pairs carry git's own precedence.
+    /// Per git's key model the middle path segments are case-sensitive;
+    /// only exact-lowercase keys (the schema's own spelling) match.
+    ///
+    /// A `WORKTRUNK_PROJECT_CONFIG_PATH` override — any value, including
+    /// empty — returns no pairs: the override names the config source
+    /// outright (see [`project_config_path`](Self::project_config_path)),
+    /// and the object-store fallback already defers to it for the same
+    /// reason. The empty-value form is the "no project config" kill switch
+    /// test harnesses rely on; ambient git keys must not resurrect config
+    /// behind it. Enforcing the deferral here, in the sole accessor, means
+    /// every consumer (`ProjectConfig::load`, `wt config show`,
+    /// `wt --diagnose`) inherits it by construction.
+    ///
+    /// Any non-empty result means the git-config source supersedes
+    /// `.config/wt.toml` — the selection lives in `ProjectConfig::load`.
+    pub fn worktrunk_config_git_pairs(&self) -> anyhow::Result<Vec<(String, String)>> {
+        if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
+            return Ok(Vec::new());
+        }
+        let guard = self.all_config()?.read().unwrap();
+        Ok(guard
+            .iter()
+            .filter_map(|(key, values)| {
+                let rest = key.strip_prefix(crate::config::GIT_CONFIG_PREFIX)?;
+                Some((rest.to_string(), values.last()?.clone()))
+            })
+            .collect())
+    }
+
     /// Run `git config --get-regexp <pattern>` and return stdout.
     ///
     /// Distinguishes exit 1 (no matching keys — expected, returns empty
@@ -1011,6 +1047,37 @@ mod tests {
         let err = repo.unset_config("inva lid.key").unwrap_err();
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
         assert_eq!(cmd_err.command_string(), "git config --unset inva lid.key");
+    }
+
+    #[test]
+    fn test_worktrunk_config_pairs_honor_conditional_include() {
+        // Keys reachable only through an `includeIf.gitdir:` condition must
+        // resolve like any other git config — git evaluates the condition
+        // before the bulk `--list` read this accessor scans.
+        let test = TestRepo::with_initial_commit();
+        let fragment = test.root_path().join("private-worktrunk.gitconfig");
+        std::fs::write(
+            &fragment,
+            "[worktrunk \"config.list\"]\n\turl = http://from-includeif:1234\n",
+        )
+        .unwrap();
+
+        use path_slash::PathExt as _;
+        let condition = format!(
+            "includeIf.gitdir:{}/.git/.path",
+            test.root_path().to_slash_lossy()
+        );
+        test.run_git(&["config", &condition, fragment.to_str().unwrap()]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let pairs = repo.worktrunk_config_git_pairs().unwrap();
+        assert_eq!(
+            pairs,
+            vec![(
+                "list.url".to_string(),
+                "http://from-includeif:1234".to_string()
+            )]
+        );
     }
 
     #[test]

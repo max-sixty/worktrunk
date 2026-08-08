@@ -534,17 +534,23 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let config_path = repo
-        .project_config_path()?
-        .context("Cannot determine project config location — no worktree found")?;
+    // Git-config-sourced config has no file path; name the source instead.
+    let source_label = match project_config {
+        Some(config) if config.source == worktrunk::config::ProjectConfigSource::GitConfig => {
+            format!("@ {}", worktrunk::config::GIT_CONFIG_SOURCE_LABEL)
+        }
+        _ => {
+            let config_path = repo
+                .project_config_path()?
+                .context("Cannot determine project config location — no worktree found")?;
+            format!("@ {}", format_path_for_display(&config_path))
+        }
+    };
 
     writeln!(
         out,
         "{}",
-        format_heading(
-            "PROJECT HOOKS",
-            Some(&format!("@ {}", format_path_for_display(&config_path)))
-        )
+        format_heading("PROJECT HOOKS", Some(&source_label))
     )?;
 
     let Some(config) = project_config else {

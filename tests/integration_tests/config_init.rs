@@ -120,6 +120,26 @@ run = "echo hello"
     });
 }
 
+/// `wt config create --project` propagates `create_config_file`'s error when
+/// the config directory can't be created. Here `.config` already exists as a
+/// regular file, so `create_dir_all(".config")` fails and the error surfaces
+/// (covers the create call's `?` error path on the git-config branch, #3454).
+#[rstest]
+fn test_config_create_project_errors_when_config_dir_is_a_file(repo: TestRepo) {
+    fs::write(repo.root_path().join(".config"), "not a dir").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "create", "--project"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "create should fail when .config is a regular file; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Running `wt config create --project` from inside a repo's `.git` directory
 /// (not inside a worktree, not a bare repo) must fail with the generic
 /// "no worktree found" error rather than the bare-repo-specific message.

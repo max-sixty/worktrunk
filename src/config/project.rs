@@ -175,11 +175,32 @@ impl ProjectConfig {
     }
 }
 
+/// Where a loaded [`ProjectConfig`] came from.
+///
+/// Attribution only — every source passes through the same approval gate
+/// ("Project Commands Run Only After Approval" in `CLAUDE.md`). Even
+/// `.git/config` content can originate remotely via an `include`/`includeIf`
+/// of a file from a cloned dotfiles repo, so no source is exempt. The enum
+/// exists so `wt config show` and `wt hook show` can name the active source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProjectConfigSource {
+    /// `.config/wt.toml` on disk (or the committed object-store fallback).
+    #[default]
+    File,
+    /// `worktrunk.config.*` keys read from git config (experimental, #3454).
+    GitConfig,
+}
+
 /// Project-specific configuration with hooks.
 ///
 /// This config is stored at `<repo>/.config/wt.toml` within the repository and
 /// IS checked into git. It defines project-specific hooks that run automatically
 /// during worktree operations. All developers working on the project share this config.
+///
+/// Alternatively (experimental), the same schema can be supplied privately via
+/// `worktrunk.config.*` keys in git config — see `src/config/git_source.rs`.
+/// When any such key exists, that source replaces the file entirely. Commands
+/// from either source pass through the same approval gate.
 ///
 /// # Template Variables
 ///
@@ -244,6 +265,13 @@ pub struct ProjectConfig {
     /// ```
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aliases: BTreeMap<String, CommandConfig>,
+
+    /// Provenance of this config — not part of the TOML schema. Set to
+    /// [`ProjectConfigSource::GitConfig`] only by the git-config branch of
+    /// [`ProjectConfig::load`]; deserialization defaults it to `File`.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub source: ProjectConfigSource,
 }
 
 impl ProjectConfig {
@@ -255,6 +283,19 @@ impl ProjectConfig {
         repo: &crate::git::Repository,
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
+        // Experimental git-config source (#3454): when any `worktrunk.config.*`
+        // key exists in the merged effective git config, that source is the
+        // complete project config and the file is not read (all-or-nothing —
+        // see `src/config/git_source.rs`). A parse failure is a hard error;
+        // falling back to the file would silently change which config runs.
+        let git_pairs = repo
+            .worktrunk_config_git_pairs()
+            .map_err(|e| ConfigError(format!("Failed to read git config: {e}")))?;
+        if !git_pairs.is_empty() {
+            super::git_source::warn_superseded_project_file(repo);
+            return super::git_source::project_config_from_git(&git_pairs).map(Some);
+        }
+
         let (contents, config_path) = match repo
             .project_config_path()
             .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
