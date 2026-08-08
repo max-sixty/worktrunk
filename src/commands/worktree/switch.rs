@@ -824,6 +824,8 @@ fn plan_switch(
     clobber: bool,
     config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
+    let branch = worktrunk::git::normalize_selector(branch);
+
     // Record current branch for `wt switch -` support
     let new_previous = repo.current_worktree().branch().ok().flatten();
 
@@ -832,21 +834,12 @@ fn plan_switch(
 
     // Phase 2: Check if worktree already exists for this branch (fast path)
     // This avoids computing the worktree path template (~7 git commands) for existing switches.
-    match repo.worktree_for_branch(&target.branch)? {
-        Some(existing_path) if existing_path.exists() => {
-            return Ok(SwitchPlan::Existing {
-                path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: Some(target.branch),
-                new_previous,
-            });
-        }
-        Some(_) => {
-            return Err(GitError::WorktreeMissing {
-                branch: target.branch,
-            }
-            .into());
-        }
-        None => {}
+    if let Some(existing_path) = repo.usable_worktree_for_branch(&target.branch)? {
+        return Ok(SwitchPlan::Existing {
+            path: canonicalize(&existing_path).unwrap_or(existing_path),
+            branch: Some(target.branch),
+            new_previous,
+        });
     }
 
     // Phase 2b: the argument as the worktree's own path — the way to name a

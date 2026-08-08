@@ -238,6 +238,11 @@ impl RepositoryCliExt for Repository {
                 // refuses a locked worktree where a repo-wide prune ignored
                 // one, which needs no guard here: the lock check above already
                 // returned for every locked entry in this arm.
+                //
+                // `exists()` is that cleanup's precondition rather than a
+                // proxy for health: `prune_worktree_entry` unregisters with
+                // `git worktree remove`, which skips its validation only while
+                // the directory is absent.
                 if let Some(branch) = wt.branch.as_deref()
                     && !wt.path.exists()
                 {
@@ -245,6 +250,22 @@ impl RepositoryCliExt for Repository {
                         pruned_from: Some(wt.path.clone()),
                         branch: branch.to_string(),
                     }
+                } else if wt.is_prunable() {
+                    // Registered, directory present, but it no longer holds
+                    // this worktree — deleted and recreated, which is what an
+                    // interrupted `wt switch` leaves behind. Neither route out
+                    // of here works: the cleanup above needs the directory
+                    // gone, and the removal below walks into git's own
+                    // validation a few calls later, reaching the user as a raw
+                    // `exit 128`. Only the repo-wide `git worktree prune`
+                    // clears this one, and the hint names it.
+                    return Err(GitError::WorktreeMissing {
+                        branch: wt
+                            .branch
+                            .clone()
+                            .unwrap_or_else(|| wt.dir_name().to_string()),
+                    }
+                    .into());
                 } else {
                     let is_current = worktrunk::path::paths_match(&wt.path, current_path);
                     Resolved::Worktree {
@@ -325,6 +346,21 @@ impl RepositoryCliExt for Repository {
 
         // Phase 5: Remaining worktree-level validation.
         let target_wt = self.worktree_at(&worktree_path);
+
+        // Ownership first: `ensure_clean` below runs `git status` in the
+        // directory, so against a foreign occupant it reports that
+        // repository's dirt as this worktree's and points at `--force`, the
+        // one flag that would carry the removal through. Planning is also
+        // upstream of the "Removing …" announcement, so the refusal arrives
+        // before wt claims to be doing it.
+        //
+        // `stage_worktree_removal` asks the same question at the rename, for
+        // the callers that reach it without planning here. That is not a
+        // re-validation of this one: `git_dir()` caches per worktree path for
+        // the process, so within a single removal the second call answers from
+        // the first. A directory swapped in between would not be caught — the
+        // same time-of-check window `ensure_clean` carries, and narrower.
+        target_wt.ensure_belongs_to_repo()?;
 
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;

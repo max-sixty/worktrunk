@@ -429,16 +429,34 @@ pub fn remove_worktree_with_cleanup(
 /// holds a handle on the worktree that would fail it, and git's graceful stop
 /// resolves the daemon by worktree path — unreachable once the path moves.
 ///
+/// The ownership check runs **before** the dirty-worktree gate, and outside
+/// the `force_worktree` branch that skips it. Both matter. The gate reads `git
+/// status` in the directory, so against a foreign occupant it reports *that*
+/// repository's dirt as this worktree's and offers `--force` as the remedy — a
+/// hint leading straight to the deletion the check refuses. And `--force` is
+/// the user waiving their own uncommitted changes, never a claim about who
+/// owns the directory, so it cannot be allowed to skip it; git's own
+/// validation is likewise unconditional.
+///
+/// `wt remove` and `wt merge --remove` have already asked this during
+/// planning, where the answer can precede the "Removing …" announcement. The
+/// call here is for the paths that stage without planning, not a fresh
+/// re-check — `git_dir()` caches per worktree path, so a second call in the
+/// same process answers from the first.
+///
 /// # Errors
 ///
-/// Only the dirty-worktree gate errors. A failed rename is reported as `None`,
-/// not an error, and the daemon stop is best-effort throughout.
+/// The ownership check and the dirty-worktree gate error. A failed rename is
+/// reported as `None`, not an error, and the daemon stop is best-effort
+/// throughout.
 pub fn stage_worktree_removal(
     repo: &Repository,
     worktree_path: &Path,
     branch: Option<&str>,
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
+    repo.worktree_at(worktree_path).ensure_belongs_to_repo()?;
+
     if !force_worktree {
         repo.worktree_at(worktree_path)
             .ensure_clean("remove worktree", branch, true)?;

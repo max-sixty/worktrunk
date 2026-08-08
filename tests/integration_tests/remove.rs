@@ -439,6 +439,74 @@ fn test_remove_path_holding_no_worktree(repo: TestRepo) {
     ));
 }
 
+/// A worktree directory deleted and *recreated* is reported, not carried into
+/// git's own validation failure.
+///
+/// It is a stale registration either way, but only the absent spelling can be
+/// cleaned up here: `prune_worktree_entry` unregisters with `git worktree
+/// remove`, which skips its validation only while the directory is gone. With
+/// a directory sitting there git refuses — `--force` included — so the answer
+/// is the message naming the repo-wide `git worktree prune` that does clear
+/// it. `test_remove_pruned_worktree_directory_missing` covers the absent half,
+/// which still removes without a prompt.
+#[rstest]
+fn test_remove_worktree_directory_recreated(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    std::fs::create_dir_all(&worktree_path).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
+}
+
+/// A registration whose directory now holds a *different* repository is not
+/// this repository's worktree, and removing it would destroy that one — its
+/// uncommitted work and, for a repo that was never pushed, the only copy of
+/// its objects.
+///
+/// `--force` is the case that matters. It is the user waiving their own
+/// uncommitted changes, never a claim about who owns the directory, and it is
+/// where the dirty-worktree gate stops applying — so it must not carry the
+/// removal through. `git worktree remove` refuses this same removal with
+/// `--force`; worktrunk's fast path renames the directory itself instead of
+/// asking git to, so it has to make the check for itself.
+#[rstest]
+fn test_remove_refuses_foreign_repository_at_worktree_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let parent = worktree_path.parent().unwrap().to_path_buf();
+    let dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+
+    // Replace the worktree with an unrelated repository at the same path — the
+    // registration still resolves, and the occupant's own `.git` keeps git
+    // from calling it prunable.
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    repo.run_git_in(&parent, &["init", "-b", "main", dir_name]);
+    std::fs::write(worktree_path.join("precious.txt"), "unpushed work").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "feature", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt remove --force must refuse a foreign repository at a registered path.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    // The refusal is worth nothing if the directory went anyway: removal
+    // stages by rename and deletes in a detached process, so the exit code
+    // alone would not catch a staged-then-deleted tree.
+    assert!(
+        worktree_path.join("precious.txt").exists(),
+        "the foreign repository's uncommitted file must survive",
+    );
+    assert!(
+        worktree_path.join(".git").is_dir(),
+        "the foreign repository's object store must survive",
+    );
+}
+
 #[rstest]
 fn test_remove_partial_success(mut repo: TestRepo) {
     // Create one valid worktree

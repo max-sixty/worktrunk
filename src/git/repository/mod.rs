@@ -520,6 +520,29 @@ pub fn resolve_input_path(path: impl AsRef<Path>) -> PathBuf {
     }
 }
 
+/// A worktree selector with trailing path separators removed.
+///
+/// Git's ref format forbids a name ending in `/`, so a selector that does can
+/// only be a path spelling — and shell completion is how one usually arrives.
+/// `wt switch docs<tab>` completes against the *directory* `./docs` whenever
+/// one sits beside the branch, yielding `docs/`, and the branch lookup then
+/// misses a branch that is right there.
+///
+/// Applied where a raw token enters resolution — [`Repository::resolve_worktree`],
+/// [`Repository::resolve_target_branch`], and `plan_switch` — rather than
+/// inside the shortcut expander they each call first. Both halves of "try the
+/// branch, then try the path" have to see one token: each gates its path
+/// attempt on the resolved name still equalling the input, which is how it
+/// tells a shortcut rewrite from a literal, and a name stripped underneath
+/// that test would read as a rewrite.
+///
+/// A selector of nothing but separators is returned unchanged — `/` is the
+/// root directory, and the empty string names nothing at all.
+pub fn normalize_selector(name: &str) -> &str {
+    let trimmed = name.trim_end_matches(std::path::is_separator);
+    if trimmed.is_empty() { name } else { trimmed }
+}
+
 /// Repository state for git operations.
 ///
 /// Represents the shared state of a git repository (the `.git` directory).

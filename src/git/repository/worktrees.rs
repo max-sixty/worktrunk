@@ -9,7 +9,8 @@ use color_print::cformat;
 use dunce::canonicalize;
 
 use super::{
-    GitError, Repository, ResolvedWorktree, WorktreeInfo, is_valid_branch_name, resolve_input_path,
+    GitError, Repository, ResolvedWorktree, WorktreeInfo, is_valid_branch_name, normalize_selector,
+    resolve_input_path,
 };
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
@@ -83,6 +84,42 @@ impl Repository {
             warn_duplicate_checkout(branch, &paths);
         }
         Ok(paths.into_iter().next())
+    }
+
+    /// The worktree `branch` is checked out in, refusing one nothing can run in.
+    ///
+    /// [`worktree_for_branch`](Self::worktree_for_branch) answers where git has
+    /// the worktree *registered*; this answers where a command can actually
+    /// work, and is what the commands that go on to run there want — `wt
+    /// switch`, `wt merge`, `wt step push`, and every selector
+    /// [`resolve_worktree`](Self::resolve_worktree) resolves.
+    ///
+    /// The verdict is git's `prunable`, read from a listing
+    /// [`list_worktrees`](Self::list_worktrees) has already parsed and cached,
+    /// so this costs a lookup rather than a fork. Two callers used to ask
+    /// `Path::exists()` instead and a third asked nothing — so a directory
+    /// deleted and *recreated* (an interrupted `wt switch`, a manual `rm -rf`
+    /// followed by `mkdir`) passed the probe, and git's `rev-parse … (exit
+    /// 128)` reached the user from wherever that command first touched the
+    /// repository.
+    ///
+    /// `Ok(None)` when the branch has no worktree at all — a normal answer,
+    /// and the caller's to interpret.
+    pub fn usable_worktree_for_branch(&self, branch: &str) -> anyhow::Result<Option<PathBuf>> {
+        let Some(path) = self.worktree_for_branch(branch)? else {
+            return Ok(None);
+        };
+        let prunable = self
+            .list_worktrees()?
+            .iter()
+            .any(|wt| paths_match(&wt.path, &path) && wt.is_prunable());
+        if prunable {
+            return Err(GitError::WorktreeMissing {
+                branch: branch.to_string(),
+            }
+            .into());
+        }
+        Ok(Some(path))
     }
 
     /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
@@ -326,8 +363,15 @@ impl Repository {
     /// # Returns
     /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
     /// - `BranchOnly { branch }` when nothing is checked out under that name
+    ///
+    /// A worktree git reports as *prunable* still resolves here. Resolution
+    /// answers "what did the user name", and `wt remove` names one precisely
+    /// in order to clean up its registration. Refusing to *work* in one is
+    /// [`usable_worktree_for_branch`](Self::usable_worktree_for_branch)'s job,
+    /// which the commands that go on to run there call instead.
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
-        match name {
+        let name = normalize_selector(name);
+        let resolved = match name {
             "@" => {
                 // Current worktree by path - works even in detached HEAD
                 // If worktree_root fails (e.g., in bare repo directory), give a clear error
@@ -344,32 +388,33 @@ impl Repository {
                     .iter()
                     .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
                     .and_then(|wt| wt.branch.clone());
-                Ok(ResolvedWorktree::Worktree { path, branch })
+                ResolvedWorktree::Worktree { path, branch }
             }
             _ => {
                 let branch = self.resolve_worktree_name(name)?;
                 if let Some(path) = self.worktree_for_branch(&branch)? {
-                    return Ok(ResolvedWorktree::Worktree {
+                    ResolvedWorktree::Worktree {
                         path,
                         branch: Some(branch),
-                    });
+                    }
                 }
-
                 // A shortcut named a branch, not a directory: `resolve_worktree_name`
                 // returns a non-shortcut token unchanged, so an unequal result is
                 // exactly the case where the literal token would be a nonsense path.
-                if branch == name
+                else if branch == name
                     && let Some((path, wt_branch)) = self.worktree_at_input_path(name)?
                 {
-                    return Ok(ResolvedWorktree::Worktree {
+                    ResolvedWorktree::Worktree {
                         path,
                         branch: wt_branch,
-                    });
+                    }
+                } else {
+                    ResolvedWorktree::BranchOnly { branch }
                 }
-
-                Ok(ResolvedWorktree::BranchOnly { branch })
             }
-        }
+        };
+
+        Ok(resolved)
     }
 
     /// The branch a selector names, erroring only when it names a detached
@@ -455,20 +500,16 @@ impl Repository {
     /// `None` when any test fails, leaving the caller's own error in place.
     ///
     /// The path is reported as the selector spells it, resolved against `-C`
-    /// but not otherwise tidied. A trailing `/` is the reason: `docs/` and
-    /// `docs` are the same directory but not the same selector — only the
-    /// second finds the branch — and echoing back the spelling that works would
-    /// hide the one character that did not. The cost is that a `-C` base and a
-    /// `./`-prefixed selector join to a visible `/./`.
+    /// but not otherwise tidied — so a `-C` base and a `./`-prefixed selector
+    /// join to a visible `/./`. Cosmetic, and Unix-only: rendering runs through
+    /// `format_path_for_display` and so through `path_slash`'s
+    /// `to_slash_lossy`, which is `to_string_lossy` verbatim there but rebuilds
+    /// the string from `Path::components()` on Windows, collapsing an interior
+    /// `/./`.
     ///
-    /// Both hold on Unix only. Rendering runs through `format_path_for_display`
-    /// and so through `path_slash`'s `to_slash_lossy`, which is
-    /// `to_string_lossy` verbatim there but rebuilds the string from
-    /// `Path::components()` on Windows: a trailing `/` is dropped (only a
-    /// trailing `\`, the platform separator, survives) and an interior `/./`
-    /// collapses. `wt switch docs/` reports `…/docs` there — true of the path,
-    /// and missing the character that explains why the selector found no
-    /// branch.
+    /// A trailing separator never reaches here: [`normalize_selector`] strips
+    /// it before resolution, so `docs/` and `docs` are one selector and both
+    /// find the branch.
     pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
         if is_valid_branch_name(selector) {
             return None;

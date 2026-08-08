@@ -597,6 +597,50 @@ impl<'a> WorkingTree<'a> {
         Ok(git_dir != common_dir)
     }
 
+    /// Refuse when the directory at this worktree's path is not this
+    /// repository's worktree.
+    ///
+    /// Git makes this check itself before `git worktree remove` and refuses
+    /// with `validation failed … is not a .git file`, `--force` included.
+    /// Worktrunk's removal fast path renames the directory into trash rather
+    /// than asking git to (see
+    /// [`stage_worktree_removal`](crate::git::remove::stage_worktree_removal)),
+    /// so git's validation never runs and the guarantee has to be made here.
+    /// Removing the wrong directory is unrecoverable — the case this was
+    /// written for is a full clone that came to sit at a stale registration's
+    /// path, holding uncommitted work and the only copy of its objects.
+    ///
+    /// The test is ownership of the git directory rather than git's
+    /// `.git`-is-a-file shape: a linked worktree's git dir sits under
+    /// `<common>/worktrees/`, the main worktree's *is* the common dir, and
+    /// anything else answers to a different repository. One comparison covers
+    /// both worktree kinds with no special case, and it rejects a `.git` file
+    /// pointing at another repository, which the shape test alone accepts.
+    ///
+    /// Deliberately not a `prunable` check — git leaves the registration alone
+    /// precisely because the occupant's own `.git` resolves, so
+    /// [`Repository::usable_worktree_for_branch`] sees nothing wrong here. The
+    /// two cover different halves of "the directory no longer holds this
+    /// worktree": prunable is the half git notices, this is the half it does
+    /// not.
+    pub fn ensure_belongs_to_repo(&self) -> anyhow::Result<()> {
+        let common_dir = self.repo.git_common_dir();
+        // A git directory that can't be resolved at all is the strongest form
+        // of "not ours": nothing there answers for this worktree. Treating it
+        // as a refusal keeps the failure closed, where propagating git's exit
+        // 128 would leave the caller to decide.
+        let is_ours = self.git_dir().is_ok_and(|git_dir| {
+            git_dir == common_dir || git_dir.starts_with(common_dir.join("worktrees"))
+        });
+        if is_ours {
+            return Ok(());
+        }
+        Err(GitError::WorktreePathNotOurs {
+            path: self.path.clone(),
+        }
+        .into())
+    }
+
     /// Ensure this worktree is clean (no uncommitted changes).
     ///
     /// Returns an error if there are uncommitted changes.

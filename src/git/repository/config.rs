@@ -506,7 +506,7 @@ impl Repository {
     /// `require_target_ref` for validation before approval prompts.
     pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         match target {
-            Some(b) => self.resolve_worktree_name(b),
+            Some(b) => self.resolve_worktree_name(super::normalize_selector(b)),
             None => self.default_branch().ok_or_else(|| {
                 GitError::Other {
                     message: cformat!(

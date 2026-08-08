@@ -1923,3 +1923,55 @@ fn test_worktree_for_branch_dedups_duplicate_warning() {
     assert!(first.is_some(), "an ambiguous branch still resolves");
     assert_eq!(first, second, "resolution is stable across the dedup guard");
 }
+
+/// A trailing path separator is not part of any branch name git will accept, so
+/// stripping it lets `docs/` — what shell completion produces beside a `docs`
+/// directory — find the branch. A selector made only of separators is left
+/// alone: `/` is the root directory and the empty string names nothing.
+#[test]
+fn normalize_selector_strips_only_trailing_separators() {
+    use crate::git::normalize_selector;
+
+    assert_eq!(normalize_selector("docs/"), "docs");
+    assert_eq!(normalize_selector("../repo.feature/"), "../repo.feature");
+    assert_eq!(normalize_selector("docs"), "docs");
+    assert_eq!(normalize_selector("feat/sub"), "feat/sub");
+    assert_eq!(normalize_selector("/"), "/");
+    assert_eq!(normalize_selector(""), "");
+}
+
+/// A worktree git reports as prunable is one nothing can run in, so the lookup
+/// every command shares refuses it rather than handing back a path that fails
+/// at `git rev-parse` a few calls later.
+///
+/// The directory is recreated rather than left absent, because that is the
+/// state the `Path::exists()` probes this replaced could not see.
+#[test]
+fn usable_worktree_for_branch_refuses_a_prunable_registration() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    assert_eq!(
+        test.repo.usable_worktree_for_branch("feature").unwrap(),
+        Some(worktree_path.clone()),
+        "a healthy worktree resolves"
+    );
+
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    std::fs::create_dir_all(&worktree_path).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+
+    let err = repo.usable_worktree_for_branch("feature").unwrap_err();
+    assert!(
+        err.to_string().contains("Worktree directory missing"),
+        "a prunable registration must be refused, got: {err}"
+    );
+    assert_eq!(
+        repo.usable_worktree_for_branch("no-such-branch").unwrap(),
+        None,
+        "a branch with no worktree is a normal answer, not an error"
+    );
+}

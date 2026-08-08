@@ -539,6 +539,45 @@ fn test_switch_path_holding_no_worktree(repo: TestRepo) {
     );
 }
 
+/// A worktree whose directory was deleted and *recreated* gets the same
+/// "directory missing" answer as one merely deleted, rather than a raw `git
+/// rev-parse --git-dir failed (exit 128)`.
+///
+/// The recreation is the point: `Path::exists()` passes it, which is why every
+/// command that resolved the branch used to walk on into git's failure. Asking
+/// git's own `prunable` instead collapses the two spellings of one state onto
+/// one message — see `test_switch_error_missing_worktree_directory` for the
+/// deleted half.
+#[rstest]
+fn test_switch_worktree_directory_recreated(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    fs::remove_dir_all(&worktree_path).unwrap();
+    fs::create_dir_all(&worktree_path).unwrap();
+
+    snapshot_switch("switch_worktree_directory_recreated", &repo, &["feature"]);
+}
+
+/// A trailing separator is stripped before resolution, so a branch whose name
+/// matches a directory in the repository is still found.
+///
+/// This is the shape shell completion produces: `wt switch docs<tab>` completes
+/// against `./docs` and yields `docs/`, which git's ref format rejects as a
+/// branch name — so the branch lookup used to miss a branch sitting right
+/// there.
+#[rstest]
+fn test_switch_branch_name_with_trailing_separator(mut repo: TestRepo) {
+    fs::create_dir_all(repo.root_path().join("docs")).unwrap();
+    fs::write(repo.root_path().join("docs/index.md"), "docs").unwrap();
+    repo.commit("add docs directory");
+    repo.add_worktree("docs");
+
+    snapshot_switch(
+        "switch_branch_name_with_trailing_separator",
+        &repo,
+        &["docs/"],
+    );
+}
+
 #[rstest]
 fn test_switch_nonexistent_branch(repo: TestRepo) {
     // Switching to a nonexistent branch (without --create) should give a clear

@@ -123,20 +123,13 @@ impl MergeContext {
         repo.ensure_no_operation_in_progress("push")?;
 
         let target_branch = repo.require_target_branch(target)?;
-        let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+        // A registered worktree git calls prunable can't receive the sync in
+        // `advance_target` — git dies trying to cd into it. Refusing upfront
+        // gives a clear answer, and names the `git worktree prune` that clears
+        // the registration.
+        let target_worktree_path = repo.usable_worktree_for_branch(&target_branch)?;
 
-        // A registered worktree whose directory is gone can't receive the
-        // sync in `advance_target` — git dies trying to cd into it. Refusing
-        // upfront gives a clear answer, and names the `git worktree prune`
-        // that clears the registration.
         if let Some(path) = &target_worktree_path {
-            if !path.exists() {
-                return Err(GitError::WorktreeMissing {
-                    branch: target_branch,
-                }
-                .into());
-            }
-
             // The target gets the same gate the source got above, for a
             // reason the source's comment doesn't cover: `advance_target`
             // syncs the target worktree with `read-tree -m -u`, which refuses
