@@ -120,7 +120,7 @@ Notable changes to document:
 
 **Section order:** Improved, Fixed, Documentation, Internal. Documentation is for help text, web docs, and terminology improvements. Internal is for selected notable internal changes (not everything).
 
-**Within each section, order by reader interest.** The section is the first ordering dimension and is fixed; reader interest is the second, and it decides rank inside a section. A change's class does not: a behavior change nobody asked for ranks below a feature people requested, and a fix every user hits ranks above a platform-specific one. `/writing-prose` → "Calibrate prominence to audience fraction" governs how to judge that share.
+**Within each section, order by reader interest.** The section is the first ordering dimension and is fixed; reader interest is the second, and it decides rank inside a section. A change's class does not: a behavior change nobody asked for ranks below a feature people requested, and a fix every user hits ranks above a platform-specific one. Interest combines how many readers a change reaches with how much it obliges each of them to act, and never counts the effort the change took to build — effort and interest diverge most on the change just finished, which is the one being written up. So a breaking change stays near the top of its section: it reaches few readers, but every one of them has to do something about it. (`/writing-prose` calls this "Calibrate prominence to audience fraction"; restated here because that skill is personal config and isn't in this repo.)
 
 **Breaking changes:** Note inline with the entry, not as a separate section:
 
@@ -134,7 +134,7 @@ Skip: internal refactors, test additions (unless user-facing like shell completi
 
 **Combine related bullets.** Several PRs that share a theme — e.g. three perf changes that together account for one user-visible speedup — belong in one bullet, not three. The reader cares about the net change, not the PR boundaries. Cite all the PRs in the trailing `([#a](...), [#b](...), [#c](...))` list.
 
-**Be brief — the ceiling is words, not sentences.** A bullet lands at 40 words or under; the two or three headline entries may reach 80; Internal-section bullets get one sentence. The whole section stays under ~1,200 words. Drop the "why we did it this way" details unless they change how the user thinks about the change, and leave code examples and `Cmd::stream` / `OnceCell` / `DashMap`-style internals in the PR description, where the reasoning belongs.
+**Be brief — the ceiling is words, not sentences.** A bullet lands at 40 words or under; the two or three headline entries may reach 80; Internal-section bullets get one sentence. The whole release — every section together, which is what the command below measures — stays under ~1,200 words. Drop the "why we did it this way" details unless they change how the user thinks about the change, and leave code examples and `Cmd::stream` / `OnceCell` / `DashMap`-style internals in the PR description, where the reasoning belongs.
 
 Sentences stretch to fit whatever you want to say; words don't. So measure rather than judge:
 
