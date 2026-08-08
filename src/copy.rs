@@ -42,7 +42,9 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 ///
 /// Detects symlinks via `symlink_metadata` on the source. Returns `Some(bytes)`
 /// when the entry was copied (reporting the source's logical byte size), or
-/// `None` if skipped because the destination already exists. When `force` is
+/// `None` if skipped because the destination already exists, or because the
+/// source vanished after the caller's directory walk collected it (e.g. a
+/// concurrent build deleting/replacing a build artifact). When `force` is
 /// true, existing entries are removed before copying.
 ///
 /// When `root` is `Some`, refuses destination paths whose parent resolves
@@ -67,15 +69,31 @@ pub fn copy_leaf(
         return Ok(None);
     }
 
-    let src_meta = src
-        .symlink_metadata()
-        .with_context(|| format!("reading metadata for {}", src.display()))?;
+    let src_meta = match src.symlink_metadata() {
+        Ok(meta) => meta,
+        // The source can vanish between the caller's directory walk and this
+        // copy — e.g. a concurrent build rewriting `target/`. Skip rather
+        // than fail the whole batch over one file that's no longer there.
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(
+                anyhow::Error::from(e).context(format!("reading metadata for {}", src.display()))
+            );
+        }
+    };
     let is_symlink = src_meta.file_type().is_symlink();
     let bytes = src_meta.len();
 
     if is_symlink {
-        let target =
-            fs::read_link(src).with_context(|| format!("reading symlink {}", src.display()))?;
+        let target = match fs::read_link(src) {
+            Ok(target) => target,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(
+                    anyhow::Error::from(e).context(format!("reading symlink {}", src.display()))
+                );
+            }
+        };
         create_symlink(&target, src, dest)?;
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
@@ -100,6 +118,7 @@ pub fn copy_leaf(
                 }
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(None),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
             }
@@ -262,5 +281,20 @@ mod tests {
         // Trying to remove a directory with remove_file produces a non-NotFound error
         let dir = std::env::temp_dir();
         assert!(remove_if_exists(&dir).is_err());
+    }
+
+    #[test]
+    fn test_copy_leaf_skips_vanished_source() {
+        // Simulates a source file that existed during the caller's directory
+        // walk but is gone by copy time (e.g. a concurrent build rewriting
+        // `target/`). Should be skipped, not treated as a fatal error.
+        let dest_dir = tempfile::tempdir().unwrap();
+        let src = dest_dir.path().join("does-not-exist");
+        let dest = dest_dir.path().join("dest");
+
+        let result = copy_leaf(&src, &dest, None, false).unwrap();
+
+        assert_eq!(result, None);
+        assert!(!dest.exists());
     }
 }
