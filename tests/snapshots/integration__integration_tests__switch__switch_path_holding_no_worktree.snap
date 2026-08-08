@@ -1,11 +1,10 @@
 ---
-source: tests/integration_tests/step_promote.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - step
-    - promote
-    - feature
+    - switch
+    - "../repo.leftover"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -59,5 +58,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot promote: not on a branch (detached HEAD)[39m
-[2m↳[22m [2mTo switch to a branch, run [4mgit -C _REPO_ switch <branch>[24m[22m
+[31m✗[39m [31mNo worktree @ [1m../repo.leftover[22m[39m
+[2m↳[22m [2mThe directory exists but is not a worktree; to list worktrees, run [4mwt list[24m[22m

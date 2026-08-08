@@ -1625,8 +1625,8 @@ fn detached_worktree_target_is_reported_as_detached() {
     );
 
     // The detached worktree is the one the argument named, so the hint has to
-    // send the user there: `git switch` run where they are stands would switch
-    // the wrong tree.
+    // send the user there: `git switch` run where they are standing would
+    // switch the wrong tree.
     let hint = err.render_diagnostic().expect("typed diagnostic");
     let quoted = crate::path::format_path_for_display(&worktree_path);
     assert!(

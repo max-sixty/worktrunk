@@ -318,7 +318,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         .clone()
         .ok_or_else(|| GitError::DetachedHead {
             action: Some("promote".into()),
-            worktree: None,
+            worktree: Some(main_path.clone()),
         })?;
 
     // Resolve the branch to promote (default_branch computed lazily, only when needed)

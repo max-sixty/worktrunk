@@ -524,6 +524,21 @@ fn test_switch_create_with_invalid_base(repo: TestRepo) {
     );
 }
 
+/// A path naming a directory that holds no worktree is reported as a directory,
+/// not as a missing branch — and, unlike a name that could be one, carries no
+/// `--create` suggestion, since git rejects a path spelling as a branch name.
+#[rstest]
+fn test_switch_path_holding_no_worktree(repo: TestRepo) {
+    let leftover = repo.root_path().parent().unwrap().join("repo.leftover");
+    fs::create_dir_all(&leftover).unwrap();
+
+    snapshot_switch(
+        "switch_path_holding_no_worktree",
+        &repo,
+        &["../repo.leftover"],
+    );
+}
+
 #[rstest]
 fn test_switch_nonexistent_branch(repo: TestRepo) {
     // Switching to a nonexistent branch (without --create) should give a clear
