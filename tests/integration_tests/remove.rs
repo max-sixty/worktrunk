@@ -325,6 +325,58 @@ fn test_remove_current_by_name(mut repo: TestRepo) {
     ));
 }
 
+/// Regression test for #3769: a worktree whose HEAD has since been detached
+/// drops out of the branch→worktree lookup, so `wt remove <branch>` used to
+/// degrade to a branch-only deletion — deleting the branch, leaving the
+/// worktree registered, and exiting 0. The removal must refuse instead, so
+/// neither half happens silently.
+#[rstest]
+fn test_remove_branch_with_detached_worktree_refuses(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached-strand");
+    repo.detach_head_in_worktree("feature-detached-strand");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-detached-strand", "--foreground"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "removal must not report success while the worktree stays behind, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let branch_list = repo
+        .git_command()
+        .args(["branch", "--list", "feature-detached-strand"])
+        .run()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branch_list.stdout)
+            .trim()
+            .is_empty(),
+        "the branch must survive when its worktree cannot be removed"
+    );
+    assert!(
+        worktree_path.exists(),
+        "the detached worktree must be left intact"
+    );
+}
+
+/// The refusal names the worktree and the path-based removal that reaches it.
+#[rstest]
+fn test_remove_branch_with_detached_worktree_message(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached-strand");
+    repo.detach_head_in_worktree("feature-detached-strand");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-detached-strand"],
+        None
+    ));
+}
+
 ///
 /// Regression test for bug where `wt remove npm` would show "Cannot create worktree for npm"
 /// when the expected path was occupied. Resolution skips the path occupation check entirely,
@@ -2537,8 +2589,9 @@ fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
     // Detach HEAD in feature-b
     repo.detach_head_in_worktree("feature-b");
 
-    // From main, try to multi-remove both
-    // feature-a should succeed, feature-b should fail (detached HEAD)
+    // From main, try to multi-remove both. feature-a is removed; feature-b
+    // refuses, because its worktree is detached and would be left behind
+    // (#3769). Partial success, so the command exits non-zero.
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",

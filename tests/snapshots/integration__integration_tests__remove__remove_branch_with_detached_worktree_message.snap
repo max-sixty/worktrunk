@@ -4,8 +4,7 @@ info:
   program: wt
   args:
     - remove
-    - feature-a
-    - feature-b
+    - feature-detached-strand
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -59,7 +58,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mBranch [1mfeature-b[22m has no worktree — the worktree @ [1m_REPO_.feature-b[22m is detached[39m
-[2m↳[22m [2mTo remove the detached worktree, run [4mwt remove _REPO_.feature-b[24m[22m
-[36m◎[39m [36mRemoving [1mfeature-a[22m worktree in background[39m
-[2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-a[24m[22m
+[31m✗[39m [31mBranch [1mfeature-detached-strand[22m has no worktree — the worktree @ [1m_REPO_.feature-detached-strand[22m is detached[39m
+[2m↳[22m [2mTo remove the detached worktree, run [4mwt remove _REPO_.feature-detached-strand[24m[22m

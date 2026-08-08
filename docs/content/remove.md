@@ -56,6 +56,8 @@ Branches matching these conditions and with empty working trees are dimmed in `w
 
 Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via `git worktree add --force`) fails a different test: deleting the ref would leave that worktree unable to resolve `HEAD`, which is why `git branch -d` refuses the same delete. Such a branch is retained whatever `-D` asks, and the surviving checkout is named.
 
+Detaching a worktree's HEAD points the opposite way: the branch stops naming that worktree, so `wt remove <branch>` would delete the ref alone and leave the worktree registered. Removal refuses instead, and names the worktree — `wt remove <path>` is what reaches a detached one.
+
 ## Force flags
 
 Worktrunk has two force flags for different situations:

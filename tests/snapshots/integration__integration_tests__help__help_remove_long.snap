@@ -147,6 +147,8 @@ Branches matching these conditions and with empty working trees are dimmed in [
 
 Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via [2mgit worktree add --force[0m) fails a different test: deleting the ref would leave that worktree unable to resolve [2mHEAD[0m, which is why [2mgit branch -d[0m refuses the same delete. Such a branch is retained whatever [2m-D[0m asks, and the surviving checkout is named.
 
+Detaching a worktree's HEAD points the opposite way: the branch stops naming that worktree, so [2mwt remove <branch>[0m would delete the ref alone and leave the worktree registered. Removal refuses instead, and names the worktree — [2mwt remove <path>[0m is what reaches a detached one.
+
 [1m[32mForce flags[0m
 
 Worktrunk has two force flags for different situations:

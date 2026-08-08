@@ -589,6 +589,18 @@ pub enum GitError {
     WorktreeSelectorNotFound {
         selector: String,
     },
+    /// A branch names no worktree, but the worktree it would name sits at its
+    /// expected path with a detached HEAD.
+    ///
+    /// Worktrees are addressed branch-first, and a detached HEAD drops one out
+    /// of that lookup — so `wt remove <branch>` would degrade to deleting the
+    /// ref alone, leaving the worktree registered and reporting success (#3769).
+    /// Only the path reaches a detached worktree, so the removal refuses and
+    /// names it.
+    DetachedWorktreeForBranch {
+        branch: String,
+        path: PathBuf,
+    },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
         ref_type: RefType,
@@ -848,6 +860,13 @@ impl GitError {
 
             GitError::WorktreeSelectorNotFound { selector } => {
                 cformat!("No branch or worktree named <bold>{selector}</>")
+            }
+
+            GitError::DetachedWorktreeForBranch { branch, path } => {
+                let path = format_path_for_display(path);
+                cformat!(
+                    "Branch <bold>{branch}</> has no worktree — the worktree @ <bold>{path}</> is detached"
+                )
             }
 
             GitError::RefCreateConflict {
@@ -1396,6 +1415,20 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To see branches and worktree paths, run <underline>wt list --branches</>"
+                    ))
+                )
+            }
+
+            GitError::DetachedWorktreeForBranch { path, .. } => {
+                let title = self.title();
+                let display_path = format_path_for_display(path);
+                let remove_cmd = suggest_command("remove", &[&display_path], &[]);
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To remove the detached worktree, run <underline>{remove_cmd}</>"
                     ))
                 )
             }
