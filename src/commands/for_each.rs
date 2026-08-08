@@ -24,7 +24,7 @@
 //!
 //! For now, we keep `for-each` under `step` as a pragmatic choice.
 
-use std::io::{Write as _, stderr};
+use std::io::Write as _;
 use std::process::Stdio;
 
 use color_print::cformat;
@@ -32,7 +32,8 @@ use worktrunk::config::{UserConfig, VarScope};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
 use worktrunk::shell_exec::{Cmd, ShellEscapeMode};
 use worktrunk::styling::{
-    eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
+    eprint, eprintln, error_message, format_with_gutter, progress_message, stderr, success_message,
+    warning_message,
 };
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
@@ -220,6 +221,12 @@ fn run_argv(
     argv: Vec<String>,
     stdin_json: &str,
 ) -> anyhow::Result<()> {
+    // Reset ANSI codes on stderr so our color doesn't bleed into the child's
+    // output, the same three lines `execute_shell_command` runs before its own
+    // spawn. Both `eprint!` and `stderr` are anstream's: the flushes have to
+    // name the stream the reset was written to, and on a redirected stderr
+    // anstream drops the reset rather than writing a literal `ESC[0m` into the
+    // file.
     stderr().flush()?;
     eprint!("{}", anstyle::Reset);
     stderr().flush().ok();

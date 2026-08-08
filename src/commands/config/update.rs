@@ -15,8 +15,8 @@ use worktrunk::config::{
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    eprintln, format_bash_with_gutter, hint_message, info_message, print, println, success_message,
-    suggest_command_in_dir,
+    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, println,
+    success_message, suggest_command_in_dir,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
