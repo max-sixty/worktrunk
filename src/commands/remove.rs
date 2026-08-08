@@ -62,10 +62,14 @@ impl RemovePlans {
 /// if any.
 ///
 /// Detaching a worktree's HEAD severs the only link git records between it and
-/// the branch, so once that happens the `worktree-path` template is what still
-/// connects the two — the same association [`worktree_display_name`] renders a
-/// worktree by. Three cases are deliberately not matched, because refusing on
-/// them would name a removal that can't happen or protect nothing:
+/// the branch, so once that happens the `worktree-path` template is all that
+/// still connects the two. That is a stronger association than the rest of the
+/// module draws — `is_worktree_at_expected_path` returns false for a detached
+/// worktree, and [`worktree_display_name`] renders one as `dir_name (detached)`
+/// without consulting the template — and it is intentional here: the template
+/// match is what keeps the removal from stranding it. Three cases are
+/// deliberately not matched, because refusing on them would name a removal that
+/// can't happen or protect nothing:
 ///
 /// - a worktree checked out on some *other* branch — that branch names it, so
 ///   removing this one strands nothing;
@@ -89,7 +93,10 @@ fn detached_worktree_for<'a>(
             wt.branch.is_none()
                 && !wt.is_prunable()
                 && worktrunk::path::paths_match(&wt.path, &expected)
-                && repo.worktree_at(&wt.path).is_linked().unwrap_or(false)
+                // Fail closed: a `git_dir` lookup that fails says nothing about
+                // whether the worktree is linked, and skipping the guard there
+                // deletes the ref and strands the worktree — the #3769 outcome.
+                && repo.worktree_at(&wt.path).is_linked().unwrap_or(true)
         })
         .map(|wt| wt.path.as_path())
 }
