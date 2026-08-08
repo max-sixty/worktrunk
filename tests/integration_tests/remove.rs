@@ -377,6 +377,34 @@ fn test_remove_branch_with_detached_worktree_message(mut repo: TestRepo) {
     ));
 }
 
+/// The default branch's expected path is the main worktree, so a detached main
+/// worktree would match the #3769 guard — but `wt remove <that path>` refuses
+/// too, so pointing at it would be a dead end. The default-branch refusal, which
+/// is the accurate answer, must still be what surfaces.
+#[rstest]
+fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
+    repo.run_git(&["checkout", "--detach", "HEAD"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["main"], None));
+}
+
+/// A detached worktree whose directory is already gone is stale metadata, not a
+/// worktree the #3769 guard protects — the branch-only removal proceeds rather
+/// than refusing and naming a path that isn't on disk.
+#[rstest]
+fn test_remove_branch_with_prunable_detached_worktree(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached-gone");
+    repo.detach_head_in_worktree("feature-detached-gone");
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["-D", "feature-detached-gone"],
+        None
+    ));
+}
+
 ///
 /// Regression test for bug where `wt remove npm` would show "Cannot create worktree for npm"
 /// when the expected path was occupied. Resolution skips the path occupation check entirely,

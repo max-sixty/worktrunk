@@ -58,13 +58,22 @@ impl RemovePlans {
     }
 }
 
-/// The detached worktree sitting where `branch`'s worktree belongs, if any.
+/// The removable detached worktree sitting where `branch`'s worktree belongs,
+/// if any.
 ///
 /// Detaching a worktree's HEAD severs the only link git records between it and
 /// the branch, so once that happens the `worktree-path` template is what still
 /// connects the two — the same association [`worktree_display_name`] renders a
-/// worktree by. A worktree checked out on some *other* branch is deliberately
-/// not matched: that branch names it, so removing this one strands nothing.
+/// worktree by. Three cases are deliberately not matched, because refusing on
+/// them would name a removal that can't happen or protect nothing:
+///
+/// - a worktree checked out on some *other* branch — that branch names it, so
+///   removing this one strands nothing;
+/// - the main worktree, which `wt remove <path>` refuses anyway. A detached
+///   main worktree matches the default branch, whose removal already reports
+///   the accurate [`CannotRemoveDefaultBranch`](worktrunk::git::GitError::CannotRemoveDefaultBranch);
+/// - a prunable entry, whose directory is already gone — stale metadata for
+///   `wt step prune` to sweep, not a worktree left on disk.
 ///
 /// [`worktree_display_name`]: super::worktree::worktree_display_name
 fn detached_worktree_for<'a>(
@@ -76,7 +85,12 @@ fn detached_worktree_for<'a>(
     let expected = compute_worktree_path(repo, branch, config).ok()?;
     worktrees
         .iter()
-        .find(|wt| wt.branch.is_none() && worktrunk::path::paths_match(&wt.path, &expected))
+        .find(|wt| {
+            wt.branch.is_none()
+                && !wt.is_prunable()
+                && worktrunk::path::paths_match(&wt.path, &expected)
+                && repo.worktree_at(&wt.path).is_linked().unwrap_or(false)
+        })
         .map(|wt| wt.path.as_path())
 }
 
@@ -155,6 +169,14 @@ fn validate_remove_targets(
                 // here and would have its ref deleted with the worktree left
                 // registered (#3769). Refuse instead, and name the path — the
                 // only spelling that still reaches it.
+                //
+                // The guard belongs to this command rather than to
+                // `prepare_worktree_removal`, which every producer of a
+                // `BranchOnly` target shares: `wt step prune` plans its whole
+                // sweep from one worktree-list snapshot, so a detached
+                // worktree it is about to remove as its own candidate is still
+                // registered when the branch's plan is built. Refusing there
+                // would leave prune unable to clean up either half.
                 if let Some(detached) =
                     worktrees.and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
                 {
