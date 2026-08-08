@@ -240,3 +240,41 @@ fn test_stdout_surfaces_survive_a_closed_consumer(repo: TestRepo) {
         );
     }
 }
+
+/// Narration on stderr strips its color when stderr isn't a terminal.
+///
+/// The stdout rule above has a stderr counterpart, and it is the same mistake:
+/// `worktrunk::styling`'s `eprint!` is anstream's and strips ANSI off a
+/// non-tty, std's prelude macro of the same name keeps it. A file that
+/// imported `eprintln` from `styling` but not `eprint` got one of each, so a
+/// deprecation warning and the hint printed directly beneath it disagreed
+/// about whether `wt list 2>log` should carry escapes.
+///
+/// The suite's own `CLICOLOR_FORCE=1` is what hides this — it forces color on
+/// both printers, so every snapshot agrees no matter which macro is in scope.
+/// This test clears it and sets `NO_COLOR`, which only anstream honors.
+///
+/// The trigger is a deprecated `[ci]` block, whose warning is emitted by the
+/// pre-deserialization deprecation pass on every command that loads config.
+#[rstest]
+fn test_stderr_narration_strips_ansi_when_piped(repo: TestRepo) {
+    repo.write_project_config("[ci]\nplatform = \"github\"\n");
+
+    let output = repo
+        .wt_command()
+        .arg("list")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run wt list");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deprecated"),
+        "expected the [ci] deprecation warning on stderr; got: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains('\x1b'),
+        "wt narration redirected to a file must not contain ANSI escapes; got: {stderr:?}"
+    );
+}
