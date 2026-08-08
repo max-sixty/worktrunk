@@ -6,8 +6,8 @@ Worktrunk's worst failure is silently destroying a user's work, and the deletion
 surface is where it leaks in. A change that touches it is not an agent's to
 merge: a force-flag bypass can read as harmless and still discard committed work.
 
-Flag a PR when its diff **introduces** any of these, or **edits a file that
-already contains** one:
+Flag a PR when its diff adds one of these, widens what an existing one can
+delete, or edits a file that contains one:
 
 - `wt remove`, especially `-D` / `--force-delete` or `-f` / `--force`
 - `git branch -D` / `-d`, `git worktree remove --force`
@@ -15,6 +15,12 @@ already contains** one:
 - `rm -rf`, `std::fs::remove_dir_all`, `std::fs::remove_file`
 - shipped automation that runs the above: `plugins/*/hooks/hooks.json`,
   `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy
+
+The hold is for what a user can't get back: a worktree, a repository, a branch,
+uncommitted work, or a file worktrunk writes on their behalf (its own config and
+state, an rc file, another tool's settings). A deletion confined to a directory
+the same code just created, or to a throwaway CI or development environment,
+reaches none of that.
 
 Hold on what the diff can reach, not co-location. In source, a change near the
 force-delete path holds even when the destructive line isn't in the diff. In
