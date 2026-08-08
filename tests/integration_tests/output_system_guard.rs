@@ -319,8 +319,11 @@ fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec
 /// tests coverage per file while Rust resolves imports per scope, so a
 /// function-local `use worktrunk::styling::eprintln;` would otherwise mark
 /// every other function in the file as covered when none of them is. Every
-/// styling import in `src/` is top-level, so the narrower rule costs nothing;
-/// a future function-local one fails this scan and gets hoisted.
+/// `eprint`/`eprintln` import in `src/` is top-level, so the narrower rule
+/// costs nothing; a future function-local one fails this scan and gets
+/// hoisted. (Function-local styling imports of *other* names do exist —
+/// `commands/remove.rs`, `commands/configure_shell.rs` — so a caller that
+/// checked a third macro could not assume the same.)
 fn styling_imports(contents: &str) -> HashSet<String> {
     let mut imports = HashSet::new();
     let mut statement = String::new();
