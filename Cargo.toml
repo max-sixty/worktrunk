@@ -49,7 +49,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.71.0"
+version = "0.72.0"
 edition = "2024"
 rust-version = "1.96"
 build = "build.rs"
@@ -96,7 +96,7 @@ cli = [
     "dep:tracing-subscriber",
 ]
 syntax-highlighting = ["dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
-# Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
+# Enable shell/PTY integration tests (needs bash, zsh, fish, nu, pwsh, and jq on PATH)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 shell-integration-tests = []
 # Enable benchmarks whose fixture is too large for hosted CI: the

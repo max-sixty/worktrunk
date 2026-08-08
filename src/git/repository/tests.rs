@@ -1447,19 +1447,360 @@ fn resolve_worktree_falls_through_to_branch_only() {
 
     let test = TestRepo::with_initial_commit();
 
-    let resolved = test.repo.resolve_worktree("../nowhere").unwrap();
+    let resolved = test.repo.resolve_worktree("nowhere").unwrap();
     let ResolvedWorktree::BranchOnly { branch } = resolved else {
         panic!("an unmatched selector should resolve to branch-only");
     };
-    assert_eq!(branch, "../nowhere");
+    assert_eq!(branch, "nowhere");
 
     // A selector matching nothing names neither, so the error claims neither —
-    // suggesting `wt switch ../nowhere` to create a worktree would only fail.
-    let err = test.repo.require_worktree("../nowhere").unwrap_err();
+    // suggesting `wt switch nowhere` to create a worktree would only fail.
+    let err = test.repo.require_worktree("nowhere").unwrap_err();
     assert!(
         err.to_string().contains("No branch or worktree named"),
         "expected an unmatched-selector error, got: {err}"
     );
+}
+
+/// A directory holding no worktree is reported as the directory it is, rather
+/// than as a missing branch — the `wt list --branches` the branch error suggests
+/// would never list it.
+///
+/// Both halves of the test are exercised, since either alone over-claims: a
+/// selector git could accept as a branch name keeps the branch error even with a
+/// directory beside it, and a selector it could not keeps the branch error when
+/// nothing is on disk.
+#[test]
+fn directory_holding_no_worktree_is_reported_as_a_directory() {
+    use crate::git::{ErrorExt, ResolvedWorktree};
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let ghost = test.root_path().join("ghost");
+    std::fs::create_dir(&ghost).unwrap();
+
+    // Resolution still falls through to branch-only; the selector's shape is
+    // read where the failure is reported, not where it is resolved.
+    let selector = ghost.to_str().unwrap();
+    let resolved = test.repo.resolve_worktree(selector).unwrap();
+    assert!(matches!(resolved, ResolvedWorktree::BranchOnly { .. }));
+
+    let rendered = test
+        .repo
+        .require_worktree(selector)
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("No worktree @") && rendered.contains("is not a worktree"),
+        "expected a directory-holds-no-worktree error, got: {rendered}"
+    );
+
+    // A branch is what a state key names, so a directory is refused rather than
+    // silently stored as one.
+    let err = test
+        .repo
+        .require_selected_branch(selector, "set marker")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("No worktree @"),
+        "expected a directory selector to be refused as a branch, got: {err}"
+    );
+
+    // Nothing on disk: wt cannot tell a mistyped path from a mistyped branch,
+    // so the error claims neither.
+    let err = test
+        .repo
+        .require_worktree(ghost.join("deeper").to_str().unwrap())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "expected an unmatched-selector error, got: {err}"
+    );
+
+    // A name git would accept as a branch is a branch, whatever sits beside it:
+    // `wt remove docs` means the branch even when `docs/` is right there.
+    std::fs::create_dir(test.root_path().join("docs")).unwrap();
+    let err = test.repo.require_worktree("docs").unwrap_err();
+    assert!(
+        err.to_string().contains("No branch or worktree named"),
+        "a directory must not shadow a branch name, got: {err}"
+    );
+
+    // Somebody's checkout, which `list_worktrees` cannot see because it belongs
+    // to another repository. worktrunk gathers every repo and worktree into one
+    // parent, so a sibling is one `../` from any command, and calling a live
+    // one "not a worktree" reads as an invitation to delete it.
+    let parent = test.root_path().parent().unwrap();
+    let sibling = parent.join("sibling");
+    std::fs::create_dir_all(sibling.join(".git")).unwrap();
+
+    // And a bare repository, which is the git directory rather than holding
+    // one — worktrunk's bare layout sits it among the worktrees it serves, so
+    // it is as reachable as they are, and it holds every object.
+    let bare = parent.join("project.bare");
+    std::fs::create_dir_all(bare.join("objects")).unwrap();
+    std::fs::create_dir_all(bare.join("refs")).unwrap();
+    std::fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    for checkout in [&sibling, &bare] {
+        assert!(
+            test.repo
+                .path_selector_error(checkout.to_str().unwrap())
+                .is_none(),
+            "a directory holding git data must not be called a leftover: {}",
+            checkout.display()
+        );
+    }
+
+    // A lone `HEAD` is not git data — the skeleton keeps its report.
+    let decoy = test.root_path().join("decoy");
+    std::fs::create_dir(&decoy).unwrap();
+    std::fs::write(decoy.join("HEAD"), "").unwrap();
+    assert!(
+        test.repo
+            .path_selector_error(decoy.to_str().unwrap())
+            .is_some(),
+        "a directory that merely contains a HEAD file is still a leftover"
+    );
+}
+
+/// A `.git` nobody can follow still marks somebody's checkout.
+///
+/// `Path::exists` answers `false` for every error alike and resolves symlinks,
+/// so both shapes here would read as "no git data" — and both are ways the
+/// bystander of a repo-wide prune presents: a `.git` symlink is how a git
+/// directory is put on another filesystem, which is the volume that gets
+/// unmounted.
+#[test]
+fn an_unresolvable_git_entry_still_counts_as_git_data() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let parent = test.root_path().parent().unwrap();
+
+    let dangling_file = parent.join("bystander-file");
+    std::fs::create_dir_all(&dangling_file).unwrap();
+    std::fs::write(dangling_file.join(".git"), "gitdir: /gone/worktrees/x\n").unwrap();
+
+    let checkouts = [dangling_file];
+
+    #[cfg(unix)]
+    let checkouts = {
+        let dangling_link = parent.join("bystander-link");
+        std::fs::create_dir_all(&dangling_link).unwrap();
+        std::os::unix::fs::symlink("/gone/worktrees/x", dangling_link.join(".git")).unwrap();
+        [checkouts[0].clone(), dangling_link]
+    };
+
+    for checkout in checkouts {
+        assert!(
+            test.repo
+                .path_selector_error(checkout.to_str().unwrap())
+                .is_none(),
+            "an unresolvable .git must still withhold the claim: {}",
+            checkout.display()
+        );
+    }
+}
+
+/// A detached worktree is reachable by its path and by nothing else, so a merge
+/// target naming one is reported as detached rather than as absent — the claim
+/// `wt list` would contradict.
+#[test]
+fn detached_worktree_target_is_reported_as_detached() {
+    use crate::git::ErrorExt;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    test.detach_head_in_worktree("feature");
+    let selector = worktree_path.to_str().unwrap();
+
+    let err = test.repo.require_target_branch(Some(selector)).unwrap_err();
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("detached") && !rendered.contains("No worktree @"),
+        "expected a detached-target error, got: {rendered}"
+    );
+
+    // The detached worktree is the one the argument named, so the hint has to
+    // send the user there: `git switch` run where they are standing would
+    // switch the wrong tree.
+    let hint = err.render_diagnostic().expect("typed diagnostic");
+    let quoted = crate::path::format_path_for_display(&worktree_path);
+    assert!(
+        hint.contains(&format!("git -C {quoted} switch")),
+        "expected the hint to name the target worktree, got: {hint}"
+    );
+
+    // A commit-ish target is spelled in a wider vocabulary than a worktree
+    // selector, so it claims nothing about paths either way.
+    if let Err(err) = test.repo.require_target_ref(Some(selector)) {
+        assert!(
+            !err.to_string().contains("No worktree @"),
+            "a registered worktree must never be reported as absent, got: {err}"
+        );
+    }
+}
+
+/// The directory claim checks for itself that nothing is registered at the path,
+/// rather than trusting the caller to have looked.
+///
+/// A shortcut is the case that breaks the trust: `resolve_worktree` skips its
+/// path lookup whenever one rewrote the argument, so `-` expanding to a
+/// worktree's own path arrives having matched nothing at all.
+#[test]
+fn path_selector_error_checks_for_a_registered_worktree() {
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+    let selector = worktree_path.to_str().unwrap();
+
+    assert!(
+        test.repo.path_selector_error(selector).is_none(),
+        "a registered worktree's own path must never be reported as holding none"
+    );
+
+    // Reached through the shortcut, which is the route with no prior lookup.
+    test.repo.set_switch_previous(Some(selector)).unwrap();
+    let err = test.repo.require_worktree("-").unwrap_err();
+    assert!(
+        !err.to_string().contains("No worktree @"),
+        "an expanded shortcut naming a live worktree must not report it as absent, got: {err}"
+    );
+}
+
+/// A merge target naming a directory that holds no worktree gets the same
+/// answer as every other worktree argument, rather than an offer to create a
+/// branch git would reject.
+#[test]
+fn directory_merge_target_is_reported_as_a_directory() {
+    use crate::git::ErrorExt;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let ghost = test.root_path().join("ghost");
+    std::fs::create_dir(&ghost).unwrap();
+
+    let rendered = test
+        .repo
+        .require_target_branch(Some(ghost.to_str().unwrap()))
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("No worktree @") && !rendered.contains("--create"),
+        "expected a directory-holds-no-worktree error, got: {rendered}"
+    );
+
+    // Revision syntax is no more a branch name than a path is, and naming no
+    // directory is what keeps it out of the path claim.
+    for revspec in ["HEAD@{1}", "main^", "v1.0..v2.0", "pr:5"] {
+        let err = test
+            .repo
+            .require_target_branch(Some(revspec))
+            .expect_err(revspec);
+        assert!(
+            !err.to_string().contains("No worktree @"),
+            "{revspec} must not be reported as a path, got: {err}"
+        );
+    }
+}
+
+/// A mistyped path names no directory, so it keeps the branch error — but the
+/// offer to create a branch goes, because git would reject the name whether or
+/// not anything sits at the path.
+#[test]
+fn a_path_spelling_is_never_offered_as_a_branch_to_create() {
+    use crate::git::ErrorExt;
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+
+    for selector in ["../repo.mistyped", "./nowhere", "/abs/nowhere"] {
+        let rendered = test
+            .repo
+            .require_target_branch(Some(selector))
+            .unwrap_err()
+            .render_diagnostic()
+            .unwrap();
+        assert!(
+            !rendered.contains("--create"),
+            "{selector} must not be offered to --create, got: {rendered}"
+        );
+    }
+
+    // A name git would take keeps the offer.
+    let rendered = test
+        .repo
+        .require_target_branch(Some("new-branch"))
+        .unwrap_err()
+        .render_diagnostic()
+        .unwrap();
+    assert!(
+        rendered.contains("--create"),
+        "a usable branch name keeps the create hint, got: {rendered}"
+    );
+}
+
+/// The branch-name rules are git's, so git decides them.
+#[test]
+fn branch_name_matches_git_check_ref_format() {
+    use super::is_valid_branch_name;
+    use crate::shell_exec::Cmd;
+
+    let names = [
+        // Ordinary branch names, including the ones that look like paths.
+        "main",
+        "feature/auth",
+        "release/1.2/rc",
+        "-x",
+        "@",
+        "nowhere",
+        // The `.lock` rule is case-sensitive and non-ASCII is fine — both are
+        // easy to over-reject when re-deriving the rules from prose.
+        "a.LOCK",
+        "café",
+        // Path spellings.
+        "/abs/path/ghost",
+        "./ghost",
+        "../ghost",
+        "~/code/myproject",
+        "ghost/",
+        ".claude/worktrees/ghost",
+        "C:\\code\\myproject",
+        // The remaining ref-format rules, one name each.
+        "",
+        "a//b",
+        "a..b",
+        "a.lock",
+        "a.lock/b",
+        "a.",
+        "a@{b",
+        "a b",
+        "a\tb",
+        "a\u{7f}b",
+        "a~b",
+        "a^b",
+        "a:b",
+        "a?b",
+        "a*b",
+        "a[b",
+    ];
+
+    for name in names {
+        let out = crate::testing::configure_git_env(Cmd::new("git"))
+            .args(["check-ref-format", &format!("refs/heads/{name}")])
+            .run()
+            .unwrap();
+        assert_eq!(
+            is_valid_branch_name(name),
+            out.status.success(),
+            "disagreed with git check-ref-format on {name:?}"
+        );
+    }
 }
 
 /// A branch that exists without a checkout is the one case where offering to

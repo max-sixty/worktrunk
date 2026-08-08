@@ -287,7 +287,7 @@ This disables bash syntax highlighting in command output but keeps all core func
 
 ### Full integration tests
 
-Shell integration tests require bash, zsh, fish, and nushell:
+Shell integration tests require bash, zsh, fish, nushell, and pwsh, plus `jq`:
 
 {{ terminal(cmd="cargo test --test integration --features shell-integration-tests") }}
 
