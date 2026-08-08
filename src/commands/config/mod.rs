@@ -8,6 +8,7 @@ mod codex;
 mod create;
 mod hints;
 pub mod opencode;
+mod pi;
 mod plugins;
 mod show;
 mod state;
@@ -20,6 +21,7 @@ pub use codex::{handle_codex_install, handle_codex_uninstall};
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
 pub use opencode::{handle_opencode_install, handle_opencode_uninstall};
+pub use pi::{handle_pi_install, handle_pi_uninstall};
 pub use plugins::{
     handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
 };
