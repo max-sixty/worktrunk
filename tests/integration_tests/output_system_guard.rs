@@ -111,7 +111,7 @@ fn check_no_unexpected_stdout_writes() {
         panic!(
             "Unexpected stdout writes:\n\n{}\n\n\
              stdout is reserved for data output (JSON, tables).\n\
-             Use worktrunk::styling::println for stdout, eprintln for stderr.\n\
+             Use worktrunk::styling::println for stdout, and its eprintln — not color_print's ceprintln! — for stderr.\n\
              Add file path to STDOUT_ALLOWED_PATHS if stdout is intentional.",
             violations.join("\n")
         );

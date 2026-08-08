@@ -60,15 +60,17 @@ panics on the `BrokenPipe` write error, anstream's drops it. `wt … | head`
 closes the pipe, so command code imports the `worktrunk::styling` one and no
 `std::println!` is left in `src/`.
 
-**Output whose ANSI is already decided** goes through
-`crate::output::println_verbatim!` instead — the statusline a shell prompt or
+**Output whose ANSI is already decided** declares that once at the top of the
+command with `worktrunk::styling::ColorChoice::Always.write_global()` and then
+prints through the same anstream macros — the statusline a shell prompt or
 Claude Code renders, and the `--help-page` document whose escapes the docs
-pipeline turns into HTML. Neither consumer is ever a tty, so anstream would
-strip their color every time, and the test suite would not catch it because it
-forces color with `CLICOLOR_FORCE=1`. `println_verbatim!` writes the bytes
-through unchanged and drops a `BrokenPipe` the same way anstream does. Reach
-for it only when the pipe is a courier rather than the destination; anything a
-person reads directly stays on anstream, which is what strips color on a pipe
+pipeline turns into HTML (`--plain` and `--help-md` declare `Never` the same
+way). Neither consumer is ever a tty, so without the declaration anstream
+would strip their color every time — and the test suite would not catch it,
+because it forces color with `CLICOLOR_FORCE=1`;
+`test_color_follows_the_consumer` pins the unforced behavior. Declare `Always`
+only when the pipe is a courier rather than the destination; anything a person
+reads directly stays on plain anstream, which is what strips color on a pipe
 and honors `NO_COLOR`.
 
 **`--format=json` answers** go through `crate::output::print_json`, never a
