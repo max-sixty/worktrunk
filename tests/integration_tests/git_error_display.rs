@@ -94,6 +94,13 @@ fn worktree_errors_render() {
             .render(),
         ),
         (
+            "no worktree at a leftover directory",
+            GitError::WorktreeNotFoundAtPath {
+                path: PathBuf::from("/tmp/repo/.claude/worktrees/ghost"),
+            }
+            .render(),
+        ),
+        (
             "branch not found",
             GitError::BranchNotFound {
                 branch: "nonexistent".into(),

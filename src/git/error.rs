@@ -589,6 +589,18 @@ pub enum GitError {
     WorktreeSelectorNotFound {
         selector: String,
     },
+    /// A directory that holds no worktree, named by a selector no branch could
+    /// answer to.
+    ///
+    /// The third member of the family: [`GitError::WorktreeNotFound`] is a
+    /// branch without a checkout, [`GitError::WorktreeSelectorNotFound`] a
+    /// token that could have been either, and this one a directory `wt list`
+    /// will never show and only the user can delete. Built solely by
+    /// [`Repository::path_selector_error`](crate::git::Repository::path_selector_error),
+    /// which owns every test that has to pass before this claim is safe.
+    WorktreeNotFoundAtPath {
+        path: PathBuf,
+    },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
         ref_type: RefType,
@@ -848,6 +860,11 @@ impl GitError {
 
             GitError::WorktreeSelectorNotFound { selector } => {
                 cformat!("No branch or worktree named <bold>{selector}</>")
+            }
+
+            GitError::WorktreeNotFoundAtPath { path } => {
+                let path_display = format_path_for_display(path);
+                cformat!("No worktree @ <bold>{path_display}</>")
             }
 
             GitError::RefCreateConflict {
@@ -1396,6 +1413,19 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To see branches and worktree paths, run <underline>wt list --branches</>"
+                    ))
+                )
+            }
+
+            GitError::WorktreeNotFoundAtPath { .. } => {
+                let title = self.title();
+                let list_cmd = suggest_command("list", &[], &[]);
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "The directory exists but is not a worktree; to list worktrees, run <underline>{list_cmd}</>"
                     ))
                 )
             }

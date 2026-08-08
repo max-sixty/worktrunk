@@ -46,6 +46,11 @@ expression: render_cases(cases)
 [31m✗[39m [31mWorktree directory missing for [1mstale-branch[22m[39m
 [2m↳[22m [2mTo clean up, run [4mgit worktree prune[24m[22m
 
+## no worktree at a leftover directory
+
+[31m✗[39m [31mNo worktree @ [1m/tmp/repo/.claude/worktrees/ghost[22m[39m
+[2m↳[22m [2mThe directory exists but is not a worktree; to list worktrees, run [4mwt list[24m[22m
+
 ## branch not found
 
 [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
