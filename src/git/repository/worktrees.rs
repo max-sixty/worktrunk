@@ -271,6 +271,7 @@ impl Repository {
             "@" => self.current_worktree().branch()?.ok_or_else(|| {
                 GitError::DetachedHead {
                     action: Some("resolve @ to current branch".into()),
+                    worktree: None,
                 }
                 .into()
             }),
@@ -396,6 +397,7 @@ impl Repository {
                     "{action} — <bold>{}</> is detached",
                     format_path_for_display(&path)
                 )),
+                worktree: Some(path),
             }
             .into()),
         }
@@ -458,6 +460,15 @@ impl Repository {
     /// second finds the branch — and echoing back the spelling that works would
     /// hide the one character that did not. The cost is that a `-C` base and a
     /// `./`-prefixed selector join to a visible `/./`.
+    ///
+    /// Both hold on Unix only. Rendering runs through `format_path_for_display`
+    /// and so through `path_slash`'s `to_slash_lossy`, which is
+    /// `to_string_lossy` verbatim there but rebuilds the string from
+    /// `Path::components()` on Windows: a trailing `/` is dropped (only a
+    /// trailing `\`, the platform separator, survives) and an interior `/./`
+    /// collapses. `wt switch docs/` reports `…/docs` there — true of the path,
+    /// and missing the character that explains why the selector found no
+    /// branch.
     pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
         if is_valid_branch_name(selector) {
             return None;

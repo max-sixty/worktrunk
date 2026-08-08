@@ -567,6 +567,7 @@ impl Repository {
                             "use <bold>{}</> as a target",
                             format_path_for_display(&path)
                         )),
+                        worktree: Some(path),
                     }
                     .into());
                 }

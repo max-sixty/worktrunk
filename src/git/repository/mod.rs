@@ -1275,6 +1275,7 @@ impl Repository {
         self.current_worktree().branch()?.ok_or_else(|| {
             GitError::DetachedHead {
                 action: Some(action.into()),
+                worktree: None,
             }
             .into()
         })

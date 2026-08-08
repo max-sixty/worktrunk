@@ -372,7 +372,7 @@ impl SwitchSuggestionCtx {
 ///
 /// // A typed error converts into a type-erased one (in real code, into `anyhow::Error`).
 /// let err: Box<dyn std::error::Error> =
-///     GitError::DetachedHead { action: Some("merge".into()) }.into();
+///     GitError::DetachedHead { action: Some("merge".into()), worktree: None }.into();
 ///
 /// // Recover the typed error to branch on the variant.
 /// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref::<GitError>() {
@@ -382,8 +382,17 @@ impl SwitchSuggestionCtx {
 #[derive(Debug, Clone)]
 pub enum GitError {
     // Git state errors
+    /// A worktree is not on a branch, so a command needing one refuses.
+    ///
+    /// `worktree` names the detached worktree when that isn't the one the
+    /// command ran in, and changes only the hint. `git switch` acts on the tree
+    /// it runs in, so an unqualified suggestion points at the tree the user is
+    /// standing in — the wrong one when the detached worktree is a target they
+    /// named (`wt merge ../other`). [`GitError::OperationInProgress`] carries
+    /// `branch` for the same reason.
     DetachedHead {
         action: Option<String>,
+        worktree: Option<PathBuf>,
     },
     /// A worktree is partway through a git operation, so a command that
     /// rewrites or moves commits (`wt merge`, `wt step rebase`,
@@ -670,7 +679,7 @@ impl GitError {
         match self {
             GitError::WithSwitchSuggestion { source, .. } => source.title(),
 
-            GitError::DetachedHead { action } => match action {
+            GitError::DetachedHead { action, .. } => match action {
                 Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
                 None => "Not on a branch (detached HEAD)".to_string(),
             },
@@ -924,14 +933,20 @@ impl GitError {
                 source.write_render_with_ctx(f, Some(ctx))
             }
 
-            GitError::DetachedHead { .. } => {
+            GitError::DetachedHead { worktree, .. } => {
                 let title = self.title();
+                let switch_cmd = match worktree {
+                    Some(path) => {
+                        format!("git -C {} switch <branch>", format_path_for_display(path))
+                    }
+                    None => "git switch <branch>".to_string(),
+                };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To switch to a branch, run <underline>git switch <<branch>></>"
+                        "To switch to a branch, run <underline>{switch_cmd}</>"
                     ))
                 )
             }
@@ -1950,7 +1965,11 @@ mod tests {
             Some(5)
         );
         assert_eq!(
-            anyhow::Error::from(GitError::DetachedHead { action: None }).exit_code(),
+            anyhow::Error::from(GitError::DetachedHead {
+                action: None,
+                worktree: None
+            })
+            .exit_code(),
             None
         );
 
@@ -2078,7 +2097,11 @@ mod tests {
         .into();
         assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
 
-        let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
+        let err: anyhow::Error = GitError::DetachedHead {
+            action: None,
+            worktree: None,
+        }
+        .into();
         assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::Other {
@@ -2115,11 +2138,11 @@ mod tests {
             @"Rebase onto main incomplete"
         );
         assert_snapshot!(
-            GitError::DetachedHead { action: Some("merge".into()) }.to_string(),
+            GitError::DetachedHead { action: Some("merge".into()), worktree: None }.to_string(),
             @"Cannot merge: not on a branch (detached HEAD)"
         );
         assert_snapshot!(
-            GitError::DetachedHead { action: None }.to_string(),
+            GitError::DetachedHead { action: None, worktree: None }.to_string(),
             @"Not on a branch (detached HEAD)"
         );
 
@@ -2624,6 +2647,7 @@ mod tests {
         // Non-switch-suggestion errors should be completely unaffected by the wrapper
         let inner = GitError::DetachedHead {
             action: Some("merge".into()),
+            worktree: None,
         };
         let wrapped = GitError::WithSwitchSuggestion {
             source: Box::new(inner.clone()),

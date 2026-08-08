@@ -12,6 +12,11 @@ expression: render_cases(cases)
 [31m✗[39m [31mNot on a branch (detached HEAD)[39m
 [2m↳[22m [2mTo switch to a branch, run [4mgit switch <branch>[24m[22m
 
+## detached HEAD in a named target worktree
+
+[31m✗[39m [31mCannot use /tmp/repo.other as a target: not on a branch (detached HEAD)[39m
+[2m↳[22m [2mTo switch to a branch, run [4mgit -C /tmp/repo.other switch <branch>[24m[22m
+
 ## rebase in progress
 
 [31m✗[39m [31mCannot rebase: a git operation is already in progress[39m

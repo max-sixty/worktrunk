@@ -1609,6 +1609,7 @@ fn an_unresolvable_git_entry_still_counts_as_git_data() {
 /// `wt list` would contradict.
 #[test]
 fn detached_worktree_target_is_reported_as_detached() {
+    use crate::git::ErrorExt;
     use crate::testing::TestRepo;
 
     let mut test = TestRepo::with_initial_commit();
@@ -1621,6 +1622,16 @@ fn detached_worktree_target_is_reported_as_detached() {
     assert!(
         rendered.contains("detached") && !rendered.contains("No worktree @"),
         "expected a detached-target error, got: {rendered}"
+    );
+
+    // The detached worktree is the one the argument named, so the hint has to
+    // send the user there: `git switch` run where they are stands would switch
+    // the wrong tree.
+    let hint = err.render_diagnostic().expect("typed diagnostic");
+    let quoted = crate::path::format_path_for_display(&worktree_path);
+    assert!(
+        hint.contains(&format!("git -C {quoted} switch")),
+        "expected the hint to name the target worktree, got: {hint}"
     );
 
     // A commit-ish target is spelled in a wider vocabulary than a worktree
