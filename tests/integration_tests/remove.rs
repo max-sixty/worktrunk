@@ -1840,12 +1840,8 @@ approved-commands = ["echo 'hook ran' > {}"]
     let _worktree_path = repo.add_worktree("feature-bg");
 
     // Remove in background mode (default)
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.current_dir(repo.root_path())
-        .args(["remove", "feature-bg"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "feature-bg"]).output().unwrap();
 
     // Wait for the hook to create the marker file
     wait_for_file(&marker_file);
@@ -2248,12 +2244,8 @@ approved-commands = ["echo 'hook ran' > {}"]
         .unwrap();
 
     // Remove the branch (no worktree)
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.current_dir(repo.root_path())
-        .args(["remove", "branch-only"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "branch-only"]).output().unwrap();
 
     // Marker file should NOT exist - pre-remove hooks only run for worktree removal
     assert!(
