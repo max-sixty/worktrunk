@@ -55,9 +55,10 @@ use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
     SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
 };
-use worktrunk::styling::eprintln;
+use worktrunk::styling::{eprintln, print};
 
 use crate::cli;
+use crate::output::println_verbatim;
 
 /// Output format for a `--help-page`. Web pages keep Zola shortcodes, HTML
 /// spans, and demo GIF figures for the docs site; plain pages strip those for
@@ -122,19 +123,19 @@ impl PageMode {
     /// uses it as a region marker), or an H1 title for plain skill pages.
     fn emit_header(self, subcommand: &str) {
         match self {
-            Self::Web => std::println!(
+            Self::Web => println_verbatim!(
                 "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
-            Self::Plain => std::println!("# wt {subcommand}"),
+            Self::Plain => println_verbatim!("# wt {subcommand}"),
         }
-        std::println!();
+        println_verbatim!();
     }
 
     /// Emit the closing END marker (web only).
     fn emit_footer(self) {
         if matches!(self, Self::Web) {
-            std::println!();
-            std::println!("{MARKER_CLOSE}");
+            println_verbatim!();
+            println_verbatim!("{MARKER_CLOSE}");
         }
     }
 }
@@ -155,11 +156,18 @@ impl PageMode {
 /// On a help/version/doc-generation request, prints output and calls
 /// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
 ///
-/// `alias_help_context` is computed by the caller from the same early-parse
-/// pass that extracts global options. When `Some`, the configured aliases are
+/// `alias_help_context` and `subcommand` both come from the caller's
+/// early-parse pass over the real argv, the same one that extracts global
+/// options. When `alias_help_context` is `Some`, the configured aliases are
 /// spliced into the rendered output — at the top level for `wt --help`, or
-/// under the Aliases section for `wt step --help`.
-pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
+/// under the Aliases section for `wt step --help`. `subcommand` is the command
+/// the doc-generation entry points below render, taken from clap rather than
+/// re-scanned here, so `wt.exe`, a renamed binary, or `wt -C <path> list
+/// --print-schema` all name the same thing.
+pub fn maybe_handle_help_with_pager(
+    alias_help_context: Option<crate::commands::HelpContext>,
+    subcommand: Option<&str>,
+) {
     let args_os: Vec<OsString> = std::env::args_os().collect();
     let args: Vec<String> = args_os
         .iter()
@@ -176,20 +184,20 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
         } else {
             PageMode::Web
         };
-        handle_help_page(&args, mode);
+        handle_help_page(subcommand, mode);
         process::exit(0);
     }
 
     // Check for --print-schema flag (output the JSON Schema for a command's
     // --format=json payload)
     if args.iter().any(|a| a == "--print-schema") {
-        handle_print_schema(&args);
+        handle_print_schema(subcommand);
         process::exit(0);
     }
 
     // Check for --help-description flag (output meta description for docs)
     if args.iter().any(|a| a == "--help-description") {
-        handle_help_description(&args);
+        handle_help_description(subcommand);
         process::exit(0);
     }
 
@@ -407,15 +415,10 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 /// Combines the command's `about` (definition) and `long_about` subtitle into
 /// a single description suitable for `<meta name="description">`. This is used
 /// by the docs sync test to auto-populate the `description` field in frontmatter.
-fn handle_help_description(args: &[String]) {
+fn handle_help_description(subcommand: Option<&str>) {
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
-
-    let subcommand = args
-        .iter()
-        .filter(|a| *a != "--help-description" && !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| !a.contains("target/") && *a != "wt");
 
     let Some(subcommand) = subcommand else {
         eprintln!("Usage: wt <command> --help-description");
@@ -447,12 +450,7 @@ fn handle_help_description(args: &[String]) {
 ///
 /// One command has a schema today, because one payload is versioned. The
 /// subcommand is the axis a second would arrive on.
-fn handle_print_schema(args: &[String]) {
-    let subcommand = args
-        .iter()
-        .filter(|a| !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| !a.contains("target/") && *a != "wt");
-
+fn handle_print_schema(subcommand: Option<&str>) {
     let Some(subcommand) = subcommand else {
         eprintln!(
             "Usage: wt <command> --print-schema
@@ -467,10 +465,7 @@ Commands with schemas: list"
     }
 
     let schema = crate::commands::list::json_v2::schema_document();
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&schema).expect("schema serializes")
-    );
+    crate::output::print_json(&schema).expect("schema serializes");
 }
 
 /// Generate a full documentation page for a command.
@@ -495,19 +490,10 @@ Commands with schemas: list"
 /// ```
 ///
 /// This is used to generate docs/content/merge.md etc from the source.
-fn handle_help_page(args: &[String], mode: PageMode) {
+fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
-
-    // Find the subcommand name (the arg before --help-page, or after wt)
-    let subcommand = args
-        .iter()
-        .filter(|a| *a != "--help-page" && !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| {
-            // Skip the binary name
-            !a.contains("target/") && *a != "wt"
-        });
 
     let Some(subcommand) = subcommand else {
         eprintln!(
@@ -536,18 +522,19 @@ Commands with pages: merge, switch, remove, list"
     let main_help = mode.process_body(main_content);
     let reference_block = help_reference_with_color(&[subcommand], Some(100), mode.color());
 
-    // Use std::println! to preserve ANSI codes in output (the styling::println strips them)
+    // println_verbatim! preserves the ANSI the web mode's reference block
+    // carries — the docs pipeline converts those escapes into HTML spans, and
+    // anstream's println! would strip them off a piped stdout.
     mode.emit_header(subcommand);
-    std::println!("{}", main_help.trim());
-    std::println!();
+    println_verbatim!("{}", main_help.trim());
+    println_verbatim!();
 
     // Main command reference immediately after its content
-    std::println!("## Command reference");
-    std::println!();
-    std::println!("```");
-    std::print!("{}", reference_block.trim());
-    std::println!();
-    std::println!("```");
+    println_verbatim!("## Command reference");
+    println_verbatim!();
+    println_verbatim!("```");
+    println_verbatim!("{}", reference_block.trim());
+    println_verbatim!("```");
 
     // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
@@ -556,10 +543,10 @@ Commands with pages: merge, switch, remove, list"
         // inside format_subcommand_section, so re-running would double-convert.
         let subdocs = mode.process_subdoc_trailing(subdocs);
         let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
-        std::println!();
-        std::println!("# Subcommands");
-        std::println!();
-        std::println!("{}", subdocs_expanded.trim());
+        println_verbatim!();
+        println_verbatim!("# Subcommands");
+        println_verbatim!();
+        println_verbatim!("{}", subdocs_expanded.trim());
     }
 
     mode.emit_footer();

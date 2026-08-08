@@ -8,20 +8,24 @@
   "confidence": "high",
   "entrypoints": [
     {
-      "path": "src/commands/hook_commands.rs",
-      "symbol": "expand_command_template",
+      "path": "src/config/expansion.rs",
+      "symbol": "expand_template",
       "route": null,
       "command": null
     }
   ],
   "ownedFiles": [
     {
-      "path": "src/commands/hook_commands.rs",
-      "reason": "expand_command_template: runtime render of hook command templates"
+      "path": "src/config/expansion.rs",
+      "reason": "expand_template / expand_template_with: the single runtime render, plus the variable catalog, the ShellArgs minijinja object, and shell-arg quoting"
     },
     {
-      "path": "src/config/expansion.rs",
-      "reason": "variable catalog, ShellArgs minijinja object, shell-arg quoting"
+      "path": "src/commands/command_executor.rs",
+      "reason": "render_template_preview and the foreground step pipeline: the execution path that renders a step's final string"
+    },
+    {
+      "path": "src/commands/hook_commands.rs",
+      "reason": "run_hook and the hook show --expanded rows: builds the template context and drives the render"
     },
     {
       "path": "src/commands/alias.rs",

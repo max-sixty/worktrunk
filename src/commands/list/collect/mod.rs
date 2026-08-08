@@ -322,6 +322,7 @@ use worktrunk::styling::{
 };
 
 use crate::commands::is_worktree_at_expected_path;
+use worktrunk::styling::println;
 
 use super::model::{CommitDetails, ItemKind, ListItem, StatusSymbols, WorktreeData};
 use super::progressive::RenderTarget;
@@ -390,7 +391,7 @@ impl TableRenderPlan {
             // for `WORKTRUNK_FIRST_OUTPUT` whenever progressive rendering is on
             // (`show_progress || progressive_handler.is_some()`), so this render
             // path runs only in buffered mode.
-            print_first_buffered_line(&self.header)?;
+            println!("{}", self.header);
             return Ok(true);
         }
 
@@ -401,15 +402,6 @@ impl TableRenderPlan {
         }
         Ok(false)
     }
-}
-
-fn print_first_buffered_line(header: &str) -> anyhow::Result<()> {
-    use std::io::Write as _;
-
-    let mut stdout = std::io::stdout();
-    writeln!(stdout, "{header}")?;
-    stdout.flush()?;
-    Ok(())
 }
 
 fn print_buffered_table(header: &str, rows: &[String], summary: &str) {

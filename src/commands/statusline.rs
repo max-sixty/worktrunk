@@ -31,7 +31,7 @@ use worktrunk::styling::{
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::StatuslineFormat;
-use crate::output::print_json;
+use crate::output::{print_json, println_verbatim};
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -723,8 +723,9 @@ fn format_context_gauge(percentage: f64) -> String {
 
 /// Run the statusline command.
 ///
-/// Output uses `println!` for raw stdout (bypasses anstream color detection).
-/// Shell prompts (PS1) and Claude Code always expect ANSI codes.
+/// Output goes through `println_verbatim!`, which bypasses anstream's color
+/// detection: shell prompts (PS1) and Claude Code always expect ANSI codes,
+/// and neither is a tty from this process's point of view.
 pub fn run(format: StatuslineFormat) -> Result<()> {
     // Statusline runs on every prompt redraw — deprecation warnings on stderr
     // would appear above each prompt.
@@ -845,7 +846,7 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     let output = fix_dim_after_color_reset(&output);
     let output = truncate_visible(&format!("{reset} {output}"), max_width);
 
-    println!("{}", output);
+    println_verbatim!("{}", output);
 
     Ok(())
 }

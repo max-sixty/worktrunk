@@ -150,8 +150,9 @@
           # Wider src than the package build: tests need .snap files and
           # tests/ fixtures (prebuilt _git/ trees, .sh scripts, no-extension
           # git database files). Default features only — shell-integration-
-          # tests requires zsh/fish/nushell + PTY (see CLAUDE.md → "Shell/PTY
-          # Integration Tests").
+          # tests wants a PTY and more shells than this derivation carries;
+          # the devShell below is where that set lives (see tests/CLAUDE.md →
+          # "Feature Flags, Not Runtime Skipping").
           worktrunk-tests = craneLib.cargoTest (
             commonArgs
             // {
@@ -200,10 +201,16 @@
             cargo-release
             cargo-llvm-cov
 
-            # For shell integration tests
+            # Shells the `shell-integration-tests` feature drives, plus the
+            # `jq` its Claude-hook tests pipe the hook payload through. The
+            # pre-merge gate runs `--all-features`, so a run here exercises
+            # every one.
             bash
             zsh
             fish
+            nushell
+            powershell
+            jq
 
             # Development tools
             git
