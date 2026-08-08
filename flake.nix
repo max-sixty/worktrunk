@@ -19,7 +19,11 @@
       rust-overlay,
       crane,
     }:
-    flake-utils.lib.eachDefaultSystem (
+    # `eachDefaultSystem` minus x86_64-darwin: nixpkgs drops Intel macOS in
+    # 26.11, so that system stops evaluating once flake.lock advances past
+    # it. Release binaries still ship for Intel macOS (dist-workspace.toml);
+    # this is the Nix surface only.
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (
       system:
       let
         overlays = [ (import rust-overlay) ];
@@ -212,8 +216,8 @@
             powershell
             jq
 
-            # Development tools
-            git
+            # Development tools. `git` comes from the `checks` above: crane
+            # folds each check's `nativeBuildInputs` in via `inputsFrom`.
             gh
             pre-commit
           ];
