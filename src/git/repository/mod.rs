@@ -358,6 +358,7 @@ pub(super) struct RepoCache {
 /// Used by `resolve_worktree` to handle different resolution outcomes:
 /// - A worktree exists (with optional branch for detached HEAD)
 /// - Only a branch exists (no worktree)
+/// - The selector named a directory that holds no worktree
 #[derive(Debug, Clone)]
 pub enum ResolvedWorktree {
     /// A worktree was found
@@ -372,6 +373,80 @@ pub enum ResolvedWorktree {
         /// The branch name
         branch: String,
     },
+    /// The selector named a directory holding no worktree — the skeleton an
+    /// interrupted create or remove leaves behind.
+    ///
+    /// A verdict rather than a caller's job: every place that reports "no such
+    /// thing" has to say whether it was looking for a branch or a path, and
+    /// [`Repository::path_selector_directory`] owns the four tests that make the
+    /// claim safe. Returning it here is what keeps those tests from being
+    /// re-invoked, or forgotten, at each reporting site.
+    NoWorktreeAtPath {
+        /// The directory, resolved against `-C` but spelled as the selector did
+        path: PathBuf,
+    },
+}
+
+/// A worktree selector after normalization and expansion — the token to look
+/// up, plus whether anything rewrote it on the way here.
+///
+/// `rewritten` is the fact that decides whether the token may still be tried as
+/// a *path*. Every assembly of the resolution ladder needs it, and each used to
+/// re-derive it by comparing the expansion's output against its input —
+/// `branch == name` in `resolve_worktree`, `target.branch == branch` in
+/// `plan_switch`, `target.filter(|t| *t == resolved)` in
+/// `target_worktree_at_path`. Three copies of one string heuristic standing in
+/// for something the rewriting step knows outright, and a trap for any
+/// normalization applied underneath them: stripping `docs/` to `docs` reads as
+/// a rewrite and silently disables the path arm.
+///
+/// So the producers state it. A shortcut expansion reports it
+/// (`Repository::expand_shortcut`); `wt switch` sets it when `pr:`/`mr:` or
+/// the remote-prefix strip fires ([`Selector::rewritten_to`]); a token nobody
+/// touched keeps it false ([`Selector::literal`]).
+#[derive(Debug, Clone)]
+pub struct Selector {
+    token: String,
+    rewritten: bool,
+}
+
+impl Selector {
+    /// A token the user typed and nothing rewrote — the path arm applies.
+    pub fn literal(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+            rewritten: false,
+        }
+    }
+
+    /// A token some earlier step produced — a shortcut expansion, a `pr:`/`mr:`
+    /// lookup, a stripped remote prefix, a default branch read from cache.
+    /// The literal argument is then a nonsense path, so the path arm is off.
+    pub fn rewritten_to(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+            rewritten: true,
+        }
+    }
+
+    /// The name to look up.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Whether this token may still be tried as a worktree path.
+    pub fn names_a_path(&self) -> bool {
+        !self.rewritten
+    }
+
+    /// Re-point at a token derived from this one, keeping the rewritten flag —
+    /// for a step that transforms without changing whether the user typed it.
+    pub fn map_token(self, token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+            ..self
+        }
+    }
 }
 
 /// Global base path for repository operations, set by -C flag.

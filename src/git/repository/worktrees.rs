@@ -9,8 +9,8 @@ use color_print::cformat;
 use dunce::canonicalize;
 
 use super::{
-    GitError, Repository, ResolvedWorktree, WorktreeInfo, is_valid_branch_name, normalize_selector,
-    resolve_input_path,
+    GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
+    normalize_selector, resolve_input_path,
 };
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
@@ -109,17 +109,25 @@ impl Repository {
         let Some(path) = self.worktree_for_branch(branch)? else {
             return Ok(None);
         };
-        let prunable = self
-            .list_worktrees()?
-            .iter()
-            .any(|wt| paths_match(&wt.path, &path) && wt.is_prunable());
-        if prunable {
+        if self.worktree_is_prunable(&path)? {
             return Err(GitError::WorktreeMissing {
                 branch: branch.to_string(),
             }
             .into());
         }
         Ok(Some(path))
+    }
+
+    /// Whether git reports the worktree registered at `path` as prunable.
+    ///
+    /// Read from a listing [`list_worktrees`](Self::list_worktrees) has already
+    /// parsed and cached, so this costs a lookup rather than a fork. `false`
+    /// for a path git has no registration for — absence is not breakage.
+    pub fn worktree_is_prunable(&self, path: &Path) -> anyhow::Result<bool> {
+        Ok(self
+            .list_worktrees()?
+            .iter()
+            .any(|wt| paths_match(&wt.path, path) && wt.is_prunable()))
     }
 
     /// The "home" worktree — main worktree for normal repos, default branch worktree for bare.
@@ -304,7 +312,23 @@ impl Repository {
     /// - `Err(DetachedHead)` if "@" and in detached HEAD state
     /// - `Err` if "-" but no previous branch in history
     pub fn resolve_worktree_name(&self, name: &str) -> anyhow::Result<String> {
-        match name {
+        Ok(self
+            .expand_shortcut(name)?
+            .unwrap_or_else(|| name.to_string()))
+    }
+
+    /// Expand `@` / `-` / `^`, reporting whether `name` was one of them.
+    ///
+    /// `None` means the token is not a shortcut and reaches the caller
+    /// untouched — the fact [`Selector`] carries as `names_a_path`, stated by
+    /// the step that would have done the rewriting rather than inferred
+    /// downstream by comparing this function's output against its input. The
+    /// two are not the same question: an expansion can legitimately return the
+    /// token it was given (a `-` history entry naming the branch you are on),
+    /// and any normalization applied around the call makes the comparison lie
+    /// outright.
+    fn expand_shortcut(&self, name: &str) -> anyhow::Result<Option<String>> {
+        let expanded = match name {
             "@" => self.current_worktree().branch()?.ok_or_else(|| {
                 GitError::DetachedHead {
                     action: Some("resolve @ to current branch".into()),
@@ -331,8 +355,23 @@ impl Repository {
                 }
                 .into()
             }),
-            _ => Ok(name.to_string()),
-        }
+            _ => return Ok(None),
+        };
+        expanded.map(Some)
+    }
+
+    /// Normalize and expand a token the user typed into the [`Selector`] the
+    /// resolvers work on.
+    ///
+    /// The one place normalization happens for the worktree ladder — possible
+    /// only because `rewritten` now comes from `expand_shortcut` rather than
+    /// from a string comparison this would corrupt.
+    pub fn expand_selector(&self, name: &str) -> anyhow::Result<Selector> {
+        let name = normalize_selector(name);
+        Ok(match self.expand_shortcut(name)? {
+            Some(token) => Selector::rewritten_to(token),
+            None => Selector::literal(name),
+        })
     }
 
     /// Resolve a worktree selector — the one place a token the user typed
@@ -353,16 +392,14 @@ impl Repository {
     ///    relative to `-C` (see [`resolve_input_path`])
     /// 5. otherwise the branch alone, which may or may not exist
     ///
-    /// A path that named no worktree lands in `BranchOnly` too, since step 5
-    /// asks nothing of the token — as does a shortcut whose expansion matched
-    /// nothing, which never reached step 4 at all. What the selector could have
-    /// meant is worked out where the failure is reported, by
-    /// [`path_selector_error`](Self::path_selector_error); the callers that go
-    /// on to succeed never need the answer.
+    /// A path that named no worktree lands in `BranchOnly` or
+    /// `NoWorktreeAtPath` — [`resolve_selector`](Self::resolve_selector)
+    /// decides which, once, so no reporting site has to.
     ///
     /// # Returns
     /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
     /// - `BranchOnly { branch }` when nothing is checked out under that name
+    /// - `NoWorktreeAtPath { path }` when the selector named a directory instead
     ///
     /// A worktree git reports as *prunable* still resolves here. Resolution
     /// answers "what did the user name", and `wt remove` names one precisely
@@ -370,51 +407,69 @@ impl Repository {
     /// [`usable_worktree_for_branch`](Self::usable_worktree_for_branch)'s job,
     /// which the commands that go on to run there call instead.
     pub fn resolve_worktree(&self, name: &str) -> anyhow::Result<ResolvedWorktree> {
+        // `@` is the only selector that resolves by path rather than by name,
+        // which is what lets it answer in a detached worktree — where the
+        // branch expansion `expand_selector` would apply has nothing to return.
         let name = normalize_selector(name);
-        let resolved = match name {
-            "@" => {
-                // Current worktree by path - works even in detached HEAD
-                // If worktree_root fails (e.g., in bare repo directory), give a clear error
-                let path = self
-                    .current_worktree()
-                    .root()
-                    .map_err(|_| GitError::NotInWorktree {
-                        action: Some("resolve @".into()),
-                    })?;
-                // root() returns canonicalized path, so canonicalize worktree paths
-                // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
-                let worktrees = self.list_worktrees()?;
-                let branch = worktrees
-                    .iter()
-                    .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
-                    .and_then(|wt| wt.branch.clone());
-                ResolvedWorktree::Worktree { path, branch }
-            }
-            _ => {
-                let branch = self.resolve_worktree_name(name)?;
-                if let Some(path) = self.worktree_for_branch(&branch)? {
-                    ResolvedWorktree::Worktree {
-                        path,
-                        branch: Some(branch),
-                    }
-                }
-                // A shortcut named a branch, not a directory: `resolve_worktree_name`
-                // returns a non-shortcut token unchanged, so an unequal result is
-                // exactly the case where the literal token would be a nonsense path.
-                else if branch == name
-                    && let Some((path, wt_branch)) = self.worktree_at_input_path(name)?
-                {
-                    ResolvedWorktree::Worktree {
-                        path,
-                        branch: wt_branch,
-                    }
-                } else {
-                    ResolvedWorktree::BranchOnly { branch }
-                }
-            }
-        };
+        if name == "@" {
+            // If worktree_root fails (e.g., in bare repo directory), give a clear error
+            let path = self
+                .current_worktree()
+                .root()
+                .map_err(|_| GitError::NotInWorktree {
+                    action: Some("resolve @".into()),
+                })?;
+            // root() returns canonicalized path, so canonicalize worktree paths
+            // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
+            let branch = self
+                .list_worktrees()?
+                .iter()
+                .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
+                .and_then(|wt| wt.branch.clone());
+            return Ok(ResolvedWorktree::Worktree { path, branch });
+        }
 
-        Ok(resolved)
+        self.resolve_selector(&self.expand_selector(name)?)
+    }
+
+    /// The worktree ladder itself: branch first, then path, then a verdict on
+    /// what the selector could have meant.
+    ///
+    /// Split from [`resolve_worktree`](Self::resolve_worktree) for the callers
+    /// that do their own expanding before they get here — `wt switch`, whose
+    /// `pr:`/`mr:` dispatch and remote-prefix strip run first and report their
+    /// rewriting through the [`Selector`]. They used to re-implement these
+    /// three steps rather than expand into a shared one.
+    pub fn resolve_selector(&self, selector: &Selector) -> anyhow::Result<ResolvedWorktree> {
+        let token = selector.token();
+
+        if let Some(path) = self.worktree_for_branch(token)? {
+            return Ok(ResolvedWorktree::Worktree {
+                path,
+                branch: Some(token.to_string()),
+            });
+        }
+
+        // Only a token the user actually typed can be a path; anything an
+        // earlier step produced would be a nonsense one.
+        if selector.names_a_path()
+            && let Some((path, wt_branch)) = self.worktree_at_input_path(token)?
+        {
+            return Ok(ResolvedWorktree::Worktree {
+                path,
+                branch: wt_branch,
+            });
+        }
+
+        // Nothing matched, so say which of the two the selector was reaching
+        // for. Free for an ordinary branch name: `path_selector_error` returns
+        // on `is_valid_branch_name` before it touches the filesystem.
+        Ok(match self.path_selector_directory(token) {
+            Some(path) => ResolvedWorktree::NoWorktreeAtPath { path },
+            None => ResolvedWorktree::BranchOnly {
+                branch: token.to_string(),
+            },
+        })
     }
 
     /// The branch a selector names, erroring only when it names a detached
@@ -431,12 +486,12 @@ impl Repository {
                 branch: Some(branch),
                 ..
             } => Ok(branch),
-            // A path selector reaches here only when it named no worktree, and
-            // it can't be the branch the caller is about to key state by.
-            ResolvedWorktree::BranchOnly { branch } => match self.path_selector_error(&branch) {
-                Some(err) => Err(err.into()),
-                None => Ok(branch),
-            },
+            ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            // A path spelling can't be the branch the caller is about to key
+            // state by.
+            ResolvedWorktree::NoWorktreeAtPath { path } => {
+                Err(GitError::WorktreeNotFoundAtPath { path }.into())
+            }
             ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
                 action: Some(cformat!(
                     "{action} — <bold>{}</> is detached",
@@ -462,11 +517,14 @@ impl Repository {
         match self.resolve_worktree(name)? {
             ResolvedWorktree::Worktree { path, .. } => Ok(path),
             ResolvedWorktree::BranchOnly { branch } => Err(self.no_worktree_error(branch)),
+            ResolvedWorktree::NoWorktreeAtPath { path } => {
+                Err(GitError::WorktreeNotFoundAtPath { path }.into())
+            }
         }
     }
 
-    /// The not-found error for a selector naming a directory that holds no
-    /// worktree — the skeleton an interrupted create or remove leaves behind.
+    /// The directory a selector names, when it names one holding no worktree —
+    /// the skeleton an interrupted create or remove leaves behind.
     ///
     /// Every argument naming a worktree is tried as a branch first and as a
     /// path second, so each place that reports "no such thing" has to say which
@@ -497,7 +555,13 @@ impl Repository {
     ///   interrupted create or remove leaves, which holds no git data at all
     ///   (see `holds_git_data`).
     ///
-    /// `None` when any test fails, leaving the caller's own error in place.
+    /// `None` when any test fails, leaving the selector to be reported as a
+    /// branch. The verdict reaches callers as
+    /// [`ResolvedWorktree::NoWorktreeAtPath`] — this is
+    /// [`resolve_selector`](Self::resolve_selector)'s last step, and the only
+    /// caller that is not itself assembling the ladder is
+    /// [`require_target_branch`](Self::require_target_branch), whose target
+    /// vocabulary is wider than a worktree selector's.
     ///
     /// The path is reported as the selector spells it, resolved against `-C`
     /// but not otherwise tidied — so a `-C` base and a `./`-prefixed selector
@@ -510,7 +574,7 @@ impl Repository {
     /// A trailing separator never reaches here: [`normalize_selector`] strips
     /// it before resolution, so `docs/` and `docs` are one selector and both
     /// find the branch.
-    pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
+    pub fn path_selector_directory(&self, selector: &str) -> Option<PathBuf> {
         if is_valid_branch_name(selector) {
             return None;
         }
@@ -526,14 +590,15 @@ impl Repository {
         if holds_git_data(&path) {
             return None;
         }
-        Some(GitError::WorktreeNotFoundAtPath { path })
+        Some(path)
     }
 
     /// The error for a selector that resolved to a branch with no checkout.
+    ///
+    /// The directory case never arrives here — `resolve_selector` has already
+    /// separated it out — so this only has to choose between "the branch has no
+    /// worktree" and "nothing answers to this name at all".
     fn no_worktree_error(&self, branch: String) -> anyhow::Error {
-        if let Some(err) = self.path_selector_error(&branch) {
-            return err.into();
-        }
         match self.branch(&branch).exists_locally() {
             Ok(true) => GitError::WorktreeNotFound { branch }.into(),
             // A ref lookup that fails says nothing about the branch, so fall

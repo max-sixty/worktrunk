@@ -1434,6 +1434,9 @@ fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
     let branch = match resolved {
         ResolvedWorktree::Worktree { branch, .. } => branch,
         ResolvedWorktree::BranchOnly { branch } => Some(branch),
+        ResolvedWorktree::NoWorktreeAtPath { path } => {
+            panic!("`^` resolved to a directory: {}", path.display())
+        }
     };
     assert_eq!(branch.as_deref(), Some(default_branch.as_str()));
 }
@@ -1479,11 +1482,14 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     let ghost = test.root_path().join("ghost");
     std::fs::create_dir(&ghost).unwrap();
 
-    // Resolution still falls through to branch-only; the selector's shape is
-    // read where the failure is reported, not where it is resolved.
+    // Resolution reaches the verdict itself, so no reporting site has to
+    // re-derive what the selector was reaching for.
     let selector = ghost.to_str().unwrap();
     let resolved = test.repo.resolve_worktree(selector).unwrap();
-    assert!(matches!(resolved, ResolvedWorktree::BranchOnly { .. }));
+    assert!(
+        matches!(resolved, ResolvedWorktree::NoWorktreeAtPath { .. }),
+        "a directory holding no worktree is its own verdict, got: {resolved:?}"
+    );
 
     let rendered = test
         .repo
@@ -1546,7 +1552,7 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     for checkout in [&sibling, &bare] {
         assert!(
             test.repo
-                .path_selector_error(checkout.to_str().unwrap())
+                .path_selector_directory(checkout.to_str().unwrap())
                 .is_none(),
             "a directory holding git data must not be called a leftover: {}",
             checkout.display()
@@ -1559,7 +1565,7 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     std::fs::write(decoy.join("HEAD"), "").unwrap();
     assert!(
         test.repo
-            .path_selector_error(decoy.to_str().unwrap())
+            .path_selector_directory(decoy.to_str().unwrap())
             .is_some(),
         "a directory that merely contains a HEAD file is still a leftover"
     );
@@ -1596,7 +1602,7 @@ fn an_unresolvable_git_entry_still_counts_as_git_data() {
     for checkout in checkouts {
         assert!(
             test.repo
-                .path_selector_error(checkout.to_str().unwrap())
+                .path_selector_directory(checkout.to_str().unwrap())
                 .is_none(),
             "an unresolvable .git must still withhold the claim: {}",
             checkout.display()
@@ -1659,7 +1665,7 @@ fn path_selector_error_checks_for_a_registered_worktree() {
     let selector = worktree_path.to_str().unwrap();
 
     assert!(
-        test.repo.path_selector_error(selector).is_none(),
+        test.repo.path_selector_directory(selector).is_none(),
         "a registered worktree's own path must never be reported as holding none"
     );
 
@@ -1973,5 +1979,56 @@ fn usable_worktree_for_branch_refuses_a_prunable_registration() {
         repo.usable_worktree_for_branch("no-such-branch").unwrap(),
         None,
         "a branch with no worktree is a normal answer, not an error"
+    );
+}
+
+/// A selector reports whether anything rewrote it, rather than that being
+/// inferred by comparing an expansion's output against its input.
+///
+/// The two answers differ, which is the whole reason to carry the fact: an
+/// expansion can legitimately return the token it was given — `-` pointing at
+/// the branch you are already on — and string equality then reads a rewrite as
+/// a literal, turning the path arm back on for a token nobody typed.
+/// Normalization breaks it in the other direction: `docs/` and `docs` are one
+/// selector, and comparing them would read a rewrite that never happened.
+#[test]
+fn selector_reports_rewriting_rather_than_inferring_it() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let repo = &test.repo;
+    let current = repo.current_worktree().branch().unwrap().unwrap();
+
+    let literal = repo.expand_selector("some-branch").unwrap();
+    assert_eq!(literal.token(), "some-branch");
+    assert!(literal.names_a_path(), "an untouched token may be a path");
+
+    // Normalization is not rewriting: `docs/` still gets its path arm, which
+    // is what keeps `../repo.feature/` resolving as a worktree path.
+    let normalized = repo.expand_selector("docs/").unwrap();
+    assert_eq!(normalized.token(), "docs");
+    assert!(
+        normalized.names_a_path(),
+        "stripping a separator must not read as a rewrite"
+    );
+
+    // `^` expands to the default branch, which here IS the current branch — so
+    // the expansion's output equals neither its input nor nothing useful. The
+    // flag, not a comparison, is what records that a shortcut fired.
+    let shortcut = repo.expand_selector("^").unwrap();
+    assert_eq!(shortcut.token(), current);
+    assert!(
+        !shortcut.names_a_path(),
+        "a shortcut's expansion is nobody's path"
+    );
+
+    // The degenerate case string equality gets wrong: history pointing at the
+    // branch already checked out. Output == input, yet a shortcut fired.
+    repo.set_switch_previous(Some(&current)).unwrap();
+    let previous = repo.expand_selector("-").unwrap();
+    assert_eq!(previous.token(), current);
+    assert!(
+        !previous.names_a_path(),
+        "a shortcut that expands to its own input is still a rewrite"
     );
 }

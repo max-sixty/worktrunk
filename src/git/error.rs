@@ -605,7 +605,7 @@ pub enum GitError {
     /// branch without a checkout, [`GitError::WorktreeSelectorNotFound`] a
     /// token that could have been either, and this one a directory `wt list`
     /// will never show and only the user can delete. Built solely by
-    /// [`Repository::path_selector_error`](crate::git::Repository::path_selector_error),
+    /// [`Repository::path_selector_directory`](crate::git::Repository::path_selector_directory),
     /// which owns every test that has to pass before this claim is safe.
     WorktreeNotFoundAtPath {
         path: PathBuf,
