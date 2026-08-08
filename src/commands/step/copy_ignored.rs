@@ -13,6 +13,8 @@ use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, success_message, verbosity,
 };
 
+use crate::output::print_json;
+
 use super::shared::{list_and_filter_ignored_entries, resolve_copy_ignored_config};
 
 /// Handle `wt step copy-ignored` command
@@ -76,7 +78,7 @@ pub fn step_copy_ignored(
                 "files": 0,
                 "bytes": 0,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         } else {
             eprintln!(
                 "{}",
@@ -108,7 +110,7 @@ pub fn step_copy_ignored(
                 "files": 0,
                 "bytes": 0,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         } else {
             eprintln!(
                 "{}",
@@ -144,7 +146,7 @@ pub fn step_copy_ignored(
                 "files": 0,
                 "bytes": 0,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         } else {
             eprintln!("{}", info_message("No matching files to copy"));
         }
@@ -174,7 +176,7 @@ pub fn step_copy_ignored(
                 "to": dest_path,
                 "entries": entries,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
             return Ok(());
         }
         let items: Vec<String> = entries_to_copy
@@ -286,7 +288,7 @@ pub fn step_copy_ignored(
             "files": copied_count,
             "bytes": copied_bytes,
         });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        print_json(&payload)?;
     } else {
         // Show summary
         let file_word = if copied_count == 1 { "file" } else { "files" };

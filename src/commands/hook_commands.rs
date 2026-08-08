@@ -20,6 +20,8 @@ use worktrunk::styling::{
     info_message, println, warning_message,
 };
 
+use crate::output::print_json;
+
 use super::command_approval::approve_hooks_filtered;
 use super::command_executor::{
     CommandContext, FailureStrategy, PreparedStep, prepare_steps, render_template_preview,
@@ -475,7 +477,7 @@ fn emit_hook_show_json(
         }
     }
 
-    println!("{}", serde_json::to_string_pretty(&entries)?);
+    print_json(&entries)?;
     Ok(())
 }
 

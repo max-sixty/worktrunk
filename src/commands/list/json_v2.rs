@@ -5,6 +5,13 @@
 //! quarantined under `display`. Selected by `[list] json-schema = 2`;
 //! schema 1 is the bare-array format in [`super::json_output`].
 //!
+//! A JSON Schema derived from these types is published at
+//! `https://worktrunk.dev/schema/list-v2.json`, regenerated from
+//! `wt list --print-schema` by `test_docs_are_in_sync`. It is generated under
+//! schemars' *serialize* contract, so `skip_serializing_if` fields are
+//! optional there — adding a field whose absence the schema should allow
+//! needs that attribute, not just an `Option`.
+//!
 //! ## The absence rule
 //!
 //! - **Absent** — nothing to report: not applicable to this row, not
@@ -25,13 +32,14 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::Serialize;
 use worktrunk::git::{
-    GitRepoInfo, IntegrationReason, IntegrationSignals, Repository, check_integration,
+    GitRepoInfo, InProgressOperation, IntegrationReason, IntegrationSignals, Repository,
+    check_integration,
 };
 
 use super::ci_status::{CiSource, CiStatus, PrStatus, ReviewState};
 use super::custom_columns::ResolvedCustomColumn;
 use super::json_output::{JsonDiff, format_raw_symbols};
-use super::model::{BranchScope, Collected, ItemKind, ListItem, WorktreeData};
+use super::model::{BranchScope, Collected, ItemKind, ListItem, MainState, WorktreeData};
 
 /// Tri-state field encoding the absence rule (see module docs).
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +98,35 @@ pub struct JsonEnvelope {
 
     /// One entry per row, in table order.
     pub items: Vec<JsonItemV2>,
+}
+
+/// The published JSON Schema for [`JsonEnvelope`], as a JSON value.
+///
+/// `wt list --print-schema` prints this and `test_docs_are_in_sync` commits it
+/// to `docs/static/schema/list-v2.json`; it lives here so the document and the
+/// types it describes stay in one place, and so `test_schema_accepts_envelopes`
+/// checks the same document that ships.
+///
+/// Generated under schemars' *serialize* contract. The default deserialize
+/// contract marks a `skip_serializing_if` field required — nothing supplies it
+/// on the way in — which would make the schema reject the output it documents.
+pub fn schema_document() -> serde_json::Value {
+    let settings = schemars::generate::SchemaSettings::default().for_serialize();
+    let schema = schemars::SchemaGenerator::new(settings).into_root_schema_for::<JsonEnvelope>();
+
+    let mut value = serde_json::to_value(&schema).expect("schema serializes");
+    let object = value.as_object_mut().expect("schema is an object");
+    // Zola serves docs/static/ at the site root, so this is where the
+    // committed docs/static/schema/list-v2.json is reachable.
+    object.insert(
+        "$id".to_string(),
+        "https://worktrunk.dev/schema/list-v2.json".into(),
+    );
+    object.insert(
+        "title".to_string(),
+        "wt list --format=json (schema 2)".into(),
+    );
+    value
 }
 
 /// Repo-wide facts.
@@ -213,13 +250,38 @@ pub struct JsonWorktreeV2 {
     /// Another worktree has the same branch checked out.
     pub duplicate_branch: bool,
 
-    /// In-progress operation: `"rebase"`, `"merge"`, `"cherry_pick"`,
-    /// `"revert"`, or `"bisect"`; absent when none, null while unresolved.
+    /// In-progress operation; absent when none, null while unresolved.
     #[serde(skip_serializing_if = "Tri::is_absent")]
-    pub operation: Tri<&'static str>,
+    pub operation: Tri<JsonOperation>,
 
     /// Working-tree state; null while unresolved.
     pub changes: Option<JsonChanges>,
+}
+
+/// [`InProgressOperation`] wire values. The domain enum's `strum` names are
+/// the same strings, but going through an exhaustive match is what makes a
+/// sixth variant a compile error here instead of a value that appears in
+/// published output with nothing to catch it.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonOperation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
+impl From<InProgressOperation> for JsonOperation {
+    fn from(operation: InProgressOperation) -> Self {
+        match operation {
+            InProgressOperation::Merge => Self::Merge,
+            InProgressOperation::Rebase => Self::Rebase,
+            InProgressOperation::CherryPick => Self::CherryPick,
+            InProgressOperation::Revert => Self::Revert,
+            InProgressOperation::Bisect => Self::Bisect,
+        }
+    }
 }
 
 /// Reason payload for `locked` / `prunable`.
@@ -278,10 +340,35 @@ pub struct JsonDefaultBranch {
 /// Why committed content counts as integrated.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct JsonIntegration {
-    /// Which check matched: `"same_commit"`, `"ancestor"`,
-    /// `"no_added_changes"`, `"trees_match"`, `"merge_adds_nothing"`, or
-    /// `"patch_id_match"`.
-    pub reason: &'static str,
+    /// Which check matched.
+    pub reason: JsonIntegrationReason,
+}
+
+/// `IntegrationReason` wire values. Schema 2 uses snake_case throughout; the
+/// enum's own serde rename (kebab-case) is shared with other surfaces, so the
+/// mapping lives here instead of on the enum.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonIntegrationReason {
+    SameCommit,
+    Ancestor,
+    NoAddedChanges,
+    TreesMatch,
+    MergeAddsNothing,
+    PatchIdMatch,
+}
+
+impl From<IntegrationReason> for JsonIntegrationReason {
+    fn from(reason: IntegrationReason) -> Self {
+        match reason {
+            IntegrationReason::SameCommit => Self::SameCommit,
+            IntegrationReason::Ancestor => Self::Ancestor,
+            IntegrationReason::NoAddedChanges => Self::NoAddedChanges,
+            IntegrationReason::TreesMatch => Self::TreesMatch,
+            IntegrationReason::MergeAddsNothing => Self::MergeAddsNothing,
+            IntegrationReason::PatchIdMatch => Self::PatchIdMatch,
+        }
+    }
 }
 
 /// Tracking-branch relation.
@@ -327,15 +414,41 @@ pub struct JsonPr {
 /// CI pipeline facts.
 #[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct JsonChecks {
-    /// `"passed"`, `"running"`, or `"failed"`; null when a conflicts report
-    /// masked the pipeline outcome.
-    pub status: Option<&'static str>,
+    /// Pipeline outcome; null when a conflicts report masked it.
+    pub status: Option<JsonCheckStatus>,
 
     /// `"pr"` or `"branch"` (branch workflow).
     pub source: CiSource,
 
     /// Local HEAD is not what CI ran against.
     pub stale: bool,
+}
+
+/// The pipeline outcomes that reach JSON. [`CiStatus`] carries three more
+/// that never appear here, because each is reported by the shape of `checks`
+/// rather than by a value inside it: `Error` makes both `pr` and `checks`
+/// unknown, `NoCI` makes `checks` absent, and `Conflicts` leaves `status`
+/// null (the conflict itself surfaces as `pr.mergeable`). See
+/// [`pr_and_checks`].
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonCheckStatus {
+    Passed,
+    Running,
+    Failed,
+}
+
+impl JsonCheckStatus {
+    /// `None` for the statuses the shape of `checks` reports instead (see the
+    /// type docs). `Error` and `NoCI` never reach a constructed `JsonChecks`.
+    fn from_ci_status(status: CiStatus) -> Option<Self> {
+        match status {
+            CiStatus::Passed => Some(Self::Passed),
+            CiStatus::Running => Some(Self::Running),
+            CiStatus::Failed => Some(Self::Failed),
+            CiStatus::Conflicts | CiStatus::NoCI | CiStatus::Error => None,
+        }
+    }
 }
 
 /// Dev server facts.
@@ -355,7 +468,7 @@ pub struct JsonDisplay {
     /// The table's collapsed default-branch state (one value per row,
     /// highest priority wins); absent when none applies or unresolved.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<&'static str>,
+    pub state: Option<JsonMainState>,
 
     /// Raw status glyphs without ANSI (e.g. `"+!⊂"`).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,17 +484,39 @@ pub struct JsonDisplay {
     pub columns: BTreeMap<String, String>,
 }
 
-/// `IntegrationReason` wire values. Schema 2 uses snake_case throughout;
-/// the enum's own serde rename (kebab-case) is shared with other surfaces,
-/// so the mapping lives here instead of on the enum.
-fn integration_reason_str(reason: IntegrationReason) -> &'static str {
-    match reason {
-        IntegrationReason::SameCommit => "same_commit",
-        IntegrationReason::Ancestor => "ancestor",
-        IntegrationReason::NoAddedChanges => "no_added_changes",
-        IntegrationReason::TreesMatch => "trees_match",
-        IntegrationReason::MergeAddsNothing => "merge_adds_nothing",
-        IntegrationReason::PatchIdMatch => "patch_id_match",
+/// [`MainState`] wire values. `MainState::None` renders as no value at all,
+/// so it has no variant here — `display.state` is absent instead. The
+/// `Integrated` payload is dropped: the reason it carries is already reported
+/// as `default_branch.integration.reason`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonMainState {
+    IsMain,
+    WouldConflict,
+    Empty,
+    SameCommit,
+    Integrated,
+    Orphan,
+    Diverged,
+    Ahead,
+    Behind,
+}
+
+impl JsonMainState {
+    /// `None` for [`MainState::None`], which the table renders as no symbol.
+    fn from_main_state(state: MainState) -> Option<Self> {
+        match state {
+            MainState::None => None,
+            MainState::IsMain => Some(Self::IsMain),
+            MainState::WouldConflict => Some(Self::WouldConflict),
+            MainState::Empty => Some(Self::Empty),
+            MainState::SameCommit => Some(Self::SameCommit),
+            MainState::Integrated(_) => Some(Self::Integrated),
+            MainState::Orphan => Some(Self::Orphan),
+            MainState::Diverged => Some(Self::Diverged),
+            MainState::Ahead => Some(Self::Ahead),
+            MainState::Behind => Some(Self::Behind),
+        }
     }
 }
 
@@ -542,7 +677,10 @@ impl JsonItemV2 {
         let columns = columns_map(custom_columns, &item.custom_values);
 
         let display = JsonDisplay {
-            state: item.status_symbols.main_state.and_then(|s| s.as_json_str()),
+            state: item
+                .status_symbols
+                .main_state
+                .and_then(JsonMainState::from_main_state),
             symbols: Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty()),
             statusline: item.statusline.clone(),
             columns,
@@ -655,7 +793,7 @@ fn json_default_branch(item: &ListItem, worktree_data: Option<&WorktreeData>) ->
         // seeded: every seed points the negative direction, so a match can
         // only come from a computed signal.
         Some(reason) => Tri::Known(JsonIntegration {
-            reason: integration_reason_str(reason),
+            reason: reason.into(),
         }),
         // "Not integrated" is a determination only when every signal was
         // genuinely computed — a seeded signal means a probe never ran.
@@ -695,18 +833,16 @@ fn pr_and_checks(
         // the pipeline did.
         CiStatus::Error => return (Tri::Unknown, Tri::Unknown),
         CiStatus::NoCI => Tri::Absent,
-        CiStatus::Conflicts => Tri::Known(JsonChecks {
-            // The fetch discards the pipeline outcome when the forge
-            // reports conflicts (see `pr.mergeable`).
-            status: None,
-            source: status.source,
-            stale: status.is_stale,
-        }),
-        CiStatus::Passed | CiStatus::Running | CiStatus::Failed => Tri::Known(JsonChecks {
-            status: Some(status.ci_status.into()),
-            source: status.source,
-            stale: status.is_stale,
-        }),
+        // Conflicts lands here with a null `status`: the fetch discards the
+        // pipeline outcome when the forge reports conflicts, which surfaces
+        // as `pr.mergeable` instead.
+        CiStatus::Conflicts | CiStatus::Passed | CiStatus::Running | CiStatus::Failed => {
+            Tri::Known(JsonChecks {
+                status: JsonCheckStatus::from_ci_status(status.ci_status),
+                source: status.source,
+                stale: status.is_stale,
+            })
+        }
     };
 
     let pr = if status.source == CiSource::PullRequest {
@@ -876,7 +1012,7 @@ mod tests {
         assert_eq!(
             checks,
             Tri::Known(JsonChecks {
-                status: Some("passed"),
+                status: Some(JsonCheckStatus::Passed),
                 source: CiSource::PullRequest,
                 stale: true,
             })
@@ -927,7 +1063,7 @@ mod tests {
         assert_eq!(
             checks,
             Tri::Known(JsonChecks {
-                status: Some("failed"),
+                status: Some(JsonCheckStatus::Failed),
                 source: CiSource::Branch,
                 stale: false,
             })
@@ -1125,18 +1261,10 @@ mod tests {
         item
     }
 
-    /// The derived schema must generate cleanly — `Tri<T>`'s JsonSchema
-    /// delegation to `Option<T>` is only exercised here until the schema
-    /// export ships.
+    /// `JsonIntegrationReason` covers every `IntegrationReason`, under the
+    /// snake_case wire names schema 2 publishes.
     #[test]
-    fn test_schema_generates() {
-        let schema = schemars::schema_for!(JsonEnvelope);
-        let json = serde_json::to_value(&schema).unwrap();
-        assert!(json["properties"]["items"].is_object());
-    }
-
-    #[test]
-    fn test_integration_reason_str_covers_every_reason() {
+    fn test_integration_reason_wire_names() {
         let cases = [
             (IntegrationReason::SameCommit, "same_commit"),
             (IntegrationReason::Ancestor, "ancestor"),
@@ -1146,7 +1274,39 @@ mod tests {
             (IntegrationReason::PatchIdMatch, "patch_id_match"),
         ];
         for (reason, expected) in cases {
-            assert_eq!(integration_reason_str(reason), expected);
+            let wire = serde_json::to_value(JsonIntegrationReason::from(reason)).unwrap();
+            assert_eq!(wire, expected);
+        }
+    }
+
+    /// Every [`MainState`] the table can show reaches `display.state` with a
+    /// wire name, and `None` reaches it as absent.
+    #[test]
+    fn test_main_state_wire_names() {
+        let cases = [
+            (MainState::None, None),
+            (MainState::IsMain, Some("is_main")),
+            (MainState::WouldConflict, Some("would_conflict")),
+            (MainState::Empty, Some("empty")),
+            (MainState::SameCommit, Some("same_commit")),
+            (
+                MainState::Integrated(IntegrationReason::Ancestor),
+                Some("integrated"),
+            ),
+            (MainState::Orphan, Some("orphan")),
+            (MainState::Diverged, Some("diverged")),
+            (MainState::Ahead, Some("ahead")),
+            (MainState::Behind, Some("behind")),
+        ];
+        for (state, expected) in cases {
+            let wire = JsonMainState::from_main_state(state).map(|s| {
+                serde_json::to_value(s)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            });
+            assert_eq!(wire.as_deref(), expected, "for {state:?}");
         }
     }
 
@@ -1262,6 +1422,256 @@ mod tests {
                 mergeable: None,
                 repo: None,
             })
+        );
+    }
+
+    /// Every path in `value` holding a non-null value, with array indices
+    /// collapsed to `*` so a path matches whichever battery row supplies it.
+    fn non_null_paths(value: &serde_json::Value) -> std::collections::BTreeSet<String> {
+        fn walk(
+            value: &serde_json::Value,
+            path: &str,
+            out: &mut std::collections::BTreeSet<String>,
+        ) {
+            if value.is_null() {
+                return;
+            }
+            out.insert(path.to_string());
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, child) in map {
+                        walk(child, &format!("{path}/{key}"), out);
+                    }
+                }
+                serde_json::Value::Array(entries) => {
+                    for child in entries {
+                        walk(child, &format!("{path}/*"), out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = std::collections::BTreeSet::new();
+        walk(value, "", &mut out);
+        out
+    }
+
+    /// The published schema must accept what `wt list --format=json`
+    /// actually writes.
+    ///
+    /// schemars derives the document from the types without ever seeing
+    /// output, so nothing else pins the two together. This caught the schema
+    /// being generated under the deserialize contract, where every
+    /// `skip_serializing_if` field is required and the document rejects its
+    /// own output.
+    ///
+    /// The battery walks the axes the schema is most likely to get wrong:
+    /// every `CiStatus` (which drives the `pr`/`checks` tri-state arms and
+    /// `JsonCheckStatus`) and every `MainState` (which drives
+    /// `JsonMainState`).
+    #[test]
+    fn test_schema_accepts_envelopes() {
+        let collected = Collected {
+            ci: true,
+            summary: true,
+        };
+
+        let mut items = Vec::new();
+
+        // Bare row: every gated family absent.
+        items.push(convert(
+            &item_with("bare"),
+            Collected {
+                ci: false,
+                summary: false,
+            },
+        ));
+
+        // A fully-populated worktree row. `worktree` and everything under it
+        // appear nowhere else in the battery, and each field left at its
+        // default takes one more type out of the validator's reach: git
+        // records a lock with or without a message, so both `JsonReason` arms
+        // need a row.
+        items.push(convert(
+            &worktree_item(
+                "worktree",
+                WorktreeData {
+                    git_operation: Some(Some(InProgressOperation::Rebase)),
+                    locked: Some("manual lock".to_string()),
+                    prunable: Some(String::new()),
+                    working_tree_status: Some(Default::default()),
+                    has_conflicts: Some(true),
+                    working_tree_diff: Some(worktrunk::git::LineDiff {
+                        added: 3,
+                        deleted: 1,
+                    }),
+                    ..Default::default()
+                },
+            ),
+            collected,
+        ));
+
+        // An integrated row with an upstream and a dev server. Without the
+        // signals `check_integration` returns `None` and `integration` is
+        // null throughout, so `JsonIntegration` and `JsonIntegrationReason`
+        // would never meet a real object.
+        let mut integrated = item_with("integrated");
+        integrated.is_ancestor = Some(true);
+        integrated.is_orphan = Some(false);
+        integrated.has_file_changes = Some(false);
+        integrated.committed_trees_match = Some(true);
+        integrated.would_merge_add = Some(false);
+        integrated.is_patch_id_match = Some(true);
+        integrated.upstream = Some(UpstreamStatus {
+            remote: Some("origin".to_string()),
+            upstream_short: Some("origin/integrated".to_string()),
+            ahead: 2,
+            behind: 1,
+        });
+        integrated.url = Some("http://127.0.0.1:3000".to_string());
+        integrated.url_active = Some(true);
+        items.push(convert(&integrated, collected));
+
+        // Every CI status, over both sources.
+        for source in [CiSource::PullRequest, CiSource::Branch] {
+            for ci in [
+                CiStatus::Passed,
+                CiStatus::Running,
+                CiStatus::Failed,
+                CiStatus::Conflicts,
+                CiStatus::NoCI,
+                CiStatus::Error,
+            ] {
+                let mut item = item_with("ci");
+                item.pr_status = Some(Some(PrStatus {
+                    url: Some("https://github.com/org/repo/pull/7".to_string()),
+                    number: Some(PrRef::pr(7)),
+                    review_state: Some(ReviewState::Approved),
+                    ..pr_status(ci, source)
+                }));
+                items.push(convert(&item, collected));
+            }
+        }
+
+        // Every collapsed default-branch state.
+        for state in [
+            MainState::None,
+            MainState::IsMain,
+            MainState::WouldConflict,
+            MainState::Empty,
+            MainState::SameCommit,
+            MainState::Integrated(IntegrationReason::PatchIdMatch),
+            MainState::Orphan,
+            MainState::Diverged,
+            MainState::Ahead,
+            MainState::Behind,
+        ] {
+            let mut item = item_with("state");
+            item.status_symbols.main_state = Some(state);
+            items.push(convert(&item, collected));
+        }
+
+        // Requested-but-undetermined: the null arm of the absence rule.
+        let mut seeded = item_with("seeded");
+        seeded.summary = Some(None);
+        seeded.pr_status = Some(None);
+        items.push(convert(&seeded, collected));
+
+        let envelope = JsonEnvelope {
+            schema: 2,
+            repo: JsonRepo {
+                default_branch: Some("main".to_string()),
+                // `forge` is the only place `GitRepoInfo` and
+                // `GitRepoProvider` appear in the document.
+                forge: Some(GitRepoInfo {
+                    url: "https://github.com/org/repo".to_string(),
+                    provider: worktrunk::git::GitRepoProvider::GitHub,
+                    host: "github.com".to_string(),
+                    owner: "org".to_string(),
+                    name: "repo".to_string(),
+                    project: None,
+                    remote: Some("origin".to_string()),
+                }),
+            },
+            collected,
+            items,
+        };
+
+        let schema = schema_document();
+        let validator = jsonschema::validator_for(&schema).expect("schema compiles");
+        let instance = serde_json::to_value(&envelope).unwrap();
+
+        // Validating proves nothing about a type the battery never
+        // instantiates: a document can accept an envelope while whole
+        // subtrees of it go unexercised. Pin every type the document defines
+        // to a path that must carry a real value, so a new `Json*` type fails
+        // here until the battery reaches it, and a row that stops populating
+        // one fails too.
+        let reached = non_null_paths(&instance);
+        let pinned: &[(&str, &str)] = &[
+            ("CiSource", "/items/*/checks/source"),
+            ("Collected", "/collected"),
+            ("GitRepoInfo", "/repo/forge"),
+            ("GitRepoProvider", "/repo/forge/provider"),
+            ("JsonChanges", "/items/*/worktree/changes"),
+            ("JsonCheckStatus", "/items/*/checks/status"),
+            ("JsonChecks", "/items/*/checks"),
+            ("JsonDefaultBranch", "/items/*/default_branch"),
+            ("JsonDevServer", "/items/*/dev_server"),
+            ("JsonDiff", "/items/*/worktree/changes/diff"),
+            ("JsonDisplay", "/items/*/display"),
+            ("JsonHead", "/items/*/head"),
+            ("JsonIntegration", "/items/*/default_branch/integration"),
+            (
+                "JsonIntegrationReason",
+                "/items/*/default_branch/integration/reason",
+            ),
+            ("JsonItemV2", "/items/*"),
+            ("JsonMainState", "/items/*/display/state"),
+            ("JsonOperation", "/items/*/worktree/operation"),
+            ("JsonPr", "/items/*/pr"),
+            ("JsonReason", "/items/*/worktree/locked"),
+            ("JsonRepo", "/repo"),
+            ("JsonUpstream", "/items/*/upstream"),
+            ("JsonWorktreeV2", "/items/*/worktree"),
+            ("ReviewState", "/items/*/pr/review"),
+        ];
+
+        // `Nullable_X` is a schemars wrapper over `X`, which carries its own
+        // row, so it needs no path of its own.
+        let defined: Vec<&str> = schema["$defs"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !name.starts_with("Nullable_"))
+            .collect();
+        let unpinned: Vec<&str> = defined
+            .iter()
+            .copied()
+            .filter(|name| !pinned.iter().any(|(pinned_name, _)| pinned_name == name))
+            .collect();
+        assert!(
+            unpinned.is_empty(),
+            "published types with no path pinned here: {unpinned:?}"
+        );
+
+        let unreached: Vec<&str> = pinned
+            .iter()
+            .filter(|(_, path)| !reached.contains(*path))
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(
+            unreached.is_empty(),
+            "published types the battery never instantiates: {unreached:?}"
+        );
+        let errors: Vec<String> = validator
+            .iter_errors(&instance)
+            .map(|e| format!("{}: {e}", e.instance_path()))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "schema rejected its own output:\n{errors:#?}"
         );
     }
 

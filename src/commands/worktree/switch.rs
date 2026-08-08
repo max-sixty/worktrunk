@@ -27,8 +27,8 @@ use worktrunk::shell_exec::{
     ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
 };
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
-    warning_message,
+    eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
+    suggest_command, warning_message,
 };
 
 use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix};
@@ -691,7 +691,10 @@ fn validate_worktree_creation(
     {
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
-            show_create_hint: true,
+            // Offering `--create` for a name git rejects sends the user to a
+            // command that fails; the argument was a path spelling, whether or
+            // not a directory happens to sit at it.
+            show_create_hint: worktrunk::git::is_valid_branch_name(branch),
             last_fetch_ago: format_last_fetch_ago(repo),
             pr_mr_platform: repo.detect_ref_type(),
         }
@@ -851,16 +854,22 @@ fn plan_switch(
     // argument is the name of a branch that does not exist yet, and not when
     // Phase 1 rewrote the argument (a shortcut, `pr:`/`mr:`, a stripped remote
     // prefix), which is exactly when the literal token would be a nonsense path.
-    if !create
-        && target.branch == branch
-        && let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)?
-    {
-        let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
-        return Ok(SwitchPlan::Existing {
-            path: canonical,
-            branch: wt_branch,
-            new_previous,
-        });
+    if !create && target.branch == branch {
+        if let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)? {
+            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+            return Ok(SwitchPlan::Existing {
+                path: canonical,
+                branch: wt_branch,
+                new_previous,
+            });
+        }
+        // Nothing is registered there, and a path is all the argument could
+        // have been — so stop here rather than carrying it to Phase 4, which
+        // would report a missing branch and offer to create one under a name
+        // git rejects.
+        if let Some(err) = repo.path_selector_error(branch) {
+            return Err(err.into());
+        }
     }
 
     // Phase 3: Compute expected path (only needed for create)
@@ -1314,6 +1323,11 @@ impl SwitchJsonOutput {
 }
 
 /// Emit the structured `--format=json` result to stdout when requested.
+///
+/// One compact line rather than [`crate::output::print_json`]'s pretty form —
+/// a switch reports a single result, and a line is what a shell loop reads.
+/// The `println!` is anstream's for the same reason `print_json` uses it: a
+/// consumer that stops reading must not panic the command.
 ///
 /// A no-op for `SwitchFormat::Text`.
 fn emit_switch_json(

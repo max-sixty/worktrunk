@@ -118,9 +118,9 @@ jobs:
     # This job doesn't deploy anything; the environment scopes
     # SIGNPATH_API_TOKEN so it isn't readable by every workflow the repo runs.
     # It is deliberately not `release`, which also holds the publish
-    # credentials — see .github/CLAUDE.md. The `v*` tag policy means setting
-    # `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub reject
-    # this job on a PR ref.
+    # credentials — see .github/CLAUDE.md. The policy admits tags only, so
+    # setting `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub
+    # reject this job on a PR ref.
     environment: signing
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -406,6 +406,7 @@ jobs:
       - plan
       - host
     runs-on: ubuntu-24.04
+    environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     env:
       GH_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
@@ -428,6 +429,7 @@ jobs:
       - plan
       - host
     runs-on: "ubuntu-24.04"
+    environment: release
     env:
       GITHUB_USER: "worktrunk-bot"
       GITHUB_EMAIL: "worktrunk-bot@users.noreply.github.com"

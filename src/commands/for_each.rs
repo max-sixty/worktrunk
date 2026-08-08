@@ -37,6 +37,7 @@ use worktrunk::styling::{
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::worktree_display_name;
+use crate::output::print_json;
 
 /// Run a command in each worktree sequentially.
 ///
@@ -150,7 +151,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 
     if let Some(signal) = interrupted {
         if json_mode {
-            println!("{}", serde_json::to_string_pretty(&json_results)?);
+            print_json(&json_results)?;
         } else {
             eprintln!();
             eprintln!(
@@ -162,7 +163,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
     }
 
     if json_mode {
-        println!("{}", serde_json::to_string_pretty(&json_results)?);
+        print_json(&json_results)?;
         if failed.is_empty() {
             return Ok(());
         } else {

@@ -68,7 +68,6 @@
 //! 1. **Index (`.git/index`)** - Cached file metadata (mtime, size, mode)
 //!    - Speeds up `git status` by avoiding full file content comparisons
 //!    - Invalidated when files change or staging area updates
-//!    - Cold: ~100ms per worktree, Warm: ~10ms per worktree (typical repo)
 //!
 //! 2. **Commit graph (`.git/objects/info/commit-graph`)** - Precomputed commit metadata
 //!    - Speeds up `git rev-list --count` by avoiding commit object parsing
@@ -103,11 +102,10 @@
 //! ## Performance Characteristics
 //!
 //! Scaling (from benches/list.rs):
-//! - Linear with worktree count due to parallelization (Rayon thread pool)
-//! - Dominated by git command overhead, not Rust code
-//! - Cold caches: ~150-300ms per worktree (typical repo, 500 commits, 100 files)
-//! - Warm caches: ~20-50ms per worktree
-//! - Real-world: rust-lang/rust repo with 8 worktrees: ~400ms (warm caches)
+//! - Each worktree adds a `git status --porcelain`, parallelized on the Rayon pool
+//! - Git command overhead dominates the Rust code
+//! - Warm/cold 1-vs-8-worktree contrasts use the generated corpus
+//! - The imported corpus (currently rust-lang/rust) covers deep history and large trees
 //!
 //! Bottlenecks:
 //! 1. `git status --porcelain` - Slowest when index is cold or many files changed
@@ -133,11 +131,12 @@ pub(crate) mod render;
 
 // Layout is calculated in collect/mod.rs
 use anstyle::Style;
-use anyhow::Context;
 use model::{BranchScope, ItemKind, ListData, ListItem};
 use progressive::RenderTarget;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
+
+use crate::output::print_json;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
@@ -189,13 +188,6 @@ pub fn handle_list(
         Some(_) => print_json(&json_output::to_json_items(&items, &custom_columns, &repo))?,
     }
 
-    Ok(())
-}
-
-/// Serialize a JSON answer to stdout (pretty, one trailing newline).
-pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
-    let json = serde_json::to_string_pretty(value).context("Failed to serialize to JSON")?;
-    println!("{}", json);
     Ok(())
 }
 

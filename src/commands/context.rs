@@ -113,6 +113,7 @@ impl CommandEnv {
         self.branch.as_deref().ok_or_else(|| {
             worktrunk::git::GitError::DetachedHead {
                 action: Some(action.into()),
+                worktree: None,
             }
             .into()
         })

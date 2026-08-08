@@ -64,7 +64,7 @@ use worktrunk::shell_exec::scrub_git_discovery_env_vars;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
 };
-use worktrunk::styling::{hint_message, warning_message};
+use worktrunk::styling::{hint_message, stderr, warning_message};
 
 /// Issue tracking whether to relax the EXEC scrub further for project aliases
 /// and hooks. (User aliases already pass EXEC through.) Emitted in the warning
@@ -548,9 +548,9 @@ pub fn terminate_output() -> io::Result<()> {
         return Ok(());
     }
 
-    let mut stderr = io::stderr();
-
-    // Reset ANSI state before returning to shell
+    // Reset ANSI state before returning to shell. With color off anstream
+    // strips the reset, which is correct — nothing emitted color.
+    let mut stderr = stderr();
     write!(stderr, "{}", anstyle::Reset)?;
     stderr.flush()
 }

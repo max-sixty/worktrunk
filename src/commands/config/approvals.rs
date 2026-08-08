@@ -23,6 +23,7 @@ use crate::commands::command_approval::approve_command_batch;
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
+use crate::output::print_json;
 
 /// Every approvable command a project config declares: hooks in lifecycle
 /// order, then aliases (alphabetical), then any commit-message guidance.
@@ -119,7 +120,7 @@ pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
         } else {
             "approved"
         };
-        return crate::commands::list::print_json(&JsonApprovals {
+        return print_json(&JsonApprovals {
             state,
             commands: json_commands,
             stale,

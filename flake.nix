@@ -40,10 +40,10 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Filter source to include Cargo files plus templates (needed by askama)
-        # and the Gemini extension manifest (embedded via include_str! in
-        # src/testing/mod.rs; lives at the repo root because Gemini's loader
-        # reads it only from the clone root — see #2807).
+        # Filter source to include Cargo files, askama templates, and compile-time data.
+        # Gemini's loader requires its manifest at the repo root (see #2807).
+        # The benchmark fixture definition stays extensionless so Cargo does not
+        # auto-discover it as a bench target.
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter =
@@ -53,7 +53,8 @@
             || (baseNameOf (dirOf p) == "templates")
             || (pkgs.lib.hasInfix "/dev/" p)
             || (baseNameOf (dirOf p) == "dev")
-            || (baseNameOf p == "gemini-extension.json");
+            || (baseNameOf p == "gemini-extension.json")
+            || (baseNameOf p == "imported-fixture");
         };
 
         # Common arguments for crane builds
@@ -149,8 +150,9 @@
           # Wider src than the package build: tests need .snap files and
           # tests/ fixtures (prebuilt _git/ trees, .sh scripts, no-extension
           # git database files). Default features only — shell-integration-
-          # tests requires zsh/fish/nushell + PTY (see CLAUDE.md → "Shell/PTY
-          # Integration Tests").
+          # tests wants a PTY and more shells than this derivation carries;
+          # the devShell below is where that set lives (see tests/CLAUDE.md →
+          # "Feature Flags, Not Runtime Skipping").
           worktrunk-tests = craneLib.cargoTest (
             commonArgs
             // {
@@ -199,10 +201,16 @@
             cargo-release
             cargo-llvm-cov
 
-            # For shell integration tests
+            # Shells the `shell-integration-tests` feature drives, plus the
+            # `jq` its Claude-hook tests pipe the hook payload through. The
+            # pre-merge gate runs `--all-features`, so a run here exercises
+            # every one.
             bash
             zsh
             fish
+            nushell
+            powershell
+            jq
 
             # Development tools
             git

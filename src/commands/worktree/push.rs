@@ -129,13 +129,32 @@ impl MergeContext {
         // sync in `advance_target` — git dies trying to cd into it. Refusing
         // upfront gives a clear answer, and names the `git worktree prune`
         // that clears the registration.
-        if let Some(path) = &target_worktree_path
-            && !path.exists()
-        {
-            return Err(GitError::WorktreeMissing {
-                branch: target_branch,
+        if let Some(path) = &target_worktree_path {
+            if !path.exists() {
+                return Err(GitError::WorktreeMissing {
+                    branch: target_branch,
+                }
+                .into());
             }
-            .into());
+
+            // The target gets the same gate the source got above, for a
+            // reason the source's comment doesn't cover: `advance_target`
+            // syncs the target worktree with `read-tree -m -u`, which refuses
+            // an unmerged index but not an open operation whose index is
+            // momentarily clean. A target paused mid-rebase or mid-cherry-pick
+            // between steps would have its files moved under it, and its
+            // `--continue` would then commit the synced tree as the step's
+            // result. The fast-forward's former
+            // `receive.denyCurrentBranch=updateInstead` refused any unclean
+            // target outright, so the plumbing used to supply this; asking
+            // directly keeps the guarantee now that the sync is ours.
+            if repo.worktree_at(path).operation_in_progress()?.is_some() {
+                return Err(GitError::OperationInProgress {
+                    action: "push".to_string(),
+                    branch: Some(target_branch),
+                }
+                .into());
+            }
         }
 
         // Snapshot target SHA early for TOCTOU safety (used by both strategies

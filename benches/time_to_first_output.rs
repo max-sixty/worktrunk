@@ -15,14 +15,15 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
-use wt_perf::{CacheState, RepoConfig, bench_wt, create_repo, run_and_check, wt_command};
+use wt_perf::{
+    CacheState, FixtureRecipe, bench_wt, run_and_check, standard_benchmark_profile, wt_command,
+};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    let config = RepoConfig::typical(4);
-    let fixture = create_repo(&config);
+    let fixture = FixtureRecipe::generated(3).create();
 
     let make_cmd = |args: &[&str]| {
         let mut cmd = wt_command(binary, fixture.path(), None);
@@ -40,27 +41,26 @@ fn bench_first_output(c: &mut Criterion) {
     // timing would be warm cache, not the first-invocation TTFO a user sees.
     group.bench_function("remove", |b| {
         bench_wt(b, fixture.path(), CacheState::Cold, || {
-            make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
+            make_cmd(&["remove", "--yes", "--no-hooks", "--force", "wt-0000"])
         });
     });
 
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
         bench_wt(b, fixture.path(), CacheState::Warm, || {
-            make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
+            make_cmd(&["switch", "--yes", "--no-hooks", "wt-0000"])
         });
     });
 
     // list: stdout is piped here, so first output is the first buffered table
     // line after collection/render preparation, not the progressive skeleton.
+    let output = run_and_check(&mut make_cmd(&["list"]));
+    assert!(
+        !output.stdout.is_empty(),
+        "WORKTRUNK_FIRST_OUTPUT should emit the first stdout line"
+    );
     group.bench_function("list", |b| {
-        b.iter(|| {
-            let output = run_and_check(&mut make_cmd(&["list"]));
-            assert!(
-                !output.stdout.is_empty(),
-                "WORKTRUNK_FIRST_OUTPUT should emit the first stdout line"
-            );
-        });
+        b.iter(|| run_and_check(&mut make_cmd(&["list"])));
     });
 
     group.finish();
@@ -68,10 +68,7 @@ fn bench_first_output(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default()
-        .sample_size(30)
-        .measurement_time(std::time::Duration::from_secs(15))
-        .warm_up_time(std::time::Duration::from_secs(3));
+    config = standard_benchmark_profile();
     targets = bench_first_output
 }
 criterion_main!(benches);

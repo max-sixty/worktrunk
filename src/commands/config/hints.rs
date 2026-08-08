@@ -7,6 +7,7 @@ use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message, println, success_message};
 
 use crate::cli::SwitchFormat;
+use crate::output::print_json;
 
 /// Handle the hints get command (list shown hints)
 pub fn handle_hints_get(format: SwitchFormat) -> anyhow::Result<()> {
@@ -14,7 +15,7 @@ pub fn handle_hints_get(format: SwitchFormat) -> anyhow::Result<()> {
     let hints = repo.list_shown_hints();
 
     if format == SwitchFormat::Json {
-        println!("{}", serde_json::to_string_pretty(&hints)?);
+        print_json(&hints)?;
     } else if hints.is_empty() {
         eprintln!("{}", info_message("No hints have been shown"));
     } else {

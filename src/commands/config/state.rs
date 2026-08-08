@@ -84,6 +84,7 @@ use worktrunk::styling::{
 };
 
 use crate::cli::{OutputFormat, SwitchFormat};
+use crate::output::print_json;
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use worktrunk::utils::epoch_now;
 
@@ -634,7 +635,7 @@ pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
             "hook_output": hook_output,
             "diagnostic": diagnostic,
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        print_json(&output)?;
         return Ok(());
     }
 
@@ -689,7 +690,7 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
     let profile = worktrunk::trace::Profile::from_entries(&entries);
 
     if format == SwitchFormat::Json {
-        println!("{}", serde_json::to_string_pretty(&profile)?);
+        print_json(&profile)?;
     } else {
         show_help_in_pager(&profile.render_text(&source), true);
     }
@@ -746,7 +747,7 @@ pub fn handle_state_get(
                     }
                     None => serde_json::json!(null),
                 };
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                print_json(&output)?;
             } else {
                 match repo.branch_marker(&branch_name) {
                     Some(marker) => println!("{marker}"),
@@ -791,8 +792,10 @@ pub fn handle_state_get(
                 (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
+                        // Offering `--create` for a name git rejects sends the
+                        // user to a command that fails.
+                        show_create_hint: worktrunk::git::is_valid_branch_name(&branch_name),
                         branch: branch_name,
-                        show_create_hint: true,
                         last_fetch_ago: None,
                         pr_mr_platform: repo.detect_ref_type(),
                     }
@@ -811,7 +814,7 @@ pub fn handle_state_get(
                         ci_provider_override.as_deref(),
                     )
                 });
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                print_json(&output)?;
             } else {
                 let ci_status = pr_status
                     .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
@@ -1300,7 +1303,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "trash": trash,
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    print_json(&output)?;
     Ok(())
 }
 
@@ -1479,7 +1482,7 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
         "hints": repo.list_shown_hints(),
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    print_json(&output)?;
     Ok(())
 }
 
@@ -1690,7 +1693,7 @@ pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow:
             .into_iter()
             .map(|(k, v)| (k, serde_json::Value::String(v)))
             .collect();
-        println!("{}", serde_json::to_string_pretty(&obj)?);
+        print_json(&obj)?;
     } else if entries.is_empty() {
         eprintln!(
             "{}",

@@ -46,9 +46,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mPath[0m        [1mCommit[0m   [1mAge[0m   [1mMessage[0m
-@ main         [2m^[22m                                             .           [2ma6c13b1[0m  [2m1d[0m    [2mInitial[0m
-+ [2mfeature[0m      [2m_[22m                                             [2m../feature[0m  [2ma6c13b1[0m  [2m1d[0m    [2mInitial[0m
+  Branch   Status        HEAD±    main↕     main…±  Remote⇅  Path        Commit   Age   Message
+@ main         ^                                             .           a6c13b1  1d    Initial
++ feature      _                                             ../feature  a6c13b1  1d    Initial
 
 ----- stderr -----
 

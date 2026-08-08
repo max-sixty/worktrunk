@@ -6,7 +6,8 @@ use std::path::PathBuf;
 
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::println;
+
+use crate::output::print_json;
 
 /// Move worktrees to their expected paths based on the `worktree-path` template.
 ///
@@ -188,6 +189,6 @@ fn print_relocate_json(
             "reason": s.reason,
         })).collect::<Vec<_>>(),
     });
-    println!("{}", serde_json::to_string_pretty(&payload)?);
+    print_json(&payload)?;
     Ok(())
 }

@@ -49,7 +49,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.71.0"
+version = "0.72.0"
 edition = "2024"
 rust-version = "1.96"
 build = "build.rs"
@@ -96,15 +96,15 @@ cli = [
     "dep:tracing-subscriber",
 ]
 syntax-highlighting = ["dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
-# Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
+# Enable shell/PTY integration tests (needs bash, zsh, fish, nu, pwsh, and jq on PATH)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 shell-integration-tests = []
-# Enable benchmarks whose fixture is too large for hosted CI: the rust-scale
-# prune fixture (~15 GiB of rust-lang/rust worktrees, cached under
+# Enable benchmarks whose fixture is too large for hosted CI: the
+# large-repository prune fixture (multi-gigabyte linked worktrees, cached under
 # target/wt-perf/bench-repos). The daily benchmarks workflow runs plain `cargo bench`
 # and must never build it; opt in locally with
-# `cargo bench --bench prune --features real-repo-benches`.
-real-repo-benches = []
+# `cargo bench --bench prune --features large-repository-benches`.
+large-repository-benches = []
 # Install git-wt binary so `git wt` works as a git subcommand
 git-wt = []
 
@@ -324,6 +324,7 @@ vt100 = "0.16.2"
 ansi-to-html = "0.2.3"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
+jsonschema = { version = "0.49", default-features = false }
 
 [[bench]]
 name = "alias"
