@@ -66,7 +66,7 @@ use path_slash::PathExt;
 
 use self::mock_commands::{MockConfig, MockResponse, tea_api_include_stderr};
 
-/// Path to the `wt` binary built by Cargo.
+/// Path to the `wt` binary built by Cargo, pinned against concurrent builds.
 ///
 /// Resolved at runtime from `CARGO_BIN_EXE_wt`, which cargo and nextest both
 /// provide to integration-test processes, naming the binary the same
@@ -76,13 +76,93 @@ use self::mock_commands::{MockConfig, MockResponse, tea_api_include_stderr};
 /// code that spawns `wt` — `mock_commands` included — belongs in integration
 /// tests.
 ///
+/// The returned path is not `CARGO_BIN_EXE_wt` itself but a hardlink to it
+/// under `target/<profile>/wt-test-bin/<key>/` (see [`pin_test_binary`]):
+/// cargo uplifts `target/debug/wt` by removing the path and recreating it, so
+/// a concurrent `cargo build` in the same tree leaves the uplifted path absent
+/// for a fraction of a millisecond per rebuild, failing whatever spawn is in
+/// flight with `NotFound`. The hardlink keeps the observed binary's inode
+/// alive whatever a concurrent cargo does to the uplifted path. Pinned once
+/// per test process; every spawn helper routes through here, so no test
+/// spawns the unlinkable path directly (`test_wt_spawns_are_pinned`).
+///
 /// Panics when the variable is absent (the test binary run outside a cargo
 /// runner) rather than deriving a path that could name a stale binary.
 pub fn wt_bin() -> PathBuf {
-    PathBuf::from(
-        std::env::var("CARGO_BIN_EXE_wt")
-            .expect("CARGO_BIN_EXE_wt not set — only available during `cargo test`"),
-    )
+    static PINNED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PINNED
+        .get_or_init(|| {
+            let uplifted = PathBuf::from(
+                std::env::var("CARGO_BIN_EXE_wt")
+                    .expect("CARGO_BIN_EXE_wt not set — only available during `cargo test`"),
+            );
+            pin_test_binary(&uplifted)
+        })
+        .clone()
+}
+
+/// Pin `src` where a concurrent cargo can't unlink it, returning the pinned
+/// path.
+///
+/// Hardlinks `src` into a sibling `wt-test-bin/<mtime>-<len>/` directory named
+/// by the observed binary's identity, keeping `src`'s basename. The hardlink
+/// pins the inode: cargo's uplift only unlinks the *path*, so the pinned entry
+/// keeps serving the observed binary through any number of concurrent
+/// rebuilds. A link costs no space while the `deps/` artifact it shares an
+/// inode with exists, and everything under `wt-test-bin/` dies with
+/// `cargo clean`, so nothing sweeps it.
+///
+/// Two runs observing the same binary converge on the same entry (`link`
+/// returning `AlreadyExists` is success — the key names the content); a run
+/// observing a rebuilt binary creates a new entry beside the old one, exactly
+/// as it would have spawned the rebuilt binary before pinning existed. A
+/// `NotFound` from `stat` or `link` is the uplift window itself — the binary
+/// is absent for well under a millisecond — so it's polled through rather than
+/// surfaced (bounded; a genuinely missing binary still panics, with the path).
+pub fn pin_test_binary(src: &Path) -> PathBuf {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match try_pin(src) {
+            Ok(pinned) => return pinned,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "binary to pin stayed absent for 10s: {}",
+                    src.display()
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => panic!("failed to pin test binary {}: {e}", src.display()),
+        }
+    }
+}
+
+/// One pin attempt. `NotFound` means `src` was observed mid-uplift (or the
+/// pin directory's ancestors vanished under a `cargo clean`); the caller
+/// retries those.
+fn try_pin(src: &Path) -> std::io::Result<PathBuf> {
+    let meta = std::fs::metadata(src)?;
+    let mtime = meta
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let dir = src
+        .parent()
+        .expect("binary path has a parent")
+        .join("wt-test-bin")
+        .join(format!("{mtime:x}-{:x}", meta.len()));
+    let pinned = dir.join(src.file_name().expect("binary path has a file name"));
+    if pinned.exists() {
+        return Ok(pinned);
+    }
+    std::fs::create_dir_all(&dir)?;
+    match std::fs::hard_link(src, &pinned) {
+        // A concurrent test process pinned the same key first; the key names
+        // the content, so its entry is ours.
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => Err(e),
+        _ => Ok(pinned),
+    }
 }
 
 use tempfile::TempDir;
@@ -472,6 +552,11 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
     ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
+    // Give the `--reap` probes (`git::reap::probe_timeout`) a load-proof
+    // bound. At the production 5s, a probe spawn stalling under suite load
+    // trips the timeout, whose fail-safe empty result turns "reap the child"
+    // into "No processes to reap" — a load-dependent outcome.
+    ("WORKTRUNK_TEST_PROBE_TIMEOUT_MS", "60000"),
     // Treat shells as not installed by default so the "Skipped …; rc not found"
     // filter in scan_shell_configs is deterministic across hosts. Tests that need
     // a shell to count as installed (e.g., to assert the Skipped path) set "1".

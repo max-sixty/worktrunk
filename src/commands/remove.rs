@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{BranchDeletionMode, ErrorExt, Repository, ResolvedWorktree};
+use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
@@ -171,18 +171,6 @@ fn validate_remove_targets(
                 RemoveTarget::WorktreePath(path_canonical)
             }
             ResolvedWorktree::BranchOnly { branch } => {
-                // Resolution tried the argument as a branch and as a worktree
-                // path and matched neither, so a directory sitting there is a
-                // leftover skeleton rather than anything wt can remove.
-                // Reported here, where the user's own token is still in hand —
-                // the picker and `wt step prune` reach
-                // `prepare_worktree_removal` with a branch read off a row,
-                // which is nobody's typed path.
-                if let Some(err) = repo.path_selector_error(&branch) {
-                    plans.record_error(err.into());
-                    continue;
-                }
-
                 // A detached worktree is invisible to the branch-first lookup,
                 // so a branch whose worktree has since been detached resolves
                 // here and would have its ref deleted with the worktree left
@@ -200,7 +188,7 @@ fn validate_remove_targets(
                     worktrees.and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
                 {
                     plans.record_error(
-                        worktrunk::git::GitError::DetachedWorktreeForBranch {
+                        GitError::DetachedWorktreeForBranch {
                             branch,
                             path: detached.to_path_buf(),
                         }
@@ -209,6 +197,16 @@ fn validate_remove_targets(
                     continue;
                 }
                 RemoveTarget::BranchOnly(branch)
+            }
+            // Resolution tried the argument as a branch and as a worktree path
+            // and matched neither, so a directory sitting there is a leftover
+            // skeleton rather than anything wt can remove. Only a typed
+            // selector reaches this arm — the picker and `wt step prune` call
+            // `prepare_worktree_removal` with a branch read off a row, which is
+            // nobody's path.
+            ResolvedWorktree::NoWorktreeAtPath { path } => {
+                plans.record_error(GitError::WorktreeNotFoundAtPath { path }.into());
+                continue;
             }
         };
 

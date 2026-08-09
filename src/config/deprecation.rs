@@ -45,7 +45,7 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
+    eprint, eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
     warning_message,
 };
 

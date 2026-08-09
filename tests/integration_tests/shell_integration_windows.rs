@@ -6,6 +6,7 @@
 
 #![cfg(windows)]
 
+use crate::common::wt_bin;
 use std::process::Command;
 
 /// Verify shell function uses base name (without .exe) on Windows.
@@ -21,7 +22,7 @@ use std::process::Command;
 fn test_shell_init_strips_exe_suffix_on_windows() {
     // Run wt.exe config shell init bash
     // Note: This command doesn't need a git repo - it just generates shell init code
-    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = Command::new(wt_bin())
         .args(["config", "shell", "init", "bash"])
         .output()
         .expect("Failed to run wt config shell init");

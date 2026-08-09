@@ -1434,6 +1434,9 @@ fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
     let branch = match resolved {
         ResolvedWorktree::Worktree { branch, .. } => branch,
         ResolvedWorktree::BranchOnly { branch } => Some(branch),
+        ResolvedWorktree::NoWorktreeAtPath { path } => {
+            panic!("`^` resolved to a directory: {}", path.display())
+        }
     };
     assert_eq!(branch.as_deref(), Some(default_branch.as_str()));
 }
@@ -1479,11 +1482,14 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     let ghost = test.root_path().join("ghost");
     std::fs::create_dir(&ghost).unwrap();
 
-    // Resolution still falls through to branch-only; the selector's shape is
-    // read where the failure is reported, not where it is resolved.
+    // Resolution reaches the verdict itself, so no reporting site has to
+    // re-derive what the selector was reaching for.
     let selector = ghost.to_str().unwrap();
     let resolved = test.repo.resolve_worktree(selector).unwrap();
-    assert!(matches!(resolved, ResolvedWorktree::BranchOnly { .. }));
+    assert!(
+        matches!(resolved, ResolvedWorktree::NoWorktreeAtPath { .. }),
+        "a directory holding no worktree is its own verdict, got: {resolved:?}"
+    );
 
     let rendered = test
         .repo
@@ -1546,7 +1552,7 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     for checkout in [&sibling, &bare] {
         assert!(
             test.repo
-                .path_selector_error(checkout.to_str().unwrap())
+                .path_selector_directory(checkout.to_str().unwrap())
                 .is_none(),
             "a directory holding git data must not be called a leftover: {}",
             checkout.display()
@@ -1559,7 +1565,7 @@ fn directory_holding_no_worktree_is_reported_as_a_directory() {
     std::fs::write(decoy.join("HEAD"), "").unwrap();
     assert!(
         test.repo
-            .path_selector_error(decoy.to_str().unwrap())
+            .path_selector_directory(decoy.to_str().unwrap())
             .is_some(),
         "a directory that merely contains a HEAD file is still a leftover"
     );
@@ -1596,7 +1602,7 @@ fn an_unresolvable_git_entry_still_counts_as_git_data() {
     for checkout in checkouts {
         assert!(
             test.repo
-                .path_selector_error(checkout.to_str().unwrap())
+                .path_selector_directory(checkout.to_str().unwrap())
                 .is_none(),
             "an unresolvable .git must still withhold the claim: {}",
             checkout.display()
@@ -1659,7 +1665,7 @@ fn path_selector_error_checks_for_a_registered_worktree() {
     let selector = worktree_path.to_str().unwrap();
 
     assert!(
-        test.repo.path_selector_error(selector).is_none(),
+        test.repo.path_selector_directory(selector).is_none(),
         "a registered worktree's own path must never be reported as holding none"
     );
 
@@ -1922,4 +1928,151 @@ fn test_worktree_for_branch_dedups_duplicate_warning() {
     let second = repo.worktree_for_branch("dup-feature").unwrap();
     assert!(first.is_some(), "an ambiguous branch still resolves");
     assert_eq!(first, second, "resolution is stable across the dedup guard");
+}
+
+/// A trailing path separator is not part of any branch name git will accept, so
+/// stripping it lets `docs/` — what shell completion produces beside a `docs`
+/// directory — find the branch. A selector made only of separators is left
+/// alone: `/` is the root directory and the empty string names nothing.
+#[test]
+fn normalize_selector_strips_only_trailing_separators() {
+    use crate::git::normalize_selector;
+
+    assert_eq!(normalize_selector("docs/"), "docs");
+    assert_eq!(normalize_selector("../repo.feature/"), "../repo.feature");
+    assert_eq!(normalize_selector("docs"), "docs");
+    assert_eq!(normalize_selector("feat/sub"), "feat/sub");
+    assert_eq!(normalize_selector("/"), "/");
+    assert_eq!(normalize_selector(""), "");
+}
+
+/// A worktree git reports as prunable is one nothing can run in, so the lookup
+/// every command shares refuses it rather than handing back a path that fails
+/// at `git rev-parse` a few calls later.
+///
+/// The directory is recreated rather than left absent, because that is the
+/// state the `Path::exists()` probes this replaced could not see.
+#[test]
+fn usable_worktree_for_branch_refuses_a_prunable_registration() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    assert_eq!(
+        test.repo.usable_worktree_for_branch("feature").unwrap(),
+        Some(worktree_path.clone()),
+        "a healthy worktree resolves"
+    );
+
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    std::fs::create_dir_all(&worktree_path).unwrap();
+    let repo = Repository::at(test.root_path()).unwrap();
+
+    let err = repo.usable_worktree_for_branch("feature").unwrap_err();
+    assert!(
+        err.to_string().contains("Worktree directory missing"),
+        "a prunable registration must be refused, got: {err}"
+    );
+    assert_eq!(
+        repo.usable_worktree_for_branch("no-such-branch").unwrap(),
+        None,
+        "a branch with no worktree is a normal answer, not an error"
+    );
+}
+
+/// A selector reports whether anything rewrote it, rather than that being
+/// inferred by comparing an expansion's output against its input.
+///
+/// The two answers differ, which is the whole reason to carry the fact: an
+/// expansion can legitimately return the token it was given — `-` pointing at
+/// the branch you are already on — and string equality then reads a rewrite as
+/// a literal, turning the path arm back on for a token nobody typed.
+/// Normalization breaks it in the other direction: `docs/` and `docs` are one
+/// selector, and comparing them would read a rewrite that never happened.
+#[test]
+fn selector_reports_rewriting_rather_than_inferring_it() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let repo = &test.repo;
+    let current = repo.current_worktree().branch().unwrap().unwrap();
+
+    let literal = repo.expand_selector("some-branch").unwrap();
+    assert_eq!(literal.token(), "some-branch");
+    assert!(literal.names_a_path(), "an untouched token may be a path");
+
+    // Normalization is not rewriting: `docs/` still gets its path arm, which
+    // is what keeps `../repo.feature/` resolving as a worktree path.
+    let normalized = repo.expand_selector("docs/").unwrap();
+    assert_eq!(normalized.token(), "docs");
+    assert!(
+        normalized.names_a_path(),
+        "stripping a separator must not read as a rewrite"
+    );
+
+    // `^` expands to the default branch, which here IS the current branch — so
+    // the expansion's output equals neither its input nor nothing useful. The
+    // flag, not a comparison, is what records that a shortcut fired.
+    let shortcut = repo.expand_selector("^").unwrap();
+    assert_eq!(shortcut.token(), current);
+    assert!(
+        !shortcut.names_a_path(),
+        "a shortcut's expansion is nobody's path"
+    );
+
+    // The degenerate case string equality gets wrong: history pointing at the
+    // branch already checked out. Output == input, yet a shortcut fired.
+    repo.set_switch_previous(Some(&current)).unwrap();
+    let previous = repo.expand_selector("-").unwrap();
+    assert_eq!(previous.token(), current);
+    assert!(
+        !previous.names_a_path(),
+        "a shortcut that expands to its own input is still a rewrite"
+    );
+}
+
+/// "Nothing can run here" is the union of two independent failures, because
+/// neither implies the other.
+///
+/// git withholds the `prunable` attribute from a **locked** worktree even when
+/// its directory is gone — prunability is git's pruning *policy*, and a lock
+/// means "don't prune this". So a `prunable`-only test reads a locked worktree
+/// on an unmounted volume as healthy, which is the state
+/// `prepare_worktree_removal`'s lock guard exists for. The recreated directory
+/// is the converse: present, so an existence probe passes, and holding nothing.
+#[test]
+fn worktree_is_unusable_covers_locked_absent_and_recreated() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let healthy = test.add_worktree("healthy");
+    let absent = test.add_worktree("absent");
+    let locked = test.add_worktree("locked-absent");
+    let recreated = test.add_worktree("recreated");
+
+    test.lock_worktree("locked-absent", Some("removable media"));
+    std::fs::remove_dir_all(&absent).unwrap();
+    std::fs::remove_dir_all(&locked).unwrap();
+    std::fs::remove_dir_all(&recreated).unwrap();
+    std::fs::create_dir_all(&recreated).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+
+    assert!(!repo.worktree_is_unusable(&healthy).unwrap());
+    assert!(
+        repo.worktree_is_unusable(&absent).unwrap(),
+        "an absent directory is unusable"
+    );
+    assert!(
+        repo.worktree_is_unusable(&locked).unwrap(),
+        "a locked worktree whose directory is gone carries no `prunable` line, \
+         so only the existence half catches it"
+    );
+    assert!(
+        repo.worktree_is_unusable(&recreated).unwrap(),
+        "a recreated directory exists, so only the `prunable` half catches it"
+    );
 }

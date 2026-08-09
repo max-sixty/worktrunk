@@ -44,9 +44,11 @@ fn test_remove_reap_no_processes(mut repo: TestRepo) {
 // `--reap` (experimental) with a real process running under the worktree: the
 // detached child is discovered and terminated before removal. Whether the
 // controlling-terminal guard reaps it depends on the test's own terminal
-// (none in CI → reaped; a TTY on a dev box → spared), so the assertion is
-// driven off the guard's verdict rather than assuming either — keeping the
-// found-processes path exercised in CI without becoming host-dependent.
+// (none in CI → reaped; a TTY on a dev box → spared), so the assertion
+// branches on that terminal — read directly from the session (`/dev/tty`),
+// the property the child inherits at spawn, not probed via a second
+// `lsof`/`ps` snapshot, which can transiently fail under suite load and
+// predict the branch `wt`'s own probe then contradicts.
 #[cfg(unix)]
 #[rstest]
 fn test_remove_reap_kills_process(mut repo: TestRepo) {
@@ -70,8 +72,10 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         .unwrap();
     let pid = child.id();
 
-    // Wait until lsof reports the child's cwd (fast, but not instant).
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // Wait until lsof reports the child's cwd — fast when idle, but under
+    // suite load a single probe can burn its whole 5s in-process timeout, so
+    // the deadline is the suite's generous 60s presence-poll convention.
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !reap::processes_under(&canonical)
         .iter()
         .any(|p| p.pid == pid)
@@ -83,10 +87,10 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    // The guard reaps the child iff it holds no controlling terminal.
-    let will_reap = reap::collect_reapable(&canonical)
-        .iter()
-        .any(|p| p.pid == pid);
+    // The guard reaps the child iff it holds no controlling terminal — which
+    // it inherited from this process's session, so read the session directly:
+    // `/dev/tty` opens iff the session has a controlling terminal.
+    let will_reap = std::fs::File::open("/dev/tty").is_err();
 
     let run_remove = |repo: &TestRepo| {
         let output = repo
@@ -517,6 +521,74 @@ fn test_remove_path_holding_no_worktree(repo: TestRepo) {
         &["../repo.leftover"],
         None
     ));
+}
+
+/// A worktree directory deleted and *recreated* is reported, not carried into
+/// git's own validation failure.
+///
+/// It is a stale registration either way, but only the absent spelling can be
+/// cleaned up here: `prune_worktree_entry` unregisters with `git worktree
+/// remove`, which skips its validation only while the directory is gone. With
+/// a directory sitting there git refuses — `--force` included — so the answer
+/// is the message naming the repo-wide `git worktree prune` that does clear
+/// it. `test_remove_pruned_worktree_directory_missing` covers the absent half,
+/// which still removes without a prompt.
+#[rstest]
+fn test_remove_worktree_directory_recreated(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    std::fs::create_dir_all(&worktree_path).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
+}
+
+/// A registration whose directory now holds a *different* repository is not
+/// this repository's worktree, and removing it would destroy that one — its
+/// uncommitted work and, for a repo that was never pushed, the only copy of
+/// its objects.
+///
+/// `--force` is the case that matters. It is the user waiving their own
+/// uncommitted changes, never a claim about who owns the directory, and it is
+/// where the dirty-worktree gate stops applying — so it must not carry the
+/// removal through. `git worktree remove` refuses this same removal with
+/// `--force`; worktrunk's fast path renames the directory itself instead of
+/// asking git to, so it has to make the check for itself.
+#[rstest]
+fn test_remove_refuses_foreign_repository_at_worktree_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let parent = worktree_path.parent().unwrap().to_path_buf();
+    let dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+
+    // Replace the worktree with an unrelated repository at the same path — the
+    // registration still resolves, and the occupant's own `.git` keeps git
+    // from calling it prunable.
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    repo.run_git_in(&parent, &["init", "-b", "main", dir_name]);
+    std::fs::write(worktree_path.join("precious.txt"), "unpushed work").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "feature", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt remove --force must refuse a foreign repository at a registered path.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    // The refusal is worth nothing if the directory went anyway: removal
+    // stages by rename and deletes in a detached process, so the exit code
+    // alone would not catch a staged-then-deleted tree.
+    assert!(
+        worktree_path.join("precious.txt").exists(),
+        "the foreign repository's uncommitted file must survive",
+    );
+    assert!(
+        worktree_path.join(".git").is_dir(),
+        "the foreign repository's object store must survive",
+    );
 }
 
 #[rstest]
@@ -1920,12 +1992,8 @@ approved-commands = ["echo 'hook ran' > {}"]
     let _worktree_path = repo.add_worktree("feature-bg");
 
     // Remove in background mode (default)
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.current_dir(repo.root_path())
-        .args(["remove", "feature-bg"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "feature-bg"]).output().unwrap();
 
     // Wait for the hook to create the marker file
     wait_for_file(&marker_file);
@@ -2328,12 +2396,8 @@ approved-commands = ["echo 'hook ran' > {}"]
         .unwrap();
 
     // Remove the branch (no worktree)
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.current_dir(repo.root_path())
-        .args(["remove", "branch-only"])
-        .output()
-        .unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "branch-only"]).output().unwrap();
 
     // Marker file should NOT exist - pre-remove hooks only run for worktree removal
     assert!(

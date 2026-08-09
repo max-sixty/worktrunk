@@ -1128,8 +1128,14 @@ fn setup_snapshot_settings_for_paths_with_home(
     // debug builds and crane/release builds (notably the nightly nix-flake
     // sandbox). The pattern is anchored on `/target/.../wt` so it matches
     // the bin path in "Invoked as:" / "Binary invoked as:" / diagnostic
-    // hint output without touching unrelated `target/` paths.
-    settings.add_filter(r"/target/(debug|release)/wt", "/target/[BUILD_MODE]/wt");
+    // hint output without touching unrelated `target/` paths. The optional
+    // segment collapses the pinned spawn path (`testing::pin_test_binary`'s
+    // `wt-test-bin/<mtime>-<len>/wt`), whose key would otherwise leak a
+    // build-specific value into snapshots.
+    settings.add_filter(
+        r"/target/(?:debug|release)/(?:wt-test-bin/[0-9a-f]+-[0-9a-f]+/)?wt",
+        "/target/[BUILD_MODE]/wt",
+    );
 
     // Normalize shell probe binary paths
     // Shell probe reports the actual binary location which varies by system
@@ -1322,9 +1328,11 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
     //
     // Include the literal `[BUILD_MODE]` placeholder so this filter still
     // collapses to `[BIN]` when the prelude's `target/(debug|release)/wt`
-    // → `target/[BUILD_MODE]/wt` rewrite has already run.
+    // → `target/[BUILD_MODE]/wt` rewrite has already run. The optional
+    // segment covers the pinned spawn path (`testing::pin_test_binary`'s
+    // `wt-test-bin/<mtime>-<len>/wt`).
     settings.add_filter(
-        r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release|\[BUILD_MODE\])/wt",
+        r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release|\[BUILD_MODE\])/(?:wt-test-bin/[0-9a-f]+-[0-9a-f]+/)?wt",
         "[BIN]",
     );
 }
@@ -1338,6 +1346,103 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rstest::rstest;
+
+    /// The uplifted `target/debug/wt` is removed and recreated by any
+    /// concurrent `cargo build`, so the suite spawns a pinned hardlink
+    /// instead (`testing::pin_test_binary`). The pin must keep serving the
+    /// observed binary through that unlink, converge across processes
+    /// observing the same binary, and track a rebuild as a new entry.
+    #[test]
+    fn pin_test_binary_tracks_generations_and_survives_unlink() {
+        let dir = worktrunk::testing::test_tempdir();
+        let src = dir.path().join("wt");
+        std::fs::write(&src, "generation A").unwrap();
+
+        let pinned_a = worktrunk::testing::pin_test_binary(&src);
+        assert_ne!(pinned_a, src);
+        assert_eq!(worktrunk::testing::pin_test_binary(&src), pinned_a);
+
+        // The uplift: the observed path vanishes; the pin doesn't.
+        std::fs::remove_file(&src).unwrap();
+        assert_eq!(std::fs::read(&pinned_a).unwrap(), b"generation A");
+
+        // A rebuilt binary (the lengths differ, so the key differs whatever
+        // the filesystem's mtime granularity) pins beside the old entry,
+        // which keeps serving processes that observed the old binary.
+        std::fs::write(&src, "generation B, rebuilt").unwrap();
+        let pinned_b = worktrunk::testing::pin_test_binary(&src);
+        assert_ne!(pinned_b, pinned_a);
+        assert_eq!(std::fs::read(&pinned_b).unwrap(), b"generation B, rebuilt");
+        assert_eq!(std::fs::read(&pinned_a).unwrap(), b"generation A");
+    }
+
+    /// The uplift window itself: a pin attempt landing while the binary is
+    /// momentarily absent polls until it reappears rather than failing the
+    /// spawn — the exact `NotFound` gap a concurrent cargo opens.
+    #[test]
+    fn pin_test_binary_rides_out_the_uplift_window() {
+        let dir = worktrunk::testing::test_tempdir();
+        let src = dir.path().join("wt");
+        let writer = {
+            let src = src.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::fs::write(&src, "late binary").unwrap();
+            })
+        };
+        let pinned = worktrunk::testing::pin_test_binary(&src);
+        writer.join().unwrap();
+        assert_eq!(std::fs::read(&pinned).unwrap(), b"late binary");
+    }
+
+    /// A non-transient error (here `ENOTDIR`: a path component is a file)
+    /// surfaces immediately rather than being retried as an uplift window.
+    /// Unix-only: Windows reports this shape as `NotFound`, which correctly
+    /// takes the retry path there.
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "failed to pin test binary")]
+    fn pin_test_binary_surfaces_non_transient_errors() {
+        let dir = worktrunk::testing::test_tempdir();
+        let file = dir.path().join("wt");
+        std::fs::write(&file, "not a directory").unwrap();
+        let _ = worktrunk::testing::pin_test_binary(&file.join("child"));
+    }
+
+    /// `wt_bin()` pins the binary against concurrent-build uplifts. A spawn
+    /// naming the `CARGO_BIN_EXE_wt` path directly bypasses the pin and can
+    /// hit the uplift's `NotFound` window, so the variable has exactly one
+    /// reader: `wt_bin()` itself.
+    #[test]
+    fn test_wt_spawns_are_pinned() {
+        // Built from parts so this file doesn't match its own needle.
+        let needle = ["CARGO_BIN_EXE_", "wt\""].concat();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut offenders = Vec::new();
+        for dir in ["src", "tests"] {
+            scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+        }
+        assert_eq!(
+            offenders,
+            vec![PathBuf::from("src/testing/mod.rs")],
+            "spawn wt via wt_bin() (or a helper that does), never via \
+             CARGO_BIN_EXE_wt directly — the uplifted path can vanish under \
+             a concurrent cargo build"
+        );
+    }
+
+    fn scan_for_needle(dir: &Path, needle: &str, root: &Path, offenders: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan_for_needle(&path, needle, root, offenders);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
+                && std::fs::read_to_string(&path).unwrap().contains(needle)
+            {
+                offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
+            }
+        }
+    }
 
     /// Every PTY spawn routes through [`configure_pty_command`] (directly or
     /// via `shell_command` / `build_pty_command`), and it is the only floor
