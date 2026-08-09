@@ -108,15 +108,16 @@ gh run rerun <run-id> --failed
 
 Re-running the bot's own failed workflow is restorative, not destructive — no maintainer approval needed. Close the issue once every row is drained (`gh issue close "$OUTAGE"`): the harness only auto-closes duplicates from a create-create race, never the surviving issue, so one left open makes tomorrow's sweep re-check the same rows and folds the next outage into a stale incident.
 
-**Diagnose the cause before calling it an outage.** The issue body says only "The bot failed to process a request". tend's nightly enrichment posts a per-run comment carrying each failed job's failure annotation, which is the cheapest first look — but for this class it reads `claude -p exited non-zero (exit=1) — see the session-logs artifact` (or `claude -p turn ended in failure (…) — rate limit, auth, max turns, or server error` when the CLI exits 0 with an error result), and neither says whether it was quota, auth, or a server error. It's also absent whenever `tend-nightly` was itself one of the stranded runs. To narrow it, read the session log: a subscription session-limit exhaustion surfaces as a `<synthetic>` assistant message:
+**Diagnose the cause before calling it an outage.** The issue body says only "The bot failed to process a request". tend's nightly enrichment posts a per-run comment carrying each failed job's failure annotation, which is the cheapest first look — but for this class it reads `claude -p exited non-zero (exit=1) — see the session-logs artifact` (or `claude -p turn ended in failure (…) — rate limit, auth, max turns, or server error` when the CLI exits 0 with an error result), and neither says whether it was quota, auth, or a server error. It's also absent whenever `tend-nightly` was itself one of the stranded runs. To narrow it, read the session log: a subscription quota exhaustion surfaces as a `<synthetic>` assistant message:
 
 ```bash
 gh run download <run-id> --pattern '*session-logs*' --dir /tmp/outage
 jq -r 'select(.type == "assistant") | .message.content[]?.text // empty' /tmp/outage/*/*/*.jsonl
 # → You've hit your session limit · resets 8:30am (UTC)
+# → You've hit your weekly limit · resets 12am (UTC)
 ```
 
-A cluster of these is quota exhaustion across a 5-hour window, not a bug — don't open a fix PR. Record the window's spend in the tracking issue and re-run the stranded triggers once the window resets.
+A cluster of these is quota exhaustion, not a bug — don't open a fix PR. The two limits reset on different clocks, so read the reset off the message rather than assuming the shorter session window; a weekly exhaustion can strand most of a day. Record the window's spend in the tracking issue, and gate the re-runs on a later run that already succeeded rather than on an assumed clock — re-running inside a still-exhausted window just appends another row to the issue you are draining.
 
 ## CI Fix: Prefer Rerun for Transient Infrastructure Failures
 
