@@ -14,14 +14,13 @@
 //   cargo bench --bench time_to_first_output -- switch  # Just switch
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::path::Path;
 use wt_perf::{
     CacheState, FixtureRecipe, bench_wt, run_and_check, standard_benchmark_profile, wt_command,
 };
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
     let fixture = FixtureRecipe::generated(3).create();
 

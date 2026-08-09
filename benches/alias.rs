@@ -48,7 +48,7 @@ fn wt_cmd(binary: &Path, repo: &Path, user_config: &Path, args: &[&str]) -> Comm
 
 fn bench_dispatch(c: &mut Criterion) {
     let mut group = c.benchmark_group("dispatch");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
     // Startup floor: `wt --version` exits before any repo discovery, so the
     // delta between this and the scaling rows is the parent-side dispatch

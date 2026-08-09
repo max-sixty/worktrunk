@@ -58,7 +58,7 @@ fn run_benchmark(
 
 fn bench_skeleton(c: &mut Criterion) {
     let mut group = c.benchmark_group("skeleton");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
     for total_worktrees in WORKTREE_COUNTS {
         for cache in CacheState::WARM_AND_COLD {
@@ -85,7 +85,7 @@ fn bench_skeleton(c: &mut Criterion) {
 
 fn bench_worktree_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("worktree_scaling");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
     for total_worktrees in WORKTREE_COUNTS {
         for cache in CacheState::WARM_AND_COLD {
@@ -120,7 +120,7 @@ fn bench_large_repository(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(20));
     group.sample_size(10);
 
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
     let fixture = OnceCell::new();
 
     // Cold goes last because it removes the commit graph. Each warm row has
@@ -153,7 +153,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(30));
     group.sample_size(10);
 
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
     for cache in CacheState::WARM_AND_COLD {
         group.bench_function(cache.label(), |b| {
@@ -218,7 +218,7 @@ fn bench_full(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(20));
     group.sample_size(10);
 
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
     let (linked_worktrees, branchless_branches) = (24usize, 120usize);
 
     for cache in CacheState::WARM_AND_COLD {

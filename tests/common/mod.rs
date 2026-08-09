@@ -1419,7 +1419,7 @@ mod tests {
         let needle = ["CARGO_BIN_EXE_", "wt\""].concat();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut offenders = Vec::new();
-        for dir in ["src", "tests"] {
+        for dir in ["src", "tests", "benches"] {
             scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
         }
         assert_eq!(
