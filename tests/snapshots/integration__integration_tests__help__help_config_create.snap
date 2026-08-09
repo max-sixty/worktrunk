@@ -36,6 +36,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -313,7 +314,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. An entry outranks the global key in config files, but not a `WORKTRUNK_` env var or `--config-set` — see how the layers rank (https://worktrunk.dev/config/#precedence).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
