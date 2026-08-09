@@ -371,10 +371,11 @@ not-a-pid tty
     }
 
     /// `reap_pids` against a real process: `SIGTERM` terminates it and the
-    /// count comes back confirmed. Discovery and the controlling-terminal
-    /// guard are covered in-process by the `test_remove_reap_kills_process`
-    /// integration test (which calls `processes_under` / `collect_reapable`
-    /// directly), so this focuses on the signalling half.
+    /// count comes back confirmed. Discovery is covered in-process by the
+    /// `test_remove_reap_kills_process` integration test (which polls
+    /// `processes_under` directly); the controlling-terminal guard's
+    /// classification has the `parse_ps_tty` unit tests, and the spawned `wt`
+    /// exercises the assembled gate — so this focuses on the signalling half.
     #[test]
     fn reap_pids_terminates_a_process() {
         use std::process::Command;

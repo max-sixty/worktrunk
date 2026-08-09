@@ -1347,12 +1347,6 @@ mod tests {
     use insta::assert_snapshot;
     use rstest::rstest;
 
-    /// Every PTY spawn routes through [`configure_pty_command`] (directly or
-    /// via `shell_command` / `build_pty_command`), and it is the only floor
-    /// the shell-wrapper suite gets: those call sites layer fixture paths and
-    /// an identity on top, never `pty_env_vars`. `useConfigOnly` fires only
-    /// where an identity is missing, so no wrapper assertion would notice the
-    /// floor going missing — this pins it instead.
     /// The uplifted `target/debug/wt` is removed and recreated by any
     /// concurrent `cargo build`, so the suite spawns a pinned hardlink
     /// instead (`testing::pin_test_binary`). The pin must keep serving the
@@ -1380,6 +1374,39 @@ mod tests {
         assert_ne!(pinned_b, pinned_a);
         assert_eq!(std::fs::read(&pinned_b).unwrap(), b"generation B, rebuilt");
         assert_eq!(std::fs::read(&pinned_a).unwrap(), b"generation A");
+    }
+
+    /// The uplift window itself: a pin attempt landing while the binary is
+    /// momentarily absent polls until it reappears rather than failing the
+    /// spawn — the exact `NotFound` gap a concurrent cargo opens.
+    #[test]
+    fn pin_test_binary_rides_out_the_uplift_window() {
+        let dir = worktrunk::testing::test_tempdir();
+        let src = dir.path().join("wt");
+        let writer = {
+            let src = src.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::fs::write(&src, "late binary").unwrap();
+            })
+        };
+        let pinned = worktrunk::testing::pin_test_binary(&src);
+        writer.join().unwrap();
+        assert_eq!(std::fs::read(&pinned).unwrap(), b"late binary");
+    }
+
+    /// A non-transient error (here `ENOTDIR`: a path component is a file)
+    /// surfaces immediately rather than being retried as an uplift window.
+    /// Unix-only: Windows reports this shape as `NotFound`, which correctly
+    /// takes the retry path there.
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "failed to pin test binary")]
+    fn pin_test_binary_surfaces_non_transient_errors() {
+        let dir = worktrunk::testing::test_tempdir();
+        let file = dir.path().join("wt");
+        std::fs::write(&file, "not a directory").unwrap();
+        let _ = worktrunk::testing::pin_test_binary(&file.join("child"));
     }
 
     /// `wt_bin()` pins the binary against concurrent-build uplifts. A spawn
@@ -1417,6 +1444,12 @@ mod tests {
         }
     }
 
+    /// Every PTY spawn routes through [`configure_pty_command`] (directly or
+    /// via `shell_command` / `build_pty_command`), and it is the only floor
+    /// the shell-wrapper suite gets: those call sites layer fixture paths and
+    /// an identity on top, never `pty_env_vars`. `useConfigOnly` fires only
+    /// where an identity is missing, so no wrapper assertion would notice the
+    /// floor going missing — this pins it instead.
     #[test]
     fn configure_pty_command_carries_the_git_config_floor() {
         let mut cmd = portable_pty::CommandBuilder::new("true");
