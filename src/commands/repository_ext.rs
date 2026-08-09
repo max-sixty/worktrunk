@@ -578,10 +578,17 @@ pub(crate) fn compute_integration_reason(
 /// with an unresolvable `HEAD`, so every removal that could delete a branch
 /// asks this first.
 ///
-/// Only a live directory counts. A sibling entry whose directory is already
-/// gone is stale metadata awaiting `git worktree prune`, not a checkout with
-/// anything to lose — retaining a branch for it would strand the branch and
-/// point the user at a directory that isn't there.
+/// Only a live directory counts: a sibling entry whose directory is gone is
+/// stale metadata awaiting `git worktree prune`, not a checkout with anything
+/// to lose, and retaining a branch for it would strand the branch and point the
+/// user at a directory that isn't there.
+///
+/// `exists()` is the test, not [`Repository::worktree_is_unusable`], which the
+/// rest of the removal path uses. The two disagree on a directory that is
+/// present but no longer holds its worktree, and the disagreement is
+/// asymmetric: calling a dead sibling live retains a branch nobody needed,
+/// while calling a live one dead deletes a branch a checkout still resolves.
+/// This answer only ever gates a deletion, so it takes the conservative test.
 pub(crate) fn live_sibling_checkout<'a>(
     worktrees: &'a [WorktreeInfo],
     branch: &str,

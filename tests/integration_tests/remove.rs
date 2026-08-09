@@ -292,6 +292,98 @@ fn test_remove_locked_worktree_directory_missing(mut repo: TestRepo) {
     );
 }
 
+/// Regression test for #3769: `wt remove <branch>` on a worktree whose HEAD has
+/// since been detached deleted the branch, left the worktree registered, and
+/// exited 0. Detaching severs the only link git records between the two, so the
+/// branch-first lookup found no worktree and the removal degraded to
+/// branch-only — half the operation, and the silent half.
+///
+/// Refusing is defensible because the path still reaches the worktree, which
+/// `test_remove_detached_worktree_by_path` pins.
+#[rstest]
+fn test_remove_branch_whose_worktree_was_detached(mut repo: TestRepo) {
+    let _worktree_path = repo.add_worktree("detached-later");
+    repo.detach_head_in_worktree("detached-later");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "detached-later", "--foreground", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "wt remove should refuse a branch whose worktree has been detached.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The branch must survive — deleting it is the half that used to run.
+    let branch_exists = repo
+        .git_command()
+        .args(["branch", "--list", "detached-later"])
+        .run()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branch_exists.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should NOT be deleted while a detached worktree occupies its path",
+    );
+
+    // ...and so must the worktree it would otherwise have stranded.
+    let list_after = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_after.stdout).contains("detached-later"),
+        "Detached worktree should still be registered",
+    );
+}
+
+/// The refusal names the worktree and the path-based removal that reaches it.
+#[rstest]
+fn test_remove_branch_with_detached_worktree_message(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached-strand");
+    repo.detach_head_in_worktree("feature-detached-strand");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-detached-strand"],
+        None
+    ));
+}
+
+/// The default branch's expected path is the main worktree, so a detached main
+/// worktree would match the #3769 guard — but `wt remove <that path>` refuses
+/// too, so pointing at it would be a dead end. The default-branch refusal, which
+/// is the accurate answer, must still be what surfaces.
+#[rstest]
+fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
+    repo.run_git(&["checkout", "--detach", "HEAD"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["main"], None));
+}
+
+/// A detached worktree whose directory is already gone is stale metadata, not a
+/// worktree the #3769 guard protects — the branch-only removal proceeds rather
+/// than refusing and naming a path that isn't on disk.
+#[rstest]
+fn test_remove_branch_with_prunable_detached_worktree(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached-gone");
+    repo.detach_head_in_worktree("feature-detached-gone");
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["-D", "feature-detached-gone"],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_by_name_from_main(mut repo: TestRepo) {
     // Create a worktree
@@ -2622,8 +2714,10 @@ fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
     // Detach HEAD in feature-b
     repo.detach_head_in_worktree("feature-b");
 
-    // From main, try to multi-remove both
-    // feature-a should succeed, feature-b should fail (detached HEAD)
+    // From main, try to multi-remove both. feature-a is removed; feature-b is
+    // refused, because detaching dropped it out of the branch-first lookup and
+    // removing it by branch would delete the ref and strand the worktree
+    // (#3769). Partial success is the point: one refusal doesn't stop the rest.
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
