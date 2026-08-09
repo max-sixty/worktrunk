@@ -85,6 +85,8 @@ Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
 
 ## Outage Recovery: Re-run Triggers Stranded by a Failed Session
 
+_Temporary hold: [max-sixty/tend#851](https://github.com/max-sixty/tend/pull/851) moves this into the bundled `review-runs` skill. Drop this section once that lands._
+
 When `claude -p` exits non-zero the harness opens (or appends to) a `tend-outage`-labelled **"Bot temporarily unavailable"** issue, one table row per failure with the run link and the triggering `#N`. It records the failure; **nothing re-runs it.** `tend-review` fires only on `pull_request_target`, so a PR whose one review attempt died is silently never reviewed until someone happens to push again.
 
 Drain the open outage issue as part of the daily `review-runs` sweep:
