@@ -86,6 +86,12 @@ fn detached_worktree_for<'a>(
     branch: &str,
     worktrees: &'a [worktrunk::git::WorktreeInfo],
 ) -> Option<&'a Path> {
+    // Downstream, `prepare_worktree_removal` is what reports a typo, a deleted
+    // branch, or a remote-only name; a guard that fires ahead of it would
+    // assert a branch that doesn't exist. Fail closed on a lookup error.
+    if !repo.branch(branch).exists_locally().unwrap_or(true) {
+        return None;
+    }
     let expected = compute_worktree_path(repo, branch, config).ok()?;
     worktrees
         .iter()
@@ -184,8 +190,14 @@ fn validate_remove_targets(
                 // worktree it is about to remove as its own candidate is still
                 // registered when the branch's plan is built. Refusing there
                 // would leave prune unable to clean up either half.
-                if let Some(detached) =
-                    worktrees.and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
+                //
+                // Under `Keep` (`--no-delete-branch`, or
+                // `[remove] delete-branch = false`) this arm deletes nothing,
+                // so there is no ref to strand the worktree behind — the guard
+                // would turn a no-op into a failure.
+                if let Some(detached) = worktrees
+                    .filter(|_| !deletion_mode.should_keep())
+                    .and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
                 {
                     plans.record_error(
                         GitError::DetachedWorktreeForBranch {

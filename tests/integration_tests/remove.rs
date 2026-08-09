@@ -392,6 +392,40 @@ fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["main"], None));
 }
 
+/// The #3769 guard runs ahead of the branch-existence check in
+/// `prepare_worktree_removal`, so it must not claim a branch that isn't there:
+/// a name whose templated path holds a detached worktree still reports the
+/// missing branch once the ref is gone.
+#[rstest]
+fn test_remove_missing_branch_with_detached_worktree_at_its_path(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached-orphan");
+    repo.detach_head_in_worktree("feature-detached-orphan");
+    repo.run_git(&["branch", "-D", "feature-detached-orphan"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-detached-orphan"],
+        None
+    ));
+}
+
+/// Under `--no-delete-branch` the branch-only removal deletes nothing, so there
+/// is no ref whose deletion could strand the detached worktree — the #3769
+/// guard must not turn that no-op into a failure.
+#[rstest]
+fn test_remove_branch_with_detached_worktree_keeping_branch(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached-keep");
+    repo.detach_head_in_worktree("feature-detached-keep");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--no-delete-branch", "feature-detached-keep"],
+        None
+    ));
+}
+
 /// A detached worktree whose directory is already gone is stale metadata, not a
 /// worktree the #3769 guard protects — the branch-only removal proceeds rather
 /// than refusing and naming a path that isn't on disk.
