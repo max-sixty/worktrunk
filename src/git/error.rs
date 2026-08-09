@@ -1472,14 +1472,16 @@ impl GitError {
 
             GitError::DetachedWorktreeForBranch { path, .. } => {
                 let title = self.title();
+                // `format_path_for_display` already returns a shell-ready
+                // token, so the command is built by interpolation — routing it
+                // through `suggest_command` would escape it a second time.
                 let display_path = format_path_for_display(path);
-                let remove_cmd = suggest_command("remove", &[&display_path], &[]);
                 write!(
                     f,
                     "{}\n{}",
                     error_message(&title),
                     hint_message(cformat!(
-                        "To remove the detached worktree, run <underline>{remove_cmd}</>"
+                        "To remove the detached worktree, run <underline>wt remove {display_path}</>"
                     ))
                 )
             }

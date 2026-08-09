@@ -8,7 +8,7 @@ use worktrunk::git::{
     parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, format_with_gutter, suggest_command, warning_message};
+use worktrunk::styling::{eprintln, format_with_gutter, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -167,10 +167,12 @@ impl RepositoryCliExt for Repository {
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(branch.as_str()))
                 {
+                    // `path` is already shell-ready, so the suggested command
+                    // interpolates it rather than passing it through
+                    // `suggest_command`, which would escape it a second time.
                     let path = format_path_for_display(&wt.path);
                     bail!(cformat!(
-                        "Branch <bold>{branch}</> gained a worktree @ <bold>{path}</> since it was selected; to remove that worktree, run <bold>{}</>",
-                        suggest_command("remove", &[&path], &[])
+                        "Branch <bold>{branch}</> gained a worktree @ <bold>{path}</> since it was selected; to remove that worktree, run <bold>wt remove {path}</>"
                     ));
                 }
                 // Check the branch exists locally, so a typo or a remote-only
