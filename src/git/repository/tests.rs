@@ -2032,3 +2032,47 @@ fn selector_reports_rewriting_rather_than_inferring_it() {
         "a shortcut that expands to its own input is still a rewrite"
     );
 }
+
+/// "Nothing can run here" is the union of two independent failures, because
+/// neither implies the other.
+///
+/// git withholds the `prunable` attribute from a **locked** worktree even when
+/// its directory is gone — prunability is git's pruning *policy*, and a lock
+/// means "don't prune this". So a `prunable`-only test reads a locked worktree
+/// on an unmounted volume as healthy, which is the state
+/// `prepare_worktree_removal`'s lock guard exists for. The recreated directory
+/// is the converse: present, so an existence probe passes, and holding nothing.
+#[test]
+fn worktree_is_unusable_covers_locked_absent_and_recreated() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let healthy = test.add_worktree("healthy");
+    let absent = test.add_worktree("absent");
+    let locked = test.add_worktree("locked-absent");
+    let recreated = test.add_worktree("recreated");
+
+    test.lock_worktree("locked-absent", Some("removable media"));
+    std::fs::remove_dir_all(&absent).unwrap();
+    std::fs::remove_dir_all(&locked).unwrap();
+    std::fs::remove_dir_all(&recreated).unwrap();
+    std::fs::create_dir_all(&recreated).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+
+    assert!(!repo.worktree_is_unusable(&healthy).unwrap());
+    assert!(
+        repo.worktree_is_unusable(&absent).unwrap(),
+        "an absent directory is unusable"
+    );
+    assert!(
+        repo.worktree_is_unusable(&locked).unwrap(),
+        "a locked worktree whose directory is gone carries no `prunable` line, \
+         so only the existence half catches it"
+    );
+    assert!(
+        repo.worktree_is_unusable(&recreated).unwrap(),
+        "a recreated directory exists, so only the `prunable` half catches it"
+    );
+}

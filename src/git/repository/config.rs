@@ -498,7 +498,7 @@ impl Repository {
 
     /// Resolve a target branch from an optional override
     ///
-    /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
+    /// If target is Some, expands special symbols ("@", "-", "^") via `expand_selector`.
     /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
     ///

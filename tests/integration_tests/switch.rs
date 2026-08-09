@@ -557,6 +557,38 @@ fn test_switch_worktree_directory_recreated(mut repo: TestRepo) {
     snapshot_switch("switch_worktree_directory_recreated", &repo, &["feature"]);
 }
 
+/// `--create` names a branch that does not exist yet, so the argument is never
+/// tried as a path — even when a worktree is registered at that spelling.
+///
+/// The registered worktree is on a *different* branch, so resolving the
+/// argument as a path would return that worktree and silently drop `--create`.
+/// `resolve_switch_target`'s own `--create` guards do not catch it: they reject
+/// a branch that already exists locally, and this one does not.
+#[rstest]
+fn test_switch_create_ignores_a_worktree_at_that_path(mut repo: TestRepo) {
+    let occupied = repo.root_path().join("docs");
+    repo.add_worktree_at_path("other", &occupied);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "docs", "--no-hooks"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|b| b == "docs"),
+        "--create must create the branch rather than switching to the worktree \
+         registered at ./docs, got branches: {branches}"
+    );
+}
+
 /// A trailing separator is stripped before resolution, so a branch whose name
 /// matches a directory in the repository is still found.
 ///

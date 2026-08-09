@@ -467,7 +467,7 @@ fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
 }
 
 /// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts. Non-shortcut
-/// inputs go through [`Repository::resolve_worktree_name`] (handles `@`/`-`/`^`).
+/// inputs go through [`Repository::expand_selector`] (handles `@`/`-`/`^`).
 ///
 /// Returns the resolved ref plus, when the user picked a `pr:`/`mr:` shortcut
 /// against a same-repo PR/MR, the `(remote, branch)` pair the new branch
@@ -665,7 +665,14 @@ fn resolve_switch_target(
     };
 
     Ok(ResolvedTarget {
-        selector,
+        // Under `--create` the argument names a branch that does not exist
+        // yet, so it is not a path to look up — stated here, where `create`
+        // lives, rather than re-tested at each arm that consults it.
+        selector: if create {
+            selector.branch_only()
+        } else {
+            selector
+        },
         method: CreationMethod::Regular {
             create_branch: create,
             base_branch,
@@ -849,9 +856,9 @@ fn plan_switch(
     // worktree answers without the ~7 git commands `compute_worktree_path` runs.
     match repo.resolve_selector(&target.selector)? {
         ResolvedWorktree::Worktree { path, branch } => {
-            // A registration git calls prunable has no directory left to
+            // A registration whose directory is gone or broken has nothing to
             // switch into; `wt remove` is the one command that still wants it.
-            if repo.worktree_is_prunable(&path)? {
+            if repo.worktree_is_unusable(&path)? {
                 return Err(GitError::WorktreeMissing {
                     branch: branch
                         .unwrap_or_else(|| worktrunk::git::path_dir_name(&path).to_string()),
@@ -867,10 +874,9 @@ fn plan_switch(
         // Nothing is registered there, and a path is all the argument could
         // have been — so stop here rather than carrying it to Phase 4, which
         // would report a missing branch and offer to create one under a name
-        // git rejects. Under `--create` the argument names a branch that does
-        // not exist yet, and a directory in the way is the clobber check's
-        // business rather than a resolution failure.
-        ResolvedWorktree::NoWorktreeAtPath { path } if !create => {
+        // git rejects. `--create` never reaches this arm: its selector says
+        // the token is not a path, so `resolve_selector` returns `BranchOnly`.
+        ResolvedWorktree::NoWorktreeAtPath { path } => {
             return Err(GitError::WorktreeNotFoundAtPath { path }.into());
         }
         _ => {}

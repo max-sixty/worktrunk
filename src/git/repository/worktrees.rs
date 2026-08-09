@@ -94,14 +94,7 @@ impl Repository {
     /// switch`, `wt merge`, `wt step push`, and every selector
     /// [`resolve_worktree`](Self::resolve_worktree) resolves.
     ///
-    /// The verdict is git's `prunable`, read from a listing
-    /// [`list_worktrees`](Self::list_worktrees) has already parsed and cached,
-    /// so this costs a lookup rather than a fork. Two callers used to ask
-    /// `Path::exists()` instead and a third asked nothing — so a directory
-    /// deleted and *recreated* (an interrupted `wt switch`, a manual `rm -rf`
-    /// followed by `mkdir`) passed the probe, and git's `rev-parse … (exit
-    /// 128)` reached the user from wherever that command first touched the
-    /// repository.
+    /// The verdict is [`worktree_is_unusable`](Self::worktree_is_unusable).
     ///
     /// `Ok(None)` when the branch has no worktree at all — a normal answer,
     /// and the caller's to interpret.
@@ -109,7 +102,7 @@ impl Repository {
         let Some(path) = self.worktree_for_branch(branch)? else {
             return Ok(None);
         };
-        if self.worktree_is_prunable(&path)? {
+        if self.worktree_is_unusable(&path)? {
             return Err(GitError::WorktreeMissing {
                 branch: branch.to_string(),
             }
@@ -118,12 +111,33 @@ impl Repository {
         Ok(Some(path))
     }
 
-    /// Whether git reports the worktree registered at `path` as prunable.
+    /// Whether nothing can run in the worktree registered at `path`.
     ///
-    /// Read from a listing [`list_worktrees`](Self::list_worktrees) has already
-    /// parsed and cached, so this costs a lookup rather than a fork. `false`
-    /// for a path git has no registration for — absence is not breakage.
-    pub fn worktree_is_prunable(&self, path: &Path) -> anyhow::Result<bool> {
+    /// Two independent ways for that to be true, and neither implies the other,
+    /// so the test is the union:
+    ///
+    /// - The directory is not there. `Path::exists()` is the whole of this one.
+    /// - Git reports the registration as `prunable` — its gitdir pointer no
+    ///   longer resolves. This is the case an existence probe misses, because a
+    ///   directory deleted and *recreated* (an interrupted `wt switch`, an
+    ///   `rm -rf` followed by a `mkdir`) is there while holding nothing.
+    ///
+    /// `prunable` alone is not the wider test it looks like: git withholds the
+    /// attribute from a **locked** worktree even when the directory is gone,
+    /// because prunability is git's pruning *policy* and a lock means "don't
+    /// prune this". A locked worktree on an unmounted volume — the case
+    /// `prepare_worktree_removal`'s lock guard exists for — carries no
+    /// `prunable` line, so a `prunable`-only test reads it as healthy and lets
+    /// a command walk into a directory that is not there.
+    ///
+    /// The `prunable` half costs a lookup rather than a fork:
+    /// [`list_worktrees`](Self::list_worktrees) has already parsed and cached
+    /// the listing. `false` for a path git has no registration for — absence of
+    /// a registration is not breakage of one.
+    pub fn worktree_is_unusable(&self, path: &Path) -> anyhow::Result<bool> {
+        if !path.exists() {
+            return Ok(true);
+        }
         Ok(self
             .list_worktrees()?
             .iter()
@@ -295,28 +309,6 @@ impl Repository {
         Ok(())
     }
 
-    /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to the default branch.
-    ///
-    /// # Arguments
-    /// * `name` - The worktree name to resolve:
-    ///   - "@" for current HEAD
-    ///   - "-" for previous branch (via worktrunk.history)
-    ///   - "^" for default branch
-    ///   - any other string is returned as-is
-    ///
-    /// # Returns
-    /// - `Ok(name)` if not a special symbol
-    /// - `Ok(current_branch)` if "@" and on a branch
-    /// - `Ok(previous_branch)` if "-" and worktrunk.history has a previous branch
-    /// - `Ok(default_branch)` if "^"
-    /// - `Err(DetachedHead)` if "@" and in detached HEAD state
-    /// - `Err` if "-" but no previous branch in history
-    pub fn resolve_worktree_name(&self, name: &str) -> anyhow::Result<String> {
-        Ok(self
-            .expand_shortcut(name)?
-            .unwrap_or_else(|| name.to_string()))
-    }
-
     /// Expand `@` / `-` / `^`, reporting whether `name` was one of them.
     ///
     /// `None` means the token is not a shortcut and reaches the caller
@@ -450,11 +442,19 @@ impl Repository {
             });
         }
 
-        // Only a token the user actually typed can be a path; anything an
-        // earlier step produced would be a nonsense one.
-        if selector.names_a_path()
-            && let Some((path, wt_branch)) = self.worktree_at_input_path(token)?
-        {
+        // Both remaining steps are about the token as a path, so
+        // `names_a_path` gates them together — a caller that turns it off gets
+        // neither a worktree matched by path nor a verdict about a directory,
+        // which is what `wt switch --create` needs: the argument names a branch
+        // to create, and a directory sitting at that spelling is the clobber
+        // check's business.
+        if !selector.names_a_path() {
+            return Ok(ResolvedWorktree::BranchOnly {
+                branch: token.to_string(),
+            });
+        }
+
+        if let Some((path, wt_branch)) = self.worktree_at_input_path(token)? {
             return Ok(ResolvedWorktree::Worktree {
                 path,
                 branch: wt_branch,
@@ -462,8 +462,8 @@ impl Repository {
         }
 
         // Nothing matched, so say which of the two the selector was reaching
-        // for. Free for an ordinary branch name: `path_selector_error` returns
-        // on `is_valid_branch_name` before it touches the filesystem.
+        // for. Free for an ordinary branch name: `path_selector_directory`
+        // returns on `is_valid_branch_name` before touching the filesystem.
         Ok(match self.path_selector_directory(token) {
             Some(path) => ResolvedWorktree::NoWorktreeAtPath { path },
             None => ResolvedWorktree::BranchOnly {

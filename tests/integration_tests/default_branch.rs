@@ -379,7 +379,7 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
 
     // Now resolving "^" should fail with an error
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let result = git_repo.resolve_worktree_name("^");
+    let result = git_repo.expand_selector("^");
     assert!(
         result.is_err(),
         "Expected error when resolving ^ without default branch"

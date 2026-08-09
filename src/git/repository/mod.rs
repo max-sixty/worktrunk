@@ -388,26 +388,30 @@ pub enum ResolvedWorktree {
 }
 
 /// A worktree selector after normalization and expansion — the token to look
-/// up, plus whether anything rewrote it on the way here.
+/// up, plus whether it may still be tried as a *path*.
 ///
-/// `rewritten` is the fact that decides whether the token may still be tried as
-/// a *path*. Every assembly of the resolution ladder needs it, and each used to
-/// re-derive it by comparing the expansion's output against its input —
+/// Every assembly of the resolution ladder needs that second fact, and each
+/// used to re-derive it by comparing an expansion's output against its input —
 /// `branch == name` in `resolve_worktree`, `target.branch == branch` in
 /// `plan_switch`, `target.filter(|t| *t == resolved)` in
-/// `target_worktree_at_path`. Three copies of one string heuristic standing in
-/// for something the rewriting step knows outright, and a trap for any
-/// normalization applied underneath them: stripping `docs/` to `docs` reads as
-/// a rewrite and silently disables the path arm.
+/// `target_worktree_at_path`, `resolved == base` in `resolve_base_ref`. Four
+/// copies of one string heuristic standing in for something the producing step
+/// knows outright, and a trap for any normalization applied underneath them:
+/// stripping `docs/` to `docs` reads as a rewrite and silently disables the
+/// path arm.
 ///
-/// So the producers state it. A shortcut expansion reports it
-/// (`Repository::expand_shortcut`); `wt switch` sets it when `pr:`/`mr:` or
-/// the remote-prefix strip fires ([`Selector::rewritten_to`]); a token nobody
-/// touched keeps it false ([`Selector::literal`]).
+/// So the producers state it. A token nobody touched may name a path
+/// ([`Selector::literal`]). One an earlier step produced may not
+/// ([`Selector::rewritten_to`]) — a shortcut expansion, a `pr:`/`mr:` lookup, a
+/// stripped remote prefix, a default branch read from cache. Neither does one
+/// that names a branch by construction ([`Selector::branch_only`]), which is
+/// `wt switch --create <name>`: nothing rewrote the argument, but it names a
+/// branch that does not exist yet, so a directory sitting at that spelling is
+/// not what the user meant.
 #[derive(Debug, Clone)]
 pub struct Selector {
     token: String,
-    rewritten: bool,
+    may_name_path: bool,
 }
 
 impl Selector {
@@ -415,17 +419,24 @@ impl Selector {
     pub fn literal(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
-            rewritten: false,
+            may_name_path: true,
         }
     }
 
-    /// A token some earlier step produced — a shortcut expansion, a `pr:`/`mr:`
-    /// lookup, a stripped remote prefix, a default branch read from cache.
-    /// The literal argument is then a nonsense path, so the path arm is off.
+    /// A token some earlier step produced, so the literal argument is not what
+    /// this names and a path lookup would be a nonsense one.
     pub fn rewritten_to(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
-            rewritten: true,
+            may_name_path: false,
+        }
+    }
+
+    /// Take the path arm off a token that names a branch by construction.
+    pub fn branch_only(self) -> Self {
+        Self {
+            may_name_path: false,
+            ..self
         }
     }
 
@@ -436,16 +447,7 @@ impl Selector {
 
     /// Whether this token may still be tried as a worktree path.
     pub fn names_a_path(&self) -> bool {
-        !self.rewritten
-    }
-
-    /// Re-point at a token derived from this one, keeping the rewritten flag —
-    /// for a step that transforms without changing whether the user typed it.
-    pub fn map_token(self, token: impl Into<String>) -> Self {
-        Self {
-            token: token.into(),
-            ..self
-        }
+        self.may_name_path
     }
 }
 
