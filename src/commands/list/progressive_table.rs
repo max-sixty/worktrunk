@@ -9,6 +9,24 @@
 //! - Has predictable cursor behavior based on our rendering logic
 //! - Reserves blank rows below the table ([`PROMPT_RESERVE_LINES`]) so the
 //!   shell prompt printed after exit doesn't scroll the settled table
+//!
+//! # Presentation vs. mechanics
+//!
+//! This is the one stdout writer that cannot route through an anstream stream:
+//! anstream's strip adapter drops every escape sequence, including the crossterm
+//! cursor-control CSI ([`MoveUp`], [`Clear`]) the in-place redraw is built on. So
+//! the table splits the two itself. Content — the row, header, and footer strings,
+//! which arrive with color and OSC-8 hyperlinks already baked in by the shared
+//! render code — is stripped when color is off; the cursor-control sequences this
+//! module emits are always written.
+//!
+//! "Color is off" is not re-derived from `NO_COLOR` and friends here. The decision
+//! comes from [`anstream::AutoStream::choice`] — the single resolution the anstream
+//! macros already use for every other stdout surface (process-global `ColorChoice`
+//! first, then tty plus the environment) — read once in [`ProgressiveTable::new`].
+//! Stripping uses [`anstream::adapter::strip_str`], the exact transform an anstream
+//! stream in `Never` mode applies, so progressive output matches the buffered path
+//! by construction rather than by approximation.
 
 use crossterm::{
     ExecutableCommand,
@@ -17,7 +35,7 @@ use crossterm::{
 };
 use std::io::{IsTerminal, Write, stdout};
 
-use crate::display::truncate_visible;
+use worktrunk::styling::truncate_visible;
 
 /// Blank rows kept below the table so the shell prompt printed after exit
 /// renders into pre-scrolled rows instead of scrolling the settled table.
@@ -60,8 +78,14 @@ fn write_prompt_reserve(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
 ///
 /// Data mutation (`update_row`, `update_footer`) is separate from rendering (`flush`).
 /// Call `flush()` after updates to write changes to the terminal.
+///
+/// Every content string passes through [`ProgressiveTable::prepare`], which
+/// truncates and — when color is off — strips the escapes the render code baked
+/// in. The crossterm cursor-control sequences written alongside them are never
+/// stripped; see the module docs for that split.
 pub struct ProgressiveTable {
-    /// Previously rendered content for each line (header + rows + spacer + footer)
+    /// Previously rendered content for each line (header + rows + spacer + footer),
+    /// each already passed through [`ProgressiveTable::prepare`]
     lines: Vec<String>,
     /// Maximum width for content (terminal width - safety margin)
     max_width: usize,
@@ -75,6 +99,9 @@ pub struct ProgressiveTable {
     /// Whether the skeleton was printed. Tests skip `render_skeleton` to keep
     /// this false and suppress stdout output.
     rendered: bool,
+    /// Whether content escapes are stripped, resolved once from
+    /// `anstream::AutoStream::choice` at construction.
+    strip_content: bool,
 }
 
 impl ProgressiveTable {
@@ -100,7 +127,15 @@ impl ProgressiveTable {
         } else {
             None
         };
-        Self::new_with_height(header, skeletons, initial_footer, max_width, term_height)
+        let strip_content = anstream::AutoStream::choice(&stdout()) == anstream::ColorChoice::Never;
+        Self::new_with_height(
+            header,
+            skeletons,
+            initial_footer,
+            max_width,
+            term_height,
+            strip_content,
+        )
     }
 
     fn new_with_height(
@@ -109,6 +144,7 @@ impl ProgressiveTable {
         initial_footer: String,
         max_width: usize,
         terminal_height: Option<usize>,
+        strip_content: bool,
     ) -> Self {
         let total_row_count = skeletons.len();
 
@@ -119,27 +155,50 @@ impl ProgressiveTable {
             .map(|h| total_row_count.min(h.saturating_sub(4 + PROMPT_RESERVE_LINES as usize)))
             .unwrap_or(total_row_count);
 
-        // Build initial lines: header + visible rows + spacer + footer
-        let mut lines = Vec::with_capacity(visible_row_count + 3);
-        lines.push(truncate_visible(&header, max_width));
-
-        for skeleton in skeletons.into_iter().take(visible_row_count) {
-            lines.push(truncate_visible(&skeleton, max_width));
-        }
-
-        // Spacer (blank line)
-        lines.push(String::new());
-
-        // Footer
-        lines.push(truncate_visible(&initial_footer, max_width));
-
-        Self {
-            lines,
+        let mut table = Self {
+            lines: Vec::with_capacity(visible_row_count + 3),
             max_width,
             row_count: visible_row_count,
             total_row_count,
             dirty: Vec::new(),
             rendered: false,
+            strip_content,
+        };
+
+        // Build initial lines: header + visible rows + spacer + footer
+        let header_line = table.prepare(&header);
+        table.lines.push(header_line);
+
+        for skeleton in skeletons.into_iter().take(visible_row_count) {
+            let row = table.prepare(&skeleton);
+            table.lines.push(row);
+        }
+
+        // Spacer (blank line)
+        table.lines.push(String::new());
+
+        // Footer
+        let footer_line = table.prepare(&initial_footer);
+        table.lines.push(footer_line);
+
+        table
+    }
+
+    /// Fit a content string to the table's width and, when color is off, strip
+    /// the escapes the render code baked into it.
+    ///
+    /// Truncation runs first because the width math is escape-aware, and a cut
+    /// through styled content appends its own reset; stripping afterwards removes
+    /// that reset along with the rest.
+    /// Every content line — header, rows, footer, on both the in-place and
+    /// overflow paths — goes through here, so no other content path calls
+    /// [`truncate_visible`] directly.
+    fn prepare(&self, content: &str) -> String {
+        let truncated = truncate_visible(content, self.max_width);
+        if self.strip_content {
+            anstream::adapter::strip_str(&truncated).to_string()
+        } else {
+            truncated
         }
     }
 
@@ -179,17 +238,17 @@ impl ProgressiveTable {
             return false;
         }
 
-        let truncated = truncate_visible(&content, self.max_width);
+        let prepared = self.prepare(&content);
 
         // Line index: header (0) + row_idx
         let line_idx = row_idx + 1;
 
         // Skip if content hasn't changed
-        if self.lines[line_idx] == truncated {
+        if self.lines[line_idx] == prepared {
             return false;
         }
 
-        self.lines[line_idx] = truncated;
+        self.lines[line_idx] = prepared;
         // Only mark dirty if we've rendered (otherwise nothing on screen to redraw)
         if self.rendered {
             self.dirty.push(line_idx);
@@ -204,17 +263,17 @@ impl ProgressiveTable {
     /// # Returns
     /// `true` if the content changed, `false` if unchanged.
     pub fn update_footer(&mut self, content: String) -> bool {
-        let truncated = truncate_visible(&content, self.max_width);
+        let prepared = self.prepare(&content);
 
         // Footer is the last line
         let footer_idx = self.lines.len() - 1;
 
         // Skip if content hasn't changed
-        if self.lines[footer_idx] == truncated {
+        if self.lines[footer_idx] == prepared {
             return false;
         }
 
-        self.lines[footer_idx] = truncated;
+        self.lines[footer_idx] = prepared;
         // Only mark dirty if we've rendered (otherwise nothing on screen to redraw)
         if self.rendered {
             self.dirty.push(footer_idx);
@@ -303,16 +362,12 @@ impl ProgressiveTable {
             stdout.execute(MoveUp(self.lines.len() as u16))?;
             stdout.execute(MoveToColumn(0))?;
             stdout.execute(Clear(ClearType::FromCursorDown))?;
-            writeln!(stdout, "{}", self.lines[0])?; // header (unchanged)
+            writeln!(stdout, "{}", self.lines[0])?; // header (already prepared)
             for row in &final_rows {
-                writeln!(stdout, "{}", truncate_visible(row, self.max_width))?;
+                writeln!(stdout, "{}", self.prepare(row))?;
             }
             writeln!(stdout)?;
-            writeln!(
-                stdout,
-                "{}",
-                truncate_visible(&final_footer, self.max_width)
-            )?;
+            writeln!(stdout, "{}", self.prepare(&final_footer))?;
             write_prompt_reserve(&mut stdout)?;
             stdout.flush()
         } else {
@@ -504,6 +559,7 @@ mod tests {
             "loading".into(),
             80,
             Some(10),
+            false,
         );
 
         assert_eq!(table.row_count, 4);
@@ -528,6 +584,7 @@ mod tests {
             "loading".into(),
             80,
             Some(20),
+            false,
         );
 
         assert_eq!(table.row_count, 3);
@@ -545,6 +602,7 @@ mod tests {
             "loading".into(),
             80,
             Some(11),
+            false,
         );
 
         assert_eq!(table.row_count, 5);
@@ -561,6 +619,7 @@ mod tests {
             "loading".into(),
             80,
             Some(10),
+            false,
         );
 
         assert_eq!(table.row_count, 4);
@@ -577,6 +636,7 @@ mod tests {
             "loading".into(),
             80,
             Some(10),
+            false,
         );
 
         // Can update visible rows (0..4)
@@ -598,6 +658,7 @@ mod tests {
             "loading".into(),
             80,
             Some(3),
+            false,
         );
 
         assert_eq!(table.row_count, 0);
@@ -617,10 +678,87 @@ mod tests {
             "loading".into(),
             80,
             None,
+            false,
         );
 
         assert_eq!(table.row_count, 10);
         assert_eq!(table.total_row_count, 10);
         assert_eq!(table.row_count, table.total_row_count);
+    }
+
+    // Styled header, skeleton row, and footer, plus an OSC-8 hyperlink — one
+    // per content path, so a path that skipped `prepare` shows up here.
+    const STYLED_HEADER: &str = "\u{1b}[1mBRANCH\u{1b}[0m";
+    const STYLED_ROW: &str = "\u{1b}[31mrow0\u{1b}[0m";
+    const STYLED_FOOTER: &str = "\u{1b}[2mloading\u{1b}[0m";
+    const LINKED_FOOTER: &str =
+        "\u{1b}]8;;https://example.com\u{1b}\\4 worktrees\u{1b}]8;;\u{1b}\\";
+
+    #[test]
+    fn strip_content_removes_escapes_from_every_content_path() {
+        let mut table = ProgressiveTable::new_with_height(
+            STYLED_HEADER.into(),
+            vec![STYLED_ROW.into()],
+            STYLED_FOOTER.into(),
+            80,
+            None,
+            true,
+        );
+
+        assert!(table.update_row(0, "\u{1b}[32mrow0-done\u{1b}[0m".into()));
+        assert!(table.update_footer(LINKED_FOOTER.into()));
+
+        assert!(
+            !table.lines.iter().any(|line| line.contains('\u{1b}')),
+            "escape survived stripping: {:?}",
+            table.lines
+        );
+        insta::assert_debug_snapshot!(table.lines, @r#"
+        [
+            "BRANCH",
+            "row0-done",
+            "",
+            "4 worktrees",
+        ]
+        "#);
+    }
+
+    #[test]
+    fn escapes_survive_when_strip_content_is_off() {
+        let mut table = ProgressiveTable::new_with_height(
+            STYLED_HEADER.into(),
+            vec![STYLED_ROW.into()],
+            STYLED_FOOTER.into(),
+            80,
+            None,
+            false,
+        );
+
+        assert_eq!(table.lines[0], STYLED_HEADER);
+        assert_eq!(table.lines[1], STYLED_ROW);
+        assert_eq!(table.lines[3], STYLED_FOOTER);
+
+        assert!(table.update_row(0, "\u{1b}[32mrow0-done\u{1b}[0m".into()));
+        assert!(table.update_footer(LINKED_FOOTER.into()));
+        assert_eq!(table.lines[1], "\u{1b}[32mrow0-done\u{1b}[0m");
+        assert_eq!(table.lines[3], LINKED_FOOTER);
+    }
+
+    #[test]
+    fn stripping_removes_the_reset_a_styled_truncation_appends() {
+        // Cutting styled content leaves a style open, so truncate_visible closes
+        // it with ESC[0m; stripping takes that with the rest, leaving the
+        // ellipsis as the only trace of the truncation.
+        let styled_header = || "\u{1b}[31mtwelve chars here\u{1b}[0m".to_string();
+
+        let kept =
+            ProgressiveTable::new_with_height(styled_header(), vec![], "f".into(), 8, None, false);
+        // The color ansi_cut closes at the cut sits between the kept text and
+        // the ellipsis, so the whitespace trim can't reach past it.
+        assert_eq!(kept.lines[0], "\u{1b}[31mtwelve \u{1b}[39m…\u{1b}[0m");
+
+        let stripped =
+            ProgressiveTable::new_with_height(styled_header(), vec![], "f".into(), 8, None, true);
+        assert_eq!(stripped.lines[0], "twelve …");
     }
 }

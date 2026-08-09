@@ -24,7 +24,7 @@ use ansi_str::AnsiStr;
 use unicode_width::UnicodeWidthStr;
 
 // Re-exports from anstream (auto-detecting output)
-pub use anstream::{eprint, eprintln, print, println, stderr, stdout};
+pub use anstream::{ColorChoice, eprint, eprintln, print, println, stderr, stdout};
 
 // Re-exports from anstyle (for composition)
 pub use anstyle::Style as AnstyleStyle;

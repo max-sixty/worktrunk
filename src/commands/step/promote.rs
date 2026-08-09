@@ -194,6 +194,7 @@ fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Res
         current_wt.branch()?.ok_or_else(|| {
             GitError::DetachedHead {
                 action: Some("promote".into()),
+                worktree: None,
             }
             .into()
         })
@@ -317,6 +318,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         .clone()
         .ok_or_else(|| GitError::DetachedHead {
             action: Some("promote".into()),
+            worktree: Some(main_path.clone()),
         })?;
 
     // Resolve the branch to promote (default_branch computed lazily, only when needed)

@@ -63,4 +63,8 @@ Measures pure skeleton latency. Target: <60ms.
 - `layout.rs` — column width calculation
 - `progressive_table.rs` — terminal rendering with in-place updates; reserves
   blank rows below the table so the shell prompt printed after exit renders
-  into pre-scrolled rows instead of jerking the settled table up
+  into pre-scrolled rows instead of jerking the settled table up. It writes to
+  a raw stdout rather than an anstream stream, since a strip would eat its
+  cursor-control CSI, so it applies the color decision to content itself —
+  every row, header, and footer through `prepare`; the module docstring covers
+  the split

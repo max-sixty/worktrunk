@@ -100,7 +100,7 @@ syntax-highlighting = ["dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
 shell-integration-tests = []
 # Enable benchmarks whose fixture is too large for hosted CI: the
-# large-repository prune fixture (~15 GiB of linked worktrees, cached under
+# large-repository prune fixture (multi-gigabyte linked worktrees, cached under
 # target/wt-perf/bench-repos). The daily benchmarks workflow runs plain `cargo bench`
 # and must never build it; opt in locally with
 # `cargo bench --bench prune --features large-repository-benches`.

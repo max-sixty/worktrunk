@@ -3,8 +3,7 @@
 //! # Architecture
 //!
 //! For regular output, use `eprintln!`/`println!` directly (from `worktrunk::styling`
-//! for color support); [`print_json`] serializes a `--format=json` answer to stdout,
-//! and [`println_verbatim`] writes a line whose color is already resolved.
+//! for color support); [`print_json`] serializes a `--format=json` answer to stdout.
 //! This module handles shell integration directives (cd, exec) that need to be
 //! communicated to the parent shell.
 //!
@@ -37,7 +36,6 @@ pub(crate) mod handlers;
 mod json;
 pub(crate) mod prompt;
 pub(crate) mod shell_integration;
-mod verbatim;
 
 // Re-export the public API
 pub(crate) use global::{
@@ -61,5 +59,3 @@ pub(crate) use shell_integration::{
 pub(crate) use commit_generation::prompt_commit_generation;
 // Re-export the JSON answer printer
 pub(crate) use json::print_json;
-// Re-export the verbatim (already-colored) line printer
-pub(crate) use verbatim::println_verbatim;

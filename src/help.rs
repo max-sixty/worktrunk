@@ -49,16 +49,14 @@ use std::ffi::OsString;
 use std::process;
 
 use ansi_str::AnsiStr;
-use clap::ColorChoice;
 use clap::error::ErrorKind;
 use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
     SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
 };
-use worktrunk::styling::{eprintln, print};
+use worktrunk::styling::{ColorChoice, eprintln, print, println};
 
 use crate::cli;
-use crate::output::println_verbatim;
 
 /// Output format for a `--help-page`. Web pages keep Zola shortcodes, HTML
 /// spans, and demo GIF figures for the docs site; plain pages strip those for
@@ -70,8 +68,13 @@ enum PageMode {
 }
 
 impl PageMode {
-    /// ANSI color for the embedded `--help` reference block. Web keeps ANSI so
-    /// it can be converted to HTML downstream; plain strips it.
+    /// The page's one color choice, declared globally for the stdout it
+    /// prints to. The embedded `--help` reference block always renders with
+    /// escapes and the stream decides what survives: web keeps them for the
+    /// docs pipeline to turn into HTML spans, plain strips them for the
+    /// portable markdown skill files read. Both generators read a pipe rather
+    /// than a tty, so without the global web's escapes would be stripped
+    /// every time.
     fn color(self) -> ColorChoice {
         match self {
             Self::Web => ColorChoice::Always,
@@ -123,19 +126,19 @@ impl PageMode {
     /// uses it as a region marker), or an H1 title for plain skill pages.
     fn emit_header(self, subcommand: &str) {
         match self {
-            Self::Web => println_verbatim!(
+            Self::Web => println!(
                 "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
-            Self::Plain => println_verbatim!("# wt {subcommand}"),
+            Self::Plain => println!("# wt {subcommand}"),
         }
-        println_verbatim!();
+        println!();
     }
 
     /// Emit the closing END marker (web only).
     fn emit_footer(self) {
         if matches!(self, Self::Web) {
-            println_verbatim!();
-            println_verbatim!("{MARKER_CLOSE}");
+            println!();
+            println!("{MARKER_CLOSE}");
         }
     }
 }
@@ -205,7 +208,6 @@ pub fn maybe_handle_help_with_pager(
     if args.iter().any(|a| a == "--help-md") {
         let mut cmd = cli::build_command();
         cmd = crate::completion::inject_hook_subcommands(cmd);
-        cmd = cmd.color(ColorChoice::Never); // No ANSI codes for raw markdown
 
         // Replace --help-md with --help for clap
         let filtered_args: Vec<String> = args
@@ -225,7 +227,11 @@ pub fn maybe_handle_help_with_pager(
                 ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
             )
         {
-            let output = normalize_clap_help_fences(&err.render().to_string());
+            // Escape-free markdown on stdout is this entry point's contract,
+            // tty or not, so the choice is declared rather than left to the
+            // stream's tty check.
+            ColorChoice::Never.write_global();
+            let output = normalize_clap_help_fences(&err.render().ansi().to_string());
             print!("{output}");
             process::exit(0);
         }
@@ -234,13 +240,12 @@ pub fn maybe_handle_help_with_pager(
 
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
     if let Err(err) = cmd.try_get_matches_from_mut(args_os) {
         match err.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                // err.render() returns a StyledStr containing ANSI codes.
-                // Use .ansi() to preserve them; .to_string() strips ANSI codes.
+                // .ansi() renders the StyledStr's styles as escapes; its
+                // Display renders the text without them.
                 let clap_output = err.render().ansi().to_string();
 
                 // Splice configured aliases into `wt --help` and
@@ -279,24 +284,15 @@ pub fn maybe_handle_help_with_pager(
     }
 }
 
-/// Get the help reference block with configurable color output.
-///
-/// `ColorChoice::Always` produces ANSI codes for HTML conversion (web docs).
-/// `ColorChoice::Never` produces plain text (skill reference files).
-fn help_reference_with_color(
-    command_path: &[&str],
-    width: Option<usize>,
-    color: ColorChoice,
-) -> String {
-    let output = help_reference_inner(command_path, width, color);
-    if matches!(color, ColorChoice::Always) {
-        // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
-        // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
-        // (colors), not OSC sequences - hyperlinks leak through as garbage.
-        worktrunk::styling::strip_osc8_hyperlinks(&output)
-    } else {
-        output
-    }
+/// The help reference block, rendered with ANSI codes for the page's stdout
+/// stream to keep or strip.
+fn help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = help_reference_inner(command_path, width);
+    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
+    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
+    // (colors), not OSC sequences - hyperlinks leak through as garbage. The plain
+    // stream drops them anyway, so the strip runs unconditionally.
+    worktrunk::styling::strip_osc8_hyperlinks(&output)
 }
 
 /// Normalize fences in clap-rendered help output for downstream markdown
@@ -311,7 +307,7 @@ fn normalize_clap_help_fences(text: &str) -> String {
         .replace("```console\n", "```bash\n")
 }
 
-fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: ColorChoice) -> String {
+fn help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
@@ -319,7 +315,6 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: Colo
 
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(color);
     if let Some(w) = width {
         cmd = cmd.term_width(w);
     }
@@ -329,15 +324,7 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: Colo
             err.kind(),
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         ) {
-        let rendered = err.render();
-        // .ansi() preserves ANSI codes; .to_string() strips them.
-        // Use .ansi() only when colors are enabled (for web HTML conversion).
-        let text = if matches!(color, ColorChoice::Always) {
-            rendered.ansi().to_string()
-        } else {
-            rendered.to_string()
-        };
-        normalize_clap_help_fences(&text)
+        normalize_clap_help_fences(&err.render().ansi().to_string())
     } else {
         return String::new();
     };
@@ -418,7 +405,6 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 fn handle_help_description(subcommand: Option<&str>) {
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(ColorChoice::Never);
 
     let Some(subcommand) = subcommand else {
         eprintln!("Usage: wt <command> --help-description");
@@ -491,9 +477,12 @@ Commands with schemas: list"
 ///
 /// This is used to generate docs/content/merge.md etc from the source.
 fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
+    // This page's stdout is a pipe to a generator rather than a tty, so the
+    // mode decides its color.
+    mode.color().write_global();
+
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(ColorChoice::Never);
 
     let Some(subcommand) = subcommand else {
         eprintln!(
@@ -520,21 +509,18 @@ Commands with pages: merge, switch, remove, list"
     };
 
     let main_help = mode.process_body(main_content);
-    let reference_block = help_reference_with_color(&[subcommand], Some(100), mode.color());
+    let reference_block = help_reference(&[subcommand], Some(100));
 
-    // println_verbatim! preserves the ANSI the web mode's reference block
-    // carries — the docs pipeline converts those escapes into HTML spans, and
-    // anstream's println! would strip them off a piped stdout.
     mode.emit_header(subcommand);
-    println_verbatim!("{}", main_help.trim());
-    println_verbatim!();
+    println!("{}", main_help.trim());
+    println!();
 
     // Main command reference immediately after its content
-    println_verbatim!("## Command reference");
-    println_verbatim!();
-    println_verbatim!("```");
-    println_verbatim!("{}", reference_block.trim());
-    println_verbatim!("```");
+    println!("## Command reference");
+    println!();
+    println!("```");
+    println!("{}", reference_block.trim());
+    println!("```");
 
     // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
@@ -543,10 +529,10 @@ Commands with pages: merge, switch, remove, list"
         // inside format_subcommand_section, so re-running would double-convert.
         let subdocs = mode.process_subdoc_trailing(subdocs);
         let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
-        println_verbatim!();
-        println_verbatim!("# Subcommands");
-        println_verbatim!();
-        println_verbatim!("{}", subdocs_expanded.trim());
+        println!();
+        println!("# Subcommands");
+        println!();
+        println!("{}", subdocs_expanded.trim());
     }
 
     mode.emit_footer();
@@ -810,7 +796,7 @@ fn format_subcommand_section(
         .chain(std::iter::once(subcommand_name))
         .collect();
 
-    let reference_block = help_reference_with_color(&command_path, Some(100), mode.color());
+    let reference_block = help_reference(&command_path, Some(100));
 
     // Format the section: heading, badge (outside heading), main content, command reference
     let mut section = format!("## {full_command}\n\n");

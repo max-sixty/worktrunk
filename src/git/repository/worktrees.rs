@@ -8,7 +8,9 @@ use anyhow::Context as _;
 use color_print::cformat;
 use dunce::canonicalize;
 
-use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo, resolve_input_path};
+use super::{
+    GitError, Repository, ResolvedWorktree, WorktreeInfo, is_valid_branch_name, resolve_input_path,
+};
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
@@ -269,6 +271,7 @@ impl Repository {
             "@" => self.current_worktree().branch()?.ok_or_else(|| {
                 GitError::DetachedHead {
                     action: Some("resolve @ to current branch".into()),
+                    worktree: None,
                 }
                 .into()
             }),
@@ -312,6 +315,13 @@ impl Repository {
     /// 4. a path naming a registered worktree — absolute, `~`-relative, or
     ///    relative to `-C` (see [`resolve_input_path`])
     /// 5. otherwise the branch alone, which may or may not exist
+    ///
+    /// A path that named no worktree lands in `BranchOnly` too, since step 5
+    /// asks nothing of the token — as does a shortcut whose expansion matched
+    /// nothing, which never reached step 4 at all. What the selector could have
+    /// meant is worked out where the failure is reported, by
+    /// [`path_selector_error`](Self::path_selector_error); the callers that go
+    /// on to succeed never need the answer.
     ///
     /// # Returns
     /// - `Worktree { path, branch }` — `branch` is `None` for a detached worktree
@@ -375,13 +385,19 @@ impl Repository {
             ResolvedWorktree::Worktree {
                 branch: Some(branch),
                 ..
-            }
-            | ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            } => Ok(branch),
+            // A path selector reaches here only when it named no worktree, and
+            // it can't be the branch the caller is about to key state by.
+            ResolvedWorktree::BranchOnly { branch } => match self.path_selector_error(&branch) {
+                Some(err) => Err(err.into()),
+                None => Ok(branch),
+            },
             ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
                 action: Some(cformat!(
                     "{action} — <bold>{}</> is detached",
                     format_path_for_display(&path)
                 )),
+                worktree: Some(path),
             }
             .into()),
         }
@@ -404,8 +420,79 @@ impl Repository {
         }
     }
 
+    /// The not-found error for a selector naming a directory that holds no
+    /// worktree — the skeleton an interrupted create or remove leaves behind.
+    ///
+    /// Every argument naming a worktree is tried as a branch first and as a
+    /// path second, so each place that reports "no such thing" has to say which
+    /// of the two it was looking for. Answering that takes all four tests
+    /// below, and no three of them are enough:
+    ///
+    /// - Git could never accept the selector as a branch name, so branch-first
+    ///   never had a candidate. Without this, revision syntax reports as a
+    ///   path: `~`, `^`, `:` and `@{` are ordinary vocabulary for naming a
+    ///   commit as well as characters no branch name may hold.
+    /// - A directory is there to name, which is what makes "the user meant a
+    ///   path" more than a guess. Without this, a name shadows a branch:
+    ///   `wt remove docs` means the branch even when `docs/` sits beside it.
+    /// - No worktree of this repository is registered there, which is half of
+    ///   what the error asserts. A detached worktree is reachable by its path
+    ///   and by nothing else, so without this the message contradicts the
+    ///   `wt list` its hint points at. The check is here rather than left to
+    ///   callers because a caller cannot be relied on to have made it:
+    ///   `resolve_worktree` skips the path lookup whenever a shortcut rewrote
+    ///   the argument, so `-` expanding to a worktree's path arrives having
+    ///   matched nothing.
+    /// - Nothing there claims to be a git directory, which is the other half:
+    ///   `list_worktrees` covers only *this* repository, and worktrunk gathers
+    ///   every repo and every worktree into one parent, so a sibling's live
+    ///   checkout is one `../` away from any command. Calling one "not a
+    ///   worktree" reads as an invitation to delete it, and it may hold
+    ///   uncommitted work or the only copy of an object. A skeleton is what an
+    ///   interrupted create or remove leaves, which holds no git data at all
+    ///   (see `holds_git_data`).
+    ///
+    /// `None` when any test fails, leaving the caller's own error in place.
+    ///
+    /// The path is reported as the selector spells it, resolved against `-C`
+    /// but not otherwise tidied. A trailing `/` is the reason: `docs/` and
+    /// `docs` are the same directory but not the same selector — only the
+    /// second finds the branch — and echoing back the spelling that works would
+    /// hide the one character that did not. The cost is that a `-C` base and a
+    /// `./`-prefixed selector join to a visible `/./`.
+    ///
+    /// Both hold on Unix only. Rendering runs through `format_path_for_display`
+    /// and so through `path_slash`'s `to_slash_lossy`, which is
+    /// `to_string_lossy` verbatim there but rebuilds the string from
+    /// `Path::components()` on Windows: a trailing `/` is dropped (only a
+    /// trailing `\`, the platform separator, survives) and an interior `/./`
+    /// collapses. `wt switch docs/` reports `…/docs` there — true of the path,
+    /// and missing the character that explains why the selector found no
+    /// branch.
+    pub fn path_selector_error(&self, selector: &str) -> Option<GitError> {
+        if is_valid_branch_name(selector) {
+            return None;
+        }
+        let path = resolve_input_path(selector);
+        if !path.is_dir() {
+            return None;
+        }
+        // A failed listing says nothing about what is registered, so it counts
+        // against the claim exactly as a match does.
+        if !matches!(self.worktree_at_path(&path), Ok(None)) {
+            return None;
+        }
+        if holds_git_data(&path) {
+            return None;
+        }
+        Some(GitError::WorktreeNotFoundAtPath { path })
+    }
+
     /// The error for a selector that resolved to a branch with no checkout.
     fn no_worktree_error(&self, branch: String) -> anyhow::Error {
+        if let Some(err) = self.path_selector_error(&branch) {
+            return err.into();
+        }
         match self.branch(&branch).exists_locally() {
             Ok(true) => GitError::WorktreeNotFound { branch }.into(),
             // A ref lookup that fails says nothing about the branch, so fall
@@ -442,6 +529,52 @@ impl Repository {
         self.primary_worktree()?
             .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
     }
+}
+
+/// Whether `path` is a directory git would find data in — somebody's checkout
+/// or repository, rather than a leftover skeleton.
+///
+/// Two shapes, because a repository is not always inside a working tree:
+/// a worktree and a non-bare repo carry a `.git` (a file for the first, a
+/// directory for the second), while a bare repo *is* the git directory and so
+/// carries none. The second is the one worth spelling out — under worktrunk's
+/// bare layout the repository sits among the worktrees it serves, one `../`
+/// from any command, and it holds every object.
+///
+/// The bare test is git's own from `is_git_directory()`: `HEAD`, plus `objects`
+/// and `refs` directories. It is deliberately shallow — this decides whether to
+/// *withhold* a claim, so a false positive costs a vaguer message and a false
+/// negative costs a wrong one.
+///
+/// Which is why absence has to be established rather than assumed. `Path::exists`
+/// answers `false` for every error alike, so a `.git` that cannot be statted —
+/// a clone the process may not traverse, a symlink whose target is gone —
+/// would read as "no git data" and the message would tell someone their live
+/// checkout is theirs to delete. Only a definite `NotFound` counts as nothing
+/// being there; anything else keeps the claim withheld.
+///
+/// A `.git` whose pointer dangles counts too, and following it to check would
+/// be the wrong refinement. Two very different directories carry a dangling
+/// `.git`: a `git worktree add` that died after writing it, holding nothing
+/// else; and a worktree a repo-wide prune unregistered while its volume was
+/// unmounted, holding all its files and any uncommitted work (the bystander
+/// case [`Repository::prune_worktree_entry`] documents). The pointer cannot
+/// tell them apart, so resolving it would license "this is a leftover" over the
+/// second.
+fn holds_git_data(path: &Path) -> bool {
+    // `symlink_metadata` reports on the entry itself, so a symlink counts even
+    // when its target is gone, and it surfaces a traversal error instead of
+    // swallowing it.
+    let no_git_entry = matches!(
+        std::fs::symlink_metadata(path.join(".git")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    );
+    if !no_git_entry {
+        return true;
+    }
+    // Reached only when that probe succeeded in saying "nothing there", so the
+    // directory is readable and the bare shape can be read plainly.
+    path.join("HEAD").exists() && path.join("objects").is_dir() && path.join("refs").is_dir()
 }
 
 /// Paths of every worktree checked out on `branch`, in git's listing order.

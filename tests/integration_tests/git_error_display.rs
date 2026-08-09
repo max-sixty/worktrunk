@@ -94,6 +94,13 @@ fn worktree_errors_render() {
             .render(),
         ),
         (
+            "no worktree at a leftover directory",
+            GitError::WorktreeNotFoundAtPath {
+                path: PathBuf::from("/tmp/repo/.claude/worktrees/ghost"),
+            }
+            .render(),
+        ),
+        (
             "branch not found",
             GitError::BranchNotFound {
                 branch: "nonexistent".into(),
@@ -187,12 +194,27 @@ fn git_state_errors_render() {
             "detached HEAD while merging",
             GitError::DetachedHead {
                 action: Some("merge".into()),
+                worktree: None,
             }
             .render(),
         ),
         (
             "detached HEAD without action",
-            GitError::DetachedHead { action: None }.render(),
+            GitError::DetachedHead {
+                action: None,
+                worktree: None,
+            }
+            .render(),
+        ),
+        (
+            // The detached worktree is the target the user named, not the one
+            // they are standing in, so the hint has to say where to switch.
+            "detached HEAD in a named target worktree",
+            GitError::DetachedHead {
+                action: Some("use /tmp/repo.other as a target".into()),
+                worktree: Some(PathBuf::from("/tmp/repo.other")),
+            }
+            .render(),
         ),
         (
             "rebase in progress",

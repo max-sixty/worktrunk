@@ -126,7 +126,19 @@ fn validate_remove_targets(
                 // otherwise (see its shared-branch handling).
                 RemoveTarget::WorktreePath(path_canonical)
             }
-            ResolvedWorktree::BranchOnly { branch } => RemoveTarget::BranchOnly(branch),
+            // Resolution tried the argument as a branch and as a worktree path
+            // and matched neither, so a directory sitting there is a leftover
+            // skeleton rather than anything wt can remove. Reported here, where
+            // the user's own token is still in hand — the picker and `wt step
+            // prune` reach `prepare_worktree_removal` with a branch read off a
+            // row, which is nobody's typed path.
+            ResolvedWorktree::BranchOnly { branch } => match repo.path_selector_error(&branch) {
+                Some(err) => {
+                    plans.record_error(err.into());
+                    continue;
+                }
+                None => RemoveTarget::BranchOnly(branch),
+            },
         };
 
         match repo.prepare_worktree_removal(

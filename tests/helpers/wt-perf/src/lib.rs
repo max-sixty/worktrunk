@@ -11,8 +11,8 @@
 //! ```rust,ignore
 //! use wt_perf::{FixtureRecipe, invalidate_caches_auto};
 //!
-//! // Create a typical repo with 8 total worktrees.
-//! let fixture = FixtureRecipe::Typical { total_worktrees: 8 }.create();
+//! // Create the generated repo with 8 total worktrees.
+//! let fixture = FixtureRecipe::generated(7).create();
 //!
 //! // Invalidate caches for cold benchmark
 //! invalidate_caches_auto(fixture.path());
@@ -28,21 +28,20 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 use worktrunk::testing::{allow_network_transports, configure_git_cmd, isolate_subprocess_env};
 
-mod large_repository_fixture {
+mod imported_fixture {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../benches/large-repository-fixture"
+        "/../../../benches/imported-fixture"
     ));
 }
-use large_repository_fixture::{
-    CORPUS as LARGE_REPOSITORY_CORPUS, REVISION as LARGE_REPOSITORY_REVISION,
-};
-/// Worktrees in the canonical read-only large-repository fixture, including
+use imported_fixture::{CORPUS as IMPORTED_CORPUS, REVISION as IMPORTED_REVISION};
+/// Worktrees in the canonical imported fixture, including
 /// the primary worktree.
-const LARGE_REPOSITORY_TOTAL_WORKTREES: usize = 8;
-/// Branches in the canonical read-only large-repository fixture, spread over
+const IMPORTED_TOTAL_WORKTREES: usize = 8;
+/// Branches in the canonical imported fixture, spread over
 /// the most recent 5,000 commits.
-const LARGE_REPOSITORY_HISTORY_SPREAD_BRANCHES: usize = 50;
+const IMPORTED_HISTORY_SPREAD_BRANCHES: usize = 50;
+const GENERATED_DEFAULT_BRANCHES: usize = 50;
 
 /// An owned temporary benchmark fixture.
 ///
@@ -113,21 +112,16 @@ pub fn linked_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
         .join(format!("{repo_name}.{branch}"))
 }
 
-/// Low-level parameters for the flat synthetic repository builder.
+/// Low-level parameters for the simple generated repository builder.
 ///
-/// Benchmark callers name a [`FixtureRecipe`]. Keeping this type private
-/// prevents arbitrary parameter combinations from becoming an accidental
-/// second fixture catalog.
-#[derive(Clone, Debug)]
-struct FlatRepoConfig {
+/// Unit tests use this private builder for focused repository states without
+/// adding them to the benchmark fixture catalog.
+#[cfg(test)]
+struct SimpleRepoConfig {
     /// Number of commits on main branch
     commits_on_main: usize,
     /// Number of files in the repo
     files: usize,
-    /// Number of branches (without worktrees)
-    branchless_branches: usize,
-    /// Commits per branch
-    commits_per_branch: usize,
     /// Number of worktrees (including main)
     total_worktrees: usize,
     /// Commits ahead of main per worktree
@@ -136,118 +130,45 @@ struct FlatRepoConfig {
     worktree_uncommitted_files: usize,
 }
 
-impl FlatRepoConfig {
-    /// Typical repo with worktrees (500 commits, 100 files).
-    ///
-    /// Good for skeleton rendering and general worktree benchmarks.
-    const fn typical(total_worktrees: usize) -> Self {
-        Self {
-            commits_on_main: 500,
-            files: 100,
-            branchless_branches: 0,
-            commits_per_branch: 0,
-            total_worktrees,
-            worktree_commits_ahead: 10,
-            worktree_uncommitted_files: 3,
-        }
-    }
-
-    /// Branch-focused config (minimal history, many branches).
-    const fn minimal(
-        branchless_branches: usize,
-        linked_worktrees: usize,
-        commits_per_branch: usize,
-    ) -> Self {
-        Self {
-            commits_on_main: 1,
-            files: 1,
-            branchless_branches,
-            commits_per_branch,
-            total_worktrees: linked_worktrees + 1,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
-        }
-    }
-
-    /// Many divergent branches (GH #461 scenario: 200 branches × 20 commits).
-    const fn synthetic_divergence() -> Self {
-        Self {
-            commits_on_main: 100,
-            files: 50,
-            branchless_branches: 200,
-            commits_per_branch: 20,
-            total_worktrees: 1,
-            worktree_commits_ahead: 0,
-            worktree_uncommitted_files: 0,
-        }
-    }
-}
-
 /// The benchmark fixture catalog.
 ///
-/// Variants are sparse, named repository states rather than combinations of
-/// independent base, shape, and storage axes. Large-corpus recipes reuse the
-/// same pinned source while every mutable fixture remains caller-owned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Subcommand)]
+/// Variants name corpus provenance. Both build ordinary Git repositories;
+/// worktree, branch, and remote-ref counts are population dimensions within a
+/// base, and prune candidates are added afterward.
+#[derive(Clone, Copy, Subcommand)]
 pub enum FixtureRecipe {
-    /// Standard synthetic history, files, and feature worktrees.
-    Typical {
-        /// Total worktrees, including the primary worktree.
-        #[arg(value_parser = positive_usize)]
-        total_worktrees: usize,
-    },
-    /// Minimal history and files with configurable branch/worktree populations.
-    Minimal {
-        /// Branches without linked worktrees.
-        branchless_branches: usize,
+    /// Locally generated corpus with heterogeneous branch and worktree state.
+    Generated {
         /// Linked worktrees, excluding the primary worktree.
-        linked_worktrees: usize,
-    },
-    /// Fixed deep-divergence branch stress.
-    SyntheticDivergence,
-    /// Pinned large corpus with worktrees and branches spread across history.
-    LargeRepository,
-    /// Varied branch and worktree state rotation.
-    Mixed {
-        /// Linked worktrees, excluding the primary worktree.
+        #[arg(default_value_t = 7)]
         linked_worktrees: usize,
         /// Branches without linked worktrees.
+        #[arg(default_value_t = GENERATED_DEFAULT_BRANCHES)]
         branchless_branches: usize,
         /// Additional remote-tracking refs.
         #[arg(default_value_t = 0)]
         remote_tracking_refs: usize,
     },
-    /// Prune candidates and the unintegrated scan backdrop.
-    Prune {
-        /// Squash-merged worktree/branch pairs.
-        candidate_pairs: usize,
-        /// Unintegrated worktree/branch pairs.
-        backdrop_pairs: usize,
-    },
-    /// Pinned large corpus with prune candidates and an unintegrated backdrop.
-    LargeRepositoryPrune {
-        /// Squash-merged worktree/branch pairs.
-        candidate_pairs: usize,
-        /// Unintegrated worktree/branch pairs.
-        backdrop_pairs: usize,
-    },
-}
-
-fn positive_usize(value: &str) -> Result<usize, String> {
-    let value = value
-        .parse::<usize>()
-        .map_err(|_| "expected a positive integer".to_string())?;
-    (value >= 1)
-        .then_some(value)
-        .ok_or_else(|| "expected a positive integer".to_string())
+    /// Pinned rust-lang/rust corpus with heterogeneous history-spread state.
+    Imported,
 }
 
 impl FixtureRecipe {
+    /// The standard generated state: history-spread branches remain constant
+    /// while a benchmark varies only the linked-worktree population.
+    pub const fn generated(linked_worktrees: usize) -> Self {
+        Self::Generated {
+            linked_worktrees,
+            branchless_branches: GENERATED_DEFAULT_BRANCHES,
+            remote_tracking_refs: 0,
+        }
+    }
+
     /// Build an owned ephemeral fixture.
     pub fn create(self) -> FixtureRepo {
         let build = |repo: &Path| self.create_at(repo);
-        if matches!(self, Self::LargeRepositoryPrune { .. }) {
-            FixtureRepo::create_in(&large_repository_cache_dir().join("runs"), build)
+        if matches!(self, Self::Imported) {
+            FixtureRepo::create_in(&imported_cache_dir().join("runs"), build)
         } else {
             FixtureRepo::create(build)
         }
@@ -256,63 +177,54 @@ impl FixtureRecipe {
     /// Build an ephemeral fixture at a caller-chosen primary-worktree path.
     pub fn create_at(self, base_path: &Path) {
         match self {
-            Self::Typical { total_worktrees } => {
-                assert!(total_worktrees >= 1, "a fixture has a primary worktree");
-                build_flat_repo_at(&FlatRepoConfig::typical(total_worktrees), base_path);
-            }
-            Self::Minimal {
-                branchless_branches,
-                linked_worktrees,
-            } => {
-                build_flat_repo_at(
-                    &FlatRepoConfig::minimal(branchless_branches, linked_worktrees, 0),
-                    base_path,
-                );
-            }
-            Self::SyntheticDivergence => {
-                let config = FlatRepoConfig::synthetic_divergence();
-                build_flat_repo_at(&config, base_path);
-            }
-            Self::LargeRepository => {
-                clone_large_repository_at(base_path);
-                add_history_spread_branches(base_path, LARGE_REPOSITORY_HISTORY_SPREAD_BRANCHES);
-                add_typical_linked_worktrees(base_path, LARGE_REPOSITORY_TOTAL_WORKTREES - 1);
-            }
-            Self::Mixed {
+            Self::Generated {
                 linked_worktrees,
                 branchless_branches,
                 remote_tracking_refs,
             } => {
-                build_mixed_repo_at(
+                build_generated_repo_at(
                     linked_worktrees,
                     branchless_branches,
                     remote_tracking_refs,
                     base_path,
                 );
             }
-            Self::Prune {
-                candidate_pairs,
-                backdrop_pairs,
-            } => {
-                build_prune_repo_at(candidate_pairs, backdrop_pairs, base_path);
-            }
-            Self::LargeRepositoryPrune {
-                candidate_pairs,
-                backdrop_pairs,
-            } => {
-                clone_large_repository_at(base_path);
-                add_prune_populations(base_path, candidate_pairs, backdrop_pairs);
+            Self::Imported => {
+                clone_imported_at(base_path);
+                add_history_spread_branches(base_path, IMPORTED_HISTORY_SPREAD_BRANCHES);
+                add_imported_linked_worktrees(base_path, IMPORTED_TOTAL_WORKTREES - 1);
             }
         }
     }
 }
 
-/// Add the standard linked-worktree population to an existing typical fixture.
+/// Add the canonical heterogeneous linked-worktree rotation.
 ///
 /// Destructive benchmarks use this after committing scenario-specific
 /// configuration on the primary worktree but before recording a candidate.
-pub fn add_typical_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
-    add_flat_worktrees(&FlatRepoConfig::typical(linked_worktrees + 1), repo_path);
+pub fn add_heterogeneous_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
+    let base_tip = head_sha(repo_path);
+    add_heterogeneous_worktrees(repo_path, linked_worktrees, &base_tip);
+}
+
+/// Add the heterogeneous imported worktree population without leaving a clean
+/// worktree integrated into the default branch. The generated corpus retains
+/// that state; the imported prune overlay needs its candidate count exact, so
+/// the clean base-tip worktrees get a commit of their own. The dirty base-tip
+/// states stay integrated by ref and are excluded from the count only because
+/// `wt step prune` skips worktrees with working-tree changes.
+fn add_imported_linked_worktrees(repo_path: &Path, linked_worktrees: usize) {
+    add_heterogeneous_linked_worktrees(repo_path, linked_worktrees);
+    for i in (3..linked_worktrees).step_by(4) {
+        let worktree = linked_worktree_path(repo_path, &format!("wt-{i:04}"));
+        let marker = format!("imported_wt_{i}.txt");
+        std::fs::write(worktree.join(&marker), format!("imported worktree {i}\n")).unwrap();
+        run_git(&worktree, &["add", &marker]);
+        run_git(
+            &worktree,
+            &["commit", "-m", &format!("Advance imported worktree {i}")],
+        );
+    }
 }
 
 /// Build a `git` command isolated from host context, with the host's
@@ -515,7 +427,8 @@ fn git_stdout(path: &Path, args: &[&str], index_file: &Path) -> String {
 /// Uses worktrunk naming convention:
 /// - Main worktree: `base_path`
 /// - Feature worktrees: `base_path.feature-wt-N` (siblings in parent directory)
-fn build_flat_repo_at(config: &FlatRepoConfig, base_path: &Path) {
+#[cfg(test)]
+fn build_simple_repo_at(config: &SimpleRepoConfig, base_path: &Path) {
     let repo_path = base_path.to_path_buf();
     init_bench_repo(&repo_path);
 
@@ -554,34 +467,7 @@ fn build_flat_repo_at(config: &FlatRepoConfig, base_path: &Path) {
         run_git(&repo_path, &["commit", "-m", &format!("Commit {i}")]);
     }
 
-    // Create branches (without worktrees)
-    for i in 0..config.branchless_branches {
-        let branch_name = format!("feature-{i:03}");
-        run_git(&repo_path, &["checkout", "-b", &branch_name, "main"]);
-
-        for j in 0..config.commits_per_branch {
-            let feature_file = repo_path.join(format!("feature_{i:03}_{j}.rs"));
-            std::fs::write(
-                &feature_file,
-                format!(
-                    "// Feature {i} file {j}\npub fn feature_{i}_func_{j}() -> i32 {{ {} }}\n",
-                    i * 100 + j
-                ),
-            )
-            .unwrap();
-            run_git(&repo_path, &["add", "."]);
-            run_git(
-                &repo_path,
-                &["commit", "-m", &format!("Feature {branch_name} commit {j}")],
-            );
-        }
-    }
-
-    if config.branchless_branches > 0 {
-        run_git(&repo_path, &["checkout", "main"]);
-    }
-
-    add_flat_worktrees(config, &repo_path);
+    add_simple_worktrees(config, &repo_path);
 
     // Set up fake remote for default branch detection
     setup_fake_remote(&repo_path);
@@ -600,7 +486,8 @@ fn build_flat_repo_at(config: &FlatRepoConfig, base_path: &Path) {
 /// Creates `config.total_worktrees - 1` linked worktrees as siblings of `repo_path`
 /// (e.g., `repo.feature-wt-1`), each with diverging commits and uncommitted files
 /// controlled by `config.worktree_commits_ahead` and `config.worktree_uncommitted_files`.
-fn add_flat_worktrees(config: &FlatRepoConfig, repo_path: &Path) {
+#[cfg(test)]
+fn add_simple_worktrees(config: &SimpleRepoConfig, repo_path: &Path) {
     for wt_num in 1..config.total_worktrees {
         let branch = format!("feature-wt-{wt_num}");
         let wt_path = linked_worktree_path(repo_path, &branch);
@@ -650,7 +537,7 @@ fn add_flat_worktrees(config: &FlatRepoConfig, repo_path: &Path) {
 /// than all pointing at `HEAD`, which would leave `%(committerdate)` re-reading
 /// one object and understate the scan. It does not reach one object per ref:
 /// the round-robin can only spread over the history it has, so at
-/// the mixed recipe's 200 commits, a four-digit ref count lands ~7 refs on
+/// the generated recipe's 200 commits, a four-digit ref count lands ~7 refs on
 /// each of ~200 distinct commits. Git parses a given object once and reuses it
 /// for the rest of the `for-each-ref`, so the scan pays ~200 parses plus a
 /// cheap iteration hit per ref, where a real long-lived clone — whose remote
@@ -757,7 +644,7 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     remove_file_if_exists(&git_dir.join("objects/info/commit-graph"));
     remove_dir_if_exists(&git_dir.join("objects/info/commit-graphs"));
 
-    // Note: `packed-refs` is intentionally NOT removed. After `build_flat_repo_at`
+    // Note: `packed-refs` is intentionally NOT removed. After fixture setup
     // runs an explicit `git gc`, every loose ref under `refs/heads/`,
     // `refs/remotes/`, etc. is packed into `packed-refs` and the loose files
     // are pruned. Deleting `packed-refs` in that state leaves the repo with
@@ -870,10 +757,10 @@ fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
 ///
 /// Living under `target/` means `cargo clean` reaps every fixture and each git
 /// worktree keeps its own copy (worktrees don't share `target/`). That is cheap
-/// for the synthetic `setup` fixtures — rebuilt in seconds — but a deliberate
-/// cost for the ~15 GiB large-repository fixture under `bench-repos/`, which then re-clones
-/// per worktree and after every `cargo clean`. Relocate it with cargo's own
-/// `CARGO_TARGET_DIR` if that cost bites.
+/// for the generated `setup` fixtures — rebuilt in seconds — but a deliberate
+/// cost for the multi-gigabyte imported fixture under `bench-repos/`, which
+/// then re-clones per worktree and after every `cargo clean`. Relocate it with
+/// cargo's own `CARGO_TARGET_DIR` if that cost bites.
 pub fn wt_perf_fixture_dir() -> PathBuf {
     cargo_target_dir().join("wt-perf")
 }
@@ -917,10 +804,8 @@ fn target_dir_from_exe(exe: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-fn large_repository_cache_dir() -> PathBuf {
-    wt_perf_fixture_dir()
-        .join("bench-repos")
-        .join("large-repository")
+fn imported_cache_dir() -> PathBuf {
+    wt_perf_fixture_dir().join("bench-repos").join("imported")
 }
 
 fn acquire_exclusive_lock(path: &Path) -> File {
@@ -977,44 +862,41 @@ fn repository_is_on_main(repo: &Path) -> bool {
     output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "main"
 }
 
-fn large_repository_source_matches(repo: &Path) -> bool {
+fn imported_source_matches(repo: &Path) -> bool {
     path_exists(repo)
-        && repository_head(repo).as_deref() == Some(LARGE_REPOSITORY_REVISION)
+        && repository_head(repo).as_deref() == Some(IMPORTED_REVISION)
         && repository_is_on_main(repo)
         && run_git_ok(repo, &["fsck", "--connectivity-only", "--no-dangling"])
 }
 
-/// Get or build the immutable source for large-repository benchmarks.
+/// Get or build the immutable source for imported benchmarks.
 ///
 /// The revision is part of the cache path. Construction happens in a temporary
 /// sibling and is atomically renamed into place after validation, so an
 /// interrupted clone never looks like a usable cache entry.
-fn ensure_large_repository_source() -> PathBuf {
-    let cache_dir = large_repository_cache_dir();
-    let source = cache_dir.join(format!("source-{LARGE_REPOSITORY_REVISION}"));
-    let staged_source = cache_dir.join(format!("source-{LARGE_REPOSITORY_REVISION}.building"));
+fn ensure_imported_source() -> PathBuf {
+    let cache_dir = imported_cache_dir();
+    let source = cache_dir.join(format!("source-{IMPORTED_REVISION}"));
+    let staged_source = cache_dir.join(format!("source-{IMPORTED_REVISION}.building"));
     let _build_lock =
-        acquire_exclusive_lock(&cache_dir.join(format!("source-{LARGE_REPOSITORY_REVISION}.lock")));
+        acquire_exclusive_lock(&cache_dir.join(format!("source-{IMPORTED_REVISION}.lock")));
     if path_exists(&staged_source) {
         remove_dir_if_exists(&staged_source);
     }
 
-    if large_repository_source_matches(&source) {
-        eprintln!(
-            "Using cached large-repository source at {}",
-            source.display()
-        );
+    if imported_source_matches(&source) {
+        eprintln!("Using cached imported source at {}", source.display());
         return source;
     }
     if path_exists(&source) {
-        eprintln!("Cached large-repository source is invalid; rebuilding");
+        eprintln!("Cached imported source is invalid; rebuilding");
         remove_dir_if_exists(&source);
     }
 
-    let url = format!("https://github.com/{LARGE_REPOSITORY_CORPUS}.git");
+    let url = format!("https://github.com/{IMPORTED_CORPUS}.git");
     eprintln!(
         "Cloning {} at {} (this will take several minutes)...",
-        LARGE_REPOSITORY_CORPUS, LARGE_REPOSITORY_REVISION
+        IMPORTED_CORPUS, IMPORTED_REVISION
     );
     let mut clone = git_command();
     allow_network_transports(&mut clone);
@@ -1022,40 +904,34 @@ fn ensure_large_repository_source() -> PathBuf {
         .args(["clone", "--no-checkout", &url])
         .arg(&staged_source)
         .output()
-        .unwrap_or_else(|error| panic!("failed to spawn large-repository clone: {error}"));
+        .unwrap_or_else(|error| panic!("failed to spawn imported clone: {error}"));
     assert!(
         output.status.success(),
         "failed to clone {}:\n{}",
-        LARGE_REPOSITORY_CORPUS,
+        IMPORTED_CORPUS,
         String::from_utf8_lossy(&output.stderr)
     );
-    run_git(
-        &staged_source,
-        &["checkout", "--detach", LARGE_REPOSITORY_REVISION],
-    );
-    run_git(
-        &staged_source,
-        &["branch", "-f", "main", LARGE_REPOSITORY_REVISION],
-    );
+    run_git(&staged_source, &["checkout", "--detach", IMPORTED_REVISION]);
+    run_git(&staged_source, &["branch", "-f", "main", IMPORTED_REVISION]);
     run_git(&staged_source, &["checkout", "main"]);
     assert!(
-        large_repository_source_matches(&staged_source),
-        "large-repository source failed validation after checkout"
+        imported_source_matches(&staged_source),
+        "imported source failed validation after checkout"
     );
     std::fs::rename(&staged_source, &source).unwrap_or_else(|error| {
         panic!(
-            "failed to publish large-repository source {}: {error}",
+            "failed to publish imported source {}: {error}",
             source.display()
         )
     });
-    eprintln!("Large-repository source cloned successfully");
+    eprintln!("Imported source cloned successfully");
     source
 }
 
-/// Local-clone the pinned large-repository source to `dest` and configure a
+/// Local-clone the pinned imported source to `dest` and configure a
 /// git user for fixture commits.
-fn clone_large_repository_at(dest: &Path) {
-    let source = ensure_large_repository_source();
+fn clone_imported_at(dest: &Path) {
+    let source = ensure_imported_source();
     let clone_output = git_command()
         .args([
             "clone",
@@ -1070,19 +946,19 @@ fn clone_large_repository_at(dest: &Path) {
         .unwrap();
     assert!(
         clone_output.status.success(),
-        "Failed to local-clone large-repository source: {}",
+        "Failed to local-clone imported source: {}",
         String::from_utf8_lossy(&clone_output.stderr)
     );
     run_git(dest, &["config", "user.name", "Benchmark"]);
     run_git(dest, &["config", "user.email", "bench@test.com"]);
     assert_eq!(
         repository_head(dest).as_deref(),
-        Some(LARGE_REPOSITORY_REVISION),
-        "large-repository clone did not retain the pinned revision"
+        Some(IMPORTED_REVISION),
+        "imported clone did not retain the pinned revision"
     );
     assert!(
         repository_is_on_main(dest),
-        "large-repository clone must check out the pinned main branch"
+        "imported clone must check out the pinned main branch"
     );
 }
 
@@ -1101,7 +977,7 @@ fn history_spread_shas(repo_path: &Path, count: usize) -> Vec<String> {
         .unwrap();
     let log_str = String::from_utf8_lossy(&log_output.stdout);
     // Step over the log we actually got, not the 5000 cap: on a short history
-    // (the synthetic fixtures have a few hundred commits) dividing by the cap
+    // (the generated fixtures have a few hundred commits) dividing by the cap
     // floors every sample onto the tip, collapsing the spread to one SHA.
     // Guard the degenerate inputs: `count == 0` would divide by zero, and
     // `count > len` would yield `step == 0`, which panics `step_by`. Both
@@ -1173,9 +1049,11 @@ fn add_branch_with_commits(repo_path: &Path, branch: &str, fork: &str, commits: 
 /// Create branches pointing at different depths in the repo's commit history.
 ///
 /// Samples `count` commits via `history_spread_shas` and creates
-/// `feature-NNN` branches pointing at them. None carries its own commits, so
-/// every branch is an ancestor of the tip — behind it, except `feature-000`:
-/// the newest sample is the tip itself, so that one sits exactly on it.
+/// `feature-NNN` branches with one commit on top. Older samples are genuinely
+/// two-sided diverged from the default branch; `feature-000` is ahead from the
+/// current tip. If a later overlay advances the default branch, it becomes
+/// diverged too. This keeps the imported branches from turning into
+/// incidental prune candidates.
 fn add_history_spread_branches(repo_path: &Path, branchless_branches: usize) {
     let commits = history_spread_shas(repo_path, branchless_branches);
     assert_eq!(
@@ -1184,12 +1062,12 @@ fn add_history_spread_branches(repo_path: &Path, branchless_branches: usize) {
         "history-spread fixture needs at least {branchless_branches} commits"
     );
     for (i, commit) in commits.iter().enumerate() {
-        add_branch_with_commits(repo_path, &format!("feature-{i:03}"), commit, 0);
+        add_branch_with_commits(repo_path, &format!("feature-{i:03}"), commit, 1);
     }
 }
 
-/// Add two-sided-diverged linked worktrees (`feature-wt-N`) and branchless
-/// branches (`feature-NNN`) to an existing repo.
+/// Add two-sided-diverged linked worktrees (`unmerged-wt-N`) and branchless
+/// branches (`unmerged-br-NNN`) to an existing repo.
 ///
 /// Each forks at a `history_spread_shas` point and carries its own commits on
 /// top. That is the shape of real long-lived feature work: `git merge-base`
@@ -1220,14 +1098,14 @@ fn add_diverged_backdrop(repo_path: &Path, linked_worktrees: usize, branchless_b
     for i in 0..branchless_branches {
         add_branch_with_commits(
             repo_path,
-            &format!("feature-{i:03}"),
+            &format!("unmerged-br-{i:03}"),
             &forks[i % forks.len()],
             3,
         );
     }
 
     for i in 0..linked_worktrees {
-        let wt_branch = format!("feature-wt-{i}");
+        let wt_branch = format!("unmerged-wt-{i}");
         let wt_path = linked_worktree_path(repo_path, &wt_branch);
         run_git(
             repo_path,
@@ -1264,7 +1142,7 @@ fn head_sha(path: &Path) -> String {
 }
 
 /// Append a line to a tracked file (creating it if missing). Used to make
-/// working-tree edits in the mixed-state fixture.
+/// working-tree edits in the generated fixture.
 fn append_line(path: &Path, rel: &str, line: &str) {
     let file = path.join(rel);
     let mut content = std::fs::read_to_string(&file).unwrap_or_default();
@@ -1273,17 +1151,15 @@ fn append_line(path: &Path, rel: &str, line: &str) {
     std::fs::write(&file, content).unwrap();
 }
 
-/// Create a repo with linked worktrees, branchless branches, and optional
-/// remote-tracking refs for the `full` list and shell-completion benchmarks.
+/// Create the generated corpus with controlled worktree, branch, and
+/// remote-ref populations.
 ///
-/// Unlike the flat recipes (every worktree/branch identical), this exercises the
-/// full spread of `wt list` gates and tasks at once — clean vs dirty working
-/// trees, merged vs ahead vs diverged branches, *and* divergence spread across
-/// history depth — the realistic shape of "a huge number of worktrees &
-/// branches, all in various states". Returns an owned fixture; the main
+/// This corpus exercises the full spread of `wt list` gates and tasks at once:
+/// clean vs dirty working trees, merged vs ahead vs
+/// diverged branches, and divergence spread across history depth. It models
+/// many worktrees and branches in varied states. The main
 /// worktree is available through [`FixtureRepo::path`], and linked worktrees
-/// through [`FixtureRepo::worktree_path`]. Either dimension may be `0` (e.g.
-/// `mixed-W-0` for a worktrees-only repo).
+/// through [`FixtureRepo::worktree_path`]. Either dimension may be zero.
 ///
 /// Worktree states cycle by index % 4:
 /// 0. clean, several commits ahead of base
@@ -1301,7 +1177,7 @@ fn append_line(path: &Path, rel: &str, line: &str) {
 /// 2. diverged: a short own-commit chain forked from an older checkpoint
 ///    while base advanced (deep two-sided divergence)
 /// 3. identical to the base tip (trees match — squash-merge shape)
-fn build_mixed_repo_at(
+fn build_generated_repo_at(
     linked_worktrees: usize,
     branchless_branches: usize,
     remote_tracking_refs: usize,
@@ -1309,9 +1185,7 @@ fn build_mixed_repo_at(
 ) {
     const FILES: usize = 50;
     // Deep enough that fork points spread across history give the
-    // `%(ahead-behind)` walk real commits to traverse (GH #461 shape), while
-    // staying far cheaper to build than the dedicated `divergent` stress
-    // (`FixtureRecipe::SyntheticDivergence`, 200 branches × 20 commits).
+    // `%(ahead-behind)` walk real commits to traverse (GH #461 shape).
     const BASE_COMMITS: usize = 200;
     // Record a checkpoint every few commits so behind/diverged branches fork
     // at many distinct depths rather than a handful of fixed points.
@@ -1378,14 +1252,19 @@ fn build_mixed_repo_at(
     add_remote_tracking_refs(remote_tracking_refs, &repo);
     run_git(&repo, &["gc", "-q"]);
 
+    add_heterogeneous_worktrees(&repo, linked_worktrees, &base_tip);
+}
+
+/// Add linked worktrees in the canonical four-state rotation.
+fn add_heterogeneous_worktrees(repo: &Path, linked_worktrees: usize, base_tip: &str) {
     // Linked worktrees are siblings named `<repo-dir>.<branch>` (worktrunk
     // convention), derived from the repo's own directory name so the path is
     // correct whether the repo is the tempdir's `repo` or a custom `setup` path.
     for j in 0..linked_worktrees {
         let branch = format!("wt-{j:04}");
-        let wt = linked_worktree_path(&repo, &branch);
+        let wt = linked_worktree_path(repo, &branch);
         run_git(
-            &repo,
+            repo,
             &[
                 "worktree",
                 "add",
@@ -1393,7 +1272,7 @@ fn build_mixed_repo_at(
                 "-b",
                 &branch,
                 wt.to_str().unwrap(),
-                &base_tip,
+                base_tip,
             ],
         );
         match j % 4 {
@@ -1417,42 +1296,6 @@ fn build_mixed_repo_at(
     }
 }
 
-/// Create a repo shaped like a `wt step prune` workload at `base_path`.
-///
-/// `wt step prune` integration-checks every linked worktree and local branch,
-/// then removes the integrated ones. Two populations drive its cost:
-///
-/// - **Candidates** (`candidate_pairs`): squash-merged worktrees
-///   (`merged-wt-N`) and squash-merged orphan branches (`merged-br-N`). Each
-///   carries its own commits whose content also landed on main as a single
-///   squash commit, so it is integrated *by content* (the `merge-tree` probes),
-///   not by ancestry — the post-PR-squash shape prune typically removes.
-/// - **Backdrop** (`backdrop_pairs`): two-sided-diverged linked worktrees
-///   and orphan branches (`add_diverged_backdrop` — forked at points spread
-///   across history, with their own commits, while main advanced past them).
-///   Scanned on every run, never removed — the steady state that dominates
-///   scan cost, and the shape where merge-base walks and merge-tree
-///   three-ways do real work rather than short-circuiting at the tip.
-///
-/// The main history is mature (200 commits, 100 files) so `git status` and the
-/// integration probes pay realistic per-worktree costs.
-fn build_prune_repo_at(candidate_pairs: usize, backdrop_pairs: usize, base_path: &Path) {
-    let config = FlatRepoConfig {
-        commits_on_main: 200,
-        files: 100,
-        branchless_branches: 0,
-        commits_per_branch: 0,
-        total_worktrees: 1,
-        worktree_commits_ahead: 0,
-        worktree_uncommitted_files: 0,
-    };
-    build_flat_repo_at(&config, base_path);
-    add_prune_populations(base_path, candidate_pairs, backdrop_pairs);
-    // The squash commits advanced main past the fake remote ref written by
-    // `build_flat_repo_at`; refresh so origin/main tracks the final tip.
-    setup_fake_remote(base_path);
-}
-
 /// Add `count` squash-merged worktrees (`merged-wt-N`) and `count`
 /// squash-merged orphan branches (`merged-br-N`) to an existing repo.
 ///
@@ -1461,7 +1304,7 @@ fn build_prune_repo_at(candidate_pairs: usize, backdrop_pairs: usize, base_path:
 /// `git merge --squash` commit — integrated by content, so `wt step prune`
 /// detects it via the merge-tree probes and removes it.
 ///
-pub fn add_squash_merged(repo_path: &Path, count: usize) {
+fn add_squash_merged(repo_path: &Path, count: usize) {
     let default_branch = capture_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
 
     // Two commits in `dir`, each adding a branch-uniquified file. The add is
@@ -1520,20 +1363,20 @@ pub fn add_squash_merged(repo_path: &Path, count: usize) {
 /// — the backdrop prune scans every run but never removes) and `candidate_pairs`
 /// squash-merged candidate pairs (`add_squash_merged` — what prune removes).
 ///
-/// The base repo is the only thing the synthetic and large-repository prune
-/// recipes differ in. Both layer these populations on top.
-fn add_prune_populations(base_path: &Path, candidate_pairs: usize, backdrop_pairs: usize) {
+/// The corpus remains one of the two canonical bases; prune is an overlay.
+pub fn add_prune_populations(base_path: &Path, candidate_pairs: usize, backdrop_pairs: usize) {
     add_diverged_backdrop(base_path, backdrop_pairs, backdrop_pairs);
     add_squash_merged(base_path, candidate_pairs);
+    // Candidate squash commits advance the default branch. Keep the fake
+    // remote aligned so default-branch discovery sees the final state.
+    setup_fake_remote(base_path);
 }
 
-/// Default populations for the large-repository prune fixture:
+/// Default populations for the imported prune overlay:
 /// 12 squash-merged candidates of each kind + 24 unmerged worktrees and
-/// branches → 36 linked worktrees, and a live prune that removes 24
-/// candidates while keeping 72 unmerged items — the "dozens of worktrees,
-/// lots removed, lots kept" shape where prune takes multiple seconds.
-pub const PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS: usize = 12;
-pub const PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS: usize = 24;
+/// branches layered onto the canonical imported state.
+pub const IMPORTED_PRUNE_CANDIDATE_PAIRS: usize = 12;
+pub const IMPORTED_PRUNE_BACKDROP_PAIRS: usize = 24;
 
 /// Canonicalize path without Windows `\\?\` prefix.
 pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
@@ -1544,8 +1387,8 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 mod tests {
     use super::*;
 
-    fn create_flat(config: &FlatRepoConfig) -> FixtureRepo {
-        FixtureRepo::create(|repo| build_flat_repo_at(config, repo))
+    fn create_simple(config: &SimpleRepoConfig) -> FixtureRepo {
+        FixtureRepo::create(|repo| build_simple_repo_at(config, repo))
     }
 
     /// Sorted `git status --porcelain` lines for a worktree.
@@ -1625,17 +1468,17 @@ mod tests {
     }
 
     #[test]
-    fn large_repository_source_rejects_a_missing_pinned_commit_object() {
+    fn imported_source_rejects_a_missing_pinned_commit_object() {
         let temp = tempfile::tempdir().unwrap();
         init_bench_repo(temp.path());
         std::fs::write(
             temp.path().join(".git/refs/heads/main"),
-            format!("{LARGE_REPOSITORY_REVISION}\n"),
+            format!("{IMPORTED_REVISION}\n"),
         )
         .unwrap();
 
         assert!(
-            !large_repository_source_matches(temp.path()),
+            !imported_source_matches(temp.path()),
             "a textual ref without its commit object is not a usable clone source"
         );
     }
@@ -1648,11 +1491,9 @@ mod tests {
     /// is primary storage rather than a disposable cache.
     #[test]
     fn invalidate_preserves_repository_state_and_clears_caches() {
-        let fixture = create_flat(&FlatRepoConfig {
+        let fixture = create_simple(&SimpleRepoConfig {
             commits_on_main: 2,
             files: 2,
-            branchless_branches: 0,
-            commits_per_branch: 0,
             total_worktrees: 2,
             worktree_commits_ahead: 1,
             worktree_uncommitted_files: 0,
@@ -1760,7 +1601,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "failed to remove cache directory")]
     fn invalidate_reports_cache_removal_errors() {
-        let fixture = FixtureRecipe::Typical { total_worktrees: 1 }.create();
+        let fixture = create_simple(&SimpleRepoConfig {
+            commits_on_main: 1,
+            files: 1,
+            total_worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
         let git_dir = resolve_git_common_dir(fixture.path()).unwrap();
         std::fs::create_dir_all(git_dir.join("wt")).unwrap();
         std::fs::write(git_dir.join("wt/cache"), "not a directory\n").unwrap();
@@ -1768,7 +1615,7 @@ mod tests {
         invalidate_probe_caches(fixture.path());
     }
 
-    /// The `full` fixture's contract: [`FixtureRecipe::Mixed`] promises a
+    /// The generated fixture's contract promises a
     /// deterministic `index % 4` rotation of branch and worktree states, and
     /// every `wt list` gate the `full` bench exercises hangs off that rotation.
     /// Nothing else pins it — the bench measures one wall time, so a generator
@@ -1776,11 +1623,11 @@ mod tests {
     /// green while silently measuring a different repo. Assert the states
     /// directly, via `merge-base --is-ancestor` exit codes and porcelain status.
     #[test]
-    fn mixed_fixture_states_follow_the_documented_rotation() {
+    fn generated_fixture_states_follow_the_documented_rotation() {
         // Two full rotations of each 4-state cycle, so a state that collapsed
         // into its neighbour fails on both of its indices rather than one.
         const N: usize = 8;
-        let fixture = FixtureRecipe::Mixed {
+        let fixture = FixtureRecipe::Generated {
             linked_worktrees: N,
             branchless_branches: N,
             remote_tracking_refs: 0,
@@ -1884,11 +1731,9 @@ mod tests {
     /// prune benchmark stops removing anything.
     #[test]
     fn squash_merged_fixture_is_content_integrated() {
-        let fixture = create_flat(&FlatRepoConfig {
+        let fixture = create_simple(&SimpleRepoConfig {
             commits_on_main: 3,
             files: 2,
-            branchless_branches: 0,
-            commits_per_branch: 0,
             total_worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
@@ -1920,11 +1765,9 @@ mod tests {
     /// A zero-size spread is valid and must not divide by zero.
     #[test]
     fn history_spread_handles_zero_branches() {
-        let fixture = create_flat(&FlatRepoConfig {
+        let fixture = create_simple(&SimpleRepoConfig {
             commits_on_main: 3,
             files: 1,
-            branchless_branches: 0,
-            commits_per_branch: 0,
             total_worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
@@ -1934,11 +1777,72 @@ mod tests {
         add_history_spread_branches(&repo_path, 0);
     }
 
-    /// The `mixed` fixture's population contract. Either local dimension may
-    /// be zero, and the requested remote-tracking refs are additive to the
-    /// `origin/main` and `origin/HEAD` pair every synthetic fixture carries.
     #[test]
-    fn mixed_fixture_preserves_each_population() {
+    fn imported_populations_do_not_become_prune_candidates() {
+        let fixture = create_simple(&SimpleRepoConfig {
+            commits_on_main: 12,
+            files: 2,
+            total_worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
+        let repo = fixture.path().to_path_buf();
+        add_history_spread_branches(&repo, 4);
+        add_imported_linked_worktrees(&repo, 4);
+
+        let mut fork_depths = Vec::new();
+        for i in 0..4 {
+            let branch = format!("feature-{i:03}");
+            assert_eq!(
+                capture_git(&repo, &["rev-list", "--count", &format!("main..{branch}")]),
+                "1",
+                "{branch} must carry its own commit"
+            );
+            assert!(
+                !run_git_ok(&repo, &["merge-base", "--is-ancestor", &branch, "main"]),
+                "{branch} must not be integrated into main"
+            );
+            fork_depths.push(
+                capture_git(&repo, &["rev-list", "--count", &format!("{branch}..main")])
+                    .parse::<usize>()
+                    .unwrap(),
+            );
+        }
+        assert!(
+            fork_depths.windows(2).all(|depths| depths[0] < depths[1]),
+            "forks must spread down history: {fork_depths:?}"
+        );
+
+        add_prune_populations(&repo, 1, 1);
+        let main_tree = capture_git(&repo, &["rev-parse", "main^{tree}"]);
+        for i in 0..4 {
+            let branch = format!("feature-{i:03}");
+            assert!(
+                !run_git_ok(&repo, &["merge-base", "--is-ancestor", &branch, "main"]),
+                "{branch} became integrated after the prune overlay advanced main"
+            );
+            assert_ne!(
+                capture_git(&repo, &["merge-tree", "--write-tree", "main", &branch]),
+                main_tree,
+                "{branch} became content-integrated after the prune overlay"
+            );
+        }
+        assert!(
+            !run_git_ok(&repo, &["merge-base", "--is-ancestor", "wt-0003", "main"]),
+            "clean imported worktree became integrated after the prune overlay"
+        );
+        assert_ne!(
+            capture_git(&repo, &["merge-tree", "--write-tree", "main", "wt-0003"]),
+            main_tree,
+            "clean imported worktree became content-integrated after the prune overlay"
+        );
+    }
+
+    /// The generated fixture's population contract. Either local dimension may
+    /// be zero, and the requested remote-tracking refs are additive to the
+    /// `origin/main` and `origin/HEAD` pair every generated fixture carries.
+    #[test]
+    fn generated_fixture_preserves_each_population() {
         let refs = |repo: &Path, glob: &str| {
             capture_git(repo, &["for-each-ref", "--format=%(refname:short)", glob])
                 .lines()
@@ -1954,7 +1858,7 @@ mod tests {
         };
 
         // Cover each local zero once and add remote refs to one fixture.
-        let fixture = FixtureRecipe::Mixed {
+        let fixture = FixtureRecipe::Generated {
             linked_worktrees: 3,
             branchless_branches: 0,
             remote_tracking_refs: 5,
@@ -1966,7 +1870,7 @@ mod tests {
         assert_eq!(refs(&repo, "refs/remotes/origin/remote-only-*"), 5);
         assert_eq!(linked(&repo), 3);
 
-        let fixture = FixtureRecipe::Mixed {
+        let fixture = FixtureRecipe::Generated {
             linked_worktrees: 0,
             branchless_branches: 3,
             remote_tracking_refs: 0,
@@ -1991,11 +1895,9 @@ mod tests {
     /// parameters is invisible there and would be caught only here.
     #[test]
     fn diverged_backdrop_is_unintegrated_and_spread_across_history() {
-        let fixture = create_flat(&FlatRepoConfig {
+        let fixture = create_simple(&SimpleRepoConfig {
             commits_on_main: 40,
             files: 2,
-            branchless_branches: 0,
-            commits_per_branch: 0,
             total_worktrees: 1,
             worktree_commits_ahead: 0,
             worktree_uncommitted_files: 0,
@@ -2020,7 +1922,7 @@ mod tests {
         // Orphan branches: 4 of them, 3 own commits each.
         let mut depths = Vec::new();
         for i in 0..4 {
-            let branch = format!("feature-{i:03}");
+            let branch = format!("unmerged-br-{i:03}");
             let (behind, ahead) = counts(&branch);
             assert_eq!(ahead, 3, "{branch} must carry its own commits");
             assert!(
@@ -2042,7 +1944,7 @@ mod tests {
         // untracked scratch — no staged or unstaged tracked changes, which is
         // what keeps index-restoring helpers safe to run against them.
         for i in 0..3 {
-            let branch = format!("feature-wt-{i}");
+            let branch = format!("unmerged-wt-{i}");
             let (_, ahead) = counts(&branch);
             assert_eq!(ahead, 5, "{branch} must carry its own commits");
             let wt = fixture.worktree_path(&branch);
@@ -2053,7 +1955,7 @@ mod tests {
             );
         }
         assert!(
-            !fixture.worktree_path("feature-wt-3").exists(),
+            !fixture.worktree_path("unmerged-wt-3").exists(),
             "worktree count must not follow the branch count"
         );
     }

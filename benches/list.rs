@@ -1,13 +1,13 @@
 // Benchmarks for `wt list` command
 //
 // Benchmark groups:
-//   - skeleton: Time until the skeleton paints (1, 4, 8 worktrees; warm + cold)
-//   - worktree_scaling: Full execution, worktree-count scaling (1, 4, 8 worktrees; warm + cold)
+//   - skeleton: Time until the skeleton paints (1 and 8 worktrees; warm + cold)
+//   - worktree_scaling: Full execution at 1 and 8 worktrees (warm + cold)
 //   - full: One combined full-surface fixture — many worktrees AND many branches
 //       in varied states, with branch divergence spread across history depth.
 //       The realistic "everything at once" workload (warm + cold).
-//   - divergent_branches: 200 branches × 20 commits / GH #461 deep-divergence stress (warm + cold)
-//   - large_repository: one pinned large corpus with 8 worktrees and 50 branches
+//   - divergent_branches: 200 branches spread across history depth / GH #461 stress (warm + cold)
+//   - large_repository: one pinned upstream corpus with 8 worktrees and 50 branches
 //       spread through history; default list (warm + cold) and --branches (warm)
 //
 // Attribution: a `full` wall time can't be split by side (worktree- and
@@ -21,7 +21,7 @@
 //   cargo bench --bench list                         # All benchmarks
 //   cargo bench --bench list skeleton                # Progressive rendering
 //   cargo bench --bench list full                    # Combined full-surface fixture
-//   cargo bench --bench list large_repository        # Canonical large repo
+//   cargo bench --bench list large_repository       # Large-repository workload
 //   cargo bench --bench list warm                    # Warm-cache variants (every group's warm rows)
 //   cargo bench --bench list skeleton/warm           # Skeleton group, warm only
 
@@ -32,7 +32,7 @@ use wt_perf::{
     CacheState, FixtureRecipe, bench_wt, run_git, standard_benchmark_profile, wt_command,
 };
 
-const WORKTREE_COUNTS: [usize; 3] = [1, 4, 8];
+const WORKTREE_COUNTS: [usize; 2] = [1, 8];
 
 /// Run `wt` with `args` in `repo_path`, on a warm or cold cache.
 ///
@@ -66,7 +66,7 @@ fn bench_skeleton(c: &mut Criterion) {
                 BenchmarkId::new(cache.label(), total_worktrees),
                 &cache,
                 |b, &cache| {
-                    let fixture = FixtureRecipe::Typical { total_worktrees }.create();
+                    let fixture = FixtureRecipe::generated(total_worktrees - 1).create();
                     run_benchmark(
                         b,
                         binary,
@@ -93,7 +93,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
                 BenchmarkId::new(cache.label(), total_worktrees),
                 &cache,
                 |b, &cache| {
-                    let fixture = FixtureRecipe::Typical { total_worktrees }.create();
+                    let fixture = FixtureRecipe::generated(total_worktrees - 1).create();
                     run_git(fixture.path(), &["status"]);
                     run_benchmark(b, binary, fixture.path(), cache, &["list"], None);
                 },
@@ -136,7 +136,7 @@ fn bench_large_repository(c: &mut Criterion) {
             &cache,
             |b, &cache| {
                 let fixture = fixture.get_or_init(|| {
-                    let fixture = FixtureRecipe::LargeRepository.create();
+                    let fixture = FixtureRecipe::Imported.create();
                     run_git(fixture.path(), &["status"]);
                     fixture
                 });
@@ -157,7 +157,12 @@ fn bench_divergent_branches(c: &mut Criterion) {
 
     for cache in CacheState::WARM_AND_COLD {
         group.bench_function(cache.label(), |b| {
-            let fixture = FixtureRecipe::SyntheticDivergence.create();
+            let fixture = FixtureRecipe::Generated {
+                linked_worktrees: 0,
+                branchless_branches: 200,
+                remote_tracking_refs: 0,
+            }
+            .create();
             run_git(fixture.path(), &["status"]);
             run_benchmark(
                 b,
@@ -178,7 +183,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
 /// command exercised by one fixture instead of several narrow ones. This is the
 /// realistic "lots of worktrees & branches, all in various states" workload.
 ///
-/// [`FixtureRecipe::Mixed`] builds the spread of `wt list` gates and tasks at once:
+/// The generated fixture builds the spread of `wt list` gates and tasks at once:
 /// clean/dirty/staged working trees, merged/ahead/diverged branches, and the
 /// GH #461 deep-divergence shape (branches forking at points spread across
 /// history depth, so the `git for-each-ref %(ahead-behind)` walk has real
@@ -206,10 +211,10 @@ fn bench_divergent_branches(c: &mut Criterion) {
 /// network-touching `ci` column that `--full` would add.
 fn bench_full(c: &mut Criterion) {
     let mut group = c.benchmark_group("full");
-    // Heavy fixture (24 worktrees + 120 branches, deep history): the cold
-    // variant runs well over the inherited 30-sample / 15s budget, so cap
-    // samples at criterion's minimum and give a 20s window (≈ a few iters per
-    // sample), matching the other heavy groups.
+    // Heavy fixture (24 linked worktrees + 120 branchless branches, deep
+    // history): the cold variant runs well over the inherited 30-sample / 15s
+    // budget. Cap samples at criterion's minimum and give a 20s window (≈ a
+    // few iters per sample), matching the other heavy groups.
     group.measurement_time(std::time::Duration::from_secs(20));
     group.sample_size(10);
 
@@ -218,7 +223,7 @@ fn bench_full(c: &mut Criterion) {
 
     for cache in CacheState::WARM_AND_COLD {
         group.bench_function(cache.label(), |b| {
-            let fixture = FixtureRecipe::Mixed {
+            let fixture = FixtureRecipe::Generated {
                 linked_worktrees,
                 branchless_branches,
                 remote_tracking_refs: 0,
