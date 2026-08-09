@@ -85,6 +85,9 @@ impl RemovePlans {
 /// guard can't assert what it can't compute, and refusing every branch-only
 /// removal on a broken template would cost more than the case it guards.
 ///
+/// A name that is no local branch at all is rejected before any of that, so the
+/// refusal never asserts a branch that isn't there.
+///
 /// [`is_worktree_at_expected_path`]: super::worktree::is_worktree_at_expected_path
 /// [`worktree_display_name`]: super::worktree::worktree_display_name
 fn detached_worktree_for<'a>(
@@ -93,6 +96,15 @@ fn detached_worktree_for<'a>(
     branch: &str,
     worktrees: &'a [worktrunk::git::WorktreeInfo],
 ) -> Option<&'a Path> {
+    // Downstream, `prepare_worktree_removal` is what reports a typo, a deleted
+    // branch, or a remote-only name; a guard that fires ahead of it would
+    // assert a branch that doesn't exist. `exists_locally` reports a failed
+    // lookup as `false` rather than an error, so this can't fail closed — but
+    // the same call downstream then refuses the removal, so a guard skipped
+    // that way still never deletes a ref.
+    if !repo.branch(branch).exists_locally().unwrap_or(true) {
+        return None;
+    }
     let expected = compute_worktree_path(repo, branch, config).ok()?;
     worktrees
         .iter()
@@ -191,8 +203,19 @@ fn validate_remove_targets(
                 // worktree it is about to remove as its own candidate is still
                 // registered when the branch's plan is built. Refusing there
                 // would leave prune unable to clean up either half.
-                if let Some(detached) =
-                    worktrees.and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
+                //
+                // Under `Keep` (`--no-delete-branch`, or
+                // `[remove] delete-branch = false`) this arm deletes nothing,
+                // so there is no ref to strand the worktree behind — the guard
+                // would turn a no-op into a failure. `SafeDelete` on an
+                // unintegrated branch retains its ref too, but only the
+                // deletion attempt downstream knows that
+                // (`Repository::integration_reason`), so those refuse here
+                // rather than exiting 0 — the conservative direction, since
+                // what the refusal names is still on disk.
+                if let Some(detached) = worktrees
+                    .filter(|_| !deletion_mode.should_keep())
+                    .and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
                 {
                     plans.record_error(
                         GitError::DetachedWorktreeForBranch {
