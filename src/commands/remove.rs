@@ -88,7 +88,10 @@ fn detached_worktree_for<'a>(
 ) -> Option<&'a Path> {
     // Downstream, `prepare_worktree_removal` is what reports a typo, a deleted
     // branch, or a remote-only name; a guard that fires ahead of it would
-    // assert a branch that doesn't exist. Fail closed on a lookup error.
+    // assert a branch that doesn't exist. `exists_locally` reports a failed
+    // lookup as `false` rather than an error, so this can't fail closed — but
+    // the same call downstream then refuses the removal, so a guard skipped
+    // that way still never deletes a ref.
     if !repo.branch(branch).exists_locally().unwrap_or(true) {
         return None;
     }
@@ -194,7 +197,12 @@ fn validate_remove_targets(
                 // Under `Keep` (`--no-delete-branch`, or
                 // `[remove] delete-branch = false`) this arm deletes nothing,
                 // so there is no ref to strand the worktree behind — the guard
-                // would turn a no-op into a failure.
+                // would turn a no-op into a failure. `SafeDelete` on an
+                // unintegrated branch retains its ref too, but only the
+                // deletion attempt downstream knows that
+                // (`Repository::integration_reason`), so those refuse here
+                // rather than exiting 0 — the conservative direction, since
+                // what the refusal names is still on disk.
                 if let Some(detached) = worktrees
                     .filter(|_| !deletion_mode.should_keep())
                     .and_then(|wts| detached_worktree_for(repo, config, &branch, wts))

@@ -426,6 +426,35 @@ fn test_remove_branch_with_detached_worktree_keeping_branch(mut repo: TestRepo) 
     ));
 }
 
+/// An unintegrated branch keeps its ref under `SafeDelete` too, but only the
+/// deletion attempt downstream knows that — so unlike the `--no-delete-branch`
+/// case above, a detached worktree refuses here rather than exiting 0 with the
+/// branch retained. The refusal names a worktree that is still on disk, so this
+/// pins the conservative direction rather than an accident.
+#[rstest]
+fn test_remove_unmerged_branch_with_detached_worktree_refuses(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached-unmerged");
+    std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
+    repo.git_command()
+        .args(["add", "feature.txt"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+    repo.detach_head_in_worktree("feature-detached-unmerged");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-detached-unmerged"],
+        None
+    ));
+}
+
 /// A detached worktree whose directory is already gone is stale metadata, not a
 /// worktree the #3769 guard protects — the branch-only removal proceeds rather
 /// than refusing and naming a path that isn't on disk.
