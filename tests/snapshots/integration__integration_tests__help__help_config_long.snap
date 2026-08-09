@@ -677,6 +677,6 @@ A [2m--config-set[0m that names a project entry applies to that project alone:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m [0m[2m[32m'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"'[0m[2m switch [0m[2m[36m--create[0m[2m feature[0m
 
-Ranking only matters where one value has to win. Hooks and aliases accumulate rather than replace, so an env-set hook and a project's hook both run.
+Ranking only matters where one value has to win. Hooks, aliases and [2mstep.copy-ignored.exclude[0m accumulate rather than replace, so an env-set hook and a project's hook both run.
 
 ----- stderr -----

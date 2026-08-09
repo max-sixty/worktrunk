@@ -2587,7 +2587,7 @@ A `--config-set` that names a project entry applies to that project alone:
 $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"' switch --create feature
 ```
 
-Ranking only matters where one value has to win. Hooks and aliases accumulate rather than replace, so an env-set hook and a project's hook both run.
+Ranking only matters where one value has to win. Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
 <!-- subdoc: show -->
 <!-- subdoc: approvals -->
 <!-- subdoc: alias -->

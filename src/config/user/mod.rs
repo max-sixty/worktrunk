@@ -310,36 +310,79 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 /// - Keys the overlay itself restates under `projects."<name>"` — a
 ///   `--config-set 'projects."…".worktree-path = …'` is both the highest layer
 ///   *and* the most specific key, so it stays.
-/// - Hooks and aliases, whose project-scoped values *append to* the global
-///   ones rather than replace them (`UserConfig::hooks`, `UserConfig::aliases`).
-///   Both already run, so an env-set hook is never outranked and dropping the
-///   project's would silently stop it running.
+/// - Composing keys, whose project-scoped values *append to* the global ones
+///   rather than replace them ([`compose_only_paths`]). Both already apply, so
+///   an env-set hook is never outranked and dropping the project's would
+///   silently stop it running.
 ///
-/// Only removals happen here, so the merged document still deserializes and
-/// still validates; [`exclusive_sibling`] covers the one pair where a
-/// *partial* removal would not.
+/// Only removals happen here, but a removal can still leave a document that no
+/// longer deserializes: [`exclusive_sibling`] and [`is_atomic_section`] name
+/// the sections that have to go as a unit, and the whole step degrades as a
+/// unit behind them — the removals land on a candidate, and a candidate that
+/// stops deserializing or validating is discarded rather than handed to
+/// [`UserConfig::finalize`], which would answer a stranded required field by
+/// wiping the config to defaults. That is the same all-or-nothing guarantee
+/// the env and `--config-set` layers already have.
 fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay: &toml::Table) {
+    if overlay.is_empty() || !merged_table.contains_key("projects") {
+        return;
+    }
+
     let mut global = overlay.clone();
     global.remove("projects");
-    for key in compose_only_keys() {
-        global.remove(&key);
+    for path in compose_only_paths() {
+        remove_path(&mut global, path);
     }
     if global.is_empty() {
         return;
     }
 
     let project_scoped = overlay.get("projects").and_then(toml::Value::as_table);
-    let Some(toml::Value::Table(projects)) = merged_table.get_mut("projects") else {
+    let mut candidate = merged_table.clone();
+    if let Some(toml::Value::Table(projects)) = candidate.get_mut("projects") {
+        let entries = projects
+            .iter_mut()
+            .filter_map(|(name, entry)| entry.as_table_mut().map(|entry| (name, entry)));
+        for (name, entry) in entries {
+            let restated = project_scoped
+                .and_then(|scoped| scoped.get(name))
+                .and_then(toml::Value::as_table);
+            drop_overridden_keys(entry, &global, restated, &mut Vec::new());
+        }
+    }
+
+    match deserialize_and_validate(&candidate) {
+        Ok(()) => *merged_table = candidate,
+        // Unreachable through today's schema — the two enumerations above
+        // cover every partial removal it can break — but they are enumerations,
+        // and the next required field would otherwise cost the user their whole
+        // config rather than one project entry.
+        Err(err) => log::debug!("keeping project precedence: {err}"),
+    }
+}
+
+/// Remove `path` from `table`, pruning any table the removal leaves empty so
+/// an overlay of nothing but composing keys still reads as empty.
+fn remove_path(table: &mut toml::Table, path: &[String]) {
+    let Some((key, rest)) = path.split_first() else {
         return;
     };
-    let entries = projects
-        .iter_mut()
-        .filter_map(|(name, entry)| entry.as_table_mut().map(|entry| (name, entry)));
-    for (name, entry) in entries {
-        let restated = project_scoped
-            .and_then(|scoped| scoped.get(name))
-            .and_then(toml::Value::as_table);
-        drop_overridden_keys(entry, &global, restated, &mut Vec::new());
+    if rest.is_empty() {
+        table.remove(key.as_str());
+    } else if let Some(toml::Value::Table(child)) = table.get_mut(key.as_str()) {
+        remove_path(child, rest);
+        if child.is_empty() {
+            table.remove(key.as_str());
+        }
+    }
+}
+
+/// Deserialize `table` into [`UserConfig`] and validate it, reporting the
+/// first failure. The probe every layer runs before it commits.
+fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
+    match toml::Value::Table(table.clone()).try_into::<UserConfig>() {
+        Ok(config) => config.validate().map_err(|e| e.0),
+        Err(err) => Err(err.to_string()),
     }
 }
 
@@ -365,12 +408,14 @@ fn drop_overridden_keys<'a>(
 
         match (entry.get_mut(key.as_str()), value, restated_value) {
             // Both sides are sections: recurse, so an override of one leaf
-            // leaves the project's sibling leaves alone.
+            // leaves the project's sibling leaves alone. An atomic section's
+            // children are not sections in that sense — they go whole, through
+            // the arms below.
             (
                 Some(toml::Value::Table(entry_table)),
                 toml::Value::Table(overlay_table),
                 restated,
-            ) => {
+            ) if !is_atomic_section(section) => {
                 section.push(key);
                 drop_overridden_keys(
                     entry_table,
@@ -416,12 +461,45 @@ fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
     }
 }
 
-/// Keys whose project-scoped value composes with the global one instead of
-/// replacing it, derived from the schema so a new hook can't be forgotten.
-fn compose_only_keys() -> Vec<String> {
-    let mut keys = crate::config::schema_top_level_keys::<crate::config::HooksConfig>();
-    keys.push("aliases".to_string());
-    keys
+/// A table whose entries the merge replaces whole, so removing one of an
+/// entry's leaves neither removes the precedence nor leaves the entry usable.
+///
+/// `[list.custom-columns]` is the case: `ListConfig::merge_with` extends
+/// `custom_columns` per *column*, so a project's `Ticket` replaces the global
+/// `Ticket` outright — dropping only the overridden leaf would leave the
+/// project's column winning anyway, the ranking this pass exists to remove.
+/// And `ListColumnConfig::template` is required, so a partial removal can
+/// strand a column that no longer deserializes.
+///
+/// `section` is the path of the containing table, so this asks "are this
+/// table's children atomic", the way [`exclusive_sibling`] asks about a pair.
+fn is_atomic_section(section: &[&str]) -> bool {
+    section == ["list", "custom-columns"]
+}
+
+/// Paths whose project-scoped value composes with the global one instead of
+/// replacing it, so no invocation layer displaces them.
+///
+/// Hook names come from the schema, so a new hook can't be forgotten; the
+/// others are the composing keys elsewhere in the tree — `[aliases]`
+/// (`UserConfig::aliases`) and `step.copy-ignored.exclude`
+/// (`CopyIgnoredConfig::merged_with` unions the two pattern lists).
+fn compose_only_paths() -> &'static [Vec<String>] {
+    static PATHS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
+    PATHS.get_or_init(|| {
+        let mut paths: Vec<Vec<String>> =
+            crate::config::schema_top_level_keys::<crate::config::HooksConfig>()
+                .into_iter()
+                .map(|key| vec![key])
+                .collect();
+        paths.push(vec!["aliases".to_string()]);
+        paths.push(
+            ["step", "copy-ignored", "exclude"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        paths
+    })
 }
 
 /// Load and validate a single config file. Returns the parsed table for
@@ -773,11 +851,7 @@ impl UserConfig {
         // (e.g. an empty worktree-path) drops just this layer rather than
         // falling through to finalize(), which would wipe the lower layers to
         // defaults.
-        let probe = match toml::Value::Table(candidate.clone()).try_into::<Self>() {
-            Ok(config) => config.validate().map_err(|e| e.0),
-            Err(err) => Err(err.to_string()),
-        };
-        if let Err(err) = probe {
+        if let Err(err) = deserialize_and_validate(&candidate) {
             warnings.push(LoadError::CliOverride {
                 err,
                 overrides: overrides.to_vec(),

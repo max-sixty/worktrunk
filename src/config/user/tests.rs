@@ -2754,19 +2754,27 @@ fn test_invocation_layer_applies_to_pattern_entries() {
 
 #[test]
 fn test_invocation_layer_leaves_composing_keys_alone() {
-    // Per-project hooks and aliases append to the global ones rather than
-    // replacing them, so both already run and there is no precedence to fix.
-    // Dropping the project's copy would silently stop it running.
+    // Per-project hooks, aliases and copy-ignored excludes append to the
+    // global ones rather than replacing them, so both already apply and there
+    // is no precedence to fix. Dropping the project's copy would silently stop
+    // it applying.
     let base = base_with_project(
         r#"pre-merge = "project-hook"
 
 [projects."github.com/owner/repo".aliases]
 ship = "project-alias"
+
+[projects."github.com/owner/repo".step.copy-ignored]
+exclude = ["project-pattern"]
 "#,
     );
     let (table, warnings) = apply_overrides(
         base,
-        &["pre-merge = \"cli-hook\"", "aliases.ship = \"cli-alias\""],
+        &[
+            "pre-merge = \"cli-hook\"",
+            "aliases.ship = \"cli-alias\"",
+            "step.copy-ignored.exclude = [\"cli-pattern\"]",
+        ],
     );
     assert!(warnings.is_empty());
     let config = loaded(table);
@@ -2784,6 +2792,54 @@ ship = "project-alias"
         templates(&config.aliases(Some(PROJECT))["ship"]),
         ["cli-alias", "project-alias"]
     );
+    assert_eq!(
+        config.copy_ignored(Some(PROJECT)).exclude,
+        ["cli-pattern", "project-pattern"]
+    );
+}
+
+#[test]
+fn test_invocation_layer_displaces_whole_custom_column() {
+    // `[list.custom-columns]` merges per column, so an override of one leaf
+    // has to displace the whole column: leaving the rest of the project's
+    // column would let it replace the global one wholesale anyway, and
+    // `template` is required — a column stripped of it stops deserializing,
+    // which would cost the user their whole config rather than one entry.
+    let base = base_with_project(
+        r#"[projects."github.com/owner/repo".list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+width = 30
+"#,
+    );
+    let (table, warnings) = apply_overrides(
+        base,
+        &["list.custom-columns.Ticket.template = \"from-cli\""],
+    );
+    assert!(warnings.is_empty());
+    let column = loaded(table).list(Some(PROJECT)).custom_columns["Ticket"].clone();
+    assert_eq!(column.template, "from-cli");
+    assert_eq!(column.width, None, "the column went as a unit");
+
+    // Restating the column at project scope keeps it, as for any other key.
+    let base = base_with_project(
+        r#"[projects."github.com/owner/repo".list.custom-columns.Ticket]
+template = "{{ vars.ticket }}"
+width = 30
+"#,
+    );
+    let (table, warnings) = apply_overrides(
+        base,
+        &[
+            "list.custom-columns.Ticket.template = \"from-cli\"",
+            &format!(
+                "projects.\"{PROJECT}\".list.custom-columns.Ticket.template = \"from-cli-project\""
+            ),
+        ],
+    );
+    assert!(warnings.is_empty());
+    let column = loaded(table).list(Some(PROJECT)).custom_columns["Ticket"].clone();
+    assert_eq!(column.template, "from-cli-project");
+    assert_eq!(column.width, Some(30));
 }
 
 #[test]
