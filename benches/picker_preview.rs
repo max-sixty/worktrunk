@@ -45,7 +45,6 @@ fn main() {
 #[cfg(unix)]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 #[cfg(unix)]
-#[cfg(unix)]
 use wt_perf::{CacheState, FixtureRecipe, bench_wt, wt_command};
 
 #[cfg(unix)]
