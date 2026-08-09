@@ -673,7 +673,7 @@ Sources rank by how close they are to the invocation, which puts user config abo
 3. [2m[projects."github.com/owner/repo"][0m in a config file
 4. global [2mworktree-path[0m in a config file
 
-A [2m--config-set[0m that names a project entry applies to that project alone:
+A [2m--config-set[0m that names a project entry applies to that project alone, and beats a global [2m--config-set[0m of the same key — it is both the highest layer and the most specific key:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m [0m[2m[32m'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"'[0m[2m switch [0m[2m[36m--create[0m[2m feature[0m
 

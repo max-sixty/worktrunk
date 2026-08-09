@@ -690,7 +690,7 @@ Sources rank by how close they are to the invocation, which puts user config abo
 3. `[projects."github.com/owner/repo"]` in a config file
 4. global `worktree-path` in a config file
 
-A `--config-set` that names a project entry applies to that project alone:
+A `--config-set` that names a project entry applies to that project alone, and beats a global `--config-set` of the same key — it is both the highest layer and the most specific key:
 
 {{ terminal(cmd="wt --config-set 'projects.__WT_QUOT__github.com/owner/repo__WT_QUOT__.worktree-path = __WT_QUOT__/tmp/scratch__WT_QUOT__' switch --create feature") }}
 
