@@ -324,7 +324,7 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 /// wiping the config to defaults. That is the same all-or-nothing guarantee
 /// the env and `--config-set` layers already have.
 fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay: &toml::Table) {
-    if overlay.is_empty() {
+    if overlay.is_empty() || !merged_table.contains_key("projects") {
         return;
     }
 
@@ -354,10 +354,13 @@ fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay:
 
     match deserialize_and_validate(&candidate) {
         Ok(()) => *merged_table = candidate,
-        // Unreachable through today's schema — the two enumerations above
-        // cover every partial removal it can break — but they are enumerations,
-        // and the next required field would otherwise cost the user their whole
-        // config rather than one project entry.
+        // Reachable two ways. A partial removal the enumerations above miss —
+        // none today, but they are enumerations, and the next required field
+        // would otherwise cost the user their whole config rather than one
+        // project entry. Or a candidate that was already invalid before this
+        // pass: step 3's env probe deserializes without validating, so an
+        // empty `worktree-path` from the environment lands here. The discard
+        // is right for both; `finalize` reports the second.
         Err(err) => log::debug!("keeping project precedence: {err}"),
     }
 }

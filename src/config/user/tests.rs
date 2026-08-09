@@ -2698,6 +2698,38 @@ fn test_env_layer_outranks_project_worktree_path() {
 }
 
 #[test]
+fn test_invocation_layer_keeps_an_already_invalid_candidate_untouched() {
+    // The pass discards a candidate that does not deserialize and validate.
+    // Step 3's env probe only deserializes, so an empty `worktree-path` from
+    // the environment reaches here already invalid — and the removals are
+    // dropped rather than handed to `finalize`, which would answer the same
+    // failure by wiping the config to defaults.
+    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
+    let empty_path = |value: &str| EnvVar {
+        name: "WORKTRUNK_WORKTREE_PATH".to_string(),
+        segments: vec!["worktree-path".to_string()],
+        typed_value: try_parse_value(value),
+        raw_value: value.to_string(),
+    };
+    let mut table = base_with_project("worktree-path = \"/from-project\"\n");
+    let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[empty_path("")]));
+    deep_merge_table(&mut table, overlay.clone());
+    let before = table.clone();
+    apply_invocation_layer_over_projects(&mut table, &overlay);
+    assert_eq!(table, before, "the removals are discarded as a unit");
+
+    // Control: the same overlay with a valid value does remove the project's
+    // key, so the assertion above is the discard and not a pass that found
+    // nothing to do.
+    let mut table = base_with_project("worktree-path = \"/from-project\"\n");
+    let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[empty_path("/from-env")]));
+    deep_merge_table(&mut table, overlay.clone());
+    let before = table.clone();
+    apply_invocation_layer_over_projects(&mut table, &overlay);
+    assert_ne!(table, before);
+}
+
+#[test]
 fn test_invocation_layer_leaves_untouched_project_keys() {
     // Only the overridden key is displaced: a project entry's other settings,
     // and its sibling keys inside the same section, still apply.
