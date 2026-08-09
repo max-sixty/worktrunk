@@ -311,9 +311,9 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 ///   `--config-set 'projects."…".worktree-path = …'` is both the highest layer
 ///   *and* the most specific key, so it stays.
 /// - Composing keys, whose project-scoped values *append to* the global ones
-///   rather than replace them ([`compose_only_paths`]). Both already apply, so
-///   an env-set hook is never outranked and dropping the project's would
-///   silently stop it running.
+///   rather than replace them ([`is_compose_only`]). Both already apply, so an
+///   env-set hook is never outranked and dropping the project's would silently
+///   stop it running.
 ///
 /// Only removals happen here, but a removal can still leave a document that no
 /// longer deserializes: [`exclusive_sibling`] and [`is_atomic_section`] name
@@ -324,31 +324,32 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 /// wiping the config to defaults. That is the same all-or-nothing guarantee
 /// the env and `--config-set` layers already have.
 fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay: &toml::Table) {
-    if overlay.is_empty() || !merged_table.contains_key("projects") {
+    if overlay.is_empty() {
         return;
     }
 
     let mut global = overlay.clone();
     global.remove("projects");
-    for path in compose_only_paths() {
-        remove_path(&mut global, path);
-    }
     if global.is_empty() {
         return;
     }
 
     let project_scoped = overlay.get("projects").and_then(toml::Value::as_table);
     let mut candidate = merged_table.clone();
-    if let Some(toml::Value::Table(projects)) = candidate.get_mut("projects") {
-        let entries = projects
-            .iter_mut()
-            .filter_map(|(name, entry)| entry.as_table_mut().map(|entry| (name, entry)));
-        for (name, entry) in entries {
-            let restated = project_scoped
-                .and_then(|scoped| scoped.get(name))
-                .and_then(toml::Value::as_table);
-            drop_overridden_keys(entry, &global, restated, &mut Vec::new());
-        }
+    let Some(projects) = candidate
+        .get_mut("projects")
+        .and_then(toml::Value::as_table_mut)
+    else {
+        return;
+    };
+    let entries = projects
+        .iter_mut()
+        .filter_map(|(name, entry)| entry.as_table_mut().map(|entry| (name, entry)));
+    for (name, entry) in entries {
+        let restated = project_scoped
+            .and_then(|scoped| scoped.get(name))
+            .and_then(toml::Value::as_table);
+        drop_overridden_keys(entry, &global, restated, &mut Vec::new());
     }
 
     match deserialize_and_validate(&candidate) {
@@ -358,22 +359,6 @@ fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay:
         // and the next required field would otherwise cost the user their whole
         // config rather than one project entry.
         Err(err) => log::debug!("keeping project precedence: {err}"),
-    }
-}
-
-/// Remove `path` from `table`, pruning any table the removal leaves empty so
-/// an overlay of nothing but composing keys still reads as empty.
-fn remove_path(table: &mut toml::Table, path: &[String]) {
-    let Some((key, rest)) = path.split_first() else {
-        return;
-    };
-    if rest.is_empty() {
-        table.remove(key.as_str());
-    } else if let Some(toml::Value::Table(child)) = table.get_mut(key.as_str()) {
-        remove_path(child, rest);
-        if child.is_empty() {
-            table.remove(key.as_str());
-        }
     }
 }
 
@@ -396,6 +381,9 @@ fn drop_overridden_keys<'a>(
     section: &mut Vec<&'a str>,
 ) {
     for (key, value) in overlay {
+        if is_compose_only(section, key) {
+            continue;
+        }
         let restated_value = restated.and_then(|table| table.get(key.as_str()));
 
         // An exclusive pair goes as a unit, whether or not `entry` carries
@@ -477,29 +465,27 @@ fn is_atomic_section(section: &[&str]) -> bool {
     section == ["list", "custom-columns"]
 }
 
-/// Paths whose project-scoped value composes with the global one instead of
-/// replacing it, so no invocation layer displaces them.
+/// Whether the project-scoped `key` under `section` composes with the global
+/// one instead of replacing it, so no invocation layer displaces it.
 ///
-/// Hook names come from the schema, so a new hook can't be forgotten; the
-/// others are the composing keys elsewhere in the tree — `[aliases]`
-/// (`UserConfig::aliases`) and `step.copy-ignored.exclude`
+/// Hook names come from the schema, cached the way
+/// `config::is_user_project_override_key` caches its own lookup, so a new hook
+/// can't be forgotten. The others are the composing keys elsewhere in the tree
+/// — `[aliases]` (`UserConfig::aliases`) and `step.copy-ignored.exclude`
 /// (`CopyIgnoredConfig::merged_with` unions the two pattern lists).
-fn compose_only_paths() -> &'static [Vec<String>] {
-    static PATHS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
-    PATHS.get_or_init(|| {
-        let mut paths: Vec<Vec<String>> =
-            crate::config::schema_top_level_keys::<crate::config::HooksConfig>()
-                .into_iter()
-                .map(|key| vec![key])
-                .collect();
-        paths.push(vec!["aliases".to_string()]);
-        paths.push(
-            ["step", "copy-ignored", "exclude"]
-                .map(str::to_string)
-                .to_vec(),
-        );
-        paths
-    })
+fn is_compose_only(section: &[&str], key: &str) -> bool {
+    static HOOKS: OnceLock<Vec<String>> = OnceLock::new();
+    match section {
+        [] => {
+            key == "aliases"
+                || HOOKS
+                    .get_or_init(crate::config::schema_top_level_keys::<crate::config::HooksConfig>)
+                    .iter()
+                    .any(|hook| hook == key)
+        }
+        ["step", "copy-ignored"] => key == "exclude",
+        _ => false,
+    }
 }
 
 /// Load and validate a single config file. Returns the parsed table for
