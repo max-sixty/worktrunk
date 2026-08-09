@@ -7,13 +7,13 @@ See `list.rs` and `time_to_first_output.rs` headers for benchmark groups and run
 Criterion's CLI takes a positional `FILTER` (substring inclusion) and `--exact`. There's no `--skip`; pick a filter that *includes* what you want instead.
 
 ```bash
-# Fast iteration (one synthetic group, warm cache only)
+# Fast iteration (one generated group, warm cache only)
 cargo bench --bench list skeleton/warm
 
 # Run specific group (all variants)
 cargo bench --bench list full
 
-# GH #461 scenario (50 branches at varying depths in the large-repository corpus)
+# GH #461 scenario (50 branches at varying depths in the imported corpus)
 cargo bench --bench list large_repository
 
 # All list benchmarks (~1 hour)
@@ -24,8 +24,8 @@ cargo bench --bench time_to_first_output         # all commands
 cargo bench --bench time_to_first_output remove  # just remove
 
 # wt step prune (scan + removal on the squash-merged fixture)
-cargo bench --bench prune                        # synthetic variants
-cargo bench --bench prune --features large-repository-benches prune_large_repository  # large-repository scale (~15 GiB temporary fixture)
+cargo bench --bench prune                        # generated variants
+cargo bench --bench prune --features large-repository-benches prune_large_repository  # multi-gigabyte temporary fixture
 
 # Picker preview pre-compute (wt switch preview workload)
 cargo bench --bench picker_preview               # all variants
@@ -37,33 +37,32 @@ cargo bench --bench completion
 
 ## Fixtures and Benches
 
-Bench groups name measurements; fixture recipes are implementation details
-that construct repository states. Preserve the state dimensions needed for
-coverage and fidelity, not historical recipes or the ability to recreate an
-old setup. Consolidate or rename recipes whenever the resulting benchmarks
-still test the same performance claims. Prefer a few heterogeneous canonical
-states: a property does not need its own recipe merely because one benchmark
-studies it. Split a fixture only when a controlled contrast, destructive
-precondition, or disproportionate setup cost requires a different state. One
-recipe can feed several groups (`FixtureRecipe::Typical` backs five); for
-example, `full` is a benchmark and `Mixed` is its repository state.
+Bench groups name measurements; fixture recipes name corpus provenance. Both
+bases produce ordinary Git repositories: `Generated` builds the corpus locally,
+while `Imported` copies a pinned upstream corpus. Preserve the state dimensions
+needed for coverage and fidelity, not historical recipes or the ability to
+recreate an old setup. A property does not get its own fixture identity merely
+because one benchmark studies it.
+Worktree, branch, and remote-ref counts are controlled population parameters;
+prune candidates are an overlay. Add another base only when the corpus itself
+cannot serve one of these roles.
 
-| Fixture recipe | `wt-perf setup` | Bench group(s) |
+| Canonical base | `wt-perf setup` | Bench group(s) |
 |---|---|---|
-| `Typical { total_worktrees: N }` | `setup typical N --path <path>` | `skeleton`, `worktree_scaling` (list.rs); `first_output` (time_to_first_output.rs); `picker_preview`; `remove_e2e` |
-| `Minimal { branchless_branches: B, linked_worktrees: W }` | `setup minimal B W --path <path>` | `dispatch` (alias.rs) |
-| `SyntheticDivergence` | `setup synthetic-divergence --path <path>` | `divergent_branches` (list.rs) |
-| `LargeRepository` | `setup large-repository --path <path>` | `large_repository` (list.rs) |
-| `Mixed { linked_worktrees: W, branchless_branches: B, remote_tracking_refs: R }` | `setup mixed W B R --path <path>` | `full` (list.rs); `completion_switch` (completion.rs) |
-| `Prune { candidate_pairs: M, backdrop_pairs: U }` | `setup prune M U --path <path>` | `prune_e2e` (prune.rs) |
-| `LargeRepositoryPrune { candidate_pairs: M, backdrop_pairs: U }` | `setup large-repository-prune M U --path <path>` | `prune_large_repository` (prune.rs) |
+| `Generated { linked_worktrees: W, branchless_branches: B, remote_tracking_refs: R }` | `setup generated W B R --path <path>` | all generated benchmarks |
+| `Imported` | `setup imported --path <path>` | `large_repository` and `prune_large_repository` |
 
-`total_worktrees` includes the primary worktree. `linked_worktrees` excludes it.
-`branchless_branches` have no linked worktree. `remote_tracking_refs` excludes
-the `origin/main` and `origin/HEAD` pair every synthetic fixture has. Each prune
-count is a pair: one linked worktree and one branchless branch.
-The canonical large-repository fixture has eight worktrees and fifty branches
-spread across its most recent 5,000 commits.
+`linked_worktrees` excludes the primary worktree. `branchless_branches` have
+no linked worktree. `remote_tracking_refs` excludes the `origin/main` and
+`origin/HEAD` pair every generated fixture has. The generated defaults are 7,
+50, and 0 respectively, giving ordinary benchmarks eight total worktrees plus
+branches spread across its history. The imported base always has the same
+eight total worktrees and fifty history-spread branches.
+
+Add prune state with `--prune-candidates M --prune-backdrop U`. Each count is
+a pair: one linked worktree and one branchless branch. The benchmark catalog
+applies it to generated and imported fixtures. This is an overlay on the
+canonical base, not a separate fixture recipe.
 
 Every benchmark recipe returns `FixtureRepo`, the owner of the temporary root
 plus the canonical primary/linked-worktree paths. Repo-bound benchmark
@@ -71,18 +70,18 @@ subprocesses start through `wt_command`, and warm/cold matrices use
 `CacheState::WARM_AND_COLD`; keep lifecycle, environment isolation, and cache
 labels in those shared APIs.
 
-## Large-repository corpus
+## Imported corpus
 
-`benches/large-repository-fixture` pins the corpus and commit.
+`benches/imported-fixture` pins the corpus and commit.
 The first matching acquisition clones that revision; later runs reuse the
-revision-keyed source under `target/wt-perf/bench-repos/large-repository/`.
+revision-keyed source under `target/wt-perf/bench-repos/imported/`.
 Source construction is locked across processes, built in a temporary sibling,
 validated, then atomically renamed into place. Mutable benchmark fixtures are
 always fresh and have no shared lock or repair state.
 
 ## Faster Iteration
 
-Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `full/cold`, `large_repository/branches/warm`.
+Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/1`, `worktree_scaling/warm/8`, `full/cold`, `large_repository/branches/warm`.
 
 **Pattern matching (positional `FILTER`):**
 ```bash
@@ -93,7 +92,7 @@ cargo bench --bench list full                # Both cache states of the combined
 cargo bench --bench list -- --exact full/cold   # One exact ID
 ```
 
-To skip the slow large-repository and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list worktree_scaling`, or `cargo bench --bench list full`. Run them sequentially if you want more than one.
+To skip the slow large-repository and divergent groups, target `skeleton`, `worktree_scaling`, or `full`. Run them sequentially if you want more than one.
 
 The `full` group is the place to start when `wt list` regresses on a real mix of worktrees and branches: the cold/warm split says whether the cost is the persistent-cache fill (cold) or the per-process re-fork (warm). A `full` wall time can't be split by side (the git subprocesses overlap on the rayon pool), so to localize a regression, trace one invocation and read the profile's BY CONTEXT table ("Analyzing a trace" below); `worktree_scaling` and `divergent_branches` track the worktree side and branch side respectively at criterion cadence.
 
@@ -136,8 +135,8 @@ subcommand which populates these caches. Run ordinary warm/cold variants through
 `wt_perf::bench_wt`, the one home of the shared strategy. Destructive variants
 use `iter_custom`: each iteration builds a fresh fixture before starting the
 timer, measures only the command, and checks the postcondition before returning
-the accumulated duration. `remove_e2e` prewarms its fresh fixture through the
-same integration probes to preserve its historical cache-warm scenario;
+the accumulated duration. `remove_e2e` uses warm/cold no-hooks neighbors for
+cache cost and a warm with-hooks neighbor for hook cost;
 `prune_e2e/live` clears probe caches to preserve its probe-cold scenario.
 
 `invalidate_caches_auto` clears:
@@ -146,7 +145,7 @@ same integration probes to preserve its historical cache-warm scenario;
 - `.git/wt/cache/` (all sha_cache kinds + ci-status + summaries)
 - `worktrunk.default-branch` (git config)
 
-`.git/packed-refs` is deliberately preserved: flat fixture setup runs `git gc`
+`.git/packed-refs` is deliberately preserved: fixture setup runs `git gc`
 at the end, which packs every loose ref into `packed-refs`
 and prunes the loose copies. Deleting that file post-gc leaves the repo with
 no resolvable refs, so any bench that resolves a branch (e.g. the `with_vars`
@@ -174,30 +173,28 @@ stays warm.
 | `wt switch` (picker) | Yes | Preview pre-compute writes `picker-preview/{log,branch-diff,upstream-diff}-…` entries. Exercised under `WORKTRUNK_PREVIEW_BENCH=1` / `WORKTRUNK_PICKER_DRY_RUN=1`. |
 | `wt` (completion via `COMPLETE=$SHELL`) | No | Only `for-each-ref` + worktree list. |
 
-Default-branch cache contribution is ~17ms per iteration on a typical-8 synthetic repo
-(measured: 166ms with default-branch cached → 183ms fully cold). Small enough that
-clearing it as part of the full invalidation is simpler than introducing a "warm
-default-branch" bench mode. (`invalidate_probe_caches` leaves it warm, like
-everything else outside `.git/wt/cache/`.)
+Clearing the default-branch cache as part of full invalidation is simpler than
+introducing a separate "warm default branch" mode.
+`invalidate_probe_caches` leaves it warm, like everything else outside
+`.git/wt/cache/`.
 
 **Bench fixtures don't exercise the wire path.** `setup_fake_remote` writes
 `refs/remotes/origin/HEAD` directly into every repo, so a cold-cache iteration
-falls through to the local `<r>/HEAD` lookup (~17 ms above), never to
-`git ls-remote` (100 ms–2 s in the wild). The cold cost we benchmark is the
-*configured-remote* cold cost, not the *fresh-clone* cold cost. A
+falls through to the local `<r>/HEAD` lookup, never to `git ls-remote`. The
+cold cost we benchmark is the *configured-remote* cold cost, not the
+*fresh-clone* cold cost. A
 `cold_no_remote` mode (extending `invalidate_caches_auto` to also wipe
 `refs/remotes/origin/HEAD`) would close the gap if the wire-path cost is
 worth measuring at CI cadence.
 
-## Expected Performance
+## Expected relationships
 
-**Modest repos** (500 commits, 100 files):
-- Cold cache penalty: ~5-16% slower
-- Scaling: Linear with worktree count
-
-**Large repositories** (current corpus: rust-lang/rust):
-- Cold cache penalty: ~4x slower for single worktree
-- Scaling: Warm cache shows superlinear degradation, cold cache scales better
+- The 1- and 8-worktree rows track the endpoint cost of adding linked
+  worktrees under both cache modes.
+- Cold rows should be slower than their warm neighbors because they rebuild
+  the persistent caches named above.
+- Large-repository rows amplify history-walk and working-tree costs that generated
+  content cannot model faithfully.
 
 ## Recording `wt remove` / `wt step prune` staging
 
@@ -205,46 +202,38 @@ The removal commands interleave per-target work with parallel scans and
 detached background processes; a single e2e number hides which phase moved.
 Record them in two layers:
 
-**Criterion cadence** — `benches/remove.rs` and `benches/prune.rs`. Expected
-numbers on an M-series Mac (`Prune { candidate_pairs: 4, backdrop_pairs: 8 }`:
-4 squash-merged worktrees and 4 squash-merged branches as candidates, plus 8
-two-sided-diverged worktrees and 8 branches as backdrop, over 200 commits and
-100 files; `prune_large_repository` uses the pinned large-repository corpus
-with 12 candidate pairs and 24 backdrop pairs, i.e. 36 linked worktrees.
-The source clone is cached, but the mutable ~15 GiB fixture is built fresh for
-the benchmark process and removed when it exits. That group is opt-in —
-`cargo bench --bench prune --features large-repository-benches prune_large_repository` —
-because its ~15 GiB fixture must never build on a hosted CI runner):
+**Criterion cadence** — `benches/remove.rs` and `benches/prune.rs`. The
+generated prune overlay adds 4 squash-merged worktrees and 4 squash-merged
+branches as candidates, plus 8 two-sided-diverged worktrees and 8 branches as
+backdrop. `prune_large_repository` layers 12 candidate pairs and 24 backdrop pairs
+onto the canonical imported base. Its source clone is cached, but the mutable
+multi-gigabyte fixture is built fresh for the benchmark process and removed
+when it exits. That group is opt-in via `--features large-repository-benches` and
+must never build on a hosted CI runner.
 
-| Variant | Expected | What it measures |
-|---------|----------|------------------|
-| `prune_e2e/dry_run_probe_cold` | ~150 ms | full parallel scan, probes re-run (`.git/wt/cache/` cleared; git's own caches stay warm — the "first prune after fetching main" shape) |
-| `prune_e2e/dry_run_warm` | ~60 ms | steady-state re-scan, probes hit sha_cache |
-| `prune_e2e/live` | ~400 ms | probe-cold scan + parallel removal of the 8 candidates (worktree candidates ~145 ms each — mostly the fsmonitor-daemon stop — branch-only ~50 ms, concurrent on the removal worker pool under the scan lock's read side, reusing scan-time plans) |
-| `prune_large_repository/dry_run_warm` | ~0.25–0.8 s | steady-state scan of 72 items (36 worktrees + 36 branches) at 331k-commit scale |
-| `prune_large_repository/dry_run_probe_cold` | ~0.6–1 s | the same 72-item scan with probes re-running at real cost (statuses stay stat-warm) |
-| `first_output/remove` | ~86 ms | single-target validation up to first output (`benches/time_to_first_output.rs`) |
+| Variant | What it measures |
+|---------|------------------|
+| `prune_e2e/dry_run_probe_cold` | full parallel scan with `.git/wt/cache/` cleared; git's own caches stay warm, matching the first prune after fetching the default branch |
+| `prune_e2e/dry_run_warm` | steady-state re-scan with integration probes served from sha_cache |
+| `prune_e2e/dry_run_cold` | first scan with worktrunk caches, the default-branch cache, and git's commit graph cleared |
+| `prune_e2e/live` | probe-cold scan plus parallel removal of the 8 candidates |
+| `prune_large_repository/dry_run_warm` | steady-state scan at large-repository history and working-tree scale |
+| `prune_large_repository/dry_run_probe_cold` | the same scan with integration probes rerun; statuses stay stat-warm |
+| `remove_e2e/{warm,cold}/no_hooks` | full removal with and without persistent caches |
+| `remove_e2e/warm/with_hooks` | warm-cache neighbor isolating hook approval and spawning |
+| `first_output/remove` | single-target validation up to first output (`benches/time_to_first_output.rs`) |
 
 Full-cold and live at large-repository scale are **one-shot timelines, not
 criterion groups**. Full-cold adds commit-graph rebuilding; live consumes the
-candidates. The live one-shot on the large-repository fixture is:
-
-- **live ~0.6 s wall** — all 24 removals run concurrently on the removal
-  worker pool inside the `prune-scan` window (read side of the scan lock):
-  the 12 worktree candidates ~240–290 ms each, branch-only ~100–135 ms.
-  Contention inflates the per-span numbers — run serially, a worktree
-  candidate's chain is ~155–210 ms (fsmonitor-served status ~20 ms, daemon
-  stop ~57 ms, metadata prune ~11 ms, fresh ref snapshot ~40 ms, CAS delete
-  ~7 ms) — but the wall collapses to the scan plus the slowest straggler.
-  When candidate branches are packed (post-`gc`), the CAS deletes serialize
-  on `packed-refs.lock`, putting a floor under the branch-deletion tail
+candidates. Live removals run concurrently inside the `prune-scan` window,
+while packed candidate refs may serialize briefly on `packed-refs.lock`.
 
 An actual first checkout can be slower because every worktree status is
 stat-cold. The cache helpers preserve indexes because removing one changes
 staged state; use a fresh fixture when investigating checkout-cold status.
-The synthetic fixture can't show it — its statuses are milliseconds — so
-scale-sensitive changes need a one-shot on a fresh large-repository
-fixture (or `wt-perf timeline -- -C <repo> step prune --dry-run` on a real
+The generated fixture can't show it — its statuses are milliseconds — so
+scale-sensitive changes need a one-shot on a fresh imported fixture (or
+`wt-perf timeline -- -C <repo> step prune --dry-run` on a real
 repository) alongside the criterion cadence. All large-repository numbers are
 I/O-bound and move with ambient machine load (sibling builds, Spotlight):
 treat them as shape, not thresholds, and compare Criterion verdicts with
@@ -268,23 +257,23 @@ metadata-pruning — `removal_needs_write` in `src/commands/step/prune.rs`) also
 wait for every in-flight check and removal to drain first.
 
 ```bash
-cargo run -p wt-perf -- setup prune 4 8 --path /tmp/prune-repo
+cargo run -p wt-perf -- setup generated 0 0 --prune-candidates 4 --prune-backdrop 8 --path target/wt-prune-generated
 # A freshly built fixture is already probe-cold (empty sha_cache).
-cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --dry-run --min-age 0s
-cargo run -p wt-perf -- timeline -- -C /tmp/prune-repo step prune --min-age 0s
+cargo run -p wt-perf -- timeline -- -C target/wt-prune-generated step prune --dry-run --min-age 0s
+cargo run -p wt-perf -- timeline -- -C target/wt-prune-generated step prune --min-age 0s
 ```
 
 **Live prune at large-repository scale is a one-shot timeline, not a criterion group** —
-each live run consumes the candidates, and constructing the ~15 GiB fixture
+each live run consumes the candidates, and constructing the multi-gigabyte fixture
 costs minutes. Give setup a new explicit path; it refuses to overwrite an
 existing destination. The pinned source clone is reused, while the mutable
 fixture has no cache state to validate or repair. The probe-cold timeline keeps
 git metadata warm:
 
 ```bash
-cargo run -p wt-perf -- setup large-repository-prune 12 24 --path /tmp/prune-rust
-cargo run -p wt-perf -- timeline -- -C /tmp/prune-rust step prune --min-age 0s
-# For another run, remove /tmp/prune-rust explicitly or choose a new path.
+cargo run -p wt-perf -- setup imported --prune-candidates 12 --prune-backdrop 24 --path target/wt-prune-imported
+cargo run -p wt-perf -- timeline -- -C target/wt-prune-imported step prune --min-age 0s
+# For another run, remove target/wt-prune-imported explicitly or choose a new path.
 ```
 
 **The `wt remove` exit-delay is machine-dependent and invisible to benches.**
@@ -302,15 +291,15 @@ count.
 
 ## Output Locations
 
-Ephemeral synthetic fixtures use the system temporary directory. Manual
+Ephemeral generated fixtures use the system temporary directory. Manual
 `wt-perf setup` fixtures live at the explicit `--path` and are never
-overwritten. The revision-keyed large-repository source and temporary
-large-prune runs live under `target/wt-perf/bench-repos/`; that directory is
+overwritten. The revision-keyed imported source and temporary
+imported runs live under `target/wt-perf/bench-repos/`; that directory is
 per-worktree and reaped by `cargo clean`.
 
 - Results: `target/criterion/`
-- Cached corpus source: `target/wt-perf/bench-repos/large-repository/source-<revision>/`
-- Temporary large-prune runs: `target/wt-perf/bench-repos/large-repository/runs/`
+- Cached corpus source: `target/wt-perf/bench-repos/imported/source-<revision>/`
+- Temporary imported runs: `target/wt-perf/bench-repos/imported/runs/`
 - HTML reports: `target/criterion/*/report/index.html`
 
 ## Performance Investigation with wt-perf
@@ -320,15 +309,15 @@ Use `wt-perf` to set up benchmark repos and generate Chrome Trace Format for vis
 ### Setting up benchmark repos
 
 ```bash
-# Set up a repo with 8 worktrees. The destination must not exist.
-cargo run -p wt-perf -- setup typical 8 --path /tmp/wt-typical-8
+# Set up the default generated repo: 8 total worktrees and 50 branches.
+cargo run -p wt-perf -- setup generated --path target/wt-generated
 
 # `wt-perf setup --help` lists every recipe and its semantic count names.
 # Reproduce the completion fixture, including its remote-tracking-ref population:
-cargo run -p wt-perf -- setup mixed 80 80 1400 --path /tmp/wt-mixed
+cargo run -p wt-perf -- setup generated 24 120 1400 --path target/wt-generated-completion
 
-# Build a fresh large-repository prune fixture from the cached pinned source:
-cargo run -p wt-perf -- setup large-repository-prune 12 24 --path /tmp/prune-rust
+# Build a fresh imported prune fixture from the cached pinned source:
+cargo run -p wt-perf -- setup imported --prune-candidates 12 --prune-backdrop 24 --path target/wt-prune-imported
 ```
 
 ### Generating traces
@@ -343,7 +332,7 @@ Perfetto/chrome://tracing. `--cold` invalidates caches first.
 cargo run -p wt-perf -- timeline -- list --progressive
 
 # Cold-cache run (invalidates the traced repo — the `-C` arg, else cwd)
-cargo run -p wt-perf -- timeline --cold -- -C target/wt-perf/typical-8 list --progressive
+cargo run -p wt-perf -- timeline --cold -- -C target/wt-generated list --progressive
 
 # Chrome Trace Format JSON for Perfetto
 cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
@@ -426,24 +415,24 @@ Three questions drive `wt list` performance work:
 ### Generating traces from benchmark repos
 
 ```bash
-# Trace the canonical large-repository fixture
-cargo run -p wt-perf -- setup large-repository --path /tmp/wt-history-spread
-cargo run --release -q -- -vv -C /tmp/wt-history-spread list --progressive --branches
-cargo run -p wt-perf -- trace /tmp/wt-history-spread/.git/wt/logs/trace.jsonl > large-repository-trace.json
+# Trace the canonical imported fixture
+cargo run -p wt-perf -- setup imported --path target/wt-imported
+cargo run --release -q -- -vv -C target/wt-imported list --progressive --branches
+cargo run -p wt-perf -- trace target/wt-imported/.git/wt/logs/trace.jsonl > imported-trace.json
 ```
 
 ## Key Performance Insights
 
 **`git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs)**
 
-This command walks the commit graph to compute divergence. On rust-lang/rust:
-- Takes ~2s regardless of how many refs are queried
-- Its cost is driven primarily by history depth, not the number of rendered rows
+This command walks the commit graph to compute divergence. Its cost on the
+imported corpus is driven primarily by history depth, not the number of
+rendered rows.
 
 **Branch-row costs** (rust-lang/rust with 50 branch-only rows):
-- First run (cold persistent cache): ~15-18s (expensive merge-base/merge-tree per branch)
-- Subsequent runs (warm persistent cache): ~2-3s (cache hits on merge-tree / integration probes / diff stats / ancestry)
-- Default rows only: ~600ms (the same ref capture, without branch-only integration and rendering tasks)
+- Cold rows pay merge-base/merge-tree work per branch.
+- Warm rows reuse merge-tree, integration-probe, diff-stat, and ancestry entries.
+- Default rows still capture refs but skip branch-only integration and rendering tasks.
 
 The persistent SHA-keyed cache (`.git/wt/cache/`) amortizes the first-run cost across
 subsequent invocations. Cache entries are eternally valid since they're keyed on commit

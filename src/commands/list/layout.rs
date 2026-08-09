@@ -1275,8 +1275,8 @@ pub fn calculate_layout_with_width(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display::terminal_width;
     use worktrunk::git::LineDiff;
+    use worktrunk::styling::terminal_width;
 
     #[test]
     fn test_fit_header() {

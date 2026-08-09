@@ -1,4 +1,4 @@
-//! Guard test to prevent stdout leaks in command code
+//! Guard test to prevent stdout leaks anywhere in the crate
 //!
 //! stdout carries the command's answer — content the user may want to pipe,
 //! redirect, or capture: data (JSON, tables), rendered views (`wt config show`,
@@ -7,19 +7,20 @@
 //! errors go to stderr. When shell integration is active (directive env vars
 //! set), directives are written to files, not stdout.
 //!
-//! This test enforces: **No accidental stdout writes in command code**
+//! This test enforces: **No accidental stdout writes anywhere under `src/`**
 //!
 //! Allowed:
 //! - `eprintln!` / `eprint!` (stderr is safe)
 //! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS`
 //!
 //! When adding stdout output:
-//! - Use `worktrunk::styling::println` for color-aware output, or
-//!   `crate::output::println_verbatim` where the consumer renders the escapes
-//!   and is never a tty (the statusline, `--help-page`)
+//! - Use `worktrunk::styling::println`. Where the consumer renders the escapes
+//!   and is never a tty (the statusline, `--help-page`), declare that once at
+//!   the top of the command with `ColorChoice::Always.write_global()` — the
+//!   global anstream consults before tty detection — and print normally.
 //! - Add the file path to `STDOUT_ALLOWED_PATHS` with a comment explaining why
 //!
-//! Neither printer panics when the consumer closes the pipe, which
+//! anstream's macros don't panic when the consumer closes the pipe, which
 //! [`test_stdout_surfaces_survive_a_closed_consumer`] checks from the outside.
 
 use std::fs;
@@ -31,76 +32,93 @@ use rstest::rstest;
 
 use crate::common::{TestRepo, repo};
 
-/// Paths (relative to src/commands/) that are allowed to use println!/print! for stdout.
+/// Paths (relative to src/) that are allowed to use println!/print! for stdout.
 /// These intentionally output data to stdout for scripting/piping.
 const STDOUT_ALLOWED_PATHS: &[&str] = &[
     // Shell integration code for: eval "$(wt config shell init bash)"
-    "init.rs",
+    "commands/init.rs",
     // Table and summary output for wt list
-    "list/collect/mod.rs",
+    "commands/list/collect/mod.rs",
     // State data output (branch names, previous worktree, etc.)
-    "config/state.rs",
+    "commands/config/state.rs",
     // Hint list output
-    "config/hints.rs",
+    "commands/config/hints.rs",
     // Alias introspection output (show / dry-run), intended to be pipeable
-    "config/alias.rs",
+    "commands/config/alias.rs",
     // Template evaluation output for scripting
-    "eval.rs",
+    "commands/eval.rs",
     // LLM prompt output for wt step commit --show-prompt and squash --show-prompt
-    "step/commit.rs",
-    "step/squash.rs",
+    "commands/step/commit.rs",
+    "commands/step/squash.rs",
     // wt step copy-ignored dry-run plan (human preview + --format=json)
-    "step/copy_ignored.rs",
+    "commands/step/copy_ignored.rs",
     // wt step prune dry-run plan (human preview + --format=json)
-    "step/prune.rs",
+    "commands/step/prune.rs",
     // wt step relocate dry-run human preview (show_dry_run_preview)
-    "relocate.rs",
+    "commands/relocate.rs",
     // wt config shell install/uninstall --dry-run preview (the interactive
     // `?` re-preview still goes to stderr)
-    "configure_shell.rs",
+    "commands/configure_shell.rs",
     // JSON output for wt switch --format=json
-    "worktree/switch.rs",
+    "commands/worktree/switch.rs",
     // Migrated TOML output for wt config update --print (pipeable)
-    "config/update.rs",
+    "commands/config/update.rs",
     // Hook listing for wt hook show (paged), and the wt hook --dry-run preview
-    "hook_commands.rs",
+    "commands/hook_commands.rs",
+    // The statusline itself — a single line a shell prompt or Claude Code captures
+    "commands/statusline.rs",
+    // The --format=json answer for every command that has one
+    "output/json.rs",
+    // The doc entry points (--help-page, --help-md, --help-description) and
+    // --version: help text is the command's answer, on stdout by POSIX
+    // convention, and a generator or `version=$(wt --version)` reads it
+    "help.rs",
+    // wt --help / -h itself, whenever no pager takes the text (short help, no
+    // pager configured, stdout not a tty, or the pager failed to spawn)
+    "help_pager.rs",
+    // The mock commands the suite puts on PATH under names like gh and glab:
+    // this stdout is the mocked tool's output, read by the wt under test
+    "testing/mock_stub.rs",
 ];
 
-/// Substrings that indicate the line is a special case (e.g., in a comment or test reference)
+/// Substrings that mark a line where the token is text rather than a call
+/// (inside a string literal, a comment, or a reference to a test file)
 const ALLOWED_LINE_PATTERNS: &[&str] = &[
-    "spacing_test.rs", // Test file reference
+    // The `println!` inside llm.rs's SYNTHETIC_DIFF string literal is a line of
+    // the fake diff a commit-message prompt is built from, not a call
+    r#"println!("Hello, world!");"#,
 ];
 
+/// No file under `src/` writes to stdout unless it is listed as a surface that
+/// deliberately does. The scan covers the whole crate rather than just
+/// `src/commands/`: `src/help.rs` carries the answer for `--help-page` and
+/// `--version`, and while it was outside the scanned tree its std `println!`s
+/// panicked on a closed consumer unnoticed.
 #[test]
-fn check_no_stdout_in_commands() {
+fn check_no_unexpected_stdout_writes() {
     let project_root = env!("CARGO_MANIFEST_DIR");
-    let commands_dir = Path::new(project_root).join("src/commands");
+    let src_dir = Path::new(project_root).join("src");
 
     // Forbidden tokens that write to stdout
     let stdout_tokens = ["print!", "println!"];
 
     let mut violations = Vec::new();
 
-    // Recursively scan all .rs files under src/commands/
-    scan_directory(
-        &commands_dir,
-        &stdout_tokens,
-        &mut violations,
-        &commands_dir,
-    );
+    // Recursively scan all .rs files under src/
+    scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
 
     if !violations.is_empty() {
         panic!(
-            "Unexpected stdout writes in command code:\n\n{}\n\n\
+            "Unexpected stdout writes:\n\n{}\n\n\
              stdout is reserved for data output (JSON, tables).\n\
-             Use worktrunk::styling::println for stdout, eprintln for stderr.\n\
+             Use worktrunk::styling::println for stdout, and its eprintln — not color_print's ceprintln! — for stderr.\n\
              Add file path to STDOUT_ALLOWED_PATHS if stdout is intentional.",
             violations.join("\n")
         );
     }
 }
 
-fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, commands_dir: &Path) {
+fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -110,17 +128,17 @@ fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, com
         let path = entry.path();
 
         if path.is_dir() {
-            scan_directory(&path, tokens, violations, commands_dir);
+            scan_directory(&path, tokens, violations, scan_root);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_file(&path, tokens, violations, commands_dir);
+            check_file(&path, tokens, violations, scan_root);
         }
     }
 }
 
-fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, commands_dir: &Path) {
-    // Get path relative to src/commands/ for matching against STDOUT_ALLOWED_PATHS
+fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
+    // Get path relative to src/ for matching against STDOUT_ALLOWED_PATHS
     let relative_path = path
-        .strip_prefix(commands_dir)
+        .strip_prefix(scan_root)
         .map(|p| p.to_slash_lossy())
         .unwrap_or_default();
 
@@ -150,20 +168,19 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, comman
 
         for token in tokens {
             if let Some(pos) = line.find(token) {
-                // Skip eprint!/eprintln! - they go to stderr and are safe
-                // When we match print!/println!, check if preceded by 'e' (part of eprint/eprintln)
-                // Also verify the 'e' is at a word boundary (start of line, or after non-alphanumeric)
-                if pos > 0 {
-                    let prev_char = line.as_bytes()[pos - 1];
-                    if prev_char == b'e' {
-                        // Check this 'e' is at a word boundary (not part of some_eprint)
-                        if pos == 1
-                            || !line.as_bytes()[pos - 2].is_ascii_alphanumeric()
-                                && line.as_bytes()[pos - 2] != b'_'
-                        {
-                            continue;
-                        }
-                    }
+                // The token also sits inside the stderr macros eprint!/eprintln!,
+                // which are safe. Walk back over the identifier the token ends
+                // and let that prefix through. color_print's ceprint!/ceprintln!
+                // write through std's stderr directly, bypassing anstream's
+                // resolved color choice, so they stay violations — as does a
+                // longer identifier like some_eprintln!.
+                let ident_start = line[..pos]
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+                    .map_or(0, |(i, c)| i + c.len_utf8());
+                if &line[ident_start..pos] == "e" {
+                    continue;
                 }
 
                 // Skip if the token is in a comment
@@ -190,12 +207,12 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, comman
 /// std's `print!`/`println!` panic on a `BrokenPipe`, so a command whose
 /// answer went out through them died with exit 101 and a Rust panic message
 /// the moment the reader left — `wt list | head -3`, and `wt list statusline`
-/// on the surface a shell prompt runs on every redraw. anstream's macros and
-/// `println_verbatim!` drop that error instead, and one of the two now carries
-/// every answer this binary writes to stdout.
+/// on the surface a shell prompt runs on every redraw. anstream's macros drop
+/// that error instead, and they now carry every answer this binary writes to
+/// stdout.
 ///
-/// Which of the two a surface uses is about color, not about this, so the
-/// cases below span both.
+/// How a surface resolves color — the process-global `ColorChoice` or tty
+/// detection — is a separate axis, so the cases below span both.
 ///
 /// The child's stdout pipe is closed before it is waited on, so its first
 /// write has no reader. `--version` writes a few dozen bytes and still trips
@@ -237,6 +254,100 @@ fn test_stdout_surfaces_survive_a_closed_consumer(repo: TestRepo) {
         assert!(
             !stderr.contains("panicked"),
             "wt {args:?} panicked with its consumer gone; stderr: {stderr}"
+        );
+    }
+}
+
+/// Whether stdout carries ANSI escapes is the consumer's call, except where a
+/// command declares otherwise.
+///
+/// Color resolves in one place — anstream's `AutoStream::choice`: the
+/// process-global `ColorChoice` a command may write first, then tty detection
+/// and the `NO_COLOR` / `CLICOLOR_FORCE` conventions. The rest of the suite
+/// runs with `CLICOLOR_FORCE=1` (`STATIC_TEST_ENV_VARS`), which settles that
+/// question before anstream reaches the interesting part, so no other test can
+/// see which way it decides — the statusline losing its escapes to a strip was
+/// invisible to a green suite. These cases clear both variables and read a
+/// piped stdout, the environment a real consumer provides, and are the one
+/// place the unforced contract is pinned.
+#[rstest]
+fn test_color_follows_the_consumer(repo: TestRepo) {
+    // (args, extra env, stdout carries ANSI escapes, what the case pins)
+    for (args, env, expect_escapes, pins) in [
+        (
+            &["list", "statusline"][..],
+            None,
+            true,
+            "the statusline declares Always because its consumer renders the escapes",
+        ),
+        (
+            &["list", "statusline"][..],
+            Some(("NO_COLOR", "1")),
+            true,
+            "a declared Always outranks NO_COLOR, as --color=always conventionally does",
+        ),
+        (
+            &["merge", "--help-page"][..],
+            None,
+            true,
+            "the web reference block's ANSI is data the docs pipeline turns into HTML spans",
+        ),
+        (
+            &["merge", "--help-page", "--plain"][..],
+            None,
+            false,
+            "plain pages are the portable markdown skill reference files read",
+        ),
+        (
+            &["list"][..],
+            None,
+            false,
+            "human output strips when it is piped rather than displayed",
+        ),
+        (
+            &["list"][..],
+            Some(("CLICOLOR_FORCE", "1")),
+            true,
+            "force-on reaches a piped consumer that wants the color anyway",
+        ),
+    ] {
+        let mut command = repo.wt_command();
+        command
+            .args(args)
+            // The fixture forces color on for every other test; removing both
+            // conventions is what leaves the decision to anstream.
+            .env_remove("CLICOLOR_FORCE")
+            .env_remove("NO_COLOR");
+        if let Some((key, value)) = env {
+            command.env(key, value);
+        }
+
+        // `output()` pipes stdout, so the child's consumer is not a terminal.
+        let output = command
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run wt {args:?}: {e}"));
+
+        let case = match env {
+            Some((key, value)) => format!("wt {} with {key}={value}", args.join(" ")),
+            None => format!("wt {}", args.join(" ")),
+        };
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            output.status.success(),
+            "{case} exited {:?}; stderr: {stderr}",
+            output.status.code()
+        );
+        // Without this an empty answer would satisfy every strip case.
+        assert!(
+            !stdout.is_empty(),
+            "{case} wrote nothing to stdout; stderr: {stderr}"
+        );
+        assert_eq!(
+            stdout.contains("\u{1b}["),
+            expect_escapes,
+            "{case}: expected stdout to carry ANSI escapes: {expect_escapes} — {pins}"
         );
     }
 }

@@ -6,7 +6,7 @@
 //! `main` builds the rayon pool or parses a command, so nothing here shares
 //! state with an ordinary `wt` invocation.
 //!
-//! **One benchmark, on the `mixed` fixture `full` already uses.** Completion
+//! **One benchmark, on the generated fixture `full` already uses.** Completion
 //! has no phases worth timing separately: it spawns, fills its caches on one
 //! set of threads, scans refs and worktrees on another, prints, exits.
 //! Splitting that into a variant per dimension re-measures the same startup
@@ -16,20 +16,20 @@
 //! benches/CLAUDE.md, and note that a `-vv` run skips prewarm's rev-parse
 //! batch and so is not quite the run users get.
 //!
-//! `mixed-80-80-1400` is that one repo: 80 worktrees in four states, 80 more
-//! branches forked across 200 commits of history, and 1400 remote-tracking
-//! refs. It covers all three categories `BranchCompleter` distinguishes, puts
-//! both candidate slow calls (`for-each-ref refs/remotes/` and `worktree list
-//! --porcelain`) in the same process at a size where each is expensive, and
-//! lands past the completer's 100-entry threshold — where the remote refs are
-//! scanned and then discarded, as they are on a real long-lived clone.
+//! The benchmark uses the same 24 linked worktrees and 120 branchless branches
+//! as `full`, plus 1400 remote-tracking refs. It covers all three categories
+//! `BranchCompleter` distinguishes and runs both candidate slow calls
+//! (`for-each-ref refs/remotes/` and `worktree list --porcelain`) in one
+//! process at a size where each is expensive. Its 145 local candidates also
+//! exceed the completer's 100-entry threshold, where remote refs are scanned
+//! and then discarded as they are on a long-lived clone.
 //!
 //! The remote-ref count is what this bench adds to the shared fixture; `full`
 //! passes 0 and is unaffected.
 //!
 //! ```bash
 //! cargo bench --bench completion
-//! cargo run -p wt-perf -- setup mixed 80 80 1400 --path /tmp/clone
+//! cargo run -p wt-perf -- setup generated 24 120 1400 --path target/wt-generated-completion
 //! ```
 
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -74,15 +74,17 @@ fn assert_completion_candidates(binary: &Path, repo_path: &Path, expected: &BTre
 fn bench_completion_switch(c: &mut Criterion) {
     let mut group = c.benchmark_group("completion_switch");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let (linked_worktrees, branchless_branches) = (24, 120);
 
-    group.bench_function("mixed", |b| {
-        let fixture = FixtureRecipe::Mixed {
-            linked_worktrees: 80,
-            branchless_branches: 80,
+    group.bench_function("full_surface", |b| {
+        let fixture = FixtureRecipe::Generated {
+            linked_worktrees,
+            branchless_branches,
             remote_tracking_refs: 1400,
         }
         .create();
-        assert_completion_candidates(binary, fixture.path(), &expected_branches(80, 80));
+        let expected = expected_branches(branchless_branches, linked_worktrees);
+        assert_completion_candidates(binary, fixture.path(), &expected);
         b.iter(|| run_completion(binary, fixture.path(), &["wt", "switch", ""]));
     });
 

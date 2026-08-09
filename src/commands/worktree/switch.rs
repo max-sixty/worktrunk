@@ -691,7 +691,10 @@ fn validate_worktree_creation(
     {
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
-            show_create_hint: true,
+            // Offering `--create` for a name git rejects sends the user to a
+            // command that fails; the argument was a path spelling, whether or
+            // not a directory happens to sit at it.
+            show_create_hint: worktrunk::git::is_valid_branch_name(branch),
             last_fetch_ago: format_last_fetch_ago(repo),
             pr_mr_platform: repo.detect_ref_type(),
         }
@@ -851,16 +854,22 @@ fn plan_switch(
     // argument is the name of a branch that does not exist yet, and not when
     // Phase 1 rewrote the argument (a shortcut, `pr:`/`mr:`, a stripped remote
     // prefix), which is exactly when the literal token would be a nonsense path.
-    if !create
-        && target.branch == branch
-        && let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)?
-    {
-        let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
-        return Ok(SwitchPlan::Existing {
-            path: canonical,
-            branch: wt_branch,
-            new_previous,
-        });
+    if !create && target.branch == branch {
+        if let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)? {
+            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+            return Ok(SwitchPlan::Existing {
+                path: canonical,
+                branch: wt_branch,
+                new_previous,
+            });
+        }
+        // Nothing is registered there, and a path is all the argument could
+        // have been — so stop here rather than carrying it to Phase 4, which
+        // would report a missing branch and offer to create one under a name
+        // git rejects.
+        if let Some(err) = repo.path_selector_error(branch) {
+            return Err(err.into());
+        }
     }
 
     // Phase 3: Compute expected path (only needed for create)

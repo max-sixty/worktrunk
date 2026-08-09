@@ -53,22 +53,48 @@ tasks:
         fi
         echo "Rust version: $(rustc --version | awk '{print $2}')"
 
-        # Install shells
+        # Install what the `shell-integration-tests` feature drives
         echo ""
-        echo "Installing shells for integration tests..."
+        echo "Installing shell-integration test dependencies..."
         if command -v apt-get &> /dev/null; then
             export DEBIAN_FRONTEND=noninteractive
+            # An `if` rather than an `&&` chain: under `set -e` a chain
+            # ending false takes the whole task down, and this one ends
+            # false both on an unmatched glob and on a `.list` file with
+            # no `[` line.
             for f in /etc/apt/sources.list.d/*.list; do
-                [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null && rm -f "$f"
+                if [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null; then
+                    rm -f "$f"
+                fi
             done
-            if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null; then
+            # A missing pwsh joins the condition so one refresh serves both
+            # installs: apt resolves the PowerShell .deb's dependencies from
+            # these lists too.
+            if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null \
+                || ! command -v jq &> /dev/null || ! command -v pwsh &> /dev/null; then
                 apt-get update -qq
-                apt-get install -y -qq zsh fish
+                apt-get install -y -qq zsh fish jq
+            fi
+            # PowerShell isn't in Debian's repos. Install the release .deb
+            # rather than the tarball: pwsh aborts at startup without libicu,
+            # and only the .deb declares that dependency for apt to resolve.
+            if ! command -v pwsh &> /dev/null; then
+                PWSH_VERSION="7.6.4"
+                URL="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell_${PWSH_VERSION}-1.deb_amd64.deb"
+                TEMP=$(mktemp -d)
+                curl -fsSL -o "$TEMP/powershell.deb" "$URL"
+                apt-get install -y -qq "$TEMP/powershell.deb"
+                rm -rf "$TEMP"
+                echo "pwsh installed"
             fi
         fi
-        for shell in bash zsh fish nu; do
-            command -v "$shell" &> /dev/null || { echo "Error: $shell not found"; exit 1; }
-            echo "$shell available"
+        # The shells the feature drives, plus the `jq` its Claude-hook tests
+        # pipe the hook payload through. Run each rather than looking for it
+        # on PATH, because a pwsh missing its libicu is on PATH and aborts at
+        # startup anyway.
+        for tool in bash zsh fish nu pwsh jq; do
+            "$tool" --version > /dev/null 2>&1 || { echo "Error: $tool not usable"; exit 1; }
+            echo "$tool available"
         done
 
         # Install gh CLI

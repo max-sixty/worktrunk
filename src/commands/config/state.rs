@@ -792,8 +792,10 @@ pub fn handle_state_get(
                 (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
+                        // Offering `--create` for a name git rejects sends the
+                        // user to a command that fails.
+                        show_create_hint: worktrunk::git::is_valid_branch_name(&branch_name),
                         branch: branch_name,
-                        show_create_hint: true,
                         last_fetch_ago: None,
                         pr_mr_platform: repo.detect_ref_type(),
                     }

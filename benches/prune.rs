@@ -11,7 +11,7 @@
 //      delete) serially under the write side of the scan lock, reusing the
 //      removal plan its scan check computed.
 //
-// The fixture is `wt_perf::FixtureRecipe::Prune`: squash-merged candidates
+// The generated base gets a prune overlay: squash-merged candidates
 // (integrated by content — the expensive probe path, the post-PR-squash shape
 // prune typically removes) against a two-sided-diverged backdrop of unmerged
 // worktrees and branches (forked deep in history while main advanced) that
@@ -23,11 +23,12 @@
 //                             new commits on main" shape; git's own caches
 //                             stay warm, as after a real fetch)
 //   - prune_e2e/dry_run_warm — full scan, caches warm (steady-state re-run)
+//   - prune_e2e/dry_run_cold — full scan, including cold git/default-branch state
 //   - prune_e2e/live        — scan + removal of the squash-merged candidates
 //                             from a fresh fixture per sample
 //   - prune_large_repository/ — the same probe-cold and warm dry-runs on a
-//     dry_run_probe_cold,     pinned large-repository corpus with both
-//     dry_run_warm            populations at "dozens of worktrees" scale (~15 GiB
+//     dry_run_probe_cold,     pinned imported corpus with both
+//     dry_run_warm            populations at "dozens of worktrees" scale (multi-gigabyte
 //                             fixture; first-ever run clones, minutes).
 //                             Opt-in via `--features large-repository-benches` so
 //                             the daily CI benchmarks job never builds it;
@@ -35,12 +36,13 @@
 //                             timelines, not criterion groups (see below)
 //
 // Run examples:
-//   cargo bench --bench prune                # Synthetic variants
+//   cargo bench --bench prune                # Ordinary-scale variants
 //   cargo bench --bench prune --features large-repository-benches prune_large_repository
 //
 // For phase attribution (scan vs per-candidate removal), trace one invocation
-// instead: `wt-perf setup prune 4 8 --path /tmp/prune-repo`, then
-// `wt-perf timeline -- -C /tmp/prune-repo step prune --dry-run --min-age 0s`
+// instead: `wt-perf setup generated 0 0 --prune-candidates 4
+// --prune-backdrop 8 --path target/wt-prune-generated`, then
+// `wt-perf timeline -- -C target/wt-prune-generated step prune --dry-run --min-age 0s`
 // and read the `prune-gather` / `prune-scan` / `prune-check:*` /
 // `prune-remove:*` spans.
 
@@ -51,8 +53,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use wt_perf::{
-    CacheState, FixtureRecipe, PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS,
-    PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS, bench_wt, invalidate_probe_caches,
+    CacheState, FixtureRecipe, FixtureRepo, IMPORTED_PRUNE_BACKDROP_PAIRS,
+    IMPORTED_PRUNE_CANDIDATE_PAIRS, add_prune_populations, bench_wt, invalidate_probe_caches,
     linked_worktree_path, run_and_check, run_git_ok, wt_command,
 };
 
@@ -74,6 +76,20 @@ const DRY_RUN_ARGS: &[&str] = &[
     "json",
 ];
 const LIVE_ARGS: &[&str] = &["step", "prune", "--min-age", "0s", "--format", "json"];
+
+fn generated_prune_fixture() -> FixtureRepo {
+    // The prune overlay supplies its own exact candidate/backdrop populations.
+    // Ordinary generated behind/identical branches would be extra candidates,
+    // so this destructive scenario intentionally starts with zero of them.
+    let fixture = FixtureRecipe::Generated {
+        linked_worktrees: 0,
+        branchless_branches: 0,
+        remote_tracking_refs: 0,
+    }
+    .create();
+    add_prune_populations(fixture.path(), MERGED, UNMERGED);
+    fixture
+}
 
 /// Build the `wt <args>` command for `repo`.
 fn wt_cmd(repo: &Path, args: &[&str]) -> Command {
@@ -128,8 +144,8 @@ fn assert_live_result(repo: &Path) {
         assert_branch(repo, &branch, false);
     }
     for i in 0..UNMERGED {
-        let worktree_branch = format!("feature-wt-{i}");
-        let branch = format!("feature-{i:03}");
+        let worktree_branch = format!("unmerged-wt-{i}");
+        let branch = format!("unmerged-br-{i:03}");
         assert!(
             linked_worktree_path(repo, &worktree_branch).is_dir(),
             "measured prune removed backdrop worktree {worktree_branch}"
@@ -144,18 +160,16 @@ fn bench_prune_e2e(c: &mut Criterion) {
 
     // Dry-run repo: candidates present but never removed, so the fixture is
     // reusable across iterations without re-setup.
-    let dry_fixture = FixtureRecipe::Prune {
-        candidate_pairs: MERGED,
-        backdrop_pairs: UNMERGED,
-    }
-    .create();
+    let dry_fixture = generated_prune_fixture();
     verify_candidates(dry_fixture.path(), MERGED * 2);
 
     for (id, cache) in [
-        // First prune after fetching the default branch.
-        ("dry_run_probe_cold", CacheState::ProbeCold),
         // Steady-state re-scan where every probe hits sha_cache.
         ("dry_run_warm", CacheState::Warm),
+        // First prune after fetching the default branch.
+        ("dry_run_probe_cold", CacheState::ProbeCold),
+        // First run against fresh equivalent repo state.
+        ("dry_run_cold", CacheState::Cold),
     ] {
         group.bench_function(id, |b| {
             bench_wt(b, dry_fixture.path(), cache, || {
@@ -171,11 +185,7 @@ fn bench_prune_e2e(c: &mut Criterion) {
         b.iter_custom(|iterations| {
             let mut measured = Duration::ZERO;
             for _ in 0..iterations {
-                let fixture = FixtureRecipe::Prune {
-                    candidate_pairs: MERGED,
-                    backdrop_pairs: UNMERGED,
-                }
-                .create();
+                let fixture = generated_prune_fixture();
                 verify_candidates(fixture.path(), MERGED * 2);
                 invalidate_probe_caches(fixture.path());
 
@@ -191,14 +201,13 @@ fn bench_prune_e2e(c: &mut Criterion) {
     group.finish();
 }
 
-/// Large-repository scan: a 331k-commit repo
+/// Imported scan: a 331k-commit repo
 /// with 12 squash-merged candidate pairs against a two-sided-diverged
 /// backdrop of 24 worktrees + 24 orphan branches forked across the last 5000
-/// commits — 36 linked worktrees, lots removable, more not. Scale is what
-/// moves every per-item cost — `merge-base --is-ancestor` ~40 ms, `merge-tree
-/// --write-tree` ~130 ms, `git status` over ~60k files — vs the synthetic
-/// fixture where probes bottom out at subprocess spawn. The pinned source is
-/// cached; each benchmark process builds one fresh ~36-worktree fixture.
+/// commits, layered onto the imported repo's existing state. Scale is what
+/// moves every per-item `merge-base`, `merge-tree`, and `git status` cost beyond
+/// the subprocess-spawn floor visible in the generated fixture. The pinned source is
+/// cached; each benchmark process builds one fresh fixture.
 ///
 /// Dry-runs only, in two flavors: warm (steady-state re-scan) and probe-cold
 /// (`.git/wt/cache/` cleared per iteration — the "first prune after fetching
@@ -206,9 +215,9 @@ fn bench_prune_e2e(c: &mut Criterion) {
 /// stat-warm). A full-cold scan and live removal are one-shot timeline
 /// workloads at this scale: the former adds commit-graph rebuilding to the
 /// probe cost, while the latter consumes its fixture. Use `wt-perf setup
-/// large-repository-prune 12 24 --path <new-path>` for either.
+/// imported --prune-candidates 12 --prune-backdrop 24 --path <new-path>` for either.
 fn bench_prune_large_repository(c: &mut Criterion) {
-    // Opt-in only (`--features large-repository-benches`): the fixture is ~15 GiB —
+    // Opt-in only (`--features large-repository-benches`): the fixture is multi-gigabyte —
     // bigger than a hosted CI runner's disk and the actions cache cap — so
     // the daily benchmarks workflow (plain `cargo bench`) must never build
     // it. `cfg!` keeps the body compiling either way.
@@ -226,14 +235,16 @@ fn bench_prune_large_repository(c: &mut Criterion) {
         // (`cargo bench --bench prune prune_e2e`) from cloning the large
         // corpus. Both variants share the fresh fixture when both match.
         let fixture = fixture.get_or_init(|| {
-            FixtureRecipe::LargeRepositoryPrune {
-                candidate_pairs: PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS,
-                backdrop_pairs: PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS,
-            }
-            .create()
+            let fixture = FixtureRecipe::Imported.create();
+            add_prune_populations(
+                fixture.path(),
+                IMPORTED_PRUNE_CANDIDATE_PAIRS,
+                IMPORTED_PRUNE_BACKDROP_PAIRS,
+            );
+            fixture
         });
         let repo = fixture.path();
-        verify_candidates(repo, PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS * 2);
+        verify_candidates(repo, IMPORTED_PRUNE_CANDIDATE_PAIRS * 2);
         bench_wt(b, repo, CacheState::Warm, || wt_cmd(repo, DRY_RUN_ARGS));
     });
 
@@ -241,14 +252,16 @@ fn bench_prune_large_repository(c: &mut Criterion) {
         // Built inside the closure for the same filter-matching reason as
         // dry_run_warm above.
         let fixture = fixture.get_or_init(|| {
-            FixtureRecipe::LargeRepositoryPrune {
-                candidate_pairs: PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS,
-                backdrop_pairs: PRUNE_LARGE_REPOSITORY_BACKDROP_PAIRS,
-            }
-            .create()
+            let fixture = FixtureRecipe::Imported.create();
+            add_prune_populations(
+                fixture.path(),
+                IMPORTED_PRUNE_CANDIDATE_PAIRS,
+                IMPORTED_PRUNE_BACKDROP_PAIRS,
+            );
+            fixture
         });
         let repo = fixture.path();
-        verify_candidates(repo, PRUNE_LARGE_REPOSITORY_CANDIDATE_PAIRS * 2);
+        verify_candidates(repo, IMPORTED_PRUNE_CANDIDATE_PAIRS * 2);
         bench_wt(b, repo, CacheState::ProbeCold, || {
             wt_cmd(repo, DRY_RUN_ARGS)
         });

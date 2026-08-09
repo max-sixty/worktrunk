@@ -34,8 +34,8 @@ joins an environment can read every secret in it:
 | Environment | Admits | Secret | Read by |
 |-------------|--------|--------|---------|
 | `tend` | `main` | `CLAUDE_CODE_OAUTH_TOKEN`, `TEND_BOT_TOKEN` | every `tend-*.yaml` job except `relay`; `append-gist`; both `create-issue-on-*-failure` jobs |
-| `release` | `v*` tags | `AUR_SSH_PRIVATE_KEY`, `TEND_BOT_TOKEN` | `publish-aur`, `publish-winget`, `publish-homebrew` |
-| `signing` | `v*` tags | `SIGNPATH_API_TOKEN` | `build-local-artifacts` |
+| `release` | any tag | `AUR_SSH_PRIVATE_KEY`, `TEND_BOT_TOKEN` | `publish-aur`, `publish-winget`, `publish-homebrew` |
+| `signing` | any tag | `SIGNPATH_API_TOKEN` | `build-local-artifacts` |
 | `github-pages` | `main` | none — OIDC only | `deploy-docs` |
 
 The deployment branch policy is the gate: a job naming an environment runs
@@ -46,9 +46,18 @@ ruleset, admin-only), which is what makes both admitted sets unreachable to
 it. No environment has a reviewer rule, so joining a job to one costs no
 approval step.
 
+The tag policies admit every tag rather than a `v*` pattern. "Tag operations"
+covers `~ALL` tags, so the pattern carries no part of the gate — it only
+duplicates `release.yaml`'s own tag filter, and the two are easy to drift
+apart. They already had: the workflow fires on `**[0-9]+.[0-9]+.[0-9]+*`,
+which matches an unprefixed `1.2.3` that a `v*` policy would then refuse. A
+release cut under that name would have stopped at `build-local-artifacts`,
+which names `signing` and waits only on `plan` — before an artifact was built,
+let alone published.
+
 `TEND_BOT_TOKEN` is stored in two environments rather than shared, because a
 policy admits branches or tags but the token is needed under both: the bot's
-own workflows run on `main`, the publish jobs on a `v*` tag. Adding the tag to
+own workflows run on `main`, the publish jobs on a tag. Adding the tag to
 `tend` is not an option — `tend check` pins that policy to exactly the
 protected branches and its `--fix` deletes anything else.
 

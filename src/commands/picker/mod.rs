@@ -1652,7 +1652,7 @@ pub fn handle_picker(
     worktrunk::trace::instant("Picker config resolved");
 
     // Read the terminal size once, from the canonical reader that
-    // `crate::display::terminal_width` also projects (stderr first, then stdout,
+    // `worktrunk::styling::terminal_width` also projects (stderr first, then stdout,
     // then `COLUMNS`). The skim list-column width (`skim_list_width` below)
     // derives from the same snapshot, so the two can never observe different
     // widths — whether across a resize or because stdout and stderr point to
@@ -1664,7 +1664,7 @@ pub fn handle_picker(
     // before. The picker requires a TTY, so that fallback only bites the
     // headless dry-run / preview-bench paths; `skim_list_width` still uses the
     // `COLUMNS` width there.
-    let term_dims = crate::display::terminal_dimensions();
+    let term_dims = worktrunk::styling::terminal_dimensions();
     let (term_width, term_height) = match term_dims {
         Some((w, Some(h))) => (w, h),
         _ => (80, 24),

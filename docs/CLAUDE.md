@@ -163,6 +163,8 @@ Each command has three documentation pieces in `src/cli/mod.rs`:
 
 4. **after_long_help should mostly stand alone** — The opener should give context or purpose, not just continue with details that only make sense after reading the definition. Avoid non-sequiturs.
 
+5. **Give a behavior the share of the docs that matches its share of the feature** — every paragraph is read by everyone who runs `--help`, so length is a claim on that attention. A guard or edge case that is a tiny share of the command usually gets zero words: its own error message states it at the moment it matters, and the help page leaves it implicit. Reserve prose for what most users of the command meet.
+
 **Good patterns for after_long_help openers:**
 
 - Explain the mental model: "Worktrees are addressed by branch name..."

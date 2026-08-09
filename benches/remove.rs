@@ -4,9 +4,10 @@
 // spawning, to complement `first_output/remove` in `time_to_first_output`,
 // which exits before output.
 //
-// Both variants use the same project and user hook configuration:
-//   - remove_e2e/no_hooks       — the hooks are bypassed with --no-hooks
-//   - remove_e2e/with_hooks     — the hooks are approved and spawned
+// Three single-factor variants use the same project and user hook configuration:
+//   - remove_e2e/warm/no_hooks — steady-state removal with hooks bypassed
+//   - remove_e2e/cold/no_hooks — fresh-state neighbor for the cache cost
+//   - remove_e2e/warm/with_hooks — warm neighbor for the hook cost
 //
 // Run examples:
 //   cargo bench --bench remove              # All variants
@@ -17,11 +18,12 @@ use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use wt_perf::{
-    FixtureRecipe, FixtureRepo, add_typical_linked_worktrees, linked_worktree_path, run_and_check,
-    run_git, run_git_ok, setup_fake_remote, wt_command,
+    CacheState, FixtureRecipe, FixtureRepo, add_heterogeneous_linked_worktrees,
+    invalidate_caches_auto, invalidate_probe_caches, linked_worktree_path, run_and_check, run_git,
+    run_git_ok, setup_fake_remote, wt_command,
 };
 
-const BRANCH: &str = "feature-wt-1";
+const BRANCH: &str = "wt-0000";
 const UNTRACKED_FILES: usize = 3;
 const BACKGROUND_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -36,8 +38,8 @@ struct RemoveFixture {
 
 impl RemoveFixture {
     /// Build one complete candidate outside the measured duration.
-    fn create(binary: &Path) -> Self {
-        let repo = FixtureRecipe::Typical { total_worktrees: 1 }.create();
+    fn create(binary: &Path, cache: CacheState) -> Self {
+        let repo = FixtureRecipe::generated(0).create();
         let project_marker = repo.root().join("project-post-remove.marker");
         let user_marker = repo.root().join("user-post-switch.marker");
 
@@ -54,8 +56,16 @@ impl RemoveFixture {
         run_git(repo.path(), &["add", ".config/wt.toml"]);
         run_git(repo.path(), &["commit", "-m", "Add benchmark hook"]);
 
-        add_typical_linked_worktrees(repo.path(), 1);
+        add_heterogeneous_linked_worktrees(repo.path(), 1);
         setup_fake_remote(repo.path());
+        let worktree = repo.worktree_path(BRANCH);
+        for i in 0..UNTRACKED_FILES {
+            std::fs::write(
+                worktree.join(format!("uncommitted_{i}.txt")),
+                "Uncommitted content\n",
+            )
+            .unwrap();
+        }
         let worktree_admin_dir = linked_worktree_admin_dir(&repo.worktree_path(BRANCH));
 
         let user_config = repo.root().join("config.toml");
@@ -85,6 +95,11 @@ impl RemoveFixture {
             );
         }
         fixture.prewarm(binary);
+        match cache {
+            CacheState::Warm => {}
+            CacheState::Cold => invalidate_caches_auto(fixture.repo.path()),
+            CacheState::ProbeCold => invalidate_probe_caches(fixture.repo.path()),
+        }
         fixture
     }
 
@@ -92,9 +107,7 @@ impl RemoveFixture {
         linked_worktree_path(self.repo.path(), BRANCH)
     }
 
-    /// Preserve the original cache-warm remove scenario without reusing a
-    /// mutable fixture. Prune's dry-run uses the same integration probes and
-    /// cannot consume the unmerged candidate.
+    /// Prewarm the integration probes without consuming the unmerged candidate.
     fn prewarm(&self, binary: &Path) {
         let mut cmd = wt_command(binary, self.repo.path(), Some(&self.user_config));
         cmd.args([
@@ -179,6 +192,7 @@ fn bench_variant(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     name: &str,
     expect_hooks: bool,
+    cache: CacheState,
 ) {
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
@@ -186,7 +200,7 @@ fn bench_variant(
         b.iter_custom(|iterations| {
             let mut measured = Duration::ZERO;
             for _ in 0..iterations {
-                let fixture = RemoveFixture::create(binary);
+                let fixture = RemoveFixture::create(binary, cache);
                 let worktree = fixture.worktree_path();
                 let mut cmd = wt_command(binary, &worktree, Some(&fixture.user_config));
                 cmd.args(["remove", "--yes", "--force"]);
@@ -207,8 +221,9 @@ fn bench_variant(
 fn bench_remove_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove_e2e");
 
-    bench_variant(&mut group, "no_hooks", false);
-    bench_variant(&mut group, "with_hooks", true);
+    bench_variant(&mut group, "warm/no_hooks", false, CacheState::Warm);
+    bench_variant(&mut group, "cold/no_hooks", false, CacheState::Cold);
+    bench_variant(&mut group, "warm/with_hooks", true, CacheState::Warm);
 
     group.finish();
 }

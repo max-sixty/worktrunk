@@ -46,35 +46,32 @@ fn setup_help_exposes_the_semantic_fixture_catalog() {
         "setup must require an explicit destination:\n{stdout}"
     );
 
-    for subcommand in [
-        "typical",
-        "minimal",
-        "synthetic-divergence",
-        "large-repository",
-        "mixed",
-        "prune",
-        "large-repository-prune",
-    ] {
+    let commands = stdout
+        .split("Commands:\n")
+        .nth(1)
+        .unwrap()
+        .split("\n\nOptions:")
+        .next()
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("  ")
+                .filter(|line| !line.starts_with(' '))
+        })
+        .filter_map(|line| line.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert_eq!(commands, ["generated", "imported", "help"]);
+    for overlay in ["--prune-candidates", "--prune-backdrop"] {
         assert!(
-            stdout.contains(subcommand),
-            "setup help must list {subcommand}:\n{stdout}"
-        );
-    }
-    for removed in [
-        "large-repository-worktrees",
-        "large-repository-history-spread",
-        "picker-test",
-    ] {
-        assert!(
-            !stdout.contains(removed),
-            "setup help must not retain obsolete recipe {removed}:\n{stdout}"
+            stdout.contains(overlay),
+            "setup help must expose prune state as an overlay:\n{stdout}"
         );
     }
 }
 
 #[test]
-fn setup_validation_does_not_acquire_large_repository_fixtures() {
-    let output = run_wt_perf(&["setup", "minimal", "0", "0"]);
+fn setup_validation_does_not_acquire_imported_fixture() {
+    let output = run_wt_perf(&["setup", "generated"]);
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("Missing required --path"),
@@ -85,8 +82,10 @@ fn setup_validation_does_not_acquire_large_repository_fixtures() {
     let path = tempfile::tempdir().expect("Failed to create temp dir");
     let output = run_wt_perf(&[
         "setup",
-        "large-repository-prune",
+        "imported",
+        "--prune-candidates",
         "12",
+        "--prune-backdrop",
         "24",
         "--path",
         path.path().to_str().unwrap(),
@@ -98,15 +97,8 @@ fn setup_validation_does_not_acquire_large_repository_fixtures() {
 #[test]
 fn setup_builds_a_semantic_recipe_at_an_explicit_path() {
     let root = tempfile::tempdir().expect("Failed to create temp dir");
-    let repo = root.path().join("minimal-fixture");
-    let output = run_wt_perf(&[
-        "setup",
-        "minimal",
-        "0",
-        "0",
-        "--path",
-        repo.to_str().unwrap(),
-    ]);
+    let repo = root.path().join("generated-fixture");
+    let output = run_wt_perf(&["setup", "generated", "--path", repo.to_str().unwrap()]);
     assert!(
         output.status.success(),
         "setup failed:\n{}",
@@ -122,6 +114,27 @@ fn setup_builds_a_semantic_recipe_at_an_explicit_path() {
         "setup must not advertise the removed standalone command:\n{stderr}"
     );
     assert!(repo.join(".git").is_dir(), "setup must create a git repo");
+}
+
+#[test]
+fn setup_layers_prune_state_onto_a_canonical_base() {
+    let root = tempfile::tempdir().expect("Failed to create temp dir");
+    let repo = root.path().join("prune-fixture");
+    let output = run_wt_perf(&[
+        "setup",
+        "generated",
+        "--prune-candidates",
+        "1",
+        "--prune-backdrop",
+        "1",
+        "--path",
+        repo.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "setup failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let branches = Command::new("git")
         .args([
@@ -133,7 +146,19 @@ fn setup_builds_a_semantic_recipe_at_an_explicit_path() {
         .output()
         .expect("Failed to inspect built fixture");
     assert!(branches.status.success());
-    assert_eq!(String::from_utf8_lossy(&branches.stdout), "main\n");
+    let branches = String::from_utf8(branches.stdout).unwrap();
+    for branch in [
+        "main",
+        "merged-br-0",
+        "merged-wt-0",
+        "unmerged-br-000",
+        "unmerged-wt-0",
+    ] {
+        assert!(
+            branches.lines().any(|found| found == branch),
+            "missing {branch}:\n{branches}"
+        );
+    }
 }
 
 #[test]
@@ -148,14 +173,7 @@ fn setup_never_mutates_an_existing_destination() {
         destination.clone(),
         root.path().join("missing-parent/../existing"),
     ] {
-        let output = run_wt_perf(&[
-            "setup",
-            "minimal",
-            "0",
-            "1",
-            "--path",
-            path.to_str().unwrap(),
-        ]);
+        let output = run_wt_perf(&["setup", "generated", "--path", path.to_str().unwrap()]);
         assert!(
             !output.status.success(),
             "setup unexpectedly accepted {path:?}"
