@@ -2495,12 +2495,14 @@ fn test_load_error_display_cli_override() {
 // =========================================================================
 
 /// Apply `--config-set` overrides to a base table the way `load_with_warnings`
-/// does, returning the merged table plus any warnings.
+/// does — including the step that ranks the layer above `[projects."…"]`
+/// specificity — returning the merged table plus any warnings.
 fn apply_overrides(base: toml::Table, overrides: &[&str]) -> (toml::Table, Vec<LoadError>) {
     let overrides: Vec<String> = overrides.iter().map(|s| s.to_string()).collect();
     let mut table = base;
     let mut warnings = Vec::new();
-    UserConfig::apply_cli_overrides(&overrides, &mut table, &mut warnings);
+    let overlay = UserConfig::apply_cli_overrides(&overrides, &mut table, &mut warnings);
+    apply_invocation_layer_over_projects(&mut table, &overlay);
     (table, warnings)
 }
 
@@ -2642,6 +2644,188 @@ fn test_try_parse_value() {
     assert_eq!(
         try_parse_value("hello"),
         toml::Value::String("hello".into())
+    );
+}
+
+// =========================================================================
+// apply_invocation_layer_over_projects() — invocation layers vs `[projects]`
+// =========================================================================
+
+const PROJECT: &str = "github.com/owner/repo";
+
+/// A base table with one project entry carrying `body`.
+fn base_with_project(body: &str) -> toml::Table {
+    format!("[projects.\"{PROJECT}\"]\n{body}").parse().unwrap()
+}
+
+fn loaded(table: toml::Table) -> UserConfig {
+    toml::Value::Table(table).try_into().unwrap()
+}
+
+#[test]
+fn test_invocation_layer_outranks_project_worktree_path() {
+    // The reported bug (#3788), on the `--config-set` half: a project entry's
+    // `worktree-path` no longer beats a global key the invocation layer set.
+    let base = base_with_project("worktree-path = \"/from-project\"\n");
+    let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\""]);
+    assert!(warnings.is_empty());
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-cli"
+    );
+}
+
+#[test]
+fn test_env_layer_outranks_project_worktree_path() {
+    // The env half of the same fix, driven through the overlay
+    // `load_with_warnings` builds rather than the process environment.
+    use super::{EnvVar, migrate_env_overlay, resolve_env_overlay, try_parse_value};
+    let var = EnvVar {
+        name: "WORKTRUNK_WORKTREE_PATH".to_string(),
+        segments: vec!["worktree-path".to_string()],
+        typed_value: try_parse_value("/from-env"),
+        raw_value: "/from-env".to_string(),
+    };
+    let mut table = base_with_project("worktree-path = \"/from-project\"\n");
+    let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[var]));
+    deep_merge_table(&mut table, overlay.clone());
+    apply_invocation_layer_over_projects(&mut table, &overlay);
+
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-env"
+    );
+}
+
+#[test]
+fn test_invocation_layer_leaves_untouched_project_keys() {
+    // Only the overridden key is displaced: a project entry's other settings,
+    // and its sibling keys inside the same section, still apply.
+    let base = base_with_project(
+        r#"worktree-path = "/from-project"
+
+[projects."github.com/owner/repo".list]
+full = true
+branches = true
+"#,
+    );
+    let (table, warnings) = apply_overrides(base, &["list.full = false"]);
+    assert!(warnings.is_empty());
+    let config = loaded(table);
+    assert_eq!(config.worktree_path_for_project(PROJECT), "/from-project");
+    let list = config.list(Some(PROJECT));
+    assert_eq!(list.full, Some(false), "the invocation layer wins");
+    assert_eq!(list.branches, Some(true), "sibling key survives");
+}
+
+#[test]
+fn test_invocation_layer_keeps_its_own_project_scoped_override() {
+    // Naming the project entry is both the highest layer and the most
+    // specific key, so it outranks the same layer's global key.
+    let base = base_with_project("worktree-path = \"/from-project\"\n");
+    let (table, warnings) = apply_overrides(
+        base,
+        &[
+            "worktree-path = \"/from-cli-global\"",
+            &format!("projects.\"{PROJECT}\".worktree-path = \"/from-cli-project\""),
+        ],
+    );
+    assert!(warnings.is_empty());
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-cli-project"
+    );
+}
+
+#[test]
+fn test_invocation_layer_applies_to_pattern_entries() {
+    // Pattern entries are project entries too — a `*` key must not smuggle a
+    // project-scoped value past the invocation layer.
+    let base: toml::Table = "[projects.\"github.com/*\"]\nworktree-path = \"/from-pattern\"\n"
+        .parse()
+        .unwrap();
+    let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\""]);
+    assert!(warnings.is_empty());
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-cli"
+    );
+}
+
+#[test]
+fn test_invocation_layer_leaves_composing_keys_alone() {
+    // Per-project hooks and aliases append to the global ones rather than
+    // replacing them, so both already run and there is no precedence to fix.
+    // Dropping the project's copy would silently stop it running.
+    let base = base_with_project(
+        r#"pre-merge = "project-hook"
+
+[projects."github.com/owner/repo".aliases]
+ship = "project-alias"
+"#,
+    );
+    let (table, warnings) = apply_overrides(
+        base,
+        &["pre-merge = \"cli-hook\"", "aliases.ship = \"cli-alias\""],
+    );
+    assert!(warnings.is_empty());
+    let config = loaded(table);
+    let templates = |commands: &CommandConfig| {
+        commands
+            .commands()
+            .map(|command| command.template.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        templates(&config.hooks(Some(PROJECT)).pre_merge.unwrap()),
+        ["cli-hook", "project-hook"]
+    );
+    assert_eq!(
+        templates(&config.aliases(Some(PROJECT))["ship"]),
+        ["cli-alias", "project-alias"]
+    );
+}
+
+#[test]
+fn test_invocation_layer_displaces_exclusive_sibling() {
+    // `template` and `template-file` clear one another, so overriding one has
+    // to displace both at project scope: leaving the project's `template-file`
+    // would let it win the merge (and would fail validation next to the
+    // global `template` the same entry now carries).
+    let base = base_with_project(
+        "[projects.\"github.com/owner/repo\".commit.generation]\ntemplate-file = \"/project.txt\"\n",
+    );
+    let (table, warnings) = apply_overrides(base, &["commit.generation.template = \"from-cli\""]);
+    assert!(warnings.is_empty());
+    let config = loaded(table);
+    config.validate().expect("still validates");
+    let generation = config.commit_generation(Some(PROJECT));
+    assert_eq!(generation.template.as_deref(), Some("from-cli"));
+    assert_eq!(generation.template_file, None);
+}
+
+#[test]
+fn test_invocation_layer_noop_without_overrides() {
+    // No invocation layer, no change: a project entry keeps every key.
+    let base = base_with_project("worktree-path = \"/from-project\"\n");
+    let (table, warnings) = apply_overrides(base, &[]);
+    assert!(warnings.is_empty());
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-project"
+    );
+}
+
+#[test]
+fn test_dropped_invocation_layer_leaves_projects_intact() {
+    // A `--config-set` layer that rolls back (malformed fragment) overrides
+    // nothing, so it must not displace the project entry either.
+    let base = base_with_project("worktree-path = \"/from-project\"\n");
+    let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\"", "garbage"]);
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-project"
     );
 }
 

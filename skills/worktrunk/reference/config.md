@@ -341,7 +341,7 @@ User config can include a `[projects]` table for project-specific settings — w
 
 Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 
-Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. An entry outranks the global key in config files, but not a `WORKTRUNK_` env var or `--config-set` — see [how the layers rank](https://worktrunk.dev/config/#precedence).
 
 ```toml
 [projects."github.com/user/repo"]
@@ -630,6 +630,25 @@ On first run without shell integration, Worktrunk offers to install it. On first
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
+
+### Precedence
+
+System config sits under user config, and within either a [`[projects."…"]` entry](https://worktrunk.dev/config/#user-project-specific-settings) outranks the global key of the same name. The two invocation layers sit above all of that, because you typed them for this one run:
+
+| Source of `worktree-path` | Loses to |
+|---|---|
+| `--config-set 'worktree-path = …'` | — |
+| `WORKTRUNK_WORKTREE_PATH` | `--config-set` |
+| `[projects."github.com/owner/repo"]` in a config file | either invocation layer |
+| global `worktree-path` in a config file | all of the above |
+
+To aim an invocation override at one project rather than every project, name the entry — that is both the highest layer and the most specific key:
+
+```bash
+$ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"' switch --create feature
+```
+
+Per-project hooks and aliases are unaffected: they append to the global ones rather than replacing them, so an env-set hook and a project hook both run.
 
 ### Naming convention
 

@@ -8,7 +8,7 @@ use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 // Snapshot helpers
@@ -2429,6 +2429,99 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
     assert!(
         !stderr.contains("customize worktree locations"),
         "Hint should be suppressed when project has custom worktree-path. stderr: {stderr}"
+    );
+}
+
+/// The invocation layers outrank `[projects."…"]` specificity:
+/// `WORKTRUNK_WORKTREE_PATH` and `--config-set worktree-path` both beat a
+/// project entry, while a config file's global `worktree-path` still loses to
+/// one (#3788).
+///
+/// End-to-end because the fix lives in config *loading*: only a real process
+/// reads `WORKTRUNK_WORKTREE_PATH` off the environment.
+#[rstest]
+fn test_switch_create_invocation_layers_outrank_project_worktree_path(repo: TestRepo) {
+    set_github_remote_url(&repo);
+
+    let created_path = |args: &[&str], env: &[(&str, &str)]| {
+        let mut cmd = repo.wt_command();
+        cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "switch --create should succeed, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        PathBuf::from(json["path"].as_str().unwrap())
+    };
+    let switch =
+        |branch: &'static str| vec!["switch", "--create", branch, "--format=json", "--no-cd"];
+    const CLI_TEMPLATE: &str =
+        r#"worktree-path = "{{ repo_path }}/../from-cli-{{ branch | sanitize }}""#;
+
+    repo.write_test_config(
+        r#"
+worktree-path = "{{ repo_path }}/../from-global-{{ branch | sanitize }}"
+
+[projects."github.com/owner/test-repo"]
+worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
+"#,
+    );
+
+    // Control: within the config file, the project entry still outranks the
+    // global key. Without this the assertions below would hold equally if
+    // project entries had stopped applying at all.
+    let file_path = created_path(&switch("file-layer"), &[]);
+    assert_eq!(
+        file_path.file_name().unwrap(),
+        "from-project-file-layer",
+        "project entry should outrank the file's global key, got {}",
+        file_path.display()
+    );
+
+    let env_path = created_path(
+        &switch("env-layer"),
+        &[(
+            "WORKTRUNK_WORKTREE_PATH",
+            "{{ repo_path }}/../from-env-{{ branch | sanitize }}",
+        )],
+    );
+    assert_eq!(
+        env_path.file_name().unwrap(),
+        "from-env-env-layer",
+        "WORKTRUNK_WORKTREE_PATH should outrank the project entry, got {}",
+        env_path.display()
+    );
+
+    let mut cli_args = vec!["--config-set", CLI_TEMPLATE];
+    cli_args.extend(switch("cli-layer"));
+    let cli_path = created_path(&cli_args, &[]);
+    assert_eq!(
+        cli_path.file_name().unwrap(),
+        "from-cli-cli-layer",
+        "--config-set should outrank the project entry, got {}",
+        cli_path.display()
+    );
+
+    // Naming the project entry is both the highest layer and the most
+    // specific key, so it wins over the same layer's global key.
+    let mut pinned_args = vec![
+        "--config-set",
+        CLI_TEMPLATE,
+        "--config-set",
+        r#"projects."github.com/owner/test-repo".worktree-path = "{{ repo_path }}/../from-pin-{{ branch | sanitize }}""#,
+    ];
+    pinned_args.extend(switch("pinned"));
+    let pinned_path = created_path(&pinned_args, &[]);
+    assert_eq!(
+        pinned_path.file_name().unwrap(),
+        "from-pin-pinned",
+        "--config-set on the project entry should win, got {}",
+        pinned_path.display()
     );
 }
 
