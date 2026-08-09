@@ -229,12 +229,18 @@ impl UserConfig {
     /// Format a worktree path using this configuration's template.
     ///
     /// # Arguments
-    /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
+    /// * `main_worktree` - Main worktree directory name; supplies both
+    ///   `{{ main_worktree }}` and `{{ repo }}`
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
-    /// * `repo` - Repository for template function access
-    /// * remote owner/namespace is available as {{ owner }}
+    /// * `repo` - Repository, for template function access and for the
+    ///   `{{ repo_path }}` and `{{ owner }}` values read off it —
+    ///   `{{ owner }}` is absent when the primary remote has no parseable URL
     /// * `project` - Optional project identifier (e.g., "github.com/user/repo") to look up
     ///   project-specific worktree-path template
+    ///
+    /// The default template uses `{{ repo_path }}`, `{{ repo }}`, and
+    /// `{{ branch | sanitize }}`; the full user-facing list is in
+    /// [the config docs](https://worktrunk.dev/config/#worktree-path-template).
     pub fn format_path(
         &self,
         main_worktree: &str,
