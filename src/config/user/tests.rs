@@ -2788,20 +2788,49 @@ ship = "project-alias"
 
 #[test]
 fn test_invocation_layer_displaces_exclusive_sibling() {
-    // `template` and `template-file` clear one another, so overriding one has
-    // to displace both at project scope: leaving the project's `template-file`
-    // would let it win the merge (and would fail validation next to the
-    // global `template` the same entry now carries).
-    let base = base_with_project(
-        "[projects.\"github.com/owner/repo\".commit.generation]\ntemplate-file = \"/project.txt\"\n",
-    );
-    let (table, warnings) = apply_overrides(base, &["commit.generation.template = \"from-cli\""]);
+    // Each `[commit.generation]` pair clears itself, so overriding one member
+    // has to displace both at project scope: leaving the project's partner
+    // would let it win the merge, and it would fail validation next to the
+    // global key the same entry now answers with.
+    let pairs = [
+        ("template", "template-file"),
+        ("template-file", "template"),
+        ("squash-template", "squash-template-file"),
+        ("squash-template-file", "squash-template"),
+    ];
+    for (overridden, partner) in pairs {
+        let base = base_with_project(&format!(
+            "[projects.\"{PROJECT}\".commit.generation]\n{partner} = \"/project.txt\"\n"
+        ));
+        let (table, warnings) = apply_overrides(
+            base,
+            &[&format!("commit.generation.{overridden} = \"from-cli\"")],
+        );
+        assert!(warnings.is_empty(), "{overridden}: {warnings:?}");
+        let config = loaded(table);
+        config
+            .validate()
+            .unwrap_or_else(|e| panic!("{overridden}: {e}"));
+        let generation = config.commit_generation(Some(PROJECT));
+        let value = |key: &str| match key {
+            "template" => generation.template.as_deref(),
+            "template-file" => generation.template_file.as_deref(),
+            "squash-template" => generation.squash_template.as_deref(),
+            _ => generation.squash_template_file.as_deref(),
+        };
+        assert_eq!(value(overridden), Some("from-cli"), "{overridden}");
+        assert_eq!(value(partner), None, "{overridden} should clear {partner}");
+    }
+
+    // A `[commit.generation]` key that is in no pair displaces only itself.
+    let base = base_with_project(&format!(
+        "[projects.\"{PROJECT}\".commit.generation]\ncommand = \"project-llm\"\ntemplate-file = \"/project.txt\"\n"
+    ));
+    let (table, warnings) = apply_overrides(base, &["commit.generation.command = \"cli-llm\""]);
     assert!(warnings.is_empty());
-    let config = loaded(table);
-    config.validate().expect("still validates");
-    let generation = config.commit_generation(Some(PROJECT));
-    assert_eq!(generation.template.as_deref(), Some("from-cli"));
-    assert_eq!(generation.template_file, None);
+    let generation = loaded(table).commit_generation(Some(PROJECT));
+    assert_eq!(generation.command.as_deref(), Some("cli-llm"));
+    assert_eq!(generation.template_file.as_deref(), Some("/project.txt"));
 }
 
 #[test]

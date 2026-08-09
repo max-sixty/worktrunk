@@ -337,10 +337,10 @@ fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay:
     let Some(toml::Value::Table(projects)) = merged_table.get_mut("projects") else {
         return;
     };
-    for (name, entry) in projects.iter_mut() {
-        let Some(entry) = entry.as_table_mut() else {
-            continue;
-        };
+    let entries = projects
+        .iter_mut()
+        .filter_map(|(name, entry)| entry.as_table_mut().map(|entry| (name, entry)));
+    for (name, entry) in entries {
         let restated = project_scoped
             .and_then(|scoped| scoped.get(name))
             .and_then(toml::Value::as_table);
