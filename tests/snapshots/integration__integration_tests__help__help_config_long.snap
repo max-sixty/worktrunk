@@ -35,6 +35,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -617,6 +618,14 @@ On first run without shell integration, Worktrunk offers to install it. On first
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
 
+[32mPrecedence[0m
+
+Layer and specificity are separate axes. Layer decides which document supplies a key — system config, then user config, then [2mWORKTRUNK_[0m env vars, then [2m--config-set[0m. Specificity is applied to the merged result: a user project-specific setting beats the global key of the same name, whichever layer set each one.
+
+So [2mWORKTRUNK_WORKTREE_PATH[0m overrides a global [2mworktree-path[0m, but a [2m[projects."github.com/owner/repo"][0m entry that sets [2mworktree-path[0m still wins over it. To override a project entry for one invocation, name that entry — [2mwt config show[0m prints the identifier to use as the key:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m [0m[2m[32m'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"'[0m[2m switch [0m[2m[36m--create[0m[2m feature[0m
+
 [32mNaming convention[0m
 
 Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens automatically.
@@ -656,7 +665,7 @@ Override the LLM command in CI to use a mock:
 
 [1m[32mInline config overrides (--config-set)[0m
 
-[2m--config-set <toml>[0m overrides any user config key for a single invocation, with higher priority than both config files and [2mWORKTRUNK_[0m env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later [2m--config-set[0m replaces an earlier one for the same key.
+[2m--config-set <toml>[0m overrides any user config key for a single invocation, with higher priority than both config files and [2mWORKTRUNK_[0m env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later [2m--config-set[0m replaces an earlier one for the same key. It is the highest layer, not the most specific key — overriding a [2m[projects."…"][0m setting means naming that entry, per the precedence rules.
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m list.full=true list[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--config-set[0m[2m [0m[2m[32m'step.copy-ignored.exclude=["target", "dist"]'[0m

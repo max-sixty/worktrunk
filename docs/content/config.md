@@ -636,6 +636,14 @@ On first run without shell integration, Worktrunk offers to install it. On first
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 
+### Precedence
+
+Layer and specificity are separate axes. Layer decides which document supplies a key — system config, then user config, then `WORKTRUNK_` env vars, then `--config-set`. Specificity is applied to the merged result: a [user project-specific setting](@/config.md#user-project-specific-settings) beats the global key of the same name, whichever layer set each one.
+
+So `WORKTRUNK_WORKTREE_PATH` overrides a global `worktree-path`, but a `[projects."github.com/owner/repo"]` entry that sets `worktree-path` still wins over it. To override a project entry for one invocation, name that entry — `wt config show` prints the identifier to use as the key:
+
+{{ terminal(cmd="wt --config-set 'projects.__WT_QUOT__github.com/owner/repo__WT_QUOT__.worktree-path = __WT_QUOT__/tmp/scratch__WT_QUOT__' switch --create feature") }}
+
 ### Naming convention
 
 Config keys use kebab-case (`worktree-path`), while env vars use SCREAMING_SNAKE_CASE (`WORKTRUNK_WORKTREE_PATH`). The conversion happens automatically.
@@ -675,7 +683,7 @@ Override the LLM command in CI to use a mock:
 
 ## Inline config overrides (`--config-set`)
 
-`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key. It is the highest layer, not the most specific key — overriding a `[projects."…"]` setting means naming that entry, per [the precedence rules](@/config.md#precedence).
 
 {{ terminal(cmd="wt --config-set list.full=true list|||wt step copy-ignored --config-set 'step.copy-ignored.exclude=[__WT_QUOT__target__WT_QUOT__, __WT_QUOT__dist__WT_QUOT__]'") }}
 

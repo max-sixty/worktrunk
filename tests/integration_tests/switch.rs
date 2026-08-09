@@ -8,7 +8,7 @@ use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 // Snapshot helpers
@@ -2429,6 +2429,102 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
     assert!(
         !stderr.contains("customize worktree locations"),
         "Hint should be suppressed when project has custom worktree-path. stderr: {stderr}"
+    );
+}
+
+/// Layer and specificity are separate axes: `WORKTRUNK_WORKTREE_PATH` and
+/// `--config-set worktree-path` set the *global* key, and a
+/// `[projects."<id>"]` entry still beats the global key whichever layer set
+/// it. Overriding a project entry means naming that entry.
+///
+/// Pins the precedence documented under "Environment variables → Precedence"
+/// in the `wt config` help text (#3788).
+#[rstest]
+fn test_switch_create_project_worktree_path_outranks_invocation_layers(repo: TestRepo) {
+    set_github_remote_url(&repo);
+    repo.write_test_config(
+        r#"
+[projects."github.com/owner/test-repo"]
+worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
+"#,
+    );
+
+    let created_path = |args: &[&str], env: &[(&str, &str)]| {
+        let mut cmd = repo.wt_command();
+        cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "switch --create should succeed, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        PathBuf::from(json["path"].as_str().unwrap())
+    };
+
+    // Env var sets the global key, so the project entry still wins.
+    let env_path = created_path(
+        &[
+            "switch",
+            "--create",
+            "env-layer",
+            "--format=json",
+            "--no-cd",
+        ],
+        &[(
+            "WORKTRUNK_WORKTREE_PATH",
+            "{{ repo_path }}/../from-env-{{ branch | sanitize }}",
+        )],
+    );
+    assert_eq!(
+        env_path.file_name().unwrap(),
+        "from-project-env-layer",
+        "project entry should outrank WORKTRUNK_WORKTREE_PATH, got {}",
+        env_path.display()
+    );
+
+    // Same for `--config-set` on the global key — it is the highest layer,
+    // not the most specific key.
+    let cli_global_path = created_path(
+        &[
+            "--config-set",
+            r#"worktree-path = "{{ repo_path }}/../from-cli-{{ branch | sanitize }}""#,
+            "switch",
+            "--create",
+            "cli-global",
+            "--format=json",
+            "--no-cd",
+        ],
+        &[],
+    );
+    assert_eq!(
+        cli_global_path.file_name().unwrap(),
+        "from-project-cli-global",
+        "project entry should outrank a global --config-set, got {}",
+        cli_global_path.display()
+    );
+
+    // Naming the project entry does override it.
+    let pinned_path = created_path(
+        &[
+            "--config-set",
+            r#"projects."github.com/owner/test-repo".worktree-path = "{{ repo_path }}/../from-pin-{{ branch | sanitize }}""#,
+            "switch",
+            "--create",
+            "pinned",
+            "--format=json",
+            "--no-cd",
+        ],
+        &[],
+    );
+    assert_eq!(
+        pinned_path.file_name().unwrap(),
+        "from-pin-pinned",
+        "--config-set on the project entry should win, got {}",
+        pinned_path.display()
     );
 }
 

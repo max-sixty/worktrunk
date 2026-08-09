@@ -2522,6 +2522,16 @@ On first run without shell integration, Worktrunk offers to install it. On first
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 
+### Precedence
+
+Layer and specificity are separate axes. Layer decides which document supplies a key — system config, then user config, then `WORKTRUNK_` env vars, then `--config-set`. Specificity is applied to the merged result: a [user project-specific setting](@/config.md#user-project-specific-settings) beats the global key of the same name, whichever layer set each one.
+
+So `WORKTRUNK_WORKTREE_PATH` overrides a global `worktree-path`, but a `[projects."github.com/owner/repo"]` entry that sets `worktree-path` still wins over it. To override a project entry for one invocation, name that entry — `wt config show` prints the identifier to use as the key:
+
+```console
+$ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"' switch --create feature
+```
+
 ### Naming convention
 
 Config keys use kebab-case (`worktree-path`), while env vars use SCREAMING_SNAKE_CASE (`WORKTRUNK_WORKTREE_PATH`). The conversion happens automatically.
@@ -2563,7 +2573,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 
 ## Inline config overrides (`--config-set`)
 
-`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key. It is the highest layer, not the most specific key — overriding a `[projects."…"]` setting means naming that entry, per [the precedence rules](@/config.md#precedence).
 
 ```console
 $ wt --config-set list.full=true list
