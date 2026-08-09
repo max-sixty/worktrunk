@@ -2437,17 +2437,15 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 /// `[projects."<id>"]` entry still beats the global key whichever layer set
 /// it. Overriding a project entry means naming that entry.
 ///
+/// Both halves are load-bearing, so each layer runs once with no project entry
+/// present — proving it reaches `worktree-path` at all — before the project
+/// entry is added and shown to outrank it.
+///
 /// Pins the precedence documented under "Environment variables → Precedence"
 /// in the `wt config` help text (#3788).
 #[rstest]
 fn test_switch_create_project_worktree_path_outranks_invocation_layers(repo: TestRepo) {
     set_github_remote_url(&repo);
-    repo.write_test_config(
-        r#"
-[projects."github.com/owner/test-repo"]
-worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
-"#,
-    );
 
     let created_path = |args: &[&str], env: &[(&str, &str)]| {
         let mut cmd = repo.wt_command();
@@ -2464,6 +2462,58 @@ worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         PathBuf::from(json["path"].as_str().unwrap())
     };
+
+    // Controls, with no `[projects."…"]` entry in play: both invocation layers
+    // do reach `worktree-path`. Without these, the assertions below would hold
+    // equally if the env var and the global `--config-set` were ignored
+    // outright, so they would stop discriminating "applied to the global key,
+    // then lost on specificity" from "never applied at all".
+    repo.write_test_config("");
+    let env_only_path = created_path(
+        &[
+            "switch",
+            "--create",
+            "env-control",
+            "--format=json",
+            "--no-cd",
+        ],
+        &[(
+            "WORKTRUNK_WORKTREE_PATH",
+            "{{ repo_path }}/../from-env-{{ branch | sanitize }}",
+        )],
+    );
+    assert_eq!(
+        env_only_path.file_name().unwrap(),
+        "from-env-env-control",
+        "WORKTRUNK_WORKTREE_PATH should set the global key, got {}",
+        env_only_path.display()
+    );
+
+    let cli_only_path = created_path(
+        &[
+            "--config-set",
+            r#"worktree-path = "{{ repo_path }}/../from-cli-{{ branch | sanitize }}""#,
+            "switch",
+            "--create",
+            "cli-control",
+            "--format=json",
+            "--no-cd",
+        ],
+        &[],
+    );
+    assert_eq!(
+        cli_only_path.file_name().unwrap(),
+        "from-cli-cli-control",
+        "--config-set should set the global key, got {}",
+        cli_only_path.display()
+    );
+
+    repo.write_test_config(
+        r#"
+[projects."github.com/owner/test-repo"]
+worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
+"#,
+    );
 
     // Env var sets the global key, so the project entry still wins.
     let env_path = created_path(
