@@ -136,8 +136,11 @@ impl Repository {
     ///
     /// The `prunable` half costs a lookup rather than a fork:
     /// [`list_worktrees`](Self::list_worktrees) has already parsed and cached
-    /// the listing. `false` for a path git has no registration for — absence of
-    /// a registration is not breakage of one.
+    /// the listing, and a path absent from it contributes nothing — no
+    /// registration is not a broken one. The existence half still applies to
+    /// such a path, so an unregistered directory that is gone answers `true`.
+    /// No caller reaches that combination: all three take their path out of the
+    /// listing.
     pub fn worktree_is_unusable(&self, path: &Path) -> anyhow::Result<bool> {
         if !path.exists() {
             return Ok(true);

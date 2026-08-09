@@ -50,9 +50,11 @@ use crate::output::{
 
 /// Result of resolving the switch target.
 struct ResolvedTarget {
-    /// The branch to switch to, carrying whether anything rewrote the token
-    /// the user typed — `pr:`/`mr:` dispatch and the remote-prefix strip both
-    /// do, and a rewritten token is no longer a path worth trying.
+    /// The branch to switch to, carrying whether the token may still be tried
+    /// as a path. Two things take that off: a rewrite, since `pr:`/`mr:`
+    /// dispatch and the remote-prefix strip leave the user's literal argument
+    /// naming nothing; and `--create`, where the argument names a branch that
+    /// does not exist yet.
     selector: Selector,
     /// How to create the worktree
     method: CreationMethod,
