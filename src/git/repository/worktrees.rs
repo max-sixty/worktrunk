@@ -90,9 +90,13 @@ impl Repository {
     ///
     /// [`worktree_for_branch`](Self::worktree_for_branch) answers where git has
     /// the worktree *registered*; this answers where a command can actually
-    /// work, and is what the commands that go on to run there want — `wt
-    /// switch`, `wt merge`, `wt step push`, and every selector
-    /// [`resolve_worktree`](Self::resolve_worktree) resolves.
+    /// work. The branch-first callers use it — `wt merge` and `wt step push`,
+    /// which look their target up by name. `wt switch` and
+    /// [`recover`](crate::git::recover) already hold a path by the time they
+    /// need the verdict, so they ask
+    /// [`worktree_is_unusable`](Self::worktree_is_unusable) directly; the
+    /// selector ladder asks neither, since resolution answers what the user
+    /// named rather than whether it can be worked in.
     ///
     /// The verdict is [`worktree_is_unusable`](Self::worktree_is_unusable).
     ///
@@ -356,8 +360,8 @@ impl Repository {
     /// resolvers work on.
     ///
     /// The one place normalization happens for the worktree ladder — possible
-    /// only because `rewritten` now comes from `expand_shortcut` rather than
-    /// from a string comparison this would corrupt.
+    /// only because `may_name_path` is set from whether `expand_shortcut`
+    /// fired, rather than from a string comparison this would corrupt.
     pub fn expand_selector(&self, name: &str) -> anyhow::Result<Selector> {
         let name = normalize_selector(name);
         Ok(match self.expand_shortcut(name)? {
