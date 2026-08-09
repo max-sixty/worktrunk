@@ -7,13 +7,13 @@
 //! A setting is resolved along two axes. [`UserConfig::load_with_warnings`]
 //! flattens the *layers* — system config, user config, `WORKTRUNK_*` env vars,
 //! `--config-set` — into one document; the accessors then resolve
-//! *specificity* on that document, letting a `[projects."…"]` entry answer for
-//! the global key of the same name.
+//! *specificity* on that document, so a `[projects."…"]` entry answers for the
+//! global key of the same name.
 //!
-//! The two invocation layers cross the axes: they are typed for one run, so
-//! they outrank a project entry as well as a global key. Load applies them at
-//! both scopes, which is [`apply_invocation_layer_over_projects`] — the last
-//! step before [`UserConfig::finalize`].
+//! The two invocation layers cross the axes: they come from the invocation
+//! rather than a config file, so they outrank a project entry as well as a
+//! global key. [`apply_invocation_layer_over_projects`] applies them at both
+//! scopes, the last step before [`UserConfig::finalize`].
 
 mod accessors;
 mod merge;
@@ -297,18 +297,13 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 
 /// Let the invocation layers outrank `[projects."…"]` specificity.
 ///
-/// Layer (system → user → `WORKTRUNK_*` env vars → `--config-set`) and
-/// specificity (global key → `[projects."…"]` entry) are separate steps:
-/// [`UserConfig::load_with_warnings`] flattens the layers into one document,
-/// and the accessors in `accessors` resolve specificity on the result. So a
-/// project entry used to beat the global key whichever layer set it, and
-/// `WORKTRUNK_WORKTREE_PATH` could not override a project's `worktree-path`
-/// (#3788).
+/// The two axes, and why the invocation layers cross them, are in the module
+/// docs. Without this pass, `WORKTRUNK_WORKTREE_PATH` could not override a
+/// project's `worktree-path` (#3788).
 ///
-/// The two invocation layers are per-invocation by construction — the user
-/// typed them for *this* run — so they rank above specificity: `overlay` (the
-/// env and `--config-set` values that applied) drops every key it sets from
-/// every project entry, leaving the global key it also set to answer for them.
+/// `overlay` is the env and `--config-set` values that applied: it drops every
+/// key it sets from every project entry, leaving the global key it also set to
+/// answer for them.
 ///
 /// Two kinds of key are held back:
 ///
@@ -399,7 +394,7 @@ fn drop_overridden_keys<'a>(
     }
 }
 
-/// The key `key` clears when both are set in `section`.
+/// The key that `key` clears when both are set under `section`.
 ///
 /// `[commit.generation]` rejects `template` alongside `template-file`
 /// (`UserConfig::validate`), and setting either clears the other when a
@@ -407,7 +402,7 @@ fn drop_overridden_keys<'a>(
 /// (`CommitGenerationConfig::merge_with`).
 /// So an invocation layer that sets one member has to displace *both* at
 /// project scope: dropping only its own key would leave the project's partner
-/// to win the merge, which is the precedence this module just removed.
+/// to win the merge — the ranking this pass exists to remove.
 fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
     if section != ["commit", "generation"] {
         return None;

@@ -344,7 +344,7 @@ User config can include a `[projects]` table for project-specific settings — w
 
 Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 
-Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. An entry outranks the global key in config files, but not a `WORKTRUNK_` env var or `--config-set` — see [how the layers rank](@/config.md#precedence).
+Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. An entry outranks the global key of the same name, and both lose to a `WORKTRUNK_` env var or `--config-set` — see [how the layers rank](@/config.md#precedence).
 
 ```toml
 [projects."github.com/user/repo"]
@@ -634,24 +634,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 
 ## Environment variables
 
-All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
-
-### Precedence
-
-System config sits under user config, and within either a [`[projects."…"]` entry](@/config.md#user-project-specific-settings) outranks the global key of the same name. The two invocation layers sit above all of that, because you typed them for this one run:
-
-| Source of `worktree-path` | Loses to |
-|---|---|
-| `--config-set 'worktree-path = …'` | — |
-| `WORKTRUNK_WORKTREE_PATH` | `--config-set` |
-| `[projects."github.com/owner/repo"]` in a config file | either invocation layer |
-| global `worktree-path` in a config file | all of the above |
-
-To aim an invocation override at one project rather than every project, name the entry — that is both the highest layer and the most specific key:
-
-{{ terminal(cmd="wt --config-set 'projects.__WT_QUOT__github.com/owner/repo__WT_QUOT__.worktree-path = __WT_QUOT__/tmp/scratch__WT_QUOT__' switch --create feature") }}
-
-Per-project hooks and aliases are unaffected: they append to the global ones rather than replacing them, so an env-set hook and a project hook both run.
+All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix, which [outrank config files](@/config.md#precedence).
 
 ### Naming convention
 
@@ -692,11 +675,26 @@ Override the LLM command in CI to use a mock:
 
 ## Inline config overrides (`--config-set`)
 
-`--config-set <toml>` overrides any user config key for a single invocation, with higher priority than both config files and `WORKTRUNK_` env vars. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+`--config-set <toml>` overrides any user config key for a single invocation, ahead of every other source. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
 
 {{ terminal(cmd="wt --config-set list.full=true list|||wt step copy-ignored --config-set 'step.copy-ignored.exclude=[__WT_QUOT__target__WT_QUOT__, __WT_QUOT__dist__WT_QUOT__]'") }}
 
 This composes with aliases — an alias body can invoke `wt --config-set … <command>` to render a named view without changing the saved config.
+
+## Precedence
+
+Sources rank by how close they are to the invocation, which puts user config above system config. Within a config file, [an entry keyed to the project](@/config.md#user-project-specific-settings) outranks the global key of the same name. So `worktree-path` comes from the first of these that sets it:
+
+1. `--config-set 'worktree-path = …'`
+2. `WORKTRUNK_WORKTREE_PATH`
+3. `[projects."github.com/owner/repo"]` in a config file
+4. global `worktree-path` in a config file
+
+A `--config-set` that names a project entry applies to that project alone:
+
+{{ terminal(cmd="wt --config-set 'projects.__WT_QUOT__github.com/owner/repo__WT_QUOT__.worktree-path = __WT_QUOT__/tmp/scratch__WT_QUOT__' switch --create feature") }}
+
+Ranking only matters where one value has to win. Hooks and aliases accumulate rather than replace, so an env-set hook and a project's hook both run.
 
 ## Command reference
 
