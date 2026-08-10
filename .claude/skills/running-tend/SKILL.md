@@ -365,6 +365,17 @@ cargo run --release -- config state logs profile --format=json | jq .cache
 The `.cache` report flags commands invoked more than once with the same context.
 Triage each duplicate:
 
+- **`-vv` epilogue artifact** — check this first; it has explained every
+  duplicate the report flagged on the last three runs. The `-vv` this recipe
+  requires writes the diagnostic bundle *after* the render, and assembling it
+  re-runs three commands the render already made: `git --version` and
+  `git worktree list --porcelain` (`DiagnosticReport::collect` in
+  `src/diagnostic.rs`), plus `gh --version` for the gist hint
+  (`is_gh_installed`). All three go through `Cmd`, so they land in the same
+  `trace.jsonl` the `.cache` report reads and pair with the render's own
+  calls. They run on the main thread after the render's worker threads finish,
+  so a differing thread id and a timestamp past the render's end identify
+  them. Nothing to file.
 - **Legitimate** (different cwd, different ref form that can't be normalized,
   intentional double-call across phases) — note in the response and move on.
 - **Cache miss** (same logical operation should hit cache but doesn't) —
