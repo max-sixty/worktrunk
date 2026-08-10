@@ -259,10 +259,12 @@ impl RepositoryCliExt for Repository {
                     // the branch-only cleanup above cannot take because it has
                     // no branch to fall back to. Neither route out of here
                     // works: that cleanup wants a branch *and* an absent
-                    // directory, and the removal below walks into git's own
-                    // validation a few calls later, reaching the user as a raw
-                    // `exit 128`. Only the repo-wide `git worktree prune`
-                    // clears these, and the hint names it.
+                    // directory, and for the recreated directory the removal
+                    // below walks into git's own validation a few calls later,
+                    // reaching the user as a raw `exit 128`. The hint names the
+                    // repo-wide `git worktree prune` because it is what clears
+                    // both; the detached one, whose directory is absent, a
+                    // targeted `git worktree remove <path>` would also clear.
                     return Err(GitError::WorktreeMissing {
                         branch: wt
                             .branch
