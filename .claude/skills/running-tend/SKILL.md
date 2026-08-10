@@ -365,17 +365,20 @@ cargo run --release -- config state logs profile --format=json | jq .cache
 The `.cache` report flags commands invoked more than once with the same context.
 Triage each duplicate:
 
-- **`-vv` epilogue artifact** — check this first; it has explained every
-  duplicate the report flagged on the last three runs. The `-vv` this recipe
-  requires writes the diagnostic bundle *after* the render, and assembling it
-  re-runs three commands the render already made: `git --version` and
+- **`-vv` epilogue artifact** — check this first; it explained every duplicate
+  the report flagged on the most recent run, and all but one (`git config
+  --list -z`, a real miss fixed in #3705) on the run before. The `-vv` this
+  recipe requires writes the diagnostic bundle *after* the render, and
+  assembling it re-runs two commands the render already made:
   `git worktree list --porcelain` (`DiagnosticReport::collect` in
-  `src/diagnostic.rs`), plus `gh --version` for the gist hint
-  (`is_gh_installed`). All three go through `Cmd`, so they land in the same
+  `src/diagnostic.rs`) and `gh --version` for the gist hint
+  (`is_gh_installed`). Both go through `Cmd`, so they land in the same
   `trace.jsonl` the `.cache` report reads and pair with the render's own
-  calls. They run on the main thread after the render's worker threads finish,
-  so a differing thread id and a timestamp past the render's end identify
-  them. Nothing to file.
+  calls. `jq .cache` carries only commands, counts and durations, so confirm
+  against the trace itself: `jq -c 'select(.cmd == "gh --version") | {tid, ts}'
+  "$(git rev-parse --git-common-dir)/wt/logs/trace.jsonl"`. The epilogue runs
+  on the main thread after the render's worker threads finish, so a differing
+  `tid` and a `ts` past the render's end identify it. Nothing to file.
 - **Legitimate** (different cwd, different ref form that can't be normalized,
   intentional double-call across phases) — note in the response and move on.
 - **Cache miss** (same logical operation should hit cache but doesn't) —
