@@ -4,16 +4,18 @@
 //!
 //! # Precedence
 //!
-//! A setting is resolved along two axes. [`UserConfig::load_with_warnings`]
-//! flattens the *layers* — system config, user config, `WORKTRUNK_*` env vars,
-//! `--config-set` — into one document; the accessors then resolve
-//! *specificity* on that document, so a `[projects."…"]` entry answers for the
-//! global key of the same name.
+//! Sources rank by how close they are to the invocation — system config, user
+//! config, `WORKTRUNK_*` env vars, `--config-set`, lowest first. Within one of
+//! them a `[projects."…"]` entry outranks the global key of the same name, so
+//! specificity is a rule inside a layer rather than a second axis over all of
+//! them: a lower layer's entry loses to a higher layer's global key.
 //!
-//! The two invocation layers cross the axes: they come from the invocation
-//! rather than a config file, so they outrank a project entry as well as a
-//! global key. [`apply_invocation_layer_over_projects`] applies them at both
-//! scopes, the last step before [`UserConfig::finalize`].
+//! [`UserConfig::load_with_warnings`] flattens the layers into one document and
+//! the accessors resolve specificity on the result, which is what costs the
+//! order — a document holds one set of entries, and reading it can only let
+//! them win. So every layer goes on through [`merge_layer`], which first drops
+//! what the layer sets globally from the entries beneath it, and the flattened
+//! document then reads back as the ordered one.
 
 mod accessors;
 mod merge;
@@ -295,73 +297,68 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
     }
 }
 
-/// Let the invocation layers outrank `[projects."…"]` specificity.
+/// Merge one layer over `merged_table`, ranking its global keys above the
+/// `[projects."…"]` entries the lower layers left there.
 ///
-/// The two axes, and why the invocation layers cross them, are in the module
-/// docs. Without this pass, `WORKTRUNK_WORKTREE_PATH` could not override a
-/// project's `worktree-path` (#3788).
+/// Every leaf `layer` sets globally is dropped from the accumulated entries
+/// first, so the global key it also set is what answers for them; the layer
+/// then merges on top, its own entries included. Dropping before the merge is
+/// what keeps specificity local to a layer — a key the layer restates under
+/// `projects."<name>"` lands after the drop and wins, with nothing here having
+/// to recognize the case.
 ///
-/// `overlay` is the env and `--config-set` values that applied: it drops every
-/// key it sets from every project entry, leaving the global key it also set to
-/// answer for them.
+/// Composing keys are held back, their project-scoped values appending to the
+/// global ones rather than replacing them ([`is_compose_only`]). Both already
+/// apply, so there is no ranking to settle, and dropping the project's copy
+/// would silently stop it running.
 ///
-/// Two kinds of key are held back:
-///
-/// - Keys the overlay itself restates under `projects."<name>"` — a
-///   `--config-set 'projects."…".worktree-path = …'` is both the highest layer
-///   *and* the most specific key, so it stays.
-/// - Composing keys, whose project-scoped values *append to* the global ones
-///   rather than replace them ([`is_compose_only`]). Both already apply, so an
-///   env-set hook is never outranked and dropping the project's would silently
-///   stop it running.
-///
-/// Only removals happen here, but a removal can still leave a document that no
-/// longer deserializes: [`exclusive_sibling`] and [`is_atomic_section`] name
-/// the sections that have to go as a unit, and the whole step degrades as a
-/// unit behind them — the removals land on a candidate, and a candidate that
-/// stops deserializing or validating is discarded rather than handed to
-/// [`UserConfig::finalize`], which would answer a stranded required field by
-/// wiping the config to defaults. That is the same all-or-nothing guarantee
-/// the env and `--config-set` layers already have.
-fn apply_invocation_layer_over_projects(merged_table: &mut toml::Table, overlay: &toml::Table) {
-    if overlay.is_empty() || !merged_table.contains_key("projects") {
-        return;
-    }
-
-    let mut global = overlay.clone();
+/// Only removals precede the merge, but a removal can still leave a document
+/// that no longer deserializes: [`exclusive_sibling`] and [`is_atomic_section`]
+/// name the sections that have to go as a unit, and the removals degrade as a
+/// unit behind them — they land on a candidate, and a candidate that stops
+/// deserializing or validating is dropped for the plain merge rather than
+/// handed to [`UserConfig::finalize`], which would answer a stranded required
+/// field by wiping the config to defaults. The layer itself applies either way.
+fn merge_layer(merged_table: &mut toml::Table, layer: toml::Table) {
+    let mut global = layer.clone();
     global.remove("projects");
-    if global.is_empty() {
+
+    // Nothing to rank: no entries beneath, or nothing above them. The common
+    // case is a config with no `[projects]` table at all, and it pays only the
+    // lookup.
+    if global.is_empty() || !merged_table.contains_key("projects") {
+        deep_merge_table(merged_table, layer);
         return;
     }
 
-    let project_scoped = overlay.get("projects").and_then(toml::Value::as_table);
     let mut candidate = merged_table.clone();
-    let Some(projects) = candidate
+    if let Some(projects) = candidate
         .get_mut("projects")
         .and_then(toml::Value::as_table_mut)
-    else {
-        return;
-    };
-    let entries = projects
-        .iter_mut()
-        .filter_map(|(name, entry)| entry.as_table_mut().map(|entry| (name, entry)));
-    for (name, entry) in entries {
-        let restated = project_scoped
-            .and_then(|scoped| scoped.get(name))
-            .and_then(toml::Value::as_table);
-        drop_overridden_keys(entry, &global, restated, &mut Vec::new());
+    {
+        for entry in projects
+            .iter_mut()
+            .filter_map(|(_, entry)| entry.as_table_mut())
+        {
+            drop_overridden_keys(entry, &global, &mut Vec::new());
+        }
     }
+    deep_merge_table(&mut candidate, layer.clone());
 
     match deserialize_and_validate(&candidate) {
         Ok(()) => *merged_table = candidate,
         // Reachable two ways. A partial removal the enumerations above miss —
         // none today, but they are enumerations, and the next required field
         // would otherwise cost the user their whole config rather than one
-        // project entry. Or a candidate that was already invalid before this
-        // pass: step 3's env probe deserializes without validating, so an
-        // empty `worktree-path` from the environment lands here. The discard
-        // is right for both; `finalize` reports the second.
-        Err(err) => log::debug!("keeping project precedence: {err}"),
+        // project entry. Or a document that was already invalid before this
+        // layer: step 3's env probe deserializes without validating, so an
+        // empty `worktree-path` from the environment lands here. Merging
+        // without the removals is right for both; `finalize` reports the
+        // second.
+        Err(err) => {
+            log::debug!("keeping project precedence: {err}");
+            deep_merge_table(merged_table, layer);
+        }
     }
 }
 
@@ -374,58 +371,43 @@ fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
     }
 }
 
-/// Remove from `entry` every leaf `overlay` sets, except those `restated`
-/// carries. `section` tracks the path walked so far, for
-/// [`exclusive_sibling`].
+/// Remove from `entry` every leaf `overlay` sets. `section` tracks the path
+/// walked so far, for [`exclusive_sibling`] and the predicates beside it.
 fn drop_overridden_keys<'a>(
     entry: &mut toml::Table,
     overlay: &'a toml::Table,
-    restated: Option<&'a toml::Table>,
     section: &mut Vec<&'a str>,
 ) {
     for (key, value) in overlay {
         if is_compose_only(section, key) {
             continue;
         }
-        let restated_value = restated.and_then(|table| table.get(key.as_str()));
 
         // An exclusive pair goes as a unit, whether or not `entry` carries
         // `key` itself: the project's partner alone would still win the merge.
-        if let Some(sibling) = exclusive_sibling(section, key)
-            && !restated.is_some_and(|table| table.contains_key(sibling))
-        {
+        if let Some(sibling) = exclusive_sibling(section, key) {
             entry.remove(sibling);
         }
 
-        match (entry.get_mut(key.as_str()), value, restated_value) {
+        match (entry.get_mut(key.as_str()), value) {
             // Both sides are sections: recurse, so an override of one leaf
             // leaves the project's sibling leaves alone. An atomic section's
             // children are not sections in that sense — they go whole, through
             // the arms below.
-            (
-                Some(toml::Value::Table(entry_table)),
-                toml::Value::Table(overlay_table),
-                restated,
-            ) if !is_atomic_section(section) => {
+            (Some(toml::Value::Table(entry_table)), toml::Value::Table(overlay_table))
+                if !is_atomic_section(section) =>
+            {
                 section.push(key);
-                drop_overridden_keys(
-                    entry_table,
-                    overlay_table,
-                    restated.and_then(toml::Value::as_table),
-                    section,
-                );
+                drop_overridden_keys(entry_table, overlay_table, section);
                 section.pop();
                 if entry_table.is_empty() {
                     entry.remove(key.as_str());
                 }
             }
-            // The overlay restates this key at project scope, so it already
-            // sits in `entry` and outranks the overlay's global value.
-            (Some(_), _, Some(_)) => {}
-            (Some(_), _, None) => {
+            (Some(_), _) => {
                 entry.remove(key.as_str());
             }
-            (None, _, _) => {}
+            (None, _) => {}
         }
     }
 }
@@ -436,7 +418,7 @@ fn drop_overridden_keys<'a>(
 /// (`UserConfig::validate`), and setting either clears the other when a
 /// project entry merges over the global one
 /// (`CommitGenerationConfig::merge_with`).
-/// So an invocation layer that sets one member has to displace *both* at
+/// So a layer that sets one member has to displace *both* at
 /// project scope: dropping only its own key would leave the project's partner
 /// to win the merge — the ranking this pass exists to remove.
 fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
@@ -469,7 +451,7 @@ fn is_atomic_section(section: &[&str]) -> bool {
 }
 
 /// Whether the project-scoped `key` under `section` composes with the global
-/// one instead of replacing it, so no invocation layer displaces it.
+/// one instead of replacing it, so no layer displaces it.
 ///
 /// Hook names come from the schema, cached the way
 /// `config::is_user_project_override_key` caches its own lookup, so a new hook
@@ -677,7 +659,7 @@ impl UserConfig {
                         &result.migrated_content,
                         ConfigFileKind::System,
                     ) {
-                        Ok(table) => deep_merge_table(&mut merged_table, table),
+                        Ok(table) => merge_layer(&mut merged_table, table),
                         Err(e) => warnings.push(e),
                     }
                 }
@@ -713,7 +695,7 @@ impl UserConfig {
                             &result.migrated_content,
                             ConfigFileKind::User,
                         ) {
-                            Ok(table) => deep_merge_table(&mut merged_table, table),
+                            Ok(table) => merge_layer(&mut merged_table, table),
                             Err(e) => warnings.push(e),
                         }
                     }
@@ -734,10 +716,6 @@ impl UserConfig {
             );
         }
 
-        // The invocation layers that actually applied, accumulated so step 5
-        // can rank them above `[projects."…"]` specificity.
-        let mut invocation_overlay = toml::Table::new();
-
         // 3. Env-var overrides (override config files)
         let env_vars = parse_worktrunk_env_vars();
         if !env_vars.is_empty() {
@@ -747,7 +725,7 @@ impl UserConfig {
             // needs Integer for u64, WORKTRUNK_WORKTREE_PATH=42 needs String).
             let file_table = merged_table.clone();
             let env_overlay = migrate_env_overlay(resolve_env_overlay(&file_table, &env_vars));
-            deep_merge_table(&mut merged_table, env_overlay.clone());
+            merge_layer(&mut merged_table, env_overlay);
 
             // Env overlay broke deserialization — fall back to file-only config.
             // Each file was individually validated by load_config_file(), so the
@@ -761,18 +739,11 @@ impl UserConfig {
                         .collect(),
                 });
                 merged_table = file_table;
-            } else {
-                invocation_overlay = env_overlay;
             }
         }
 
         // 4. CLI `--config-set` overrides (override env vars and config files)
-        let cli_overlay =
-            Self::apply_cli_overrides(cli_config_overrides(), &mut merged_table, &mut warnings);
-        deep_merge_table(&mut invocation_overlay, cli_overlay);
-
-        // 5. Both invocation layers outrank `[projects."…"]` specificity
-        apply_invocation_layer_over_projects(&mut merged_table, &invocation_overlay);
+        Self::apply_cli_overrides(cli_config_overrides(), &mut merged_table, &mut warnings);
 
         Self::finalize(merged_table, warnings)
     }
@@ -802,17 +773,13 @@ impl UserConfig {
     /// dropped and a [`LoadError::CliOverride`] is recorded, so a bad override
     /// never silently corrupts (or wipes) the lower layers.
     ///
-    /// Returns the fragments as one table, so the caller can rank them above
-    /// `[projects."…"]` specificity ([`apply_invocation_layer_over_projects`]).
-    /// A dropped layer returns an empty table, keeping "what applied" and
-    /// "what outranks a project entry" the same value.
     fn apply_cli_overrides(
         overrides: &[String],
         merged_table: &mut toml::Table,
         warnings: &mut Vec<LoadError>,
-    ) -> toml::Table {
+    ) {
         if overrides.is_empty() {
-            return toml::Table::new();
+            return;
         }
 
         let mut overlay = toml::Table::new();
@@ -828,13 +795,13 @@ impl UserConfig {
                         err: err.to_string(),
                         overrides: overrides.to_vec(),
                     });
-                    return toml::Table::new();
+                    return;
                 }
             }
         }
 
         let mut candidate = merged_table.clone();
-        deep_merge_table(&mut candidate, overlay.clone());
+        merge_layer(&mut candidate, overlay);
 
         // Probe deserialize *and* validate, so a semantically-invalid override
         // (e.g. an empty worktree-path) drops just this layer rather than
@@ -845,11 +812,10 @@ impl UserConfig {
                 err,
                 overrides: overrides.to_vec(),
             });
-            return toml::Table::new();
+            return;
         }
 
         *merged_table = candidate;
-        overlay
     }
 
     /// Deserialize a merged table into `UserConfig`, validate, and collect

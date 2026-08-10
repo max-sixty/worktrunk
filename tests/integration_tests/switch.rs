@@ -2432,15 +2432,16 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
     );
 }
 
-/// The invocation layers outrank `[projects."…"]` specificity:
-/// `WORKTRUNK_WORKTREE_PATH` and `--config-set worktree-path` both beat a
-/// project entry, while a config file's global `worktree-path` still loses to
-/// one (#3788).
+/// A layer's global key outranks the `[projects."…"]` entries below it, at
+/// every boundary: `WORKTRUNK_WORKTREE_PATH`, `--config-set worktree-path` and
+/// the user file's global key each beat an entry a lower layer set, while an
+/// entry still outranks the global key of its own layer (#3788).
 ///
-/// End-to-end because the fix lives in config *loading*: only a real process
-/// reads `WORKTRUNK_WORKTREE_PATH` off the environment.
+/// End-to-end because the rule lives in config *loading*: only a real process
+/// reads `WORKTRUNK_WORKTREE_PATH` off the environment and stacks a system file
+/// under the user's.
 #[rstest]
-fn test_switch_create_invocation_layers_outrank_project_worktree_path(repo: TestRepo) {
+fn test_switch_create_layers_outrank_project_worktree_path(repo: TestRepo) {
     set_github_remote_url(&repo);
 
     let created_path = |args: &[&str], env: &[(&str, &str)]| {
@@ -2507,8 +2508,8 @@ worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
         cli_path.display()
     );
 
-    // Naming the project entry is both the highest layer and the most
-    // specific key, so it wins over the same layer's global key.
+    // An entry outranks the global key of its own layer, which is why naming
+    // the project entry pins a `--config-set` to one repo.
     let mut pinned_args = vec![
         "--config-set",
         CLI_TEMPLATE,
@@ -2522,6 +2523,36 @@ worktree-path = "{{ repo_path }}/../from-project-{{ branch | sanitize }}"
         "from-pin-pinned",
         "--config-set on the project entry should win, got {}",
         pinned_path.display()
+    );
+
+    // The rule is the same one layer down, where no invocation is involved:
+    // with the entry moved to the system file, the user file's global key
+    // answers for this repo. Written last because it rewrites the user config.
+    let system_dir = tempfile::tempdir().unwrap();
+    let system_config = system_dir.path().join("config.toml");
+    fs::write(
+        &system_config,
+        r#"
+[projects."github.com/owner/test-repo"]
+worktree-path = "{{ repo_path }}/../from-system-project-{{ branch | sanitize }}"
+"#,
+    )
+    .unwrap();
+    repo.write_test_config(
+        r#"worktree-path = "{{ repo_path }}/../from-user-global-{{ branch | sanitize }}""#,
+    );
+    let system_path = created_path(
+        &switch("system-layer"),
+        &[(
+            "WORKTRUNK_SYSTEM_CONFIG_PATH",
+            system_config.to_str().unwrap(),
+        )],
+    );
+    assert_eq!(
+        system_path.file_name().unwrap(),
+        "from-user-global-system-layer",
+        "the user file's global key should outrank the system file's project entry, got {}",
+        system_path.display()
     );
 }
 

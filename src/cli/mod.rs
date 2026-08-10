@@ -2578,8 +2578,8 @@ Sources rank by how close they are to the invocation, which puts user config abo
 
 1. `--config-set 'worktree-path = …'`
 2. `WORKTRUNK_WORKTREE_PATH`
-3. `[projects."github.com/owner/repo"]` in a config file
-4. global `worktree-path` in a config file
+3. `[projects."github.com/owner/repo"]` in the config file
+4. global `worktree-path` in the config file
 
 A `--config-set` that names a project entry applies to that project alone, and beats a global `--config-set` of the same key — it is both the highest layer and the most specific key:
 

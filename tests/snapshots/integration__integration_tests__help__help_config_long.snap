@@ -670,8 +670,8 @@ Sources rank by how close they are to the invocation, which puts user config abo
 
 1. [2m--config-set 'worktree-path = …'[0m
 2. [2mWORKTRUNK_WORKTREE_PATH[0m
-3. [2m[projects."github.com/owner/repo"][0m in a config file
-4. global [2mworktree-path[0m in a config file
+3. [2m[projects."github.com/owner/repo"][0m in the config file
+4. global [2mworktree-path[0m in the config file
 
 A [2m--config-set[0m that names a project entry applies to that project alone, and beats a global [2m--config-set[0m of the same key — it is both the highest layer and the most specific key:
 

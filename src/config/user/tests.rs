@@ -2495,14 +2495,12 @@ fn test_load_error_display_cli_override() {
 // =========================================================================
 
 /// Apply `--config-set` overrides to a base table the way `load_with_warnings`
-/// does — including the step that ranks the layer above `[projects."…"]`
-/// specificity — returning the merged table plus any warnings.
+/// does, returning the merged table plus any warnings.
 fn apply_overrides(base: toml::Table, overrides: &[&str]) -> (toml::Table, Vec<LoadError>) {
     let overrides: Vec<String> = overrides.iter().map(|s| s.to_string()).collect();
     let mut table = base;
     let mut warnings = Vec::new();
-    let overlay = UserConfig::apply_cli_overrides(&overrides, &mut table, &mut warnings);
-    apply_invocation_layer_over_projects(&mut table, &overlay);
+    UserConfig::apply_cli_overrides(&overrides, &mut table, &mut warnings);
     (table, warnings)
 }
 
@@ -2648,7 +2646,7 @@ fn test_try_parse_value() {
 }
 
 // =========================================================================
-// apply_invocation_layer_over_projects() — invocation layers vs `[projects]`
+// merge_layer() — a layer's global keys vs the `[projects]` entries below
 // =========================================================================
 
 const PROJECT: &str = "github.com/owner/repo";
@@ -2663,9 +2661,9 @@ fn loaded(table: toml::Table) -> UserConfig {
 }
 
 #[test]
-fn test_invocation_layer_outranks_project_worktree_path() {
+fn test_cli_layer_outranks_project_worktree_path() {
     // The reported bug (#3788), on the `--config-set` half: a project entry's
-    // `worktree-path` no longer beats a global key the invocation layer set.
+    // `worktree-path` no longer beats a global key a higher layer set.
     let base = base_with_project("worktree-path = \"/from-project\"\n");
     let (table, warnings) = apply_overrides(base, &["worktree-path = \"/from-cli\""]);
     assert!(warnings.is_empty());
@@ -2688,8 +2686,7 @@ fn test_env_layer_outranks_project_worktree_path() {
     };
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
     let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[var]));
-    deep_merge_table(&mut table, overlay.clone());
-    apply_invocation_layer_over_projects(&mut table, &overlay);
+    merge_layer(&mut table, overlay);
 
     assert_eq!(
         loaded(table).worktree_path_for_project(PROJECT),
@@ -2698,7 +2695,7 @@ fn test_env_layer_outranks_project_worktree_path() {
 }
 
 #[test]
-fn test_invocation_layer_keeps_an_already_invalid_candidate_untouched() {
+fn test_layer_keeps_an_already_invalid_candidate_untouched() {
     // The pass discards a candidate that does not deserialize and validate.
     // Step 3's env probe only deserializes, so an empty `worktree-path` from
     // the environment reaches here already invalid — and the removals are
@@ -2711,26 +2708,49 @@ fn test_invocation_layer_keeps_an_already_invalid_candidate_untouched() {
         typed_value: try_parse_value(value),
         raw_value: value.to_string(),
     };
+    let plain_merge = |overlay: &toml::Table| {
+        let mut plain = base_with_project("worktree-path = \"/from-project\"\n");
+        deep_merge_table(&mut plain, overlay.clone());
+        plain
+    };
+
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
     let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[empty_path("")]));
-    deep_merge_table(&mut table, overlay.clone());
-    let before = table.clone();
-    apply_invocation_layer_over_projects(&mut table, &overlay);
-    assert_eq!(table, before, "the removals are discarded as a unit");
+    let plain = plain_merge(&overlay);
+    merge_layer(&mut table, overlay);
+    assert_eq!(
+        table, plain,
+        "the removals are discarded as a unit, and the layer still applies"
+    );
 
     // Control: the same overlay with a valid value does remove the project's
     // key, so the assertion above is the discard and not a pass that found
     // nothing to do.
     let mut table = base_with_project("worktree-path = \"/from-project\"\n");
     let overlay = migrate_env_overlay(resolve_env_overlay(&table, &[empty_path("/from-env")]));
-    deep_merge_table(&mut table, overlay.clone());
-    let before = table.clone();
-    apply_invocation_layer_over_projects(&mut table, &overlay);
-    assert_ne!(table, before);
+    let plain = plain_merge(&overlay);
+    merge_layer(&mut table, overlay);
+    assert_ne!(table, plain);
 }
 
 #[test]
-fn test_invocation_layer_leaves_untouched_project_keys() {
+fn test_file_layer_outranks_lower_layer_project_entry() {
+    // The same rule where neither layer is an invocation one: the user file's
+    // global key answers for a project the system file keyed an entry to.
+    let mut table = base_with_project("worktree-path = \"/from-system-project\"\n");
+    merge_layer(
+        &mut table,
+        "worktree-path = \"/from-user-global\"\n".parse().unwrap(),
+    );
+
+    assert_eq!(
+        loaded(table).worktree_path_for_project(PROJECT),
+        "/from-user-global"
+    );
+}
+
+#[test]
+fn test_layer_leaves_untouched_project_keys() {
     // Only the overridden key is displaced: a project entry's other settings,
     // and its sibling keys inside the same section, still apply.
     let base = base_with_project(
@@ -2746,12 +2766,12 @@ branches = true
     let config = loaded(table);
     assert_eq!(config.worktree_path_for_project(PROJECT), "/from-project");
     let list = config.list(Some(PROJECT));
-    assert_eq!(list.full, Some(false), "the invocation layer wins");
+    assert_eq!(list.full, Some(false), "the higher layer wins");
     assert_eq!(list.branches, Some(true), "sibling key survives");
 }
 
 #[test]
-fn test_invocation_layer_keeps_its_own_project_scoped_override() {
+fn test_layer_keeps_its_own_project_scoped_override() {
     // Naming the project entry is both the highest layer and the most
     // specific key, so it outranks the same layer's global key.
     let base = base_with_project("worktree-path = \"/from-project\"\n");
@@ -2770,9 +2790,9 @@ fn test_invocation_layer_keeps_its_own_project_scoped_override() {
 }
 
 #[test]
-fn test_invocation_layer_applies_to_pattern_entries() {
+fn test_layer_applies_to_pattern_entries() {
     // Pattern entries are project entries too — a `*` key must not smuggle a
-    // project-scoped value past the invocation layer.
+    // project-scoped value past a higher layer.
     let base: toml::Table = "[projects.\"github.com/*\"]\nworktree-path = \"/from-pattern\"\n"
         .parse()
         .unwrap();
@@ -2785,7 +2805,7 @@ fn test_invocation_layer_applies_to_pattern_entries() {
 }
 
 #[test]
-fn test_invocation_layer_leaves_composing_keys_alone() {
+fn test_layer_leaves_composing_keys_alone() {
     // Per-project hooks, aliases and copy-ignored excludes append to the
     // global ones rather than replacing them, so both already apply and there
     // is no precedence to fix. Dropping the project's copy would silently stop
@@ -2831,7 +2851,7 @@ exclude = ["project-pattern"]
 }
 
 #[test]
-fn test_invocation_layer_displaces_whole_custom_column() {
+fn test_layer_displaces_whole_custom_column() {
     // `[list.custom-columns]` merges per column, so an override of one leaf
     // has to displace the whole column: leaving the rest of the project's
     // column would let it replace the global one wholesale anyway, and
@@ -2852,7 +2872,10 @@ width = 30
     assert_eq!(column.template, "from-cli");
     assert_eq!(column.width, None, "the column went as a unit");
 
-    // Restating the column at project scope keeps it, as for any other key.
+    // Restating the column at project scope wins, as for any other key — and
+    // states the whole column, since the layer's global already displaced the
+    // one below it. A column is the unit on both sides of the boundary, so
+    // `width` is not carried over from the entry that was displaced.
     let base = base_with_project(
         r#"[projects."github.com/owner/repo".list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
@@ -2871,11 +2894,11 @@ width = 30
     assert!(warnings.is_empty());
     let column = loaded(table).list(Some(PROJECT)).custom_columns["Ticket"].clone();
     assert_eq!(column.template, "from-cli-project");
-    assert_eq!(column.width, Some(30));
+    assert_eq!(column.width, None, "the column went as a unit here too");
 }
 
 #[test]
-fn test_invocation_layer_displaces_exclusive_sibling() {
+fn test_layer_displaces_exclusive_sibling() {
     // Each `[commit.generation]` pair clears itself, so overriding one member
     // has to displace both at project scope: leaving the project's partner
     // would let it win the merge, and it would fail validation next to the
@@ -2922,8 +2945,8 @@ fn test_invocation_layer_displaces_exclusive_sibling() {
 }
 
 #[test]
-fn test_invocation_layer_noop_without_overrides() {
-    // No invocation layer, no change: a project entry keeps every key.
+fn test_layer_noop_without_overrides() {
+    // No higher layer, no change: a project entry keeps every key.
     let base = base_with_project("worktree-path = \"/from-project\"\n");
     let (table, warnings) = apply_overrides(base, &[]);
     assert!(warnings.is_empty());
@@ -2934,7 +2957,7 @@ fn test_invocation_layer_noop_without_overrides() {
 }
 
 #[test]
-fn test_dropped_invocation_layer_leaves_projects_intact() {
+fn test_dropped_layer_leaves_projects_intact() {
     // A `--config-set` layer that rolls back (malformed fragment) overrides
     // nothing, so it must not displace the project entry either.
     let base = base_with_project("worktree-path = \"/from-project\"\n");
