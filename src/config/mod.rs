@@ -8,8 +8,11 @@
 //! 3. **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
 //!
 //! System and user configs share the same schema and are merged via
-//! `deep_merge_table` (user values override system values at the key level).
-//! Project config is independent — different schema, different purpose.
+//! `merge_layer`, which ranks each layer above the one beneath it as a whole:
+//! a user value overrides the system value for the same key, and a user global
+//! key also outranks a system `[projects."…"]` entry that would otherwise be
+//! the more specific match. Project config is independent — different schema,
+//! different purpose.
 //!
 //! See `wt config --help` for complete documentation.
 

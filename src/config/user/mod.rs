@@ -320,16 +320,16 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 /// handed to [`UserConfig::finalize`], which would answer a stranded required
 /// field by wiping the config to defaults. The layer itself applies either way.
 fn merge_layer(merged_table: &mut toml::Table, layer: toml::Table) {
-    let mut global = layer.clone();
-    global.remove("projects");
-
     // Nothing to rank: no entries beneath, or nothing above them. The common
     // case is a config with no `[projects]` table at all, and it pays only the
     // lookup.
-    if global.is_empty() || !merged_table.contains_key("projects") {
+    if !merged_table.contains_key("projects") || layer.keys().all(|key| key == "projects") {
         deep_merge_table(merged_table, layer);
         return;
     }
+
+    let mut global = layer.clone();
+    global.remove("projects");
 
     let mut candidate = merged_table.clone();
     if let Some(projects) = candidate
@@ -772,7 +772,6 @@ impl UserConfig {
     /// the merged result fails to deserialize or validate, every override is
     /// dropped and a [`LoadError::CliOverride`] is recorded, so a bad override
     /// never silently corrupts (or wipes) the lower layers.
-    ///
     fn apply_cli_overrides(
         overrides: &[String],
         merged_table: &mut toml::Table,
