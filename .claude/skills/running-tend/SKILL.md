@@ -370,7 +370,7 @@ Triage each duplicate:
   --list -z`, a real miss fixed in #3705) on the run before. The `-vv` this
   recipe requires writes the diagnostic bundle *after* the render, and
   assembling it re-runs two commands the render already made:
-  `git worktree list --porcelain` (`DiagnosticReport::collect` in
+  `git worktree list --porcelain` (`DiagnosticReport::format_report` in
   `src/diagnostic.rs`) and `gh --version` for the gist hint
   (`is_gh_installed`). Both go through `Cmd`, so they land in the same
   `trace.jsonl` the `.cache` report reads and pair with the render's own
