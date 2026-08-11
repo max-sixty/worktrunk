@@ -588,28 +588,6 @@ pub enum GitError {
     WorktreeNotFound {
         branch: String,
     },
-    /// A branch with no worktree, whose worktree's place is taken by a
-    /// registered worktree with a detached HEAD.
-    ///
-    /// Detaching severs the only link git records between a worktree and a
-    /// branch, so the branch-first lookup reports no worktree and an operation
-    /// addressed by branch degrades to acting on the ref alone. For removal
-    /// that means deleting the ref, leaving the worktree registered, and
-    /// reporting success. Refusing is the honest answer, and the path is the
-    /// only spelling that still reaches the worktree.
-    ///
-    /// Distinct from [`GitError::WorktreeNotFound`], where the branch has no
-    /// checkout anywhere and creating one is the right suggestion.
-    ///
-    /// [`GitError::WorktreePathOccupied`] reports the same physical state to
-    /// `wt switch`, which wants the worktree back on the branch and says so.
-    /// Removal wants it gone, so the two carry different hints and split on the
-    /// occupied-by-another-branch case: that one blocks a switch, and leaves a
-    /// removal nothing to strand.
-    DetachedWorktreeForBranch {
-        branch: String,
-        path: PathBuf,
-    },
     /// A worktree selector matched neither a branch nor a worktree path.
     ///
     /// Distinct from [`GitError::WorktreeNotFound`], which means the branch
@@ -903,13 +881,6 @@ impl GitError {
 
             GitError::WorktreeNotFound { branch } => {
                 cformat!("Branch <bold>{branch}</> has no worktree")
-            }
-
-            GitError::DetachedWorktreeForBranch { branch, path } => {
-                let path_display = format_path_for_display(path);
-                cformat!(
-                    "Branch <bold>{branch}</> has no worktree; the one @ <bold>{path_display}</> is detached"
-                )
             }
 
             GitError::WorktreeSelectorNotFound { selector } => {
@@ -1466,22 +1437,6 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "To create a worktree, run <underline>{switch_cmd}</>"
-                    ))
-                )
-            }
-
-            GitError::DetachedWorktreeForBranch { path, .. } => {
-                let title = self.title();
-                // `format_path_for_display` already returns a shell-ready
-                // token, so the command is built by interpolation — routing it
-                // through `suggest_command` would escape it a second time.
-                let display_path = format_path_for_display(path);
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
-                        "To remove the detached worktree, run <underline>wt remove {display_path}</>"
                     ))
                 )
             }

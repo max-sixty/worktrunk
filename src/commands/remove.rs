@@ -58,35 +58,37 @@ impl RemovePlans {
     }
 }
 
-/// The removable detached worktree sitting where `branch`'s worktree belongs,
-/// if any.
+/// The detached worktree sitting where `branch`'s worktree would go, if any —
+/// the one thing a branch-only removal of `branch` can't otherwise mention.
 ///
 /// Detaching a worktree's HEAD severs the only link git records between it and
-/// the branch, so once that happens the `worktree-path` template is all that
-/// still connects the two. That is a stronger association than the rest of the
-/// module draws — [`is_worktree_at_expected_path`] returns false for a detached
-/// worktree, and [`worktree_display_name`] renders one as `dir_name (detached)`
-/// without consulting the template — and it is intentional here: the template
-/// match is what keeps the removal from stranding it. Three cases are
-/// deliberately not matched, because refusing on them would name a removal that
-/// can't happen or protect nothing:
+/// the branch, so `branch` genuinely has no worktree and deleting the ref alone
+/// is the right operation. But the directory is still on disk, and `No worktree
+/// found for branch <name>` reads as though it isn't. Once the link is gone the
+/// `worktree-path` template is all that still connects the two, which is a
+/// weaker association than the rest of the module draws — the template records
+/// where a worktree *would* go, not that this one belongs to that branch, and
+/// [`is_worktree_at_expected_path`] returns false for a detached worktree while
+/// [`worktree_display_name`] renders one as `dir_name (detached)` without
+/// consulting the template at all. That weakness is why this only ever adds a
+/// line: a mention that occasionally points at a coincidence costs nothing,
+/// where a refusal built on the same inference would block work.
 ///
-/// - a worktree checked out on some *other* branch — that branch names it, so
-///   removing this one strands nothing;
-/// - the main worktree, which `wt remove <path>` refuses — the hint would name
-///   a command that can't run, and the branch falls through to the accurate
-///   [`CannotRemoveDefaultBranch`](worktrunk::git::GitError::CannotRemoveDefaultBranch).
-///   A bare repo has no main worktree, so its default-branch checkout is
-///   matched like any other and the hint works;
-/// - a prunable entry, whose directory is already gone — stale metadata for
-///   `wt step prune` to sweep, not a worktree left on disk.
+/// Three cases go unmatched, each because naming them would mislead:
 ///
-/// A template that won't expand yields no expected path and so no match: the
-/// guard can't assert what it can't compute, and refusing every branch-only
-/// removal on a broken template would cost more than the case it guards.
+/// - a worktree checked out on some *other* branch — that branch names it, and
+///   it has nothing to do with this removal;
+/// - the main worktree, whose path-based removal `wt remove` refuses, so the
+///   hint would name a command that can't run. A bare repo has no main
+///   worktree, so its default-branch checkout is named like any other and the
+///   hint works;
+/// - a prunable entry, whose directory is already gone — `wt step prune`'s to
+///   sweep, and nothing to point a user at.
 ///
-/// A name that is no local branch at all is rejected before any of that, so the
-/// refusal never asserts a branch that isn't there.
+/// A template that won't expand yields no expected path and so no match. The
+/// branch is known to exist by the time this runs: `prepare_worktree_removal`
+/// reports a typo, a deleted branch, or a remote-only name as an error, so a
+/// plan to annotate means the lookup already succeeded.
 ///
 /// [`is_worktree_at_expected_path`]: super::worktree::is_worktree_at_expected_path
 /// [`worktree_display_name`]: super::worktree::worktree_display_name
@@ -96,15 +98,6 @@ fn detached_worktree_for<'a>(
     branch: &str,
     worktrees: &'a [worktrunk::git::WorktreeInfo],
 ) -> Option<&'a Path> {
-    // Downstream, `prepare_worktree_removal` is what reports a typo, a deleted
-    // branch, or a remote-only name; a guard that fires ahead of it would
-    // assert a branch that doesn't exist. `exists_locally` reports a failed
-    // lookup as `false` rather than an error, so this can't fail closed — but
-    // the same call downstream then refuses the removal, so a guard skipped
-    // that way still never deletes a ref.
-    if !repo.branch(branch).exists_locally().unwrap_or(true) {
-        return None;
-    }
     let expected = compute_worktree_path(repo, branch, config).ok()?;
     worktrees
         .iter()
@@ -112,9 +105,9 @@ fn detached_worktree_for<'a>(
             wt.branch.is_none()
                 && !wt.is_prunable()
                 && worktrunk::path::paths_match(&wt.path, &expected)
-                // Fail closed: a `git_dir` lookup that fails says nothing about
-                // whether the worktree is linked, and skipping the guard there
-                // deletes the ref and strands the worktree.
+                // A `git_dir` lookup that fails says nothing either way, so
+                // treat it as linked and name the worktree — an extra line is
+                // the worst a wrong answer here can cost.
                 && repo.worktree_at(&wt.path).is_linked().unwrap_or(true)
         })
         .map(|wt| wt.path.as_path())
@@ -189,45 +182,7 @@ fn validate_remove_targets(
                 // otherwise (see its shared-branch handling).
                 RemoveTarget::WorktreePath(path_canonical)
             }
-            ResolvedWorktree::BranchOnly { branch } => {
-                // A detached worktree is invisible to the branch-first lookup,
-                // so a branch whose worktree has since been detached resolves
-                // here and would have its ref deleted with the worktree left
-                // registered. Refuse instead, and name the path — the only
-                // spelling that still reaches it.
-                //
-                // The guard belongs to this command rather than to
-                // `prepare_worktree_removal`, which every producer of a
-                // `BranchOnly` target shares: `wt step prune` plans its whole
-                // sweep from one worktree-list snapshot, so a detached
-                // worktree it is about to remove as its own candidate is still
-                // registered when the branch's plan is built. Refusing there
-                // would leave prune unable to clean up either half.
-                //
-                // Under `Keep` (`--no-delete-branch`, or
-                // `[remove] delete-branch = false`) this arm deletes nothing,
-                // so there is no ref to strand the worktree behind — the guard
-                // would turn a no-op into a failure. `SafeDelete` on an
-                // unintegrated branch retains its ref too, but only the
-                // deletion attempt downstream knows that
-                // (`Repository::integration_reason`), so those refuse here
-                // rather than exiting 0 — the conservative direction, since
-                // what the refusal names is still on disk.
-                if let Some(detached) = worktrees
-                    .filter(|_| !deletion_mode.should_keep())
-                    .and_then(|wts| detached_worktree_for(repo, config, &branch, wts))
-                {
-                    plans.record_error(
-                        GitError::DetachedWorktreeForBranch {
-                            branch,
-                            path: detached.to_path_buf(),
-                        }
-                        .into(),
-                    );
-                    continue;
-                }
-                RemoveTarget::BranchOnly(branch)
-            }
+            ResolvedWorktree::BranchOnly { branch } => RemoveTarget::BranchOnly(branch),
             // Resolution tried the argument as a branch and as a worktree path
             // and matched neither, so a directory sitting there is a leftover
             // skeleton rather than anything wt can remove. Only a typed
@@ -251,14 +206,32 @@ fn validate_remove_targets(
             // Bucket the validated result, not the pre-validation resolution:
             // a worktree whose directory disappeared degrades to BranchOnly
             // during preparation and must run with the other branch-only plans.
-            Ok(result) => match &result {
-                RemovalPlan::Worktree {
-                    changed_directory: true,
+            Ok(mut result) => {
+                // A branch whose worktree has since been detached still has no
+                // worktree — detaching severed the link — so the branch-only
+                // removal is right. What it can't see is the directory still
+                // sitting at that branch's templated path, which the output
+                // would otherwise never mention. Annotate here, where the
+                // user's typed branch name and the config are both in hand.
+                if let RemovalPlan::BranchOnly {
+                    branch_name,
+                    detached_worktree,
                     ..
-                } => plans.current = Some(result),
-                RemovalPlan::Worktree { .. } => plans.others.push(result),
-                RemovalPlan::BranchOnly { .. } => plans.branch_only.push(result),
-            },
+                } = &mut result
+                    && let Some(wts) = worktrees
+                {
+                    *detached_worktree = detached_worktree_for(repo, config, branch_name, wts)
+                        .map(Path::to_path_buf);
+                }
+                match &result {
+                    RemovalPlan::Worktree {
+                        changed_directory: true,
+                        ..
+                    } => plans.current = Some(result),
+                    RemovalPlan::Worktree { .. } => plans.others.push(result),
+                    RemovalPlan::BranchOnly { .. } => plans.branch_only.push(result),
+                }
+            }
             Err(e) => plans.record_error(e),
         }
     }

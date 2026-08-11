@@ -60,4 +60,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m No worktree found for branch [1mfeature-detached-keep[22m
+[2m○[22m No worktree found for branch [1mfeature-detached-keep[22m; a detached worktree is @ [1m_REPO_.feature-detached-keep[22m
+[2m↳[22m [2mTo remove the detached worktree, run [4mwt remove _REPO_.feature-detached-keep[24m[22m

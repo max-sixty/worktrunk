@@ -319,6 +319,7 @@ impl RepositoryCliExt for Repository {
                         target_branch: None,
                         integration_reason: None,
                         branch_checked_out_at: Some(shared),
+                        detached_worktree: None,
                     });
                 }
                 let default_branch = self.default_branch();
@@ -337,6 +338,7 @@ impl RepositoryCliExt for Repository {
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
+                    detached_worktree: None,
                 });
             }
             Resolved::Worktree {

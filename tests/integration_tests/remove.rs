@@ -292,17 +292,17 @@ fn test_remove_locked_worktree_directory_missing(mut repo: TestRepo) {
     );
 }
 
-/// Regression test for #3769: `wt remove <branch>` on a worktree whose HEAD has
-/// since been detached deleted the branch, left the worktree registered, and
-/// exited 0. Detaching severs the only link git records between the two, so the
-/// branch-first lookup found no worktree and the removal degraded to
-/// branch-only — half the operation, and the silent half.
+/// Regression test for #3769. Detaching a worktree's HEAD severs the only link
+/// git records between it and the branch, so the branch really has no worktree
+/// and deleting the ref alone is the right operation — the directory is left on
+/// disk either way, and `wt remove <path>` is what clears it.
 ///
-/// Refusing is defensible because the path still reaches the worktree, which
-/// `test_remove_detached_worktree_by_path` pins.
+/// What was wrong was the report: `○ No worktree found for branch <name>` reads
+/// as "nothing is there" while a directory sits at exactly that path. The
+/// removal must still happen, and must now name what it left behind.
 #[rstest]
 fn test_remove_branch_whose_worktree_was_detached(mut repo: TestRepo) {
-    let _worktree_path = repo.add_worktree("detached-later");
+    let worktree_path = repo.add_worktree("detached-later");
     repo.detach_head_in_worktree("detached-later");
 
     let output = repo
@@ -311,38 +311,41 @@ fn test_remove_branch_whose_worktree_was_detached(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(
-        !output.status.success(),
-        "wt remove should refuse a branch whose worktree has been detached.\nstdout: {}\nstderr: {}",
+        output.status.success(),
+        "the branch has no worktree, so removing it is the right operation.\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
 
-    // The branch must survive — deleting it is the half that used to run.
+    // The branch goes, because nothing is checked out on it.
     let branch_exists = repo
         .git_command()
         .args(["branch", "--list", "detached-later"])
         .run()
         .unwrap();
     assert!(
-        !String::from_utf8_lossy(&branch_exists.stdout)
+        String::from_utf8_lossy(&branch_exists.stdout)
             .trim()
             .is_empty(),
-        "Branch should NOT be deleted while a detached worktree occupies its path",
+        "Branch should be deleted — no worktree holds it",
     );
 
-    // ...and so must the worktree it would otherwise have stranded.
-    let list_after = repo
-        .git_command()
-        .args(["worktree", "list", "--porcelain"])
-        .run()
-        .unwrap();
+    // The detached worktree is untouched, and the output says so rather than
+    // leaving the user to discover it.
     assert!(
-        String::from_utf8_lossy(&list_after.stdout).contains("detached-later"),
-        "Detached worktree should still be registered",
+        worktree_path.exists(),
+        "Detached worktree must be left alone"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("a detached worktree is @"),
+        "Output must name the directory it left behind; stderr:\n{stderr}"
     );
 }
 
-/// The refusal names the worktree and the path-based removal that reaches it.
+/// The wording: the info line names the detached worktree alongside the branch
+/// it no longer belongs to, and the hint gives the path spelling that removes
+/// it.
 #[rstest]
 fn test_remove_branch_with_detached_worktree_message(mut repo: TestRepo) {
     repo.add_worktree("feature-detached-strand");
@@ -357,9 +360,9 @@ fn test_remove_branch_with_detached_worktree_message(mut repo: TestRepo) {
 }
 
 /// The default branch's expected path is the main worktree, so a detached main
-/// worktree would match the #3769 guard — but `wt remove <that path>` refuses
-/// too, so pointing at it would be a dead end. The default-branch refusal, which
-/// is the accurate answer, must still be what surfaces.
+/// worktree would match — but `wt remove <that path>` refuses the main worktree,
+/// so naming it would be a dead end. The default-branch refusal, which is the
+/// accurate answer, is what surfaces.
 #[rstest]
 fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
     repo.run_git(&["checkout", "--detach", "HEAD"]);
@@ -367,10 +370,9 @@ fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["main"], None));
 }
 
-/// The #3769 guard runs ahead of the branch-existence check in
-/// `prepare_worktree_removal`, so it must not claim a branch that isn't there:
-/// a name whose templated path holds a detached worktree still reports the
-/// missing branch once the ref is gone.
+/// A detached worktree at the templated path must not make a name that is no
+/// longer a branch look like one: once the ref is gone, the missing branch is
+/// what gets reported.
 #[rstest]
 fn test_remove_missing_branch_with_detached_worktree_at_its_path(mut repo: TestRepo) {
     repo.add_worktree("feature-detached-orphan");
@@ -385,9 +387,9 @@ fn test_remove_missing_branch_with_detached_worktree_at_its_path(mut repo: TestR
     ));
 }
 
-/// Under `--no-delete-branch` the branch-only removal deletes nothing, so there
-/// is no ref whose deletion could strand the detached worktree — the #3769
-/// guard must not turn that no-op into a failure.
+/// `--no-delete-branch` deletes nothing, so the removal is a no-op — but the
+/// detached worktree is still worth naming, since "no worktree found" misreads
+/// the same way whether or not a ref goes with it.
 #[rstest]
 fn test_remove_branch_with_detached_worktree_keeping_branch(mut repo: TestRepo) {
     repo.add_worktree("feature-detached-keep");
@@ -401,13 +403,11 @@ fn test_remove_branch_with_detached_worktree_keeping_branch(mut repo: TestRepo) 
     ));
 }
 
-/// An unintegrated branch keeps its ref under `SafeDelete` too, but only the
-/// deletion attempt downstream knows that — so unlike the `--no-delete-branch`
-/// case above, a detached worktree refuses here rather than exiting 0 with the
-/// branch retained. The refusal names a worktree that is still on disk, so this
-/// pins the conservative direction rather than an accident.
+/// An unintegrated branch keeps its ref under `SafeDelete`, and the detached
+/// worktree at its path is named all the same — the note is about the directory
+/// on disk, not about what happened to the ref.
 #[rstest]
-fn test_remove_unmerged_branch_with_detached_worktree_refuses(mut repo: TestRepo) {
+fn test_remove_unmerged_branch_with_detached_worktree_reports_it(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-detached-unmerged");
     std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
     repo.git_command()
@@ -430,9 +430,9 @@ fn test_remove_unmerged_branch_with_detached_worktree_refuses(mut repo: TestRepo
     ));
 }
 
-/// A detached worktree whose directory is already gone is stale metadata, not a
-/// worktree the #3769 guard protects — the branch-only removal proceeds rather
-/// than refusing and naming a path that isn't on disk.
+/// A detached worktree whose directory is already gone is stale metadata for
+/// `wt step prune` to sweep — there is nothing on disk to point the user at, so
+/// the removal says nothing extra.
 #[rstest]
 fn test_remove_branch_with_prunable_detached_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-detached-gone");
@@ -2777,10 +2777,9 @@ fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
     // Detach HEAD in feature-b
     repo.detach_head_in_worktree("feature-b");
 
-    // From main, try to multi-remove both. feature-a is removed; feature-b is
-    // refused, because detaching dropped it out of the branch-first lookup and
-    // removing it by branch would delete the ref and strand the worktree
-    // (#3769). Partial success is the point: one refusal doesn't stop the rest.
+    // From main, remove both. feature-a's worktree goes; feature-b was detached,
+    // so its branch has no worktree and only the ref is deleted — with the
+    // directory left behind named in the output rather than passed over (#3769).
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
@@ -4075,6 +4074,40 @@ fn test_remove_json_branch_only(repo: TestRepo) {
     assert!(output.status.success());
 
     assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+/// `--format=json` carries the detached worktree too. The human output names it
+/// on stderr, which a script consuming stdout never sees — and "a script
+/// checking the exit code sees a clean run" is half of what #3769 reported.
+#[rstest]
+fn test_remove_json_reports_detached_worktree(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("json-detached");
+    repo.detach_head_in_worktree("json-detached");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "json-detached",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let entry = &json[0];
+    assert_eq!(entry["kind"], "branch_only");
+    assert_eq!(
+        entry["detached_worktree"]
+            .as_str()
+            .map(std::path::Path::new),
+        Some(worktree_path.as_path()),
+        "json must name the directory the removal left behind: {json}"
+    );
 }
 
 #[cfg(not(target_os = "windows"))]
