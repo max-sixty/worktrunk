@@ -52,9 +52,9 @@ fn test_remove_reap_no_processes(mut repo: TestRepo) {
 #[cfg(unix)]
 #[rstest]
 fn test_remove_reap_kills_process(mut repo: TestRepo) {
+    use crate::common::{wait_for, wait_for_worktree_removed};
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
     use worktrunk::git::reap;
 
     let worktree_path = repo.add_worktree("feature-reapkill");
@@ -73,19 +73,16 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
     let pid = child.id();
 
     // Wait until lsof reports the child's cwd — fast when idle, but under
-    // suite load a single probe can burn its whole 5s in-process timeout, so
-    // the deadline is the suite's generous 60s presence-poll convention.
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !reap::processes_under(&canonical)
-        .iter()
-        .any(|p| p.pid == pid)
-    {
-        assert!(
-            Instant::now() < deadline,
-            "child {pid} never discovered — is lsof installed and able to read process cwds?"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // suite load a single probe can burn its whole 5s in-process timeout;
+    // `wait_for` carries the suite's generous presence-poll deadline.
+    wait_for(
+        &format!("child {pid} in cwd discovery — is lsof installed and able to read process cwds?"),
+        || {
+            reap::processes_under(&canonical)
+                .iter()
+                .any(|p| p.pid == pid)
+        },
+    );
 
     // The guard reaps the child iff it holds no controlling terminal — which
     // it inherited from this process's session, so read the session directly:
@@ -126,6 +123,87 @@ fn test_remove_reap_kills_process(mut repo: TestRepo) {
         let _ = child.kill();
         let _ = child.wait();
     }
+
+    // The reap phase prints before the removal runs, so neither branch's
+    // output proves the removal itself completed.
+    wait_for_worktree_removed(&worktree_path);
+}
+
+// `--reap` (experimental) with a process *holding* a controlling terminal
+// under the worktree: the guard spares it. Unlike
+// `test_remove_reap_kills_process` this doesn't branch on the suite's own
+// terminal — the child gets a fresh PTY as its controlling terminal at spawn
+// (portable_pty runs it as a session leader on the slave side), so the spared
+// branch runs deterministically in every environment, CI included.
+//
+// From the outside a spared process is indistinguishable from an undiscovered
+// one (both print "No processes to reap"), so the test first proves discovery
+// sees the child, then pins the guard's verdict in-process. The load-bearing
+// assertion is the child surviving removal — the data-safety contract — which
+// a guard regression fails whenever discovery succeeds.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_reap_spares_terminal_process(mut repo: TestRepo) {
+    use crate::common::{open_pty_with_size, wait_for, wait_for_worktree_removed};
+    use portable_pty::CommandBuilder;
+    use worktrunk::git::reap;
+
+    let worktree_path = repo.add_worktree("feature-reapspare");
+    let canonical = std::fs::canonicalize(&worktree_path).unwrap();
+
+    // The "keep-me" shape: a terminal-holding process cwd'd in the worktree.
+    // `sleep` writes nothing, so the never-read master can't fill and block it;
+    // 600s bounds the leak if an assertion panics before cleanup.
+    let pty = open_pty_with_size(24, 80);
+    let mut cmd = CommandBuilder::new("sleep");
+    cmd.arg("600");
+    cmd.cwd(&canonical);
+    let mut child = pty.slave.spawn_command(cmd).unwrap();
+    let pid = child.process_id().unwrap();
+
+    // Same presence poll as the kill test: prove discovery sees the child
+    // before asking what the guard makes of it.
+    wait_for(
+        &format!("child {pid} in cwd discovery — is lsof installed and able to read process cwds?"),
+        || {
+            reap::processes_under(&canonical)
+                .iter()
+                .any(|p| p.pid == pid)
+        },
+    );
+
+    // The guard's verdict, pinned in-process: discovered but not reapable.
+    // (A transiently failed `ps` probe also yields "not reapable" — the
+    // fail-safe points the same way as the contract, so this can't flake.)
+    assert!(
+        !reap::collect_reapable(&canonical)
+            .iter()
+            .any(|p| p.pid == pid),
+        "terminal-holding child {pid} was classified reapable"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--reap", "feature-reapspare"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No processes to reap"),
+        "expected no-reap output, got:\n{stderr}"
+    );
+    // The reap phase prints before the removal runs, so confirm the removal
+    // actually happened — otherwise the survival assertion below would hold
+    // just as well for a `wt` that gave up before touching the worktree.
+    assert!(output.status.success(), "remove failed; stderr:\n{stderr}");
+    wait_for_worktree_removed(&worktree_path);
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "spared child {pid} was killed during removal"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[rstest]
