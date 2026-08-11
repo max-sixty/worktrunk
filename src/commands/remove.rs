@@ -78,10 +78,12 @@ impl RemovePlans {
 ///
 /// - a worktree checked out on some *other* branch — that branch names it, and
 ///   it has nothing to do with this removal;
-/// - the main worktree, whose path-based removal `wt remove` refuses, so the
-///   hint would name a command that can't run. A bare repo has no main
-///   worktree, so its default-branch checkout is named like any other and the
-///   hint works;
+/// - the main worktree, which `wt remove <path>` refuses with nothing to do
+///   about it, so the hint would be a dead end. What decides this is whether
+///   the hint leads anywhere, not whether the command succeeds: a *locked*
+///   worktree refuses too and is named all the same, because that refusal
+///   carries the `git worktree unlock` that clears the way. A bare repo has no
+///   main worktree, so its default-branch checkout is named like any other;
 /// - a prunable entry, whose directory is already gone — `wt step prune`'s to
 ///   sweep, and nothing to point a user at.
 ///

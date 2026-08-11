@@ -370,6 +370,20 @@ fn test_remove_default_branch_with_detached_main_worktree(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["main"], None));
 }
 
+/// `-D` is what reaches the annotation for the default branch: without it
+/// `check_not_default_branch` errors first, so the case above never exercises
+/// the exclusion it appears to be about. `compute_worktree_path` returns the
+/// repo root for the default branch of a non-bare repo, and a detached main
+/// worktree passes every other predicate in the `find` — `is_linked()` is the
+/// only thing keeping the removal from pointing at a directory `wt remove`
+/// refuses outright.
+#[rstest]
+fn test_remove_default_branch_force_with_detached_main_worktree(repo: TestRepo) {
+    repo.run_git(&["checkout", "--detach", "HEAD"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["-D", "main"], None));
+}
+
 /// A detached worktree at the templated path must not make a name that is no
 /// longer a branch look like one: once the ref is gone, the missing branch is
 /// what gets reported.
