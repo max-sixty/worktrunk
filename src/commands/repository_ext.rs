@@ -231,8 +231,9 @@ impl RepositoryCliExt for Repository {
                 // so execution unregisters it — planning stays a pure read
                 // (`wt step prune`'s scan doubles as `--dry-run`, and `wt
                 // remove` plans before its approval prompt). A detached
-                // worktree has no branch to fall back to, so it proceeds and
-                // surfaces the removal error.
+                // worktree has no branch to fall back to, so an absent
+                // directory leaves it to the prunable arm below rather than
+                // here.
                 //
                 // The recorded prune names this worktree rather than sweeping
                 // the repo, so a sibling whose directory is merely absent
@@ -253,14 +254,19 @@ impl RepositoryCliExt for Repository {
                         branch: branch.to_string(),
                     }
                 } else if wt.is_prunable() {
-                    // Registered, directory present, but it no longer holds
-                    // this worktree — deleted and recreated, which is what an
-                    // interrupted `wt switch` leaves behind. Neither route out
-                    // of here works: the cleanup above needs the directory
-                    // gone, and the removal below walks into git's own
-                    // validation a few calls later, reaching the user as a raw
-                    // `exit 128`. Only the repo-wide `git worktree prune`
-                    // clears this one, and the hint names it.
+                    // Still registered, but the directory no longer holds this
+                    // worktree. Two shapes reach here: one deleted and
+                    // recreated, which is what an interrupted `wt switch`
+                    // leaves behind; and a detached one simply deleted, which
+                    // the branch-only cleanup above cannot take because it has
+                    // no branch to fall back to. Neither route out of here
+                    // works: that cleanup wants a branch *and* an absent
+                    // directory, and for the recreated directory the removal
+                    // below walks into git's own validation a few calls later,
+                    // reaching the user as a raw `exit 128`. The hint names the
+                    // repo-wide `git worktree prune` because it is what clears
+                    // both; the detached one, whose directory is absent, a
+                    // targeted `git worktree remove <path>` would also clear.
                     return Err(GitError::WorktreeMissing {
                         branch: wt
                             .branch

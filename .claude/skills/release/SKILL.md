@@ -134,13 +134,13 @@ Skip: internal refactors, test additions (unless user-facing like shell completi
 
 **Combine related bullets.** Several PRs that share a theme — e.g. three perf changes that together account for one user-visible speedup — belong in one bullet, not three. The reader cares about the net change, not the PR boundaries. Cite all the PRs in the trailing `([#a](...), [#b](...), [#c](...))` list.
 
-**Be brief — the ceiling is words, not sentences.** A bullet lands at 40 words or under; the two or three headline entries may reach 80; Internal-section bullets get one sentence. The whole release — every section together, which is what the command below measures — stays under ~1,200 words. Drop the "why we did it this way" details unless they change how the user thinks about the change, and leave code examples and `Cmd::stream` / `OnceCell` / `DashMap`-style internals in the PR description, where the reasoning belongs.
+**Be brief — the ceiling is words, not sentences.** A bullet aims at 35 words; a dense one runs to 60, and the two or three headline entries may reach 80; Internal-section bullets get one sentence. Drop the "why we did it this way" details unless they change how the user thinks about the change, and leave code examples and `Cmd::stream` / `OnceCell` / `DashMap`-style internals in the PR description, where the reasoning belongs.
 
 Sentences stretch to fit whatever you want to say; words don't. So measure rather than judge:
 
 ```bash
 awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md \
-  | awk '/^- \*\*/ {n=split($0,_," "); t+=n; c++; printf "%4d  %.58s\n", n, $0} END {printf "\n%d entries, %d words, %d avg\n", c, t, c?t/c:0}'
+  | awk '/^- \*\*/ {n=split($0,_," "); t+=n; c++; if (n>60) o++; printf "%4d  %.58s\n", n, $0} END {printf "\n%d entries, %d avg, %d over 60\n", c, c?t/c:0, o}'
 ```
 
 **Calibrate against the ceiling, not against the last release.** Length ratchets: each release is drafted beside the previous section, and an abstract rule loses to a concrete neighbouring exemplar every time. Entries grew from 49 to 101 words on average across five releases while this skill said "be brief" throughout. Read the previous section for what it drifted to, then ignore it and write to the ceiling.
@@ -251,7 +251,7 @@ For EACH entry:
 2. Read the actual diff, not just the commit message
 3. Confirm the entry accurately describes the user-facing change
 4. Flag if the entry overstates, understates, or misdescribes the change
-5. Flag if the entry runs over 40 words (80 for one of the two or three headline
+5. Flag if the entry runs over 60 words (80 for one of the two or three headline
    entries), restates the PR description, or explains mechanism the reader cannot
    act on — report these as seriously as an inaccuracy, and quote a shorter
    rewrite that keeps every user-facing claim

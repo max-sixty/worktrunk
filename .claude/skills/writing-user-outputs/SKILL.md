@@ -60,6 +60,20 @@ panics on the `BrokenPipe` write error, anstream's drops it. `wt … | head`
 closes the pipe, so command code imports the `worktrunk::styling` one and no
 `std::println!` is left in `src/`.
 
+The stderr macros carry the same rule for a different consequence: anstream's
+`eprint!` / `eprintln!` strip ANSI when stderr isn't a terminal, std's keep it,
+so a file importing one but not the other writes escapes on one line of a
+message block and not the next under `wt … 2>log`. `eprint!` is the half that
+slips — it has no newline, so it gets reached for mid-block in a file that
+imported only `eprintln`. Every bare `eprint!` / `eprintln!` under `src/` must
+resolve to anstream's: import it, or qualify the call as
+`styling::eprintln!(…)`. `check_stderr_macros_come_from_styling` in
+`tests/integration_tests/output_system_guard.rs` holds that statically, since
+no snapshot can — the suite forces `CLICOLOR_FORCE=1`, so both printers emit
+color and a snapshot agrees whichever macro is in scope. Its
+`STD_STDERR_ALLOWED_PATHS` exempts whole files, not calls, so an entry is only
+right where std's macro is right throughout.
+
 **Output whose ANSI is already decided** declares that once at the top of the
 command with `worktrunk::styling::ColorChoice::Always.write_global()` and then
 prints through the same anstream macros — the statusline a shell prompt or

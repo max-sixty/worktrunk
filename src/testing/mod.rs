@@ -108,9 +108,14 @@ pub fn wt_bin() -> PathBuf {
 /// by the observed binary's identity, keeping `src`'s basename. The hardlink
 /// pins the inode: cargo's uplift only unlinks the *path*, so the pinned entry
 /// keeps serving the observed binary through any number of concurrent
-/// rebuilds. A link costs no space while the `deps/` artifact it shares an
-/// inode with exists, and everything under `wt-test-bin/` dies with
-/// `cargo clean`, so nothing sweeps it.
+/// rebuilds. An entry's marginal disk cost is near zero — where cargo uplifts
+/// by hardlink (Linux) the pin shares the `deps/` artifact's inode outright,
+/// and where it uplifts by copy-on-write clone (macOS/APFS) the pin keeps the
+/// clone, whose blocks stay shared with that artifact (measured: cloning the
+/// 70 MB binary consumes 8 KB) — the bytes belong to `deps/`, which cargo
+/// already retains. Everything under `wt-test-bin/` dies with `cargo clean`,
+/// so nothing sweeps it; a sweeper could unlink a generation another live
+/// suite pinned, re-creating the very window this exists to close.
 ///
 /// Two runs observing the same binary converge on the same entry (`link`
 /// returning `AlreadyExists` is success — the key names the content); a run

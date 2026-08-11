@@ -93,7 +93,7 @@ fn generated_prune_fixture() -> FixtureRepo {
 
 /// Build the `wt <args>` command for `repo`.
 fn wt_cmd(repo: &Path, args: &[&str]) -> Command {
-    let mut cmd = wt_command(Path::new(env!("CARGO_BIN_EXE_wt")), repo, None);
+    let mut cmd = wt_command(&worktrunk::testing::wt_bin(), repo, None);
     cmd.args(args);
     cmd
 }
