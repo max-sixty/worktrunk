@@ -341,7 +341,7 @@ User config can include a `[projects]` table for project-specific settings — w
 
 Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 
-Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. Env vars and `--config-set` [rank higher](https://worktrunk.dev/config/#precedence).
+Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See [how the layers rank](https://worktrunk.dev/config/#precedence).
 
 ```toml
 [projects."github.com/user/repo"]
@@ -629,7 +629,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 
 ## Environment variables
 
-All user config options can be overridden with `WORKTRUNK_`-prefixed environment variables, which [outrank config files](https://worktrunk.dev/config/#precedence).
+All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 
 ### Naming convention
 
@@ -672,7 +672,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 
 ## Inline config overrides (`--config-set`)
 
-`--config-set <toml>` overrides any user config key for a single invocation, ahead of every other source. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
+`--config-set <toml>` overrides any user config key for a single invocation. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
 
 ```bash
 $ wt --config-set list.full=true list
@@ -690,7 +690,7 @@ Sources closer to the invocation rank higher (user config above system config), 
 3. `[projects."github.com/owner/repo"]` in the config file
 4. global `worktree-path` in the config file
 
-A `--config-set` that names a project entry is both the highest layer and the most specific key, so it applies to one project and beats the same flag's global key:
+A `--config-set` that names a project entry is both the highest layer and the most specific key, so it beats the same flag's global key:
 
 ```bash
 $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"' switch --create feature
