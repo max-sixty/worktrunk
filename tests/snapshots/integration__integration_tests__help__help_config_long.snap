@@ -362,7 +362,7 @@ User config can include a [2m[projects][0m table for project-specific settings
 
 Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
 
-Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first. An entry outranks the global key of the same name, and both lose to a [2mWORKTRUNK_[0m env var or [2m--config-set[0m — see how the layers rank.
+Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first. Env vars and [2m--config-set[0m rank higher.
 
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
@@ -616,7 +616,7 @@ On first run without shell integration, Worktrunk offers to install it. On first
 
 [1m[32mEnvironment variables[0m
 
-All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix, which outrank config files.
+All user config options can be overridden with [2mWORKTRUNK_[0m-prefixed environment variables, which outrank config files.
 
 [32mNaming convention[0m
 
@@ -666,17 +666,17 @@ This composes with aliases — an alias body can invoke [2mwt --config-set … 
 
 [1m[32mPrecedence[0m
 
-Sources rank by how close they are to the invocation, which puts user config above system config. Within a config file, an entry keyed to the project outranks the global key of the same name. So [2mworktree-path[0m comes from the first of these that sets it:
+Sources closer to the invocation rank higher (user config above system config), and within a config file a project entry outranks the global key of the same name. So [2mworktree-path[0m comes from the first of these that sets it:
 
 1. [2m--config-set 'worktree-path = …'[0m
 2. [2mWORKTRUNK_WORKTREE_PATH[0m
-3. [2m[projects."github.com/owner/repo"][0m in the config file
-4. global [2mworktree-path[0m in the config file
+3. [2m[projects."github.com/owner/repo"][0m in a config file
+4. global [2mworktree-path[0m in a config file
 
-A [2m--config-set[0m that names a project entry applies to that project alone, and beats a global [2m--config-set[0m of the same key — it is both the highest layer and the most specific key:
+A [2m--config-set[0m that names a project entry is both the highest layer and the most specific key, so it applies to one project and beats the same flag's global key:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config-set[0m[2m [0m[2m[32m'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"'[0m[2m switch [0m[2m[36m--create[0m[2m feature[0m
 
-Ranking only matters where one value has to win. Hooks, aliases and [2mstep.copy-ignored.exclude[0m accumulate rather than replace, so an env-set hook and a project's hook both run.
+Hooks, aliases and [2mstep.copy-ignored.exclude[0m accumulate rather than replace, so an env-set hook and a project's hook both run.
 
 ----- stderr -----

@@ -4,18 +4,16 @@
 //!
 //! # Precedence
 //!
-//! Sources rank by how close they are to the invocation — system config, user
-//! config, `WORKTRUNK_*` env vars, `--config-set`, lowest first. Within one of
-//! them a `[projects."…"]` entry outranks the global key of the same name, so
-//! specificity is a rule inside a layer rather than a second axis over all of
-//! them: a lower layer's entry loses to a higher layer's global key.
+//! Sources rank by how close they are to the invocation: system config, user
+//! config, `WORKTRUNK_*` env vars, `--config-set`. Within a layer, a
+//! `[projects."…"]` entry outranks the global key of the same name; across
+//! layers, a higher layer's global key beats a lower layer's entry.
 //!
-//! [`UserConfig::load_with_warnings`] flattens the layers into one document and
-//! the accessors resolve specificity on the result, which is what costs the
-//! order — a document holds one set of entries, and reading it can only let
-//! them win. So every layer goes on through [`merge_layer`], which first drops
-//! what the layer sets globally from the entries beneath it, and the flattened
-//! document then reads back as the ordered one.
+//! [`UserConfig::load_with_warnings`] flattens the layers into one document
+//! and the accessors resolve specificity on the result — which alone would let
+//! any entry beat any global key, whichever layer set it. So each layer merges
+//! through [`merge_layer`], which first drops what the layer sets globally
+//! from the entries beneath it.
 
 mod accessors;
 mod merge;
