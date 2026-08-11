@@ -182,7 +182,7 @@ pub fn fetch_gitlab_project_urls(
     };
 
     // Fetch source project URLs (for fork push)
-    let (source_ssh, source_http) = fetch_project_urls(*source_project_id, repo_root)
+    let (source_ssh, source_http) = fetch_project_urls(*source_project_id, "source", repo_root)
         .with_context(|| {
             format!(
                 "Failed to fetch source project {} for MR !{}",
@@ -191,7 +191,7 @@ pub fn fetch_gitlab_project_urls(
         })?;
 
     // Fetch target project URLs (where MR refs live)
-    let (target_ssh, target_http) = fetch_project_urls(*target_project_id, repo_root)
+    let (target_ssh, target_http) = fetch_project_urls(*target_project_id, "target", repo_root)
         .with_context(|| {
             format!(
                 "Failed to fetch target project {} for MR !{}",
@@ -219,8 +219,16 @@ pub fn fetch_gitlab_project_urls(
 }
 
 /// Fetch project URLs from GitLab API.
+///
+/// `role` is the caller's word for which of the two projects this is ("source"
+/// or "target"). It belongs in the CLI-failure message rather than in the
+/// caller's `with_context`, because that context is inert there: `cli_api_error`
+/// returns a `GitError`, and `format_command_error` renders only the first
+/// `Diagnostic` in the chain. A numeric project ID alone can't tell a user which
+/// of the two repos they're locked out of.
 fn fetch_project_urls(
     project_id: u64,
+    role: &str,
     repo_root: &Path,
 ) -> anyhow::Result<(Option<String>, Option<String>)> {
     let api_path = format!("projects/{}", project_id);
@@ -240,7 +248,7 @@ fn fetch_project_urls(
         // 404, or a network failure.
         return Err(cli_api_error(
             ForgeKind::GitLab.ref_type(),
-            format!("glab api failed for project {}", project_id),
+            format!("glab api failed for {} project {}", role, project_id),
             &output,
         ));
     }

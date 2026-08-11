@@ -62,5 +62,5 @@ exit_code: 1
 [36m◎[39m [36mFetching MR !42...[39m
 [107m [0m [1mAdd feature fix for edge case[22m (!42)
 [107m [0m by @contributor · opened · feature-fix · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
-[31m✗[39m [31mglab api failed for project 456[39m
+[31m✗[39m [31mglab api failed for source project 456[39m
 [107m [0m glab: 404 Project Not Found (HTTP 404)
