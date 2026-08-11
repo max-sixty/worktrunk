@@ -6804,9 +6804,11 @@ fn test_switch_mr_fork_project_fetch_error(#[from(repo_with_remote)] repo: TestR
 /// The other half of the role label: when the source lookup succeeds and the
 /// *target* one is denied, the message names "target project 123".
 ///
-/// Without this, transposing the two `role` literals in
+/// Without this, changing the target call's `role` literal to `"source"` in
 /// `fetch_gitlab_project_urls` leaves the suite green while telling the user
-/// they're locked out of the upstream when it's actually the fork.
+/// they're locked out of the fork when it's actually the upstream. (Swapping
+/// *both* literals is already caught by the sibling above, whose snapshot
+/// pins "source project 456".)
 #[rstest]
 fn test_switch_mr_fork_target_project_fetch_error(#[from(repo_with_remote)] repo: TestRepo) {
     let bare_url = String::from_utf8_lossy(
