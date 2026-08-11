@@ -6736,6 +6736,71 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A failing `glab api projects/<id>` surfaces glab's own verdict.
+///
+/// The MR call already forwards it (`fetch_mr_info`); the deferred project
+/// call is the other half of the same fork path, and a bare "Failed to fetch
+/// project 456" leaves the reader unable to tell a 401 from a 404.
+#[rstest]
+fn test_switch_mr_fork_project_fetch_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup is denied.
+        .command(
+            "api projects/456",
+            MockResponse::exit(1).with_stderr("glab: 404 Project Not Found (HTTP 404)"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_project_fetch_error", cmd);
+    });
+}
+
 /// Test fork MR checkout when branch already exists and tracks the MR
 #[rstest]
 fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo: TestRepo) {

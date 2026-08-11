@@ -235,10 +235,23 @@ fn fetch_project_urls(
     })?;
 
     if !output.status.success() {
-        bail!("Failed to fetch project {}", project_id);
+        // Forward glab's own verdict, same as `fetch_mr_info` above — a bare
+        // "Failed to fetch project 456" hides whether the call was a 401, a
+        // 404, or a network failure.
+        return Err(cli_api_error(
+            ForgeKind::GitLab.ref_type(),
+            format!("glab api failed for project {}", project_id),
+            &output,
+        ));
     }
 
-    let response: GlabProject = serde_json::from_slice(&output.stdout)?;
+    let response: GlabProject = serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "Failed to parse GitLab API response for project {}. \
+             This may indicate a GitLab API change.",
+            project_id
+        )
+    })?;
     Ok((response.ssh_url_to_repo, response.http_url_to_repo))
 }
 
