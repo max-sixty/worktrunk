@@ -139,10 +139,12 @@
 # needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 # template — since listing can't supply the data.
 #
-# The selection drives the table and the `wt switch` picker. `wt list --format
-# json` always emits every field, but a listed gated column (`ci`, `summary`)
-# still forces its data collection on, so the JSON carries the same data the
-# table shows.
+# The selection drives the table and the `wt switch` picker; `wt list --format
+# json` ignores it in both directions. JSON always emits every field, and a
+# listed `ci` or `summary` does not force its collection on there — that stays
+# with `--full` and `[list] summary`, so a display setting never decides whether
+# a machine-readable call reaches a forge. Which data a run gathered is reported
+# in schema 2's `collected`.
 #
 # #### Custom columns [experimental]
 #

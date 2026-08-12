@@ -214,10 +214,12 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
 [107m [0m [2m# template — since listing can't supply the data.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The selection drives the table and the `wt switch` picker. `wt list --format[0m
-[107m [0m [2m# json` always emits every field, but a listed gated column (`ci`, `summary`)[0m
-[107m [0m [2m# still forces its data collection on, so the JSON carries the same data the[0m
-[107m [0m [2m# table shows.[0m
+[107m [0m [2m# The selection drives the table and the `wt switch` picker; `wt list --format[0m
+[107m [0m [2m# json` ignores it in both directions. JSON always emits every field, and a[0m
+[107m [0m [2m# listed `ci` or `summary` does not force its collection on there — that stays[0m
+[107m [0m [2m# with `--full` and `[list] summary`, so a display setting never decides whether[0m
+[107m [0m [2m# a machine-readable call reaches a forge. Which data a run gathered is reported[0m
+[107m [0m [2m# in schema 2's `collected`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

@@ -428,9 +428,9 @@ Item fields:
  [2mupstrea[0m Tracking branch: [2m{remote, branch, ahead, behind}[0m; absent when none is  
  [2mm[0m       configured                                                             
  [2mpr[0m      Open PR/MR: [2m{number, url, review, mergeable, repo}[0m; collected with     
-         [2m--full[0m or a listed [2mci[0m column. [2mreview[0m uses the schema 1 [2mci.review_state[0m 
-         vocabulary; [2mmergeable[0m is false when the forge reports conflicts, null  
-         otherwise                                                              
+         [2m--full[0m ([2m[list] columns[0m doesn't reach JSON). [2mreview[0m uses the schema 1   
+         [2mci.review_state[0m vocabulary; [2mmergeable[0m is false when the forge reports  
+         conflicts, null otherwise                                              
  [2mchecks[0m  CI pipeline: [2m{status, source, stale}[0m; [2mstatus[0m is [2mpassed[0m, [2mrunning[0m, or    
          [2mfailed[0m — null when a conflicts report masks it                         
  [2mdev_ser[0m [2m{url, listening}[0m from the project's [2mlist.url[0m template                  

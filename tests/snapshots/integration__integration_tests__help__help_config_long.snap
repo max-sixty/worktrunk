@@ -262,10 +262,12 @@ named one. A column whose data source is missing still stays hidden — [2msumm
 needs an LLM command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m
 template — since listing can't supply the data.
 
-The selection drives the table and the [2mwt switch[0m picker. [2mwt list --format[0m
-json[2m always emits every field, but a listed gated column ([0mci[2m, [0msummary[2m)[0m
-still forces its data collection on, so the JSON carries the same data the
-table shows.
+The selection drives the table and the [2mwt switch[0m picker; [2mwt list --format[0m
+json[2m ignores it in both directions. JSON always emits every field, and a[0m
+listed [2mci[0m or [2msummary[0m does not force its collection on there — that stays
+with [2m--full[0m and [2m[list] summary[0m, so a display setting never decides whether
+a machine-readable call reaches a forge. Which data a run gathered is reported
+in schema 2's [2mcollected[0m.
 
 [1mCustom columns [experimental][0m
 
