@@ -10,7 +10,7 @@ secrets.
 Use this setup command:
 
 ```bash
-printf '%s  %s\n' '20415cbd8fa04364868f1cf54ef26e995a4f61b1a8df9a374c364dc41c4bbe23' scripts/codex-cloud/setup.sh | sha256sum -c - && bash scripts/codex-cloud/setup.sh
+printf '%s  %s\n' '67e4ec050b9d5f372be5a897362a057cdc835883848db81bdb61fe0eaa77f913' scripts/codex-cloud/setup.sh | sha256sum -c - && bash scripts/codex-cloud/setup.sh
 ```
 
 Use this maintenance command:
