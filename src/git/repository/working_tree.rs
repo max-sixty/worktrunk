@@ -597,25 +597,36 @@ impl<'a> WorkingTree<'a> {
         Ok(git_dir != common_dir)
     }
 
-    /// Refuse when the directory at this worktree's path is not this
-    /// repository's worktree.
+    /// Refuse when the directory at this worktree's path does not hold this
+    /// worktree.
     ///
     /// Git makes this check itself before `git worktree remove` and refuses
-    /// with `validation failed … is not a .git file`, `--force` included.
-    /// Worktrunk's removal fast path renames the directory into trash rather
-    /// than asking git to (see
+    /// with `validation failed … does not point back to
+    /// '.git/worktrees/<id>'`, `--force` included. Worktrunk's removal fast
+    /// path renames the directory into trash rather than asking git to (see
     /// [`stage_worktree_removal`](crate::git::remove::stage_worktree_removal)),
     /// so git's validation never runs and the guarantee has to be made here.
-    /// Removing the wrong directory is unrecoverable — the case this was
-    /// written for is a full clone that came to sit at a stale registration's
-    /// path, holding uncommitted work and the only copy of its objects.
+    /// Removing the wrong directory is unrecoverable, whether it holds a full
+    /// clone that came to sit at a stale registration's path (uncommitted work
+    /// and, for a repo never pushed, the only copy of its objects) or a sibling
+    /// worktree of this repository, moved onto the path after this one was
+    /// deleted.
     ///
-    /// The test is ownership of the git directory rather than git's
-    /// `.git`-is-a-file shape: a linked worktree's git dir sits under
-    /// `<common>/worktrees/`, the main worktree's *is* the common dir, and
-    /// anything else answers to a different repository. One comparison covers
-    /// both worktree kinds with no special case, and it rejects a `.git` file
-    /// pointing at another repository, which the shape test alone accepts.
+    /// So the test is git's own: the directory's `.git` must name *this
+    /// registration*, and that registration's `gitdir` file must name this
+    /// directory back (`registration_records_this_path`). Repository-level
+    /// ownership is the weaker half: a sibling worktree's git dir sits under
+    /// `<common>/worktrees/` too, so asking only which repository the occupant
+    /// answers to accepts one moved onto this path. The main worktree is the
+    /// same test where there is no registration to point back at: its git dir
+    /// *is* the common dir, and that equality is the whole of it.
+    ///
+    /// Resolution reads the `.git` entry in this directory on every call
+    /// (`Repository::git_dir_at`) instead of going through the `GIT_DIRS`-cached
+    /// [`git_dir`](Self::git_dir), which would answer from whenever an earlier
+    /// caller asked. That is what makes the second call worth making: removal
+    /// gates at planning and again at the rename, with the approval prompt and
+    /// the `pre-remove` hook running in between.
     ///
     /// Deliberately not a `prunable` check — git leaves the registration alone
     /// precisely because the occupant's own `.git` resolves, so
@@ -623,22 +634,51 @@ impl<'a> WorkingTree<'a> {
     /// two cover different halves of "the directory no longer holds this
     /// worktree": prunable is the half git notices, this is the half it does
     /// not.
-    pub fn ensure_belongs_to_repo(&self) -> anyhow::Result<()> {
+    pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<()> {
         let common_dir = self.repo.git_common_dir();
-        // A git directory that can't be resolved at all is the strongest form
-        // of "not ours": nothing there answers for this worktree. Treating it
-        // as a refusal keeps the failure closed, where propagating git's exit
-        // 128 would leave the caller to decide.
-        let is_ours = self.git_dir().is_ok_and(|git_dir| {
-            git_dir == common_dir || git_dir.starts_with(common_dir.join("worktrees"))
+        let registrations = common_dir.join("worktrees");
+        // A git dir that can't be resolved at all is the strongest form of "not
+        // this worktree": nothing there answers for it. Treating that as a
+        // refusal keeps the failure closed.
+        let holds_it = Repository::git_dir_at(&self.path).is_some_and(|git_dir| {
+            git_dir == common_dir
+                || (git_dir.parent() == Some(registrations.as_path())
+                    && self.registration_records_this_path(&git_dir))
         });
-        if is_ours {
+        if holds_it {
             return Ok(());
         }
         Err(GitError::WorktreePathNotOurs {
             path: self.path.clone(),
         }
         .into())
+    }
+
+    /// Whether `registration` — a `<common>/worktrees/<id>` directory — records
+    /// this worktree's path as the working tree it belongs to.
+    ///
+    /// Its `gitdir` file holds the path of that working tree's `.git`, resolved
+    /// against the registration directory when relative, as git resolves it.
+    /// Comparing the canonicalized `.git` paths settles it: two spellings of one
+    /// worktree agree, while a path that no longer resolves cannot — the sibling
+    /// case, where the registration still names the directory its occupant was
+    /// moved out of.
+    fn registration_records_this_path(&self, registration: &Path) -> bool {
+        std::fs::read_to_string(registration.join("gitdir")).is_ok_and(|content| {
+            let recorded = PathBuf::from(content.trim());
+            let absolute = if recorded.is_relative() {
+                registration.join(recorded)
+            } else {
+                recorded
+            };
+            match (
+                canonicalize(&absolute),
+                canonicalize(self.path.join(".git")),
+            ) {
+                (Ok(recorded_dot_git), Ok(our_dot_git)) => recorded_dot_git == our_dot_git,
+                _ => false,
+            }
+        })
     }
 
     /// Ensure this worktree is clean (no uncommitted changes).

@@ -511,6 +511,53 @@ fn test_remove_refuses_foreign_repository_at_worktree_path(mut repo: TestRepo) {
     );
 }
 
+/// A registration whose directory now holds a *sibling worktree of the same
+/// repository* is refused on the same terms, `--force` included.
+///
+/// This is the case repository-level ownership cannot see: the occupant's git
+/// dir sits under `<common>/worktrees/` like any worktree of this repo, so only
+/// the pointer back — the registration's `gitdir` file naming this directory —
+/// tells the two registrations apart. git refuses it (`does not point back to
+/// '.git/worktrees/<id>'`), and what removal would destroy is a live checkout
+/// with its own uncommitted work.
+///
+/// The occupant has to be *moved* onto the path rather than created there:
+/// `git worktree add` refuses a registered path, which is what leaves a plain
+/// `mv` as the way this state arises.
+#[rstest]
+fn test_remove_refuses_sibling_worktree_at_worktree_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let sibling_path = repo.add_worktree("other");
+
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+    std::fs::rename(&sibling_path, &worktree_path).unwrap();
+    std::fs::write(worktree_path.join("precious.txt"), "unpushed work").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "feature", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt remove --force must refuse a sibling worktree at a registered path.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    // The refusal is worth nothing if the directory went anyway: removal stages
+    // by rename and deletes in a detached process, so the exit code alone would
+    // not catch a staged-then-deleted tree.
+    assert!(
+        worktree_path.join("precious.txt").exists(),
+        "the sibling worktree's uncommitted file must survive",
+    );
+    assert!(
+        worktree_path.join(".git").is_file(),
+        "the sibling worktree's link to its own registration must survive",
+    );
+}
+
 #[rstest]
 fn test_remove_partial_success(mut repo: TestRepo) {
     // Create one valid worktree

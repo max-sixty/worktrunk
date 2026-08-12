@@ -177,7 +177,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 `wt remove` mirrors `git worktree remove`: it refuses to remove worktrees with uncommitted changes (staged, modified, or untracked files). The `--force` flag removes the worktree anyway, discarding all of those changes.
 
-Removal also refuses, `--force` included, when the directory at a registered path has come to hold a *different* repository — a clone made there after the worktree was deleted, say. `--force` waives uncommitted changes, not the check for whose directory it is, and `git worktree remove` refuses the same case.
+Removal also refuses, `--force` included, when the directory at a registered path no longer holds the worktree registered there — a clone made there after the worktree was deleted, say, or another worktree of the same repository moved onto the path. `--force` waives uncommitted changes, not the check for what the directory holds, and `git worktree remove` refuses the same cases.
 
 To protect a worktree from removal entirely (say it holds a local database), lock it:
 

@@ -440,9 +440,9 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// `wt remove` and `wt merge --remove` have already asked this during
 /// planning, where the answer can precede the "Removing …" announcement. The
-/// call here is for the paths that stage without planning, not a fresh
-/// re-check — `git_dir()` caches per worktree path, so a second call in the
-/// same process answers from the first.
+/// call here still re-reads the directory's `.git` entry, so it also closes the
+/// window those two leave open: the approval prompt and the `pre-remove` hook
+/// run between their check and this rename.
 ///
 /// # Errors
 ///
@@ -455,7 +455,8 @@ pub fn stage_worktree_removal(
     branch: Option<&str>,
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
-    repo.worktree_at(worktree_path).ensure_belongs_to_repo()?;
+    repo.worktree_at(worktree_path)
+        .ensure_holds_this_worktree()?;
 
     if !force_worktree {
         repo.worktree_at(worktree_path)

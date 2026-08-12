@@ -360,13 +360,12 @@ impl RepositoryCliExt for Repository {
         // upstream of the "Removing …" announcement, so the refusal arrives
         // before wt claims to be doing it.
         //
-        // `stage_worktree_removal` asks the same question at the rename, for
-        // the callers that reach it without planning here. That is not a
-        // re-validation of this one: `git_dir()` caches per worktree path for
-        // the process, so within a single removal the second call answers from
-        // the first. A directory swapped in between would not be caught — the
-        // same time-of-check window `ensure_clean` carries, and narrower.
-        target_wt.ensure_belongs_to_repo()?;
+        // `stage_worktree_removal` asks again at the rename, and that is a
+        // genuine re-check rather than a repeat of this one: the gate reads the
+        // directory's `.git` entry every call, so a directory swapped in
+        // between — across the approval prompt and the `pre-remove` hook — is
+        // caught there.
+        target_wt.ensure_holds_this_worktree()?;
 
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;

@@ -610,19 +610,20 @@ pub enum GitError {
     WorktreeNotFoundAtPath {
         path: PathBuf,
     },
-    /// A registered worktree's path that some *other* repository now occupies.
+    /// A registered worktree's path that something else now occupies: another
+    /// repository, or a sibling worktree of this one moved onto the path.
     ///
     /// The registration still resolves and the directory is still there, so
-    /// every check short of asking who owns it passes — including the
-    /// dirty-worktree gate, which reads the occupant's `git status` and
-    /// reports it as this worktree's. Removal is the operation that has to
-    /// care: the directory holds someone else's work, and possibly the only
-    /// copy of their objects.
+    /// every check short of asking what the directory points at passes —
+    /// including the dirty-worktree gate, which reads the occupant's `git
+    /// status` and reports it as this worktree's. Removal is the operation that
+    /// has to care: the directory holds work this registration cannot account
+    /// for, and possibly the only copy of its objects.
     ///
-    /// git refuses the same removal (`validation failed … is not a .git
-    /// file`), `--force` included. Worktrunk's fast path renames the directory
-    /// itself rather than asking git to, so it has to make this check for
-    /// itself — see `ensure_belongs_to_repo`.
+    /// git refuses the same removal (`validation failed … does not point back
+    /// to '.git/worktrees/<id>'`), `--force` included. Worktrunk's fast path
+    /// renames the directory itself rather than asking git to, so it has to
+    /// make this check for itself — see `ensure_holds_this_worktree`.
     WorktreePathNotOurs {
         path: PathBuf,
     },
@@ -894,7 +895,9 @@ impl GitError {
 
             GitError::WorktreePathNotOurs { path } => {
                 let path_display = format_path_for_display(path);
-                cformat!("Directory @ <bold>{path_display}</> is not this repository's worktree")
+                cformat!(
+                    "Directory @ <bold>{path_display}</> does not hold the worktree registered there"
+                )
             }
 
             GitError::RefCreateConflict {

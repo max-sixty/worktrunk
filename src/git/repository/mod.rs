@@ -1326,26 +1326,38 @@ impl Repository {
             // A worktree's top-level path is its own `root()`.
             WORKTREE_ROOTS.entry(key.clone()).or_insert(key.clone());
 
-            if let Some(git_dir) = self.derive_worktree_git_dir(&key) {
+            if let Some(git_dir) = Self::git_dir_at(&key) {
                 GIT_DIRS.entry(key).or_insert(git_dir);
             }
         }
     }
 
-    /// Resolve a worktree's git dir from its `.git` entry without forking
-    /// `git rev-parse --git-dir`. A `.git` directory *is* the git dir (the main
-    /// worktree, whose common dir we already hold); a `.git` file holds
+    /// The git dir a directory's own `.git` entry names, without forking
+    /// `git rev-parse --git-dir`. A `.git` directory *is* the git dir (a main
+    /// worktree, or the root of some other repository); a `.git` file holds
     /// `gitdir: <path>` pointing at `<common>/worktrees/<id>` (a linked
     /// worktree). Returns the canonicalized git dir, or `None` when the entry
-    /// is missing, unreadable, or in a form not worth second-guessing — the
-    /// caller then leaves it to the subprocess. Mirrors the `--git-dir`
-    /// canonicalization in [`Self::prewarm`] (`prewarm_rev_parse`).
-    fn derive_worktree_git_dir(&self, worktree: &Path) -> Option<PathBuf> {
-        let dot_git = worktree.join(".git");
-        let file_type = std::fs::symlink_metadata(&dot_git).ok()?.file_type();
+    /// is missing, unreadable, or in a form not worth second-guessing. Mirrors
+    /// the `--git-dir` canonicalization in [`Self::prewarm`]
+    /// (`prewarm_rev_parse`).
+    ///
+    /// Answers for the directory rather than for a repository: it reads the
+    /// `.git` entry sitting there and never walks up to a parent, which is what
+    /// lets [`WorkingTree::ensure_holds_this_worktree`] compare the answer
+    /// against this repository and learn something. Every call reads the
+    /// filesystem, so a caller consulting it twice sees any change in between —
+    /// the reason that gate uses it rather than the `GIT_DIRS`-cached
+    /// [`WorkingTree::git_dir`].
+    ///
+    /// Two callers, with opposite readings of `None`:
+    /// [`Self::prime_worktree_path_caches`] declines to seed a cache entry and
+    /// leaves the answer to the subprocess, while the removal gate refuses.
+    fn git_dir_at(dir: &Path) -> Option<PathBuf> {
+        let dot_git = dir.join(".git");
+        // Follows a symlinked `.git`, as git and the subprocess fallback do.
+        let file_type = std::fs::metadata(&dot_git).ok()?.file_type();
         if file_type.is_dir() {
-            // Main worktree: git dir is the common dir (already canonicalized).
-            return Some(self.git_common_dir().to_path_buf());
+            return canonicalize(&dot_git).ok();
         }
         if !file_type.is_file() {
             return None;
@@ -1356,7 +1368,7 @@ impl Repository {
         let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?;
         let path = PathBuf::from(gitdir.trim());
         let absolute = if path.is_relative() {
-            worktree.join(path)
+            dir.join(path)
         } else {
             path
         };
