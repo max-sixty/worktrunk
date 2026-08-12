@@ -2628,6 +2628,9 @@ mod tests {
             .unwrap(),
             "3000"
         );
+        // A JSON bool reaches minijinja as a real bool, so it renders the way
+        // minijinja renders bools: `True`/`False` since 2.22, which adopted
+        // Jinja2's spelling.
         assert_eq!(
             expand_template(
                 "{{ vars.config.debug }}",
@@ -2637,7 +2640,7 @@ mod tests {
                 "test"
             )
             .unwrap(),
-            "true"
+            "True"
         );
 
         // Array index access
