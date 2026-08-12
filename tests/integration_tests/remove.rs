@@ -8,6 +8,7 @@ use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
+use std::path::{Path, PathBuf};
 
 #[rstest]
 fn test_remove_from_worktree(mut repo: TestRepo) {
@@ -589,6 +590,15 @@ fn test_remove_refuses_foreign_repository_at_worktree_path(mut repo: TestRepo) {
     );
 }
 
+/// The registration a worktree's `.git` file names — `<common>/worktrees/<id>`.
+///
+/// Read from the worktree rather than assembled from its directory name, so a
+/// test never depends on how git derives the id.
+fn registration_dir(worktree: &Path) -> PathBuf {
+    let dot_git = std::fs::read_to_string(worktree.join(".git")).unwrap();
+    PathBuf::from(dot_git.trim().strip_prefix("gitdir: ").unwrap())
+}
+
 /// A registration whose directory now holds a *sibling worktree of the same
 /// repository* is refused on the same terms, `--force` included.
 ///
@@ -602,6 +612,12 @@ fn test_remove_refuses_foreign_repository_at_worktree_path(mut repo: TestRepo) {
 /// The occupant has to be *moved* onto the path rather than created there:
 /// `git worktree add` refuses a registered path, which is what leaves a plain
 /// `mv` as the way this state arises.
+///
+/// The hint is part of the assertion. Moving the occupant back to the path its
+/// own registration records — which is what the hint names — leaves `git
+/// worktree prune` with only the stale entry to clear; from anywhere else both
+/// registrations are prunable, and clearing them both would leave this checkout
+/// pointing at a registration that no longer exists.
 #[rstest]
 fn test_remove_refuses_sibling_worktree_at_worktree_path(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");
@@ -611,18 +627,13 @@ fn test_remove_refuses_sibling_worktree_at_worktree_path(mut repo: TestRepo) {
     std::fs::rename(&sibling_path, &worktree_path).unwrap();
     std::fs::write(worktree_path.join("precious.txt"), "unpushed work").unwrap();
 
-    let output = repo
-        .wt_command()
-        .args(["remove", "--force", "feature", "--yes"])
-        .output()
-        .unwrap();
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--force", "feature", "--yes"],
+        None
+    ));
 
-    assert!(
-        !output.status.success(),
-        "wt remove --force must refuse a sibling worktree at a registered path.\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
     // The refusal is worth nothing if the directory went anyway: removal stages
     // by rename and deletes in a detached process, so the exit code alone would
     // not catch a staged-then-deleted tree.
@@ -633,6 +644,103 @@ fn test_remove_refuses_sibling_worktree_at_worktree_path(mut repo: TestRepo) {
     assert!(
         worktree_path.join(".git").is_file(),
         "the sibling worktree's link to its own registration must survive",
+    );
+}
+
+/// The ownership gate is re-decided at the rename, not carried over from
+/// planning.
+///
+/// Removal asks twice — once while planning, once with nothing between it and
+/// the `mv` into trash — and the approval prompt and this `pre-remove` hook run
+/// in between. So the hook repoints the worktree's `.git` at a sibling's
+/// registration, exactly the state the planning gate had just cleared, and the
+/// second gate has to catch it. Resolving through a per-process cache instead
+/// would answer from the planning-time read and delete the directory.
+#[rstest]
+fn test_remove_rechecks_ownership_after_pre_remove_hook(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let sibling_registration = registration_dir(&repo.add_worktree("other"));
+
+    // Hooks run under a POSIX shell on every platform (Git Bash on Windows), and
+    // a TOML literal string carries the `"` the format needs verbatim.
+    let hook = format!(
+        r#"printf "gitdir: %s" {} > {}"#,
+        sibling_registration.to_slash_lossy(),
+        worktree_path.join(".git").to_slash_lossy(),
+    );
+    repo.write_project_config(&format!("pre-remove = '{hook}'"));
+    repo.commit("Add pre-remove config");
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ['{hook}']
+"#
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "removal must refuse once the hook has repointed the worktree.\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("does not hold the worktree registered there"),
+        "the refusal must come from the ownership gate, not the dirty check.\nstderr: {stderr}"
+    );
+    assert!(
+        worktree_path.join("file.txt").exists(),
+        "the worktree the hook repointed must survive.\nstderr: {stderr}"
+    );
+}
+
+/// A registration recording its worktree with a *relative* `gitdir` entry is
+/// recognized, and that worktree removes normally.
+///
+/// git writes the relative form under `worktree.useRelativePaths` and resolves
+/// either, so the gate resolves an entry against the registration directory as
+/// git does. Rewriting the entry rather than setting the config keeps this
+/// independent of the git version that introduced the option — and git reads the
+/// rewritten entry back, which is what makes it the same form git would write.
+#[rstest]
+fn test_remove_worktree_with_relative_registration_gitdir(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let registration = registration_dir(&worktree_path);
+
+    // From `<repo>/.git/worktrees/<id>`, four levels up is the directory the
+    // worktree sits in, under the default `../{{ repo }}.{{ branch }}` layout.
+    let relative = Path::new("../../../..")
+        .join(worktree_path.file_name().unwrap())
+        .join(".git");
+    assert_eq!(
+        dunce::canonicalize(registration.join(&relative)).unwrap(),
+        dunce::canonicalize(worktree_path.join(".git")).unwrap(),
+        "the relative entry must resolve to this worktree's own .git",
+    );
+    std::fs::write(
+        registration.join("gitdir"),
+        relative.to_slash_lossy().as_ref(),
+    )
+    .unwrap();
+    assert!(
+        repo.git_output(&["worktree", "list", "--porcelain"])
+            .contains(&worktree_path.to_slash_lossy().to_string()),
+        "git must still resolve the worktree from the relative entry",
+    );
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--foreground", "feature"],
+        None
+    ));
+    assert!(
+        !worktree_path.exists(),
+        "the worktree directory must be gone",
     );
 }
 

@@ -71,6 +71,37 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
     }
 }
 
+/// The working tree a `<common>/worktrees/<id>` registration records, read from
+/// its `gitdir` file.
+///
+/// The file holds the path of that working tree's `.git`, absolute or relative to
+/// the registration directory — git writes the relative form under
+/// `worktree.useRelativePaths` and resolves either, so both are ordinary. Its
+/// parent is the working tree, which is the half of git's `validate_worktree`
+/// that reads from the registration side.
+fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
+    let recorded = PathBuf::from(content.trim());
+    let absolute = if recorded.is_relative() {
+        registration.join(recorded)
+    } else {
+        recorded
+    };
+    absolute.parent().map(Path::to_path_buf)
+}
+
+/// Whether two paths name one directory.
+///
+/// Equal spellings settle it without touching the filesystem, and two spellings
+/// of one directory (`/tmp` and `/private/tmp` on macOS, a relative `gitdir`
+/// entry against a canonicalized worktree path) resolve to the same place. A
+/// path that no longer resolves can only match its own spelling, which is what
+/// makes a registration recording a directory its occupant has left fail the
+/// comparison.
+fn paths_name_one_directory(a: &Path, b: &Path) -> bool {
+    a == b || matches!((canonicalize(a), canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+}
+
 /// Typed snapshot returned by [`WorkingTree::prewarm_info`].
 ///
 /// Mirrors what the batched `git rev-parse` actually resolved so callers can
@@ -614,7 +645,7 @@ impl<'a> WorkingTree<'a> {
     ///
     /// So the test is git's own: the directory's `.git` must name *this
     /// registration*, and that registration's `gitdir` file must name this
-    /// directory back (`registration_records_this_path`). Repository-level
+    /// directory back (`registration_worktree_path`). Repository-level
     /// ownership is the weaker half: a sibling worktree's git dir sits under
     /// `<common>/worktrees/` too, so asking only which repository the occupant
     /// answers to accepts one moved onto this path. The main worktree is the
@@ -636,49 +667,34 @@ impl<'a> WorkingTree<'a> {
     /// not.
     pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<()> {
         let common_dir = self.repo.git_common_dir();
-        let registrations = common_dir.join("worktrees");
         // A git dir that can't be resolved at all is the strongest form of "not
         // this worktree": nothing there answers for it. Treating that as a
         // refusal keeps the failure closed.
-        let holds_it = Repository::git_dir_at(&self.path).is_some_and(|git_dir| {
-            git_dir == common_dir
-                || (git_dir.parent() == Some(registrations.as_path())
-                    && self.registration_records_this_path(&git_dir))
-        });
-        if holds_it {
+        let git_dir = Repository::git_dir_at(&self.path);
+        if git_dir.as_deref() == Some(common_dir) {
             return Ok(());
         }
+
+        // Where the occupant's own registration says it lives. `None` when the
+        // occupant answers to a different repository, so there is no
+        // registration of ours to ask.
+        let registrations = common_dir.join("worktrees");
+        let occupant_registered_at = git_dir
+            .filter(|git_dir| git_dir.parent() == Some(registrations.as_path()))
+            .as_deref()
+            .and_then(registration_worktree_path);
+        if occupant_registered_at
+            .as_deref()
+            .is_some_and(|recorded| paths_name_one_directory(recorded, &self.path))
+        {
+            return Ok(());
+        }
+
         Err(GitError::WorktreePathNotOurs {
             path: self.path.clone(),
+            occupant_registered_at,
         }
         .into())
-    }
-
-    /// Whether `registration` — a `<common>/worktrees/<id>` directory — records
-    /// this worktree's path as the working tree it belongs to.
-    ///
-    /// Its `gitdir` file holds the path of that working tree's `.git`, resolved
-    /// against the registration directory when relative, as git resolves it.
-    /// Comparing the canonicalized `.git` paths settles it: two spellings of one
-    /// worktree agree, while a path that no longer resolves cannot — the sibling
-    /// case, where the registration still names the directory its occupant was
-    /// moved out of.
-    fn registration_records_this_path(&self, registration: &Path) -> bool {
-        std::fs::read_to_string(registration.join("gitdir")).is_ok_and(|content| {
-            let recorded = PathBuf::from(content.trim());
-            let absolute = if recorded.is_relative() {
-                registration.join(recorded)
-            } else {
-                recorded
-            };
-            match (
-                canonicalize(&absolute),
-                canonicalize(self.path.join(".git")),
-            ) {
-                (Ok(recorded_dot_git), Ok(our_dot_git)) => recorded_dot_git == our_dot_git,
-                _ => false,
-            }
-        })
     }
 
     /// Ensure this worktree is clean (no uncommitted changes).
