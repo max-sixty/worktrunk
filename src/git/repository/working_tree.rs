@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use dashmap::mapref::entry::Entry;
 
+use crate::path::canonicalize_with_parents;
 use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
@@ -79,6 +80,12 @@ fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
 /// `worktree.useRelativePaths` and resolves either, so both are ordinary. Its
 /// parent is the working tree, which is the half of git's `validate_worktree`
 /// that reads from the registration side.
+///
+/// Resolved through [`canonicalize_with_parents`], which normalizes the `..`
+/// chain a relative entry leaves behind even though the directory it names may
+/// no longer exist — the case the caller is usually asking about, and the path it
+/// then shows the user. Normalizing rewrites spellings only, so it cannot make
+/// two directories compare equal.
 fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
     let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
     let recorded = PathBuf::from(content.trim());
@@ -87,19 +94,7 @@ fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
     } else {
         recorded
     };
-    absolute.parent().map(Path::to_path_buf)
-}
-
-/// Whether two paths name one directory.
-///
-/// Equal spellings settle it without touching the filesystem, and two spellings
-/// of one directory (`/tmp` and `/private/tmp` on macOS, a relative `gitdir`
-/// entry against a canonicalized worktree path) resolve to the same place. A
-/// path that no longer resolves can only match its own spelling, which is what
-/// makes a registration recording a directory its occupant has left fail the
-/// comparison.
-fn paths_name_one_directory(a: &Path, b: &Path) -> bool {
-    a == b || matches!((canonicalize(a), canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+    absolute.parent().map(canonicalize_with_parents)
 }
 
 /// Typed snapshot returned by [`WorkingTree::prewarm_info`].
@@ -675,9 +670,10 @@ impl<'a> WorkingTree<'a> {
             return Ok(());
         }
 
-        // Where the occupant's own registration says it lives. `None` when the
-        // occupant answers to a different repository, so there is no
-        // registration of ours to ask.
+        // Where the occupant's own registration says it lives. `None` when there
+        // is no registration of ours to ask — the occupant answers to a
+        // different repository, or its registration here has lost its `gitdir`
+        // file.
         let registrations = common_dir.join("worktrees");
         let occupant_registered_at = git_dir
             .filter(|git_dir| git_dir.parent() == Some(registrations.as_path()))
@@ -685,7 +681,7 @@ impl<'a> WorkingTree<'a> {
             .and_then(registration_worktree_path);
         if occupant_registered_at
             .as_deref()
-            .is_some_and(|recorded| paths_name_one_directory(recorded, &self.path))
+            .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
         {
             return Ok(());
         }

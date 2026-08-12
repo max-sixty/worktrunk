@@ -626,9 +626,14 @@ pub enum GitError {
     /// make this check for itself — see `ensure_holds_this_worktree`.
     WorktreePathNotOurs {
         path: PathBuf,
-        /// Where the occupant's own registration records it, when the occupant
-        /// is a worktree of this repository. `None` for one that answers to a
-        /// different repository, where this one has no registration to ask.
+        /// Where the occupant's own registration records it, when this
+        /// repository has a registration to ask: the occupant is one of its
+        /// worktrees, sitting at the wrong path.
+        ///
+        /// `None` covers both ways that question goes unanswered — an occupant
+        /// answering to a different repository, and a registration of ours whose
+        /// `gitdir` file has gone missing. Neither names a path to move the
+        /// directory to, so both take the hint that doesn't name one.
         ///
         /// The two remedies differ, which is why the case is carried rather
         /// than inferred at display time — see the hint below.

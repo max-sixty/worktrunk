@@ -2076,3 +2076,88 @@ fn worktree_is_unusable_covers_locked_absent_and_recreated() {
         "a recreated directory exists, so only the `prunable` half catches it"
     );
 }
+
+/// The ownership gate accepts a worktree that holds its own registration, in
+/// both shapes: a linked worktree, whose `.git` file names a registration that
+/// names it back, and the main worktree, which has no registration at all
+/// because its git dir *is* the common dir.
+///
+/// The main-worktree arm is a backstop rather than a path a command reaches —
+/// `wt remove` rejects the main worktree well before this gate, and a bare
+/// repository's worktrees are all linked — so nothing through the CLI would
+/// notice it inverting.
+#[test]
+fn ensure_holds_this_worktree_accepts_both_worktree_shapes() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("linked");
+    let repo = Repository::at(test.root_path()).unwrap();
+
+    repo.worktree_at(&linked)
+        .ensure_holds_this_worktree()
+        .expect("a linked worktree holding its own registration is accepted");
+    repo.worktree_at(test.root_path())
+        .ensure_holds_this_worktree()
+        .expect("the main worktree is accepted, having no registration to point back at");
+}
+
+/// The refusal names where the occupant belongs in a form the user can act on,
+/// including when the registration records it relatively.
+///
+/// A relative `gitdir` entry is resolved against the registration directory, so
+/// the recorded path arrives with a `..` chain through `.git/worktrees/<id>`
+/// still in it, and the directory it names no longer exists — that is why the
+/// gate is refusing. Plain canonicalization can't normalize a path that isn't
+/// there, so the hint would otherwise print the traversal verbatim.
+///
+/// Asserted against `Diagnostic::render`, since the path is in the hint and
+/// `Display` carries only the title.
+#[test]
+fn worktree_path_not_ours_names_a_normalized_path() {
+    use crate::git::{Diagnostic, GitError, Repository};
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let occupied = test.add_worktree("occupied");
+    let occupant = test.add_worktree("occupant");
+
+    // Record the occupant's own worktree relatively, as git does under
+    // `worktree.useRelativePaths`, then move it onto the other's path.
+    let registration = PathBuf::from(
+        std::fs::read_to_string(occupant.join(".git"))
+            .unwrap()
+            .trim()
+            .strip_prefix("gitdir: ")
+            .unwrap(),
+    );
+    let relative = PathBuf::from("../../../..")
+        .join(occupant.file_name().unwrap())
+        .join(".git");
+    std::fs::write(
+        registration.join("gitdir"),
+        relative.to_string_lossy().as_ref(),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&occupied).unwrap();
+    std::fs::rename(&occupant, &occupied).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    let refusal = repo
+        .worktree_at(&occupied)
+        .ensure_holds_this_worktree()
+        .expect_err("the occupant's registration records a path it has left")
+        .downcast_ref::<GitError>()
+        .expect("the gate refuses with a GitError")
+        .render();
+
+    assert!(
+        !refusal.contains(".."),
+        "the refusal must name a normalized path:\n{refusal}"
+    );
+    assert!(
+        refusal.contains(&occupant.file_name().unwrap().to_string_lossy().to_string()),
+        "the refusal must name where the occupant belongs:\n{refusal}"
+    );
+}
