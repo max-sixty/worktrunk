@@ -85,7 +85,7 @@ Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
 
 ## Outage Recovery: Re-run Triggers Stranded by a Failed Session
 
-_Temporary hold: [max-sixty/tend#851](https://github.com/max-sixty/tend/pull/851) moves this into the bundled `review-runs` skill. Drop this section once that lands._
+_Temporary hold: [max-sixty/tend#851](https://github.com/max-sixty/tend/pull/851) moves this into the bundled `review-runs` skill; it merged 2026-08-11. Merged is not shipped — the `tend-*` workflows pin `max-sixty/tend/claude@0.1.14` (released 2026-08-06), whose marketplace copy of `review-runs` carries no outage section. Drop this section when a tend release containing #851 is pinned in `.github/workflows/tend-*.yaml`, not when #851 merges._
 
 When `claude -p` exits non-zero the harness opens (or appends to) a `tend-outage`-labelled **"Bot temporarily unavailable"** issue, one table row per failure with the run link and the triggering `#N`. It records the failure; **nothing re-runs it.** `tend-review` fires only on `pull_request_target`, so a PR whose one review attempt died is silently never reviewed until someone happens to push again.
 
@@ -117,7 +117,7 @@ jq -r 'select(.type == "assistant") | .message.content[]?.text // empty' /tmp/ou
 # → You've hit your weekly limit · resets 12am (UTC)
 ```
 
-A cluster of these is quota exhaustion, not a bug — don't open a fix PR. The two limits reset on different clocks, so read the reset off the message rather than assuming the shorter session window; a weekly exhaustion can strand most of a day. Record the window's spend in the tracking issue, and gate the re-runs on a later run that already succeeded rather than on an assumed clock — re-running inside a still-exhausted window just appends another row to the issue you are draining.
+A cluster of these is quota exhaustion, not a bug — don't open a fix PR. The two limits reset on different clocks, so read the reset off the message rather than assuming the shorter session window; a weekly exhaustion can strand most of a day. But the stated reset is a ceiling, not a schedule — 2026-08-04's weekly window ran the full 15h to its stated `12am`, while 2026-08-11's cleared inside 43 minutes against a stated `2am`. So record the window's spend in the tracking issue, and gate the re-runs on a later run that already succeeded rather than on either clock — re-running inside a still-exhausted window just appends another row to the issue you are draining, and waiting out a reset that already passed strands the rows for nothing.
 
 ## CI Fix: Prefer Rerun for Transient Infrastructure Failures
 
