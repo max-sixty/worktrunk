@@ -280,9 +280,9 @@ Item fields:
 | `default_branch` | Relation to the default branch: `{ahead, behind, diff, orphan, integration, merge_conflicts}`; absent on the default branch itself. `integration.reason` is one of `same_commit`, `ancestor`, `no_added_changes`, `trees_match`, `merge_adds_nothing`, `patch_id_match`; a dirty tree skips the checks, leaving `integration` null |
 | `upstream` | Tracking branch: `{remote, branch, ahead, behind}`; absent when none is configured |
 | `pr` | Open PR/MR: `{number, url, review, mergeable, repo}`; collected with `--full` (`[list] columns` doesn't reach JSON). `review` uses the schema 1 `ci.review_state` vocabulary; `mergeable` is false when the forge reports conflicts, null otherwise |
-| `checks` | CI pipeline: `{status, source, stale}`; `status` is `passed`, `running`, or `failed` — null when a conflicts report masks it |
+| `checks` | CI pipeline: `{status, source, stale}`; collected with `--full`, on the same task as `pr`. `status` is `passed`, `running`, or `failed` — null when a conflicts report masks it |
 | `dev_server` | `{url, listening}` from the project's `list.url` template |
-| `summary` | LLM branch summary (requires `[list] summary = true`) |
+| `summary` | LLM branch summary; collected with `--full` plus `[list] summary = true` (`[list] columns` doesn't reach JSON), and needs a `[commit.generation]` command |
 | `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
 | `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors and OSC 8 hyperlinks), `columns` (custom-column cells keyed by header) |
 
