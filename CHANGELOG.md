@@ -14,6 +14,8 @@
 
 - **A path holding no worktree is reported as a path**: `wt remove ../repo.ghost` answered `No branch named …` and pointed at a listing it could never appear in; `wt switch` and `wt merge` offered `--create <path>`, which git rejects; and `wt config state marker set --branch <path>` silently stored state keyed by a path. ([#3773](https://github.com/max-sixty/worktrunk/pull/3773), thanks @judewang for reporting)
 
+- **A failed GitLab project lookup carries `glab`'s own verdict**: `wt switch mr:<n>` on a fork MR answered a 401, a 404, and a network failure with the same `Failed to fetch project 456`, swallowing the output every other `remote_ref` failure path forwards. A non-project response body now says so too. ([#3799](https://github.com/max-sixty/worktrunk/pull/3799))
+
 - **A deleted-and-recreated worktree directory is reported, not leaked as git's exit 128**: An `rm -rf` followed by a `mkdir` passes the `Path::exists()` probe, so `wt switch`, `wt merge`, `wt step push`, and `wt remove` walked into a raw git failure. All four now name the missing worktree and the `git worktree prune` that clears it. ([#3785](https://github.com/max-sixty/worktrunk/pull/3785))
 
 ### Internal
