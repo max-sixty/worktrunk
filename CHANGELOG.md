@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.73.0
+
+### Fixed
+
+- **`wt remove` refuses a registered path that now holds a different repository**: A clone made at a stale registration's path was removed whole, uncommitted work included — and wt routed the user there, since the dirty gate read the occupant's files as this worktree's and offered `--force` as the cure. Removal now compares the directory's git dir against this repository's; `--force` waives uncommitted changes, not the check for whose directory it is. ([#3785](https://github.com/max-sixty/worktrunk/pull/3785))
+
+- **The Nix flake names three systems, dropping Intel macOS**: nixpkgs drops `x86_64-darwin` in 26.11, so the flake would stop evaluating there once `flake.lock` advances past it. (Breaking: `nix build`, `nix run`, and the home-manager module no longer resolve on Intel macOS. Release binaries are unaffected and still ship for it.) ([#3776](https://github.com/max-sixty/worktrunk/pull/3776))
+
+- **`NO_COLOR` and a redirected stream reach every surface**: Escapes still landed in progressive `wt list`, `-v` diagnostics, clap's error tips, and parts of stderr — the deprecation warning, the `wt config update` preview, the `[y/N]` prompt — so a redirected log carried escapes on one line and not the next. Color now resolves in one place. ([#3777](https://github.com/max-sixty/worktrunk/pull/3777), [#3771](https://github.com/max-sixty/worktrunk/pull/3771))
+
+- **A trailing separator no longer hides the branch**: Git's ref format forbids a name ending in `/`, and shell completion produces exactly that spelling whenever a `docs` directory sits beside the branch, so `wt switch docs/` never had a candidate. Selectors are normalized before resolution now — `wt remove`, merge targets, `--base`, and the `pre-switch` hook's `target` alike. ([#3785](https://github.com/max-sixty/worktrunk/pull/3785))
+
+- **A path holding no worktree is reported as a path**: `wt remove ../repo.ghost` answered `No branch named …` and pointed at a listing it could never appear in; `wt switch` and `wt merge` offered `--create <path>`, which git rejects; and `wt config state marker set --branch <path>` silently stored state keyed by a path. ([#3773](https://github.com/max-sixty/worktrunk/pull/3773), thanks @judewang for reporting)
+
+- **A failed GitLab project lookup carries `glab`'s own verdict**: `wt switch mr:<n>` on a fork MR answered a 401, a 404, and a network failure with the same `Failed to fetch project 456`, swallowing the output every other `remote_ref` failure path forwards. A non-project response body now says so too. ([#3799](https://github.com/max-sixty/worktrunk/pull/3799))
+
+- **A deleted-and-recreated worktree directory is reported, not leaked as git's exit 128**: An `rm -rf` followed by a `mkdir` passes the `Path::exists()` probe, so `wt switch`, `wt merge`, `wt step push`, and `wt remove` walked into a raw git failure. All four now name the missing worktree and the `git worktree prune` that clears it. ([#3785](https://github.com/max-sixty/worktrunk/pull/3785))
+
+### Internal
+
+- **Library API rework** (Breaking library API): `cargo-semver-checks` fails four lints — `GitError` gained `WorktreeNotFoundAtPath` and `WorktreePathNotOurs`, shifting seven later discriminants, its `DetachedHead` variant gained a `worktree` field, `ResolvedWorktree` gained `NoWorktreeAtPath`, and `Repository::resolve_worktree_name` was removed. ([#3785](https://github.com/max-sixty/worktrunk/pull/3785), [#3773](https://github.com/max-sixty/worktrunk/pull/3773))
+
+- **Tests and benches spawn a pinned `wt` binary**: a concurrent `cargo` removes and recreates `target/debug/wt` as it uplifts, so spawns hit a one-off `NotFound`; every spawn now routes through a hardlinked pin. ([#3784](https://github.com/max-sixty/worktrunk/pull/3784), [#3792](https://github.com/max-sixty/worktrunk/pull/3792))
+
+- **The nix devShell and `task setup-web` install what the test suite drives**: both were missing `nushell`, `pwsh`, and `jq`, which `--features shell-integration-tests` shells out to. ([#3768](https://github.com/max-sixty/worktrunk/pull/3768), [#3776](https://github.com/max-sixty/worktrunk/pull/3776))
+
+- **Benchmark fixtures reduced to two provenance-based bases**: `Generated` builds a repository locally and `Imported` copies the pinned `rust-lang/rust` corpus, with worktree, branch, and remote-ref populations as parameters. ([#3761](https://github.com/max-sixty/worktrunk/pull/3761))
+
 ## 0.72.0
 
 ### Improved

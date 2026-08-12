@@ -6736,6 +6736,212 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A failing `glab api projects/<id>` surfaces glab's own verdict.
+///
+/// The MR call already forwards it (`fetch_mr_info`); the deferred project
+/// call is the other half of the same fork path, and a bare "Failed to fetch
+/// project 456" leaves the reader unable to tell a 401 from a 404.
+#[rstest]
+fn test_switch_mr_fork_project_fetch_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup is denied.
+        .command(
+            "api projects/456",
+            MockResponse::exit(1).with_stderr("glab: 404 Project Not Found (HTTP 404)"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_project_fetch_error", cmd);
+    });
+}
+
+/// The other half of the role label: when the source lookup succeeds and the
+/// *target* one is denied, the message names "target project 123".
+///
+/// Without this, changing the target call's `role` literal to `"source"` in
+/// `fetch_gitlab_project_urls` leaves the suite green while telling the user
+/// they're locked out of the fork when it's actually the upstream. (Swapping
+/// *both* literals is already caught by the sibling above, whose snapshot
+/// pins "source project 456".)
+#[rstest]
+fn test_switch_mr_fork_target_project_fetch_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let source_project_response = r#"{
+        "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+        "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup succeeds ...
+        .command(
+            "api projects/456",
+            MockResponse::output(source_project_response),
+        )
+        // ... and the target (upstream) one is denied.
+        .command(
+            "api projects/123",
+            MockResponse::exit(1).with_stderr("glab: 403 Forbidden (HTTP 403)"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_target_project_fetch_error", cmd);
+    });
+}
+
+/// A `glab api projects/<id>` response that isn't the expected shape names the
+/// project it came from, the same as the MR parse arm above it.
+#[rstest]
+fn test_switch_mr_fork_project_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup succeeds but answers with something
+        // that isn't a project object.
+        .command(
+            "api projects/456",
+            MockResponse::output("not valid json {{{"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_project_invalid_json", cmd);
+    });
+}
+
 /// Test fork MR checkout when branch already exists and tracks the MR
 #[rstest]
 fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo: TestRepo) {
