@@ -163,6 +163,13 @@ pub fn expand_tilde(path: &Path) -> Cow<'_, Path> {
 /// For non-existent paths, canonicalizes the longest existing prefix and appends
 /// the remaining components. This handles macOS `/var` -> `/private/var` symlinks
 /// correctly for computed worktree paths that don't exist yet.
+///
+/// A `..` is resolved by the filesystem rather than collapsed lexically, which is
+/// load-bearing where [`paths_match`] decides whether two paths name one
+/// directory: crossing a symlink, the two readings name different directories,
+/// and `WorkingTree::ensure_holds_this_worktree` compares a worktree
+/// registration's recorded path against the directory sitting at it to decide
+/// whether removal may delete that directory.
 pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
     if let Ok(canonical) = canonicalize(path) {
         return canonical;
