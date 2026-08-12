@@ -229,8 +229,9 @@ impl RepositoryCliExt for Repository {
                 // so execution unregisters it — planning stays a pure read
                 // (`wt step prune`'s scan doubles as `--dry-run`, and `wt
                 // remove` plans before its approval prompt). A detached
-                // worktree has no branch to fall back to, so it proceeds and
-                // surfaces the removal error.
+                // worktree has no branch to fall back to, so an absent
+                // directory leaves it to the prunable arm below rather than
+                // here.
                 //
                 // The recorded prune names this worktree rather than sweeping
                 // the repo, so a sibling whose directory is merely absent
@@ -238,6 +239,11 @@ impl RepositoryCliExt for Repository {
                 // refuses a locked worktree where a repo-wide prune ignored
                 // one, which needs no guard here: the lock check above already
                 // returned for every locked entry in this arm.
+                //
+                // `exists()` is that cleanup's precondition rather than a
+                // proxy for health: `prune_worktree_entry` unregisters with
+                // `git worktree remove`, which skips its validation only while
+                // the directory is absent.
                 if let Some(branch) = wt.branch.as_deref()
                     && !wt.path.exists()
                 {
@@ -245,6 +251,27 @@ impl RepositoryCliExt for Repository {
                         pruned_from: Some(wt.path.clone()),
                         branch: branch.to_string(),
                     }
+                } else if wt.is_prunable() {
+                    // Still registered, but the directory no longer holds this
+                    // worktree. Two shapes reach here: one deleted and
+                    // recreated, which is what an interrupted `wt switch`
+                    // leaves behind; and a detached one simply deleted, which
+                    // the branch-only cleanup above cannot take because it has
+                    // no branch to fall back to. Neither route out of here
+                    // works: that cleanup wants a branch *and* an absent
+                    // directory, and for the recreated directory the removal
+                    // below walks into git's own validation a few calls later,
+                    // reaching the user as a raw `exit 128`. The hint names the
+                    // repo-wide `git worktree prune` because it is what clears
+                    // both; the detached one, whose directory is absent, a
+                    // targeted `git worktree remove <path>` would also clear.
+                    return Err(GitError::WorktreeMissing {
+                        branch: wt
+                            .branch
+                            .clone()
+                            .unwrap_or_else(|| wt.dir_name().to_string()),
+                    }
+                    .into());
                 } else {
                     let is_current = worktrunk::path::paths_match(&wt.path, current_path);
                     Resolved::Worktree {
@@ -325,6 +352,21 @@ impl RepositoryCliExt for Repository {
 
         // Phase 5: Remaining worktree-level validation.
         let target_wt = self.worktree_at(&worktree_path);
+
+        // Ownership first: `ensure_clean` below runs `git status` in the
+        // directory, so against a foreign occupant it reports that
+        // repository's dirt as this worktree's and points at `--force`, the
+        // one flag that would carry the removal through. Planning is also
+        // upstream of the "Removing …" announcement, so the refusal arrives
+        // before wt claims to be doing it.
+        //
+        // `stage_worktree_removal` asks the same question at the rename, for
+        // the callers that reach it without planning here. That is not a
+        // re-validation of this one: `git_dir()` caches per worktree path for
+        // the process, so within a single removal the second call answers from
+        // the first. A directory swapped in between would not be caught — the
+        // same time-of-check window `ensure_clean` carries, and narrower.
+        target_wt.ensure_belongs_to_repo()?;
 
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;

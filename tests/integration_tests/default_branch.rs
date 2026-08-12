@@ -379,7 +379,7 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
 
     // Now resolving "^" should fail with an error
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let result = git_repo.resolve_worktree_name("^");
+    let result = git_repo.expand_selector("^");
     assert!(
         result.is_err(),
         "Expected error when resolving ^ without default branch"
@@ -389,6 +389,31 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
         err_msg.contains("Cannot determine default branch"),
         "Error should mention cannot determine default branch, got: {}",
         err_msg
+    );
+}
+
+/// An omitted target reaches the same "cannot determine default branch" error as
+/// `^` does, by a different route: `^` asks the shortcut expander, while
+/// `wt merge` with no argument asks `resolve_target_selector` for the default
+/// directly. Both are how a user meets a repo whose default branch is
+/// unknowable, and only the first had a test.
+#[rstest]
+fn test_omitted_target_fails_when_default_branch_unavailable(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .run()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let err = git_repo
+        .require_target_branch(None)
+        .expect_err("an unknowable default branch cannot be a merge target");
+    assert!(
+        err.to_string().contains("Cannot determine default branch"),
+        "got: {err}"
     );
 }
 

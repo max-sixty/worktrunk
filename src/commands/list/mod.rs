@@ -134,7 +134,7 @@ use anstyle::Style;
 use model::{BranchScope, ItemKind, ListData, ListItem};
 use progressive::RenderTarget;
 use worktrunk::git::Repository;
-use worktrunk::styling::INFO_SYMBOL;
+use worktrunk::styling::{INFO_SYMBOL, eprintln};
 
 use crate::output::print_json;
 
@@ -213,7 +213,7 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
     use color_print::cformat;
-    use worktrunk::styling::{eprintln, hint_message, warning_message};
+    use worktrunk::styling::{hint_message, warning_message};
 
     static WARNED: Once = Once::new();
     match repo.config().list.json_schema {

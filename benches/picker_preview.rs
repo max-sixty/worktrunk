@@ -45,8 +45,6 @@ fn main() {
 #[cfg(unix)]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 #[cfg(unix)]
-use std::path::Path;
-#[cfg(unix)]
 use wt_perf::{CacheState, FixtureRecipe, bench_wt, wt_command};
 
 #[cfg(unix)]
@@ -57,7 +55,7 @@ fn bench_picker_preview(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(35));
 
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
     let total_worktrees = 8;
 
     for cache in CacheState::WARM_AND_COLD {

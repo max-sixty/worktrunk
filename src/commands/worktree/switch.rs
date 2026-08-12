@@ -21,7 +21,8 @@ use worktrunk::git::remote_ref::{
     RemoteRefProvider, parse_ref_url,
 };
 use worktrunk::git::{
-    ForgeKind, GitError, GitRemoteUrl, RefType, Repository, SwitchSuggestionCtx, current_or_recover,
+    ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
+    SwitchSuggestionCtx, current_or_recover,
 };
 use worktrunk::shell_exec::{
     ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
@@ -49,8 +50,12 @@ use crate::output::{
 
 /// Result of resolving the switch target.
 struct ResolvedTarget {
-    /// The resolved branch name
-    branch: String,
+    /// The branch to switch to, carrying whether the token may still be tried
+    /// as a path. Two things take that off: a rewrite, since `pr:`/`mr:`
+    /// dispatch and the remote-prefix strip leave the user's literal argument
+    /// naming nothing; and `--create`, where the argument names a branch that
+    /// does not exist yet.
+    selector: Selector,
     /// How to create the worktree
     method: CreationMethod,
 }
@@ -284,7 +289,7 @@ fn resolve_fork_ref(
                 ))
             );
             return Ok(ResolvedTarget {
-                branch: local_branch,
+                selector: Selector::rewritten_to(local_branch),
                 method: CreationMethod::Regular {
                     create_branch: false,
                     base_branch: None,
@@ -311,7 +316,7 @@ fn resolve_fork_ref(
                         ))
                     );
                     return Ok(ResolvedTarget {
-                        branch: prefixed,
+                        selector: Selector::rewritten_to(prefixed),
                         method: CreationMethod::Regular {
                             create_branch: false,
                             base_branch: None,
@@ -332,7 +337,7 @@ fn resolve_fork_ref(
             // This is GitHub-only (GitLab doesn't support prefixed names)
             let remote = remote_ref::find_remote(repo, info)?;
             return Ok(ResolvedTarget {
-                branch: prefixed,
+                selector: Selector::rewritten_to(prefixed),
                 method: CreationMethod::ForkRef {
                     ref_type,
                     number,
@@ -394,7 +399,7 @@ fn resolve_fork_ref(
     };
 
     Ok(ResolvedTarget {
-        branch: local_branch,
+        selector: Selector::rewritten_to(local_branch),
         method: CreationMethod::ForkRef {
             ref_type,
             number,
@@ -414,7 +419,7 @@ fn resolve_same_repo_ref(
     fetch_same_repo_branch(repo, info)?;
 
     Ok(ResolvedTarget {
-        branch: info.source_branch.clone(),
+        selector: Selector::rewritten_to(info.source_branch.clone()),
         method: CreationMethod::Regular {
             create_branch: false,
             base_branch: None,
@@ -464,7 +469,7 @@ fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
 }
 
 /// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts. Non-shortcut
-/// inputs go through [`Repository::resolve_worktree_name`] (handles `@`/`-`/`^`).
+/// inputs go through [`Repository::expand_selector`] (handles `@`/`-`/`^`).
 ///
 /// Returns the resolved ref plus, when the user picked a `pr:`/`mr:` shortcut
 /// against a same-repo PR/MR, the `(remote, branch)` pair the new branch
@@ -488,7 +493,8 @@ fn resolve_base_ref(
         None => {}
     }
 
-    let resolved = repo.resolve_worktree_name(base)?;
+    let selector = repo.expand_selector(base)?;
+    let resolved = selector.token().to_string();
 
     if !repo.ref_exists(&resolved)? {
         let remotes = repo.branch(&resolved).remotes()?;
@@ -497,8 +503,8 @@ fn resolve_base_ref(
         }
         // Neither a ref nor a branch on a remote: the base may be named by the
         // path of the worktree it is checked out in, as targets elsewhere are.
-        if resolved == base
-            && let Some((_, Some(branch))) = repo.worktree_at_input_path(base)?
+        if selector.names_a_path()
+            && let Some((_, Some(branch))) = repo.worktree_at_input_path(selector.token())?
         {
             return Ok((branch, None));
         }
@@ -571,21 +577,25 @@ fn resolve_switch_target(
         None => {}
     }
 
-    // Regular branch switch
-    let mut resolved_branch = repo
-        .resolve_worktree_name(branch)
+    // Regular branch switch. `expand_selector` normalizes the token and
+    // expands `@` / `-` / `^`, reporting whether it rewrote anything.
+    let mut selector = repo
+        .expand_selector(branch)
         .context("Failed to resolve branch name")?;
 
     // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
     // Strip the remote prefix only when there is no exact local branch/worktree,
     // so a local branch literally named `origin/foo` is not retargeted to `foo`.
     if !create
-        && repo.worktree_for_branch(&resolved_branch)?.is_none()
-        && !repo.branch(&resolved_branch).exists_locally()?
-        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
+        && repo.worktree_for_branch(selector.token())?.is_none()
+        && !repo.branch(selector.token()).exists_locally()?
+        && let Some(local_name) = repo.strip_remote_prefix(selector.token())
     {
-        resolved_branch = local_name;
+        // A rewrite like any other: `origin/foo` may have been a path the user
+        // typed, but `foo` is one nobody did.
+        selector = Selector::rewritten_to(local_name);
     }
+    let resolved_branch = selector.token().to_string();
 
     // Resolve and validate base (only when --create is set)
     let (resolved_base, base_pr_upstream) = if let Some(base_str) = base {
@@ -657,7 +667,14 @@ fn resolve_switch_target(
     };
 
     Ok(ResolvedTarget {
-        branch: resolved_branch,
+        // Under `--create` the argument names a branch that does not exist
+        // yet, so it is not a path to look up — stated here, where `create`
+        // lives, rather than re-tested at each arm that consults it.
+        selector: if create {
+            selector.branch_only()
+        } else {
+            selector
+        },
         method: CreationMethod::Regular {
             create_branch: create,
             base_branch,
@@ -830,55 +847,50 @@ fn plan_switch(
     // Phase 1: Resolve target (handles pr:, validates --create/--base, may do network)
     let target = resolve_switch_target(repo, branch, create, base)?;
 
-    // Phase 2: Check if worktree already exists for this branch (fast path)
-    // This avoids computing the worktree path template (~7 git commands) for existing switches.
-    match repo.worktree_for_branch(&target.branch)? {
-        Some(existing_path) if existing_path.exists() => {
-            return Ok(SwitchPlan::Existing {
-                path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: Some(target.branch),
-                new_previous,
-            });
-        }
-        Some(_) => {
-            return Err(GitError::WorktreeMissing {
-                branch: target.branch,
+    // Phase 2: the shared worktree ladder — the branch, then the argument as a
+    // worktree's own path (the way to name a detached one, which has no
+    // branch), then a verdict on what a selector matching neither was reaching
+    // for. `target.selector` carries whether Phase 1 rewrote the token, so the
+    // path arm switches itself off after a shortcut, `pr:`/`mr:`, or a stripped
+    // remote prefix.
+    //
+    // Resolving before the path template is also the fast path: an existing
+    // worktree answers without the ~7 git commands `compute_worktree_path` runs.
+    match repo.resolve_selector(&target.selector)? {
+        ResolvedWorktree::Worktree { path, branch } => {
+            // A registration whose directory is gone or broken has nothing to
+            // switch into; `wt remove` is the one command that still wants it.
+            if repo.worktree_is_unusable(&path)? {
+                return Err(GitError::WorktreeMissing {
+                    branch: branch
+                        .unwrap_or_else(|| worktrunk::git::path_dir_name(&path).to_string()),
+                }
+                .into());
             }
-            .into());
-        }
-        None => {}
-    }
-
-    // Phase 2b: the argument as the worktree's own path — the way to name a
-    // detached worktree, which has no branch. Not under `--create`, where the
-    // argument is the name of a branch that does not exist yet, and not when
-    // Phase 1 rewrote the argument (a shortcut, `pr:`/`mr:`, a stripped remote
-    // prefix), which is exactly when the literal token would be a nonsense path.
-    if !create && target.branch == branch {
-        if let Some((path, wt_branch)) = repo.worktree_at_input_path(branch)? {
-            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
             return Ok(SwitchPlan::Existing {
-                path: canonical,
-                branch: wt_branch,
+                path: canonicalize(&path).unwrap_or(path),
+                branch,
                 new_previous,
             });
         }
         // Nothing is registered there, and a path is all the argument could
         // have been — so stop here rather than carrying it to Phase 4, which
         // would report a missing branch and offer to create one under a name
-        // git rejects.
-        if let Some(err) = repo.path_selector_error(branch) {
-            return Err(err.into());
+        // git rejects. `--create` never reaches this arm: its selector says
+        // the token is not a path, so `resolve_selector` returns `BranchOnly`.
+        ResolvedWorktree::NoWorktreeAtPath { path } => {
+            return Err(GitError::WorktreeNotFoundAtPath { path }.into());
         }
+        _ => {}
     }
 
     // Phase 3: Compute expected path (only needed for create)
-    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
+    let expected_path = compute_worktree_path(repo, target.selector.token(), config)?;
 
     // Phase 4: Validate we can create at this path
     let needs_clobber_backup = validate_worktree_creation(
         repo,
-        &target.branch,
+        target.selector.token(),
         &expected_path,
         clobber,
         &target.method,
@@ -886,7 +898,7 @@ fn plan_switch(
 
     // Phase 5: Return the plan
     Ok(SwitchPlan::Create {
-        branch: target.branch,
+        branch: target.selector.token().to_string(),
         worktree_path: expected_path,
         method: target.method,
         needs_clobber_backup,
@@ -1378,8 +1390,12 @@ fn run_pre_switch_hooks(
 ) -> anyhow::Result<()> {
     let current_wt = repo.current_worktree();
     let current_path = current_wt.path().to_path_buf();
+    // `expand_selector`, not the bare shortcut expander: the `target` var a
+    // pre-switch hook receives has to name the same branch the switch goes on
+    // to resolve, normalization included.
     let resolved_target = repo
-        .resolve_worktree_name(target_branch)
+        .expand_selector(target_branch)
+        .map(|s| s.token().to_string())
         .unwrap_or_else(|_| target_branch.to_string());
     let pre_ctx = CommandContext::new(repo, config, Some(&resolved_target), &current_path, yes);
 

@@ -65,12 +65,15 @@ pub fn cwd_removed_hint() -> Option<String> {
 }
 
 fn hint_for_repo(repo: &Repository) -> String {
+    // The hint is only worth printing if `wt switch ^` would land somewhere,
+    // which is more than the directory existing: a recreated one passes an
+    // existence probe while holding no worktree.
     if let Some(branch) = repo.default_branch()
         && repo
             .worktree_for_branch(&branch)
             .ok()
             .flatten()
-            .is_some_and(|p| p.exists())
+            .is_some_and(|p| !repo.worktree_is_unusable(&p).unwrap_or(true))
     {
         return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
     }

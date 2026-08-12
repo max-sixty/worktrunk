@@ -539,6 +539,77 @@ fn test_switch_path_holding_no_worktree(repo: TestRepo) {
     );
 }
 
+/// A worktree whose directory was deleted and *recreated* gets the same
+/// "directory missing" answer as one merely deleted, rather than a raw `git
+/// rev-parse --git-dir failed (exit 128)`.
+///
+/// The recreation is the point: `Path::exists()` passes it, which is why every
+/// command that resolved the branch used to walk on into git's failure. Asking
+/// git's own `prunable` instead collapses the two spellings of one state onto
+/// one message — see `test_switch_error_missing_worktree_directory` for the
+/// deleted half.
+#[rstest]
+fn test_switch_worktree_directory_recreated(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    fs::remove_dir_all(&worktree_path).unwrap();
+    fs::create_dir_all(&worktree_path).unwrap();
+
+    snapshot_switch("switch_worktree_directory_recreated", &repo, &["feature"]);
+}
+
+/// `--create` names a branch that does not exist yet, so the argument is never
+/// tried as a path — even when a worktree is registered at that spelling.
+///
+/// The registered worktree is on a *different* branch, so resolving the
+/// argument as a path would return that worktree and silently drop `--create`.
+/// `resolve_switch_target`'s own `--create` guards do not catch it: they reject
+/// a branch that already exists locally, and this one does not.
+#[rstest]
+fn test_switch_create_ignores_a_worktree_at_that_path(mut repo: TestRepo) {
+    let occupied = repo.root_path().join("docs");
+    repo.add_worktree_at_path("other", &occupied);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "docs", "--no-hooks"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let branches = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|b| b == "docs"),
+        "--create must create the branch rather than switching to the worktree \
+         registered at ./docs, got branches: {branches}"
+    );
+}
+
+/// A trailing separator is stripped before resolution, so a branch whose name
+/// matches a directory in the repository is still found.
+///
+/// This is the shape shell completion produces: `wt switch docs<tab>` completes
+/// against `./docs` and yields `docs/`, which git's ref format rejects as a
+/// branch name — so the branch lookup used to miss a branch sitting right
+/// there.
+#[rstest]
+fn test_switch_branch_name_with_trailing_separator(mut repo: TestRepo) {
+    fs::create_dir_all(repo.root_path().join("docs")).unwrap();
+    fs::write(repo.root_path().join("docs/index.md"), "docs").unwrap();
+    repo.commit("add docs directory");
+    repo.add_worktree("docs");
+
+    snapshot_switch(
+        "switch_branch_name_with_trailing_separator",
+        &repo,
+        &["docs/"],
+    );
+}
+
 #[rstest]
 fn test_switch_nonexistent_branch(repo: TestRepo) {
     // Switching to a nonexistent branch (without --create) should give a clear
@@ -6662,6 +6733,212 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_mr_fork", cmd);
+    });
+}
+
+/// A failing `glab api projects/<id>` surfaces glab's own verdict.
+///
+/// The MR call already forwards it (`fetch_mr_info`); the deferred project
+/// call is the other half of the same fork path, and a bare "Failed to fetch
+/// project 456" leaves the reader unable to tell a 401 from a 404.
+#[rstest]
+fn test_switch_mr_fork_project_fetch_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup is denied.
+        .command(
+            "api projects/456",
+            MockResponse::exit(1).with_stderr("glab: 404 Project Not Found (HTTP 404)"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_project_fetch_error", cmd);
+    });
+}
+
+/// The other half of the role label: when the source lookup succeeds and the
+/// *target* one is denied, the message names "target project 123".
+///
+/// Without this, changing the target call's `role` literal to `"source"` in
+/// `fetch_gitlab_project_urls` leaves the suite green while telling the user
+/// they're locked out of the fork when it's actually the upstream. (Swapping
+/// *both* literals is already caught by the sibling above, whose snapshot
+/// pins "source project 456".)
+#[rstest]
+fn test_switch_mr_fork_target_project_fetch_error(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let source_project_response = r#"{
+        "ssh_url_to_repo": "git@gitlab.com:contributor/test-repo.git",
+        "http_url_to_repo": "https://gitlab.com/contributor/test-repo.git"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup succeeds ...
+        .command(
+            "api projects/456",
+            MockResponse::output(source_project_response),
+        )
+        // ... and the target (upstream) one is denied.
+        .command(
+            "api projects/123",
+            MockResponse::exit(1).with_stderr("glab: 403 Forbidden (HTTP 403)"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_target_project_fetch_error", cmd);
+    });
+}
+
+/// A `glab api projects/<id>` response that isn't the expected shape names the
+/// project it came from, the same as the MR parse arm above it.
+#[rstest]
+fn test_switch_mr_fork_project_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let mr_response = r#"{
+        "title": "Add feature fix for edge case",
+        "author": {"username": "contributor"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-fix",
+        "source_project_id": 456,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    MockConfig::new("glab")
+        .version("glab version 1.40.0 (mock)")
+        .command(
+            "api projects/:id/merge_requests/42",
+            MockResponse::output(mr_response),
+        )
+        // The source (fork) project lookup succeeds but answers with something
+        // that isn't a project object.
+        .command(
+            "api projects/456",
+            MockResponse::output("not valid json {{{"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["mr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_mr_fork_project_invalid_json", cmd);
     });
 }
 

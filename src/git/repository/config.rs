@@ -11,7 +11,7 @@ use crate::config::ProjectConfig;
 use crate::git::CommandError;
 use crate::path::format_path_for_display;
 
-use super::{DefaultBranchName, GitError, Repository};
+use super::{DefaultBranchName, GitError, Repository, Selector};
 
 /// How long `git ls-remote` may run before default-branch detection gives up.
 ///
@@ -498,35 +498,47 @@ impl Repository {
 
     /// Resolve a target branch from an optional override
     ///
-    /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
+    /// If target is Some, expands special symbols ("@", "-", "^") via `expand_selector`.
     /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
     ///
     /// Note: This does not validate that the target exists. Use `require_target_branch` or
     /// `require_target_ref` for validation before approval prompts.
     pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
+        Ok(self.resolve_target_selector(target)?.token().to_string())
+    }
+
+    /// [`resolve_target_branch`](Self::resolve_target_branch), keeping the
+    /// [`Selector`] rather than flattening it to the name.
+    ///
+    /// The `require_target_*` pair needs what the selector carries: whether the
+    /// token is still one the user typed, which is what decides the path arm
+    /// below. A default branch read from the cache is nobody's path, so the
+    /// `None` target is a rewrite like any other.
+    pub fn resolve_target_selector(&self, target: Option<&str>) -> anyhow::Result<Selector> {
         match target {
-            Some(b) => self.resolve_worktree_name(b),
-            None => self.default_branch().ok_or_else(|| {
-                GitError::Other {
-                    message: cformat!(
-                        "Cannot determine default branch. Specify target explicitly or run <bold>wt config state default-branch set BRANCH</>"
-                    ),
-                }
-                .into()
-            }),
+            Some(b) => self.expand_selector(b),
+            None => self
+                .default_branch()
+                .map(Selector::rewritten_to)
+                .ok_or_else(|| {
+                    GitError::Other {
+                        message: cformat!(
+                            "Cannot determine default branch. Specify target explicitly or run <bold>wt config state default-branch set BRANCH</>"
+                        ),
+                    }
+                    .into()
+                }),
         }
     }
 
-    /// The branch checked out at `target`, when `target` is a worktree path.
+    /// The worktree a target names by path, when the target is one.
     ///
     /// The path arm of a merge or rebase target: `wt merge ../repo.main` names
     /// the same branch as `wt merge main`. Refs win, so this runs only once the
     /// caller's own ref lookup has failed, and only for a target the user typed
-    /// — a default branch that resolved from the cache is not a path.
-    ///
-    /// `resolved` is `target` after shortcut expansion; an expansion means the
-    /// literal token was a symbol rather than a path.
+    /// — which [`Selector::names_a_path`] answers outright, where this used to
+    /// infer it by checking whether expansion had changed the string.
     ///
     /// The worktree is returned whole rather than just its branch, so `None`
     /// means "nothing registered here" alone. A detached worktree — `Some` with
@@ -535,13 +547,12 @@ impl Repository {
     /// let a caller report a worktree `wt list` shows as absent.
     fn target_worktree_at_path(
         &self,
-        target: Option<&str>,
-        resolved: &str,
+        selector: &Selector,
     ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
-        let Some(target) = target.filter(|t| *t == resolved) else {
+        if !selector.names_a_path() {
             return Ok(None);
-        };
-        self.worktree_at_input_path(target)
+        }
+        self.worktree_at_input_path(selector.token())
     }
 
     /// Resolve and validate a target that must be a branch.
@@ -555,9 +566,10 @@ impl Repository {
     /// the generic "branch not found" — the user didn't type that name,
     /// the persisted cache did.
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
-        let branch = self.resolve_target_branch(target)?;
+        let selector = self.resolve_target_selector(target)?;
+        let branch = selector.token().to_string();
         if !self.branch(&branch).exists()? {
-            match self.target_worktree_at_path(target, &branch)? {
+            match self.target_worktree_at_path(&selector)? {
                 Some((_, Some(from_path))) => return Ok(from_path),
                 // A worktree is there, so the path resolved — it just has no
                 // branch to be the target of a merge or a push.
@@ -574,15 +586,14 @@ impl Repository {
                 None => {}
             }
             if target.is_none() {
-                if self.is_unborn_branch(&branch) {
-                    return Err(GitError::UnbornDefaultBranch { branch }.into());
-                }
-                return Err(GitError::StaleDefaultBranch { branch }.into());
+                return Err(self.uncached_default_branch_error(branch));
             }
             // Nothing is registered at the path, which is what this error
-            // asserts; the arms above consumed both worktree cases.
-            if let Some(err) = self.path_selector_error(&branch) {
-                return Err(err.into());
+            // asserts; the arms above consumed both worktree cases. A target
+            // is spelled in a wider vocabulary than a worktree selector, so
+            // this stays here rather than routing through `resolve_selector`.
+            if let Some(path) = self.path_selector_directory(&branch) {
+                return Err(GitError::WorktreeNotFoundAtPath { path }.into());
             }
             return Err(GitError::BranchNotFound {
                 // Offering `--create` for a name git rejects sends the user to
@@ -608,22 +619,37 @@ impl Repository {
     /// [`GitError::StaleDefaultBranch`] with cache-reset hints rather than
     /// the generic "reference not found".
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
-        let reference = self.resolve_target_branch(target)?;
+        let selector = self.resolve_target_selector(target)?;
+        let reference = selector.token().to_string();
         if !self.ref_exists(&reference)? {
-            if let Some((_, Some(from_path))) = self.target_worktree_at_path(target, &reference)? {
+            if let Some((_, Some(from_path))) = self.target_worktree_at_path(&selector)? {
                 return Ok(from_path);
             }
             // No path claim here: a commit-ish is spelled in a wider vocabulary
             // than a worktree selector, and `ReferenceNotFound` names all of it.
             if target.is_none() {
-                if self.is_unborn_branch(&reference) {
-                    return Err(GitError::UnbornDefaultBranch { branch: reference }.into());
-                }
-                return Err(GitError::StaleDefaultBranch { branch: reference }.into());
+                return Err(self.uncached_default_branch_error(reference));
             }
             return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
+    }
+
+    /// The error for a default branch that came from the cache rather than the
+    /// user, and then didn't resolve.
+    ///
+    /// The one part of `require_target_branch` and `require_target_ref` that is
+    /// identical rather than merely parallel: the rest of those two differ in
+    /// their existence predicate, their extra arms, and their final error, and
+    /// forcing them together would cost more in parameters than the duplication
+    /// does.
+    fn uncached_default_branch_error(&self, branch: String) -> anyhow::Error {
+        if self.is_unborn_branch(&branch) {
+            // No cache-reset hint: the cached name is right, the branch just
+            // has no commits yet.
+            return GitError::UnbornDefaultBranch { branch }.into();
+        }
+        GitError::StaleDefaultBranch { branch }.into()
     }
 
     /// True when `branch` is checked out as an unborn HEAD (no commits yet)

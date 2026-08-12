@@ -605,9 +605,25 @@ pub enum GitError {
     /// branch without a checkout, [`GitError::WorktreeSelectorNotFound`] a
     /// token that could have been either, and this one a directory `wt list`
     /// will never show and only the user can delete. Built solely by
-    /// [`Repository::path_selector_error`](crate::git::Repository::path_selector_error),
+    /// [`Repository::path_selector_directory`](crate::git::Repository::path_selector_directory),
     /// which owns every test that has to pass before this claim is safe.
     WorktreeNotFoundAtPath {
+        path: PathBuf,
+    },
+    /// A registered worktree's path that some *other* repository now occupies.
+    ///
+    /// The registration still resolves and the directory is still there, so
+    /// every check short of asking who owns it passes — including the
+    /// dirty-worktree gate, which reads the occupant's `git status` and
+    /// reports it as this worktree's. Removal is the operation that has to
+    /// care: the directory holds someone else's work, and possibly the only
+    /// copy of their objects.
+    ///
+    /// git refuses the same removal (`validation failed … is not a .git
+    /// file`), `--force` included. Worktrunk's fast path renames the directory
+    /// itself rather than asking git to, so it has to make this check for
+    /// itself — see `ensure_belongs_to_repo`.
+    WorktreePathNotOurs {
         path: PathBuf,
     },
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
@@ -874,6 +890,11 @@ impl GitError {
             GitError::WorktreeNotFoundAtPath { path } => {
                 let path_display = format_path_for_display(path);
                 cformat!("No worktree @ <bold>{path_display}</>")
+            }
+
+            GitError::WorktreePathNotOurs { path } => {
+                let path_display = format_path_for_display(path);
+                cformat!("Directory @ <bold>{path_display}</> is not this repository's worktree")
             }
 
             GitError::RefCreateConflict {
@@ -1441,6 +1462,22 @@ impl GitError {
                     error_message(&title),
                     hint_message(cformat!(
                         "The directory exists but is not a worktree; to list worktrees, run <underline>{list_cmd}</>"
+                    ))
+                )
+            }
+
+            GitError::WorktreePathNotOurs { .. } => {
+                let title = self.title();
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&title),
+                    // No `git worktree prune` on its own: prune keeps a
+                    // registration whose directory resolves, which this one
+                    // does — the occupant's own `.git` answers for it. Moving
+                    // the directory is what makes prune able to act.
+                    hint_message(cformat!(
+                        "Removing it could destroy unrelated data; move the directory aside, then run <underline>git worktree prune</>"
                     ))
                 )
             }

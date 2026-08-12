@@ -260,7 +260,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     }
 
     // Worktree for target is optional: if present we use it for safety checks and as destination.
-    let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+    let target_worktree_path = repo.usable_worktree_for_branch(&target_branch)?;
     // Where `post-merge` / `post-remove` / `post-switch` run: the target
     // branch's worktree if it exists, else the primary worktree. Mirrors
     // `finish_after_merge`'s destination resolution. (Config is resolved from

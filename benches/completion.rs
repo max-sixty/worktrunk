@@ -73,7 +73,7 @@ fn assert_completion_candidates(binary: &Path, repo_path: &Path, expected: &BTre
 
 fn bench_completion_switch(c: &mut Criterion) {
     let mut group = c.benchmark_group("completion_switch");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
     let (linked_worktrees, branchless_branches) = (24, 120);
 
     group.bench_function("full_surface", |b| {

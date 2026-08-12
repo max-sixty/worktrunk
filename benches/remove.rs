@@ -194,7 +194,7 @@ fn bench_variant(
     expect_hooks: bool,
     cache: CacheState,
 ) {
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
     group.bench_function(name, |b| {
         b.iter_custom(|iterations| {
