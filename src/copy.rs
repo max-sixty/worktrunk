@@ -223,10 +223,8 @@ pub fn copy_dir_recursive(
                 // The entry was listed but is gone already — same race.
                 Err(e) if e.kind() == ErrorKind::NotFound => continue,
                 Err(e) => {
-                    return Err(anyhow::Error::from(e).context(format!(
-                        "reading metadata for {}",
-                        entry.path().display()
-                    )));
+                    return Err(anyhow::Error::from(e)
+                        .context(format!("reading metadata for {}", entry.path().display())));
                 }
             };
             let src_path = entry.path();
