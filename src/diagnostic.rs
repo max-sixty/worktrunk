@@ -501,7 +501,10 @@ fn config_show_output(repo: &Repository) -> Option<String> {
     // project config, and this report must say so: diagnose output is
     // routinely pasted into public bug reports, so it names the source, the
     // key names, and the superseded file, but never the values — this source
-    // exists specifically for private, machine-specific configuration.
+    // exists specifically for private, machine-specific configuration. The
+    // bulk `git config --list -z` read redacts those same values in its logged
+    // output (`redact_worktrunk_config_z`), so the trace/subprocess sinks the
+    // report also bundles don't reintroduce them.
     match repo.worktrunk_config_git_pairs() {
         Ok(pairs) if !pairs.is_empty() => {
             output.push_str(&format!(

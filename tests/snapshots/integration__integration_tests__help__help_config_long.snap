@@ -35,6 +35,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -610,10 +611,15 @@ Any key under the [2mworktrunk.config.[0m prefix in git config becomes project
 
 Selection is all-or-nothing. When any [2mworktrunk.config.*[0m key exists, those keys are the complete project config and [2m.config/wt.toml[0m is ignored — a warning names the superseded file. There is no key-level merging between the two sources. To return to the file, remove the keys.
 
+That rule combines with [2m--global[0m in a way worth stating outright: a single global key supersedes the committed project config — and every project hook — of every repository on the machine. The supersession warning still fires in each one, but only once the key is already in effect. Keep keys repository-local, or scope them with [2mincludeIf[0m, unless disabling every repository's project config is the intent.
+
 Values are strings, one per key. Settings that need other TOML types (such as the [2mstep.copy-ignored.exclude[0m array) cannot be expressed here. Hooks and aliases defined this way go through the same approval prompt as file-based project config.
 
-Use the canonical key spellings from the sections above. Deprecated spellings may still deserialize, but git-sourced configuration does not run file migration or emit deprecation guidance — [2mwt config update[0m has nothing to rewrite here. Per-worktree git config ([2mextensions.worktreeConfig[0m) is not supported: keys are read from the shared git dir, so a [2mconfig.worktree[0m value is never consumed. Setting [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m — even to an empty value — disables this source entirely; the override 
-names the project config source outright.
+Use the canonical key spellings from the sections above. Git lowercases the final component of a key, so a name chosen there is lowercased with it — an alias set as [2mworktrunk.config.aliases.Deploy[0m runs as [2mwt deploy[0m. Deprecated spellings may still deserialize, but git-sourced configuration does not run file migration or emit deprecation guidance — [2mwt config update[0m has nothing to rewrite here.
+
+Per-worktree git config ([2mextensions.worktreeConfig[0m) is only partly reachable. Keys are read from the shared git dir, so a linked worktree's [2mconfig.worktree[0m is never consumed. The main worktree's [2mconfig.worktree[0m lives in that shared dir, though, so a key placed there is read — and supplies project config for the whole repository, not only the main worktree.
+
+Setting [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m — even to an empty value — disables this source entirely; the override names the project config source outright.
 
 To list the matching git keys with their scope and origin file (inside a linked worktree this can also show worktree-scoped keys, which worktrunk does not read):
 

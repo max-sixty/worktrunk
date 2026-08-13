@@ -170,8 +170,8 @@ pub use expansion::{
     validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
 };
 pub use git_source::{
-    GIT_CONFIG_LIST_COMMAND, GIT_CONFIG_PREFIX, GIT_CONFIG_SOURCE_LABEL, render_git_source_toml,
-    superseded_project_file_label,
+    GIT_CONFIG_LIST_COMMAND, GIT_CONFIG_PREFIX, GIT_CONFIG_SOURCE_LABEL, redact_worktrunk_config_z,
+    render_git_source_toml, superseded_project_file_label,
 };
 pub use hooks::HooksConfig;
 pub use project::{

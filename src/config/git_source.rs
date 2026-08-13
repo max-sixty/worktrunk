@@ -47,10 +47,13 @@
 //!   not run — `wt config update` has nothing to rewrite in git config, and
 //!   migration-only forms work in the file but not in this namespace. Docs
 //!   recommend canonical spellings.
-//! - **No worktree scope.** The bulk config read runs from the common git
-//!   dir, so `config.worktree` values (`extensions.worktreeConfig`) are
-//!   never consumed. The diagnostic command, run inside a linked worktree,
-//!   can therefore list matching keys this source ignores.
+//! - **Only partial worktree scope.** The bulk config read runs from the
+//!   common git dir, so a *linked* worktree's `config.worktree`
+//!   (`extensions.worktreeConfig`) is never consumed. The *main* worktree's
+//!   `config.worktree` lives in the common dir, though, so a key there is
+//!   read — and supplies project config repo-wide, not just in the main
+//!   worktree. The diagnostic command, run inside a linked worktree, can
+//!   list matching keys this source ignores.
 //!
 //! # Invariants
 //!
@@ -85,6 +88,38 @@ pub const GIT_CONFIG_SOURCE_LABEL: &str = "git config (worktrunk.config.*)";
 /// so all surfaces teach the same incantation.
 pub const GIT_CONFIG_LIST_COMMAND: &str =
     r"git config --show-scope --show-origin --get-regexp '^worktrunk\.config\.'";
+
+/// Redact `worktrunk.config.*` values from raw `git config --list -z` output,
+/// leaving every other key's value intact.
+///
+/// The feature holds private, machine-specific configuration, so its values
+/// must not reach the `-vv` diagnostic bundle even though the bulk config read
+/// dumps the whole merged config there. This runs only on the *logged* copy of
+/// the command's stdout (see `Cmd::redact_logged_stdout`), never on the bytes
+/// worktrunk parses. Values of other keys are left as-is — the redaction is
+/// scoped to this namespace, not a blanket config scrub.
+///
+/// The `-z` stream is NUL-separated entries, each `key\nvalue` (the value may
+/// itself contain newlines). An entry whose key is under
+/// [`GIT_CONFIG_PREFIX`] keeps its key and gets `[REDACTED]` for its value.
+pub fn redact_worktrunk_config_z(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
+    for (i, entry) in raw.split(|&b| b == 0).enumerate() {
+        if i > 0 {
+            out.push(0);
+        }
+        match entry.iter().position(|&b| b == b'\n') {
+            Some(nl) if entry[..nl].starts_with(GIT_CONFIG_PREFIX.as_bytes()) => {
+                out.extend_from_slice(&entry[..nl]);
+                out.push(b'\n');
+                out.extend_from_slice(b"[REDACTED]");
+            }
+            // A non-matching key, or an entry with no value separator: verbatim.
+            _ => out.extend_from_slice(entry),
+        }
+    }
+    out
+}
 
 /// Render `worktrunk.config.*` pairs (prefix already stripped) as a TOML
 /// document string.
@@ -188,9 +223,9 @@ pub(crate) fn warn_superseded_project_file(repo: &crate::git::Repository) {
 
     // Peek the latch before resolving the label (which can spawn `git show`
     // in the bare/parked layout), but SET it only on emit: setting up front
-    // would consume it on the no-file path, and a later
-    // `wt config create --project` in the same invocation would then have
-    // its born-superseded warning silently suppressed.
+    // would consume it on the no-file path, leaving a later call in the same
+    // invocation — one that does have a superseded file to report — silently
+    // latched out of the only warning that names it.
     static WARNED: OnceLock<()> = OnceLock::new();
     if WARNED.get().is_some() {
         return;
@@ -326,6 +361,22 @@ mod tests {
     fn test_file_source_is_the_default() {
         let config: ProjectConfig = toml::from_str("post-start = \"x\"").unwrap();
         assert_eq!(config.source, ProjectConfigSource::File);
+    }
+
+    #[test]
+    fn test_redact_worktrunk_config_z_scrubs_only_this_namespace() {
+        // `git config --list -z` shape: `key\nvalue\0` per entry. A
+        // worktrunk.config.* value is replaced; every other key is untouched,
+        // including a multi-line value and a valueless final chunk.
+        let raw = b"user.email\nme@example.com\0worktrunk.config.post-start\necho SECRET\0worktrunk.config.list.url\nhttp://a\nb\0core.bare\nfalse\0";
+        let out = redact_worktrunk_config_z(raw);
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(
+            s,
+            "user.email\nme@example.com\0worktrunk.config.post-start\n[REDACTED]\0worktrunk.config.list.url\n[REDACTED]\0core.bare\nfalse\0"
+        );
+        assert!(!s.contains("SECRET"));
+        assert!(!s.contains("http://a"));
     }
 
     #[test]

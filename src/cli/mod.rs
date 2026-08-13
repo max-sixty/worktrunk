@@ -2515,9 +2515,15 @@ $ git config worktrunk.config.list.url 'http://localhost:3000'
 
 Selection is all-or-nothing. When any `worktrunk.config.*` key exists, those keys are the complete project config and `.config/wt.toml` is ignored — a warning names the superseded file. There is no key-level merging between the two sources. To return to the file, remove the keys.
 
+That rule combines with `--global` in a way worth stating outright: a single global key supersedes the committed project config — and every project hook — of every repository on the machine. The supersession warning still fires in each one, but only once the key is already in effect. Keep keys repository-local, or scope them with `includeIf`, unless disabling every repository's project config is the intent.
+
 Values are strings, one per key. Settings that need other TOML types (such as the `step.copy-ignored.exclude` array) cannot be expressed here. Hooks and aliases defined this way go through the same approval prompt as file-based project config.
 
-Use the canonical key spellings from the sections above. Deprecated spellings may still deserialize, but git-sourced configuration does not run file migration or emit deprecation guidance — `wt config update` has nothing to rewrite here. Per-worktree git config (`extensions.worktreeConfig`) is not supported: keys are read from the shared git dir, so a `config.worktree` value is never consumed. Setting `WORKTRUNK_PROJECT_CONFIG_PATH` — even to an empty value — disables this source entirely; the override names the project config source outright.
+Use the canonical key spellings from the sections above. Git lowercases the final component of a key, so a name chosen there is lowercased with it — an alias set as `worktrunk.config.aliases.Deploy` runs as `wt deploy`. Deprecated spellings may still deserialize, but git-sourced configuration does not run file migration or emit deprecation guidance — `wt config update` has nothing to rewrite here.
+
+Per-worktree git config (`extensions.worktreeConfig`) is only partly reachable. Keys are read from the shared git dir, so a linked worktree's `config.worktree` is never consumed. The main worktree's `config.worktree` lives in that shared dir, though, so a key placed there is read — and supplies project config for the whole repository, not only the main worktree.
+
+Setting `WORKTRUNK_PROJECT_CONFIG_PATH` — even to an empty value — disables this source entirely; the override names the project config source outright.
 
 To list the matching git keys with their scope and origin file (inside a linked worktree this can also show worktree-scoped keys, which worktrunk does not read):
 

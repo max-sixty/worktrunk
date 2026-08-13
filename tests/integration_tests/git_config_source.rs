@@ -504,20 +504,11 @@ fn test_diagnostic_report_omits_git_config_values(repo: TestRepo, temp_home: Tem
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.output().unwrap();
 
-    let report = fs::read_to_string(
-        repo.root_path()
-            .join(".git")
-            .join("wt/logs")
-            .join("diagnostic.md"),
-    )
-    .expect("-vv run writes a diagnostic report");
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let report = fs::read_to_string(logs_dir.join("diagnostic.md"))
+        .expect("-vv run writes a diagnostic report");
 
-    // Scope the value-absence assertion to the config section: the -vv trace
-    // section embeds raw subprocess output, which includes the whole
-    // `git config --list -z` listing — a pre-existing disclosure surface for
-    // ALL git config values, not something this feature introduces or can
-    // fix here. The contract under test is that the *config section* names
-    // keys without values.
+    // The config section names the active keys and omits their values.
     let section_start = report
         .find("Project config: git config (worktrunk.config.*)")
         .unwrap_or_else(|| panic!("report should name the git-config source:\n{report}"));
@@ -531,10 +522,24 @@ fn test_diagnostic_report_omits_git_config_values(repo: TestRepo, temp_home: Tem
         section.contains("values omitted"),
         "config section should state values are omitted:\n{section}"
     );
-    assert!(
-        !section.contains("diag-private-value"),
-        "private hook body leaked into the config section:\n{section}"
-    );
+
+    // The value must not appear anywhere in the bundle — the bulk
+    // `git config --list -z` read redacts `worktrunk.config.*` values in its
+    // logged output, so the trace/subprocess sinks that would otherwise carry
+    // it are scrubbed too. The key name survives, and other config is intact.
+    for (label, path) in [
+        ("diagnostic.md", logs_dir.join("diagnostic.md")),
+        ("trace.log", logs_dir.join("trace.log")),
+        ("subprocess.log", logs_dir.join("subprocess.log")),
+    ] {
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue; // subprocess.log only exists at -vv; skip if absent
+        };
+        assert!(
+            !contents.contains("diag-private-value"),
+            "private value leaked into {label}:\n{contents}"
+        );
+    }
 }
 
 /// Git-config-sourced hooks pass through the same approval gate as
