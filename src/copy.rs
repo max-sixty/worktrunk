@@ -50,9 +50,12 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 /// The vanished-source skip never costs the destination a file: the source is
 /// stat'd before `force` removes anything, so a source that is already gone
 /// leaves the destination untouched. A source that disappears in the narrower
-/// window between that stat and the copy is an error under `force` — the
-/// destination has been removed by then, and silently reporting a skip would
-/// leave a hole where a file used to be.
+/// window between that stat and the copy is an error only when `force` had
+/// already removed an existing destination — silently reporting a skip would
+/// leave a hole where a file used to be. Where there was nothing to remove,
+/// that window is a skip like any other.
+///
+/// Every skip logs at debug, so `wt -vv` explains a short file count.
 ///
 /// When `root` is `Some`, refuses destination paths whose parent resolves
 /// outside `root`. The check guards the parent chain, not the final leaf, so
@@ -67,6 +70,12 @@ pub fn copy_leaf(
     if let Some(root) = root {
         ensure_path_within_root(dest.parent().unwrap_or(dest), root)?;
     }
+    // Use symlink_metadata (not exists()) because exists() follows symlinks
+    // and returns false for broken ones. Checked before the source is stat'd
+    // so an idempotent re-run costs one syscall per already-present leaf.
+    if !force && dest.symlink_metadata().is_ok() {
+        return Ok(None);
+    }
     // Stat the source before `force` removes the destination: the source can
     // vanish between the caller's directory walk and this copy — e.g. a
     // concurrent build rewriting `target/`. Skip rather than fail the whole
@@ -74,7 +83,10 @@ pub fn copy_leaf(
     // deleted the destination we can no longer replace.
     let src_meta = match src.symlink_metadata() {
         Ok(meta) => meta,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            tracing::debug!(path = %src.display(), "skipping vanished source: {}", src.display());
+            return Ok(None);
+        }
         Err(e) => {
             return Err(
                 anyhow::Error::from(e).context(format!("reading metadata for {}", src.display()))
@@ -82,14 +94,10 @@ pub fn copy_leaf(
         }
     };
 
-    if force {
-        remove_if_exists(dest)?;
-    }
-    // Use symlink_metadata (not exists()) because exists() follows symlinks
-    // and returns false for broken ones.
-    if dest.symlink_metadata().is_ok() {
-        return Ok(None);
-    }
+    // Only a destination we actually removed can be left as a hole, so that —
+    // not `force` — is what the late-window arms below guard on. A destination
+    // re-created by a racing writer lands on the `AlreadyExists` arm.
+    let dest_removed = force && remove_if_exists(dest)?;
 
     let is_symlink = src_meta.file_type().is_symlink();
     let bytes = src_meta.len();
@@ -97,9 +105,12 @@ pub fn copy_leaf(
     if is_symlink {
         let target = match fs::read_link(src) {
             Ok(target) => target,
-            // The source vanished after the stat above. Under `force` the
-            // destination is already gone, so this has to stay loud.
-            Err(e) if e.kind() == ErrorKind::NotFound && !force => return Ok(None),
+            // The source vanished after the stat above. If `force` removed a
+            // destination, it is already gone, so this has to stay loud.
+            Err(e) if e.kind() == ErrorKind::NotFound && !dest_removed => {
+                tracing::debug!(path = %src.display(), "skipping vanished symlink source: {}", src.display());
+                return Ok(None);
+            }
             Err(e) => {
                 return Err(
                     anyhow::Error::from(e).context(format!("reading symlink {}", src.display()))
@@ -129,12 +140,19 @@ pub fn copy_leaf(
                         .context("setting destination file permissions")?;
                 }
             }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(None),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                tracing::debug!(path = %dest.display(), "skipping existing destination: {}", dest.display());
+                return Ok(None);
+            }
             // Same window as the `read_link` arm — and broader than a vanished
             // source, since `reflink_or_copy` also reports `NotFound` when the
             // destination's parent is missing. Both callers create the parent
-            // first, so that case is latent; under `force` it errors either way.
-            Err(e) if e.kind() == ErrorKind::NotFound && !force => return Ok(None),
+            // first, so that case is latent; once `force` has removed a
+            // destination it errors either way.
+            Err(e) if e.kind() == ErrorKind::NotFound && !dest_removed => {
+                tracing::debug!(path = %src.display(), "skipping vanished source: {}", src.display());
+                return Ok(None);
+            }
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
             }
@@ -171,7 +189,17 @@ struct CopyLeaf {
 /// are skipped for idempotent usage.
 ///
 /// When `force` is true, existing files and symlinks at the destination are
-/// removed before copying. Each copied leaf is recorded on `progress` —
+/// removed before copying.
+///
+/// Sources that disappear mid-walk — a concurrent build rewriting the tree —
+/// are skipped rather than failing the batch: a subdirectory that vanishes
+/// before it is read is dropped along with its contents, an entry that vanishes
+/// between listing and `file_type` is dropped, and a directory that vanishes
+/// after its contents copy keeps the destination's default permissions instead
+/// of the source's. Every such skip logs at debug (`wt -vv`). The tree's own
+/// root is the exception: the caller named it, so its absence is an error.
+///
+/// Each copied leaf is recorded on `progress` —
 /// skipped entries are not counted — so a `progress` dedicated to this call
 /// reports `(files_copied, bytes_copied)` in `totals()` afterwards; a shared
 /// one accumulates across calls.
@@ -205,7 +233,10 @@ pub fn copy_dir_recursive(
         let entries = match fs::read_dir(&src_dir).and_then(|it| it.collect::<Result<Vec<_>, _>>())
         {
             Ok(entries) => entries,
-            Err(e) if e.kind() == ErrorKind::NotFound && !is_root => continue,
+            Err(e) if e.kind() == ErrorKind::NotFound && !is_root => {
+                tracing::debug!(path = %src_dir.display(), "skipping vanished directory: {}", src_dir.display());
+                continue;
+            }
             Err(e) => {
                 return Err(anyhow::Error::from(e)
                     .context(format!("reading directory {}", src_dir.display())));
@@ -221,7 +252,10 @@ pub fn copy_dir_recursive(
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 // The entry was listed but is gone already — same race.
-                Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                Err(e) if e.kind() == ErrorKind::NotFound => {
+                    tracing::debug!(path = %entry.path().display(), "skipping vanished entry: {}", entry.path().display());
+                    continue;
+                }
                 Err(e) => {
                     return Err(anyhow::Error::from(e)
                         .context(format!("reading metadata for {}", entry.path().display())));
@@ -265,7 +299,10 @@ pub fn copy_dir_recursive(
             // The source directory went away after its contents were copied.
             // The destination is already written; leave it with the default
             // permissions rather than failing a batch that otherwise succeeded.
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                tracing::debug!(path = %src_dir.display(), "skipping permissions for vanished directory: {}", src_dir.display());
+                continue;
+            }
             Err(e) => {
                 return Err(anyhow::Error::from(e)
                     .context(format!("reading permissions for {}", src_dir.display())));
@@ -278,12 +315,14 @@ pub fn copy_dir_recursive(
     Ok(())
 }
 
-/// Remove a file, ignoring "not found" errors.
-fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
+/// Remove a file, ignoring "not found" errors. Reports whether one was removed,
+/// which is what tells `copy_leaf` whether a later skip would leave a hole.
+fn remove_if_exists(path: &Path) -> anyhow::Result<bool> {
     if let Err(e) = fs::remove_file(path) {
         anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
+        return Ok(false);
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Create a symlink, handling platform differences.
@@ -319,8 +358,18 @@ mod tests {
 
     #[test]
     fn test_remove_if_exists_nonexistent() {
-        // NotFound is silently ignored
-        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
+        // NotFound is silently ignored, and reported as "nothing removed"
+        assert!(!remove_if_exists(Path::new("/nonexistent/file")).unwrap());
+    }
+
+    #[test]
+    fn test_remove_if_exists_reports_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        fs::write(&file, b"contents").unwrap();
+
+        assert!(remove_if_exists(&file).unwrap());
+        assert!(!file.exists());
     }
 
     #[test]
@@ -359,6 +408,38 @@ mod tests {
 
         assert_eq!(result, None);
         assert_eq!(fs::read(&dest).unwrap(), b"pre-existing content");
+    }
+
+    #[test]
+    fn test_copy_leaf_skips_existing_destination() {
+        // The destination check moved ahead of the source stat; without
+        // `force` an existing destination still wins and keeps its contents.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::write(&src, b"source content").unwrap();
+        fs::write(&dest, b"pre-existing content").unwrap();
+
+        let result = copy_leaf(&src, &dest, None, false).unwrap();
+
+        assert_eq!(result, None);
+        assert_eq!(fs::read(&dest).unwrap(), b"pre-existing content");
+    }
+
+    #[test]
+    fn test_copy_leaf_force_replaces_existing_destination() {
+        // The counterpart: with `force` the destination is removed and the
+        // source copied over it, reporting the source's byte count.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::write(&src, b"source content").unwrap();
+        fs::write(&dest, b"pre-existing content").unwrap();
+
+        let result = copy_leaf(&src, &dest, None, true).unwrap();
+
+        assert_eq!(result, Some(b"source content".len() as u64));
+        assert_eq!(fs::read(&dest).unwrap(), b"source content");
     }
 
     #[test]
