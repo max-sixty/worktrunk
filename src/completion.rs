@@ -90,9 +90,17 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     if args.is_empty() {
         // Use CompleteEnv for registration script generation, under the name the
         // shell integration binds — not clap's own (see `registration_name`).
+        //
+        // A bare `Command` is all the registration needs: clap_complete 4.6.9's
+        // `write_registration` reads `cmd.get_name()` and `self.bin` (set below,
+        // so its `cmd.get_bin_name()` fallback never fires), and nothing else off
+        // the command. Handing it `completion_command()` instead would build the
+        // whole completion tree — `Repository::current()`, both config loads, and
+        // a scan of every `PATH` directory for `wt-*` — to produce one string, on
+        // the first TAB of every new shell.
         let name = registration_name();
         let all_args: Vec<OsString> = std::env::args_os().collect();
-        let _ = CompleteEnv::with_factory(move || completion_command().name(name))
+        let _ = CompleteEnv::with_factory(move || Command::new(name))
             .bin(name)
             .try_complete(all_args, current_dir.as_deref());
         CONTEXT.with(|ctx| ctx.borrow_mut().take());
