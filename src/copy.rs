@@ -55,7 +55,8 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 /// leave a hole where a file used to be. Where there was nothing to remove,
 /// that window is a skip like any other.
 ///
-/// Every skip logs at debug, so `wt -vv` explains a short file count.
+/// The vanished-source skips log at debug, so `wt -vv` explains a short file
+/// count; the idempotent destination-already-exists skip stays silent.
 ///
 /// When `root` is `Some`, refuses destination paths whose parent resolves
 /// outside `root`. The check guards the parent chain, not the final leaf, so
@@ -96,7 +97,8 @@ pub fn copy_leaf(
 
     // Only a destination we actually removed can be left as a hole, so that —
     // not `force` — is what the late-window arms below guard on. A destination
-    // re-created by a racing writer lands on the `AlreadyExists` arm.
+    // re-created by a racing writer lands on the `AlreadyExists` arm (regular
+    // files); for a symlink source `create_symlink` reports it as an error.
     let dest_removed = force && remove_if_exists(dest)?;
 
     let is_symlink = src_meta.file_type().is_symlink();
