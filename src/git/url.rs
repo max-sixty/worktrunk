@@ -169,8 +169,16 @@ impl GitRemoteUrl {
         } else if let Some(rest) = url.strip_prefix("ssh://") {
             // ssh://git@github.com/owner/repo.git or ssh://github.com/owner/repo.git
             // ssh://git@host:port/owner/repo.git (port is stripped — irrelevant to project identity)
-            let without_user = rest.split('@').next_back()?;
-            let (host_with_port, path) = without_user.split_once('/')?;
+            //
+            // Split the authority off at the first `/` before looking for `@`,
+            // exactly as the scheme and SCP-style branches do: `@` is legal in a
+            // path, and searching the whole remainder for it lets a later
+            // segment pose as the authority — `ssh://git@attacker.example/a/
+            // b@github.com/org/repo.git` would otherwise report `github.com`,
+            // the identity `project_identifier` keys approvals on, for a remote
+            // git connects to `attacker.example`.
+            let (authority, path) = rest.split_once('/')?;
+            let host_with_port = authority_host(authority)?;
             // Strip port from host (e.g., "gitlab.internal:2222" → "gitlab.internal")
             let host = host_with_port.split(':').next().unwrap_or(host_with_port);
             let (namespace, repo) = split_namespace_repo(path)?;
@@ -1208,16 +1216,16 @@ mod tests {
         //
         // ssh://user@legitimate.com@attacker.com/owner/repo.git
         //
-        // The parser uses: rest.split('@').next_back()
-        // This takes EVERYTHING after the LAST @
+        // The authority is everything before the first `/`, and its userinfo
+        // ends at the LAST `@` in it — the boundary git itself uses.
         //
-        // Input: "user@legitimate.com@attacker.com/owner/repo.git"
-        // Split by @: ["user", "legitimate.com", "attacker.com/owner/repo.git"]
-        // next_back(): "attacker.com/owner/repo.git"
+        // Authority: "user@legitimate.com@attacker.com"
+        // rsplit_once('@'): ("user@legitimate.com", "attacker.com")
         // Host becomes: "attacker.com"
         //
         // This means ssh://git@victim.com@attacker.com/owner/repo.git
-        // produces host = "attacker.com", not "victim.com"!
+        // produces host = "attacker.com", not "victim.com" — which is the host
+        // the connection actually goes to.
 
         // The URL parses successfully - last @ wins for user/host separation
         let parsed =
@@ -1238,27 +1246,41 @@ mod tests {
 
     #[test]
     fn test_adversarial_ssh_at_in_path() {
-        // What if @ appears in the path (namespace)?
-        // ssh://git@host.com/org@company/repo.git
-        //
-        // The parser uses split('@').next_back() which takes everything after
-        // the LAST @. So "git@host.com/org@company/repo.git" splits as:
-        // ["git", "host.com/org", "company/repo.git"]
-        // next_back() returns "company/repo.git"
-        // split_once('/') gives host="company", path="repo.git"
-        // split_namespace_repo("repo.git") has only 1 segment, returns None
-        //
-        // This URL is rejected - @ in namespace breaks ssh:// parsing
+        // `@` is legal in a path, so the userinfo boundary is looked for inside
+        // the authority — everything before the first `/` — and never in the
+        // path. A namespace containing `@` therefore parses as itself.
+        let ssh_with_at = GitRemoteUrl::parse("ssh://git@host.com/org@company/repo.git").unwrap();
+        assert_eq!(ssh_with_at.host(), "host.com");
+        assert_eq!(ssh_with_at.owner(), "org@company");
+        assert_eq!(ssh_with_at.repo(), "repo");
 
-        assert!(
-            GitRemoteUrl::parse("ssh://git@host.com/org@company/repo.git").is_none(),
-            "SSH URLs with @ in path after host are rejected (ambiguous parsing)"
-        );
-
-        // However, https:// handles @ in namespace correctly (no user@ prefix)
+        // https:// and SCP-style URLs agree — all three scope the `@` search to
+        // the authority.
         let https_with_at = GitRemoteUrl::parse("https://host.com/org@company/repo.git").unwrap();
         assert_eq!(https_with_at.owner(), "org@company");
         assert_eq!(https_with_at.repo(), "repo");
+    }
+
+    /// A path segment must not be able to pose as the SSH authority. Searching
+    /// the whole remainder for the last `@` let a crafted remote report a host
+    /// git never connects to — and `project_identifier` is what
+    /// `Approvals` keys a project's approved commands on, so a spoofed host
+    /// silently borrows another project's approvals.
+    #[test]
+    fn test_adversarial_ssh_host_spoofed_from_path() {
+        let parsed =
+            GitRemoteUrl::parse("ssh://git@attacker.example/owner/repo@github.com/org/repo.git")
+                .expect("structurally valid SSH URL");
+        assert_eq!(
+            parsed.host(),
+            "attacker.example",
+            "the host is the authority git connects to, not a later path segment"
+        );
+        assert_eq!(parsed.forge_kind(), None);
+        assert_eq!(
+            parsed.project_identifier(),
+            "attacker.example/owner/repo@github.com/org/repo"
+        );
     }
 
     #[test]
