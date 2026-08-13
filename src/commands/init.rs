@@ -122,7 +122,10 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
 /// styles before the completer call means `_describe` sees them on the *first* TAB, not
 /// only on the second.
 fn make_zsh_autoload_safe(script: &str, cmd_name: &str) -> String {
-    let func = format!("_clap_dynamic_completer_{}", cmd_name.replace('-', "_"));
+    let func = format!(
+        "_clap_dynamic_completer_{}",
+        shell::clap_completer_ident(cmd_name)
+    );
     let trailing = format!("compdef {func} {cmd_name}");
     let replacement = format!(
         r#"# Single-column display keeps descriptions visually associated with each branch.

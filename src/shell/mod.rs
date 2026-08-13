@@ -312,7 +312,12 @@ impl ShellInit {
 /// on and call the function the registration actually defines. The registration
 /// is emitted under this command name via `WORKTRUNK_COMPLETE_NAME`, which the
 /// templates set on the eval — see `registration_name` in `src/completion.rs`.
-fn clap_completer_ident(cmd: &str) -> String {
+///
+/// This is the one place the rule is encoded: `make_zsh_autoload_safe` in
+/// `src/commands/init.rs` rewrites the same function name in clap's zsh
+/// registration and calls here for it, so a change to clap's escaping is one
+/// edit rather than two sites that can drift apart silently.
+pub fn clap_completer_ident(cmd: &str) -> String {
     cmd.replace('-', "_")
 }
 

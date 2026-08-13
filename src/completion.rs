@@ -509,17 +509,28 @@ thread_local! {
 /// So the generated loader passes the name it bound in `WORKTRUNK_COMPLETE_NAME`
 /// and the registration is emitted under that name. The fallback is
 /// [`crate::binary_name`], which covers a binary installed as `git-wt` and
-/// invoked directly. The value is embedded verbatim in generated shell code, so
-/// it goes through the same validation `--cmd` does and is otherwise ignored.
+/// invoked directly.
+///
+/// Both arms are validated, because both end up embedded verbatim in generated
+/// shell code and neither has necessarily been through the `--cmd` gate:
+/// `binary_name` is `argv[0]`'s file stem, so a binary installed under a name
+/// outside the allowlist would otherwise emit `complete -F _clap_complete_<name>`
+/// with an identifier the shell can't parse — completions would silently do
+/// nothing rather than fall back. `handle_completions` in `src/commands/init.rs`
+/// validates `binary_name` for the same reason before writing a registration.
+/// A rejected env var still defers to the binary name, which is the more useful
+/// answer than the constant; only a binary name that also fails lands on `wt`.
 ///
 /// Leaked because `Command::name` takes a `clap::builder::Str`, which borrows
 /// unless clap's `string` feature is on — the same trade `build_hook_completion_command`
 /// makes. One small allocation in a process that writes the script and exits.
 fn registration_name() -> &'static str {
+    let is_valid = |name: &String| worktrunk::shell::validate_shell_command_name(name).is_ok();
     let name = std::env::var("WORKTRUNK_COMPLETE_NAME")
         .ok()
-        .filter(|name| worktrunk::shell::validate_shell_command_name(name).is_ok())
-        .unwrap_or_else(crate::binary_name);
+        .filter(is_valid)
+        .or_else(|| Some(crate::binary_name()).filter(is_valid))
+        .unwrap_or_else(|| "wt".to_string());
     Box::leak(name.into_boxed_str())
 }
 

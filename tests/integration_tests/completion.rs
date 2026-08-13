@@ -2327,3 +2327,70 @@ fn test_completion_registration_uses_shell_integration_cmd_name(
         "{shell}: registration should bind via `{registration}`, got:\n{stdout}"
     );
 }
+
+/// `WORKTRUNK_COMPLETE_NAME` lands verbatim in generated shell code, so it is
+/// validated before it gets there. wt's own shell integration only ever sets it
+/// to a name `--cmd` already validated; a value outside the allowlist means
+/// something else set it, and the registration falls back to the binary name
+/// rather than emitting an unusable — or injected — identifier.
+#[rstest]
+#[case("wt; rm -rf /")]
+#[case("wt$(id)")]
+#[case("git wt")]
+#[case("-wt")]
+#[case("")]
+fn test_completion_registration_rejects_invalid_complete_name(#[case] name: &str) {
+    let output = wt_command()
+        .env("COMPLETE", "bash")
+        .env("WORKTRUNK_COMPLETE_NAME", name)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("-F _clap_complete_wt wt"),
+        "an invalid WORKTRUNK_COMPLETE_NAME ({name:?}) must fall back to the binary name, got:\n{stdout}"
+    );
+    assert!(
+        name.is_empty() || !stdout.contains(name),
+        "a rejected WORKTRUNK_COMPLETE_NAME ({name:?}) must not reach the generated script:\n{stdout}"
+    );
+}
+
+/// The binary-name fallback is validated for the same reason the env var is:
+/// it is `argv[0]`'s file stem, which no `--cmd` gate has seen. A binary
+/// installed under a name outside the allowlist would otherwise register
+/// `complete -F _clap_complete_<name>` with an identifier bash can't parse, so
+/// the last resort is the compile-time `wt`.
+///
+/// Unix-only because it needs a symlink named for the invalid case; the
+/// validation itself is platform-independent.
+#[cfg(unix)]
+#[rstest]
+fn test_completion_registration_falls_back_when_binary_name_is_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = dir.path().join("wt+odd");
+    std::os::unix::fs::symlink(crate::common::wt_bin(), &link).unwrap();
+
+    // Borrow the isolated environment `wt_command` sets up — only the program
+    // itself differs, and `Command` can't have its program swapped.
+    let template = wt_command();
+    let mut cmd = std::process::Command::new(&link);
+    for (key, value) in template.get_envs() {
+        match value {
+            Some(value) => cmd.env(key, value),
+            None => cmd.env_remove(key),
+        };
+    }
+    if let Some(cwd) = template.get_current_dir() {
+        cmd.current_dir(cwd);
+    }
+
+    let output = cmd.env("COMPLETE", "bash").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("-F _clap_complete_wt wt"),
+        "an invalid binary name must fall back to `wt`, got:\n{stdout}"
+    );
+}
