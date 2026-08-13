@@ -131,8 +131,8 @@ pub(crate) fn url_path_segments_eq(left: &str, right: &str) -> bool {
     canonical_url_path_segment(left).eq_ignore_ascii_case(&canonical_url_path_segment(right))
 }
 
-/// Extract the network host (plus an HTTP(S)/git port, when present) from a URL
-/// authority, discarding userinfo at the final `@`.
+/// Extract the network host (plus a port, when present) from a URL authority,
+/// discarding userinfo at the final `@`.
 ///
 /// The final separator matters for hostile or credential-bearing authorities:
 /// `github.com@attacker.example` connects to `attacker.example`, while
