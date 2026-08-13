@@ -2103,6 +2103,38 @@ fn ensure_holds_this_worktree_accepts_both_worktree_shapes() {
         .expect("the main worktree is accepted, having no registration to point back at");
 }
 
+/// A directory that has lost its `.git` entry holds no worktree of ours, even
+/// where the tree above it answers for this repository.
+///
+/// The gate reads `<dir>/.git` and stops there, as git's own validation does.
+/// `git rev-parse --git-dir` walks up instead, so from a worktree nested inside
+/// another it resolves to the enclosing repository's git dir — which *is* the
+/// common dir, so a gate resolving that way accepts the directory as the main
+/// worktree.
+///
+/// `wt remove` refuses this state at the upstream `prunable` check, which is why
+/// the gate is the only place it can be asked about directly.
+#[test]
+fn ensure_holds_this_worktree_refuses_a_directory_that_lost_its_git_entry() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let nested_path = test.root_path().join("nested");
+    let nested = test.add_worktree_at_path("nested", &nested_path);
+    std::fs::remove_file(nested.join(".git")).unwrap();
+
+    let repo = Repository::at(test.root_path()).unwrap();
+    assert_eq!(
+        repo.worktree_at(&nested).git_dir().unwrap(),
+        repo.git_common_dir(),
+        "premise: walking up from the emptied directory reaches this repository"
+    );
+    repo.worktree_at(&nested)
+        .ensure_holds_this_worktree()
+        .expect_err("a directory with no `.git` entry holds no worktree of ours");
+}
+
 /// The refusal names where the occupant belongs in a form the user can act on,
 /// including when the registration records it relatively.
 ///
