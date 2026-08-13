@@ -66,13 +66,16 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     # Lazy completions - generate on first TAB, then delegate to clap's completer
     _{{ cmd }}_lazy_complete() {
         # Generate completions function once (check if clap's function exists)
-        if ! (( $+functions[_clap_dynamic_completer_{{ cmd }}] )); then
+        if ! (( $+functions[_clap_dynamic_completer_{{ cmd_ident }}] )); then
             # Use `command` to bypass the shell function and call the binary directly.
             # Without this, `{{ cmd }}` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-{{ cmd }}}" 2>/dev/null)" || return
+            # WORKTRUNK_COMPLETE_NAME emits the registration under the name bound
+            # below; clap would otherwise name everything after its own command
+            # name and the call below would hit an undefined function (#3816).
+            eval "$(WORKTRUNK_COMPLETE_NAME="{{ cmd }}" COMPLETE=zsh command "${WORKTRUNK_BIN:-{{ cmd }}}" 2>/dev/null)" || return
         fi
-        _clap_dynamic_completer_{{ cmd }} "$@"
+        _clap_dynamic_completer_{{ cmd_ident }} "$@"
     }
 
     # Register completion (silently skip if compinit hasn't run yet).

@@ -115,7 +115,10 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             # Use `command` to bypass the shell function and call the binary directly.
             # Without this, `wt` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            eval "$(COMPLETE=bash command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
+            # WORKTRUNK_COMPLETE_NAME emits the registration under the name bound
+            # below; clap would otherwise name everything after its own command
+            # name and the call below would hit an undefined function (#3816).
+            eval "$(WORKTRUNK_COMPLETE_NAME="wt" COMPLETE=bash command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
         fi
         _clap_complete_wt "$@"
     }

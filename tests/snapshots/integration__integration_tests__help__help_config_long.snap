@@ -649,6 +649,7 @@ Override the LLM command in CI to use a mock:
  [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file                            
  [2mWORKTRUNK_SHELL_CWD[0m               Internal: set by wt on alias and hook bodies, so a nested [2mwt[0m preserves the user's subdirectory                     
  [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)                                          
+ [2mWORKTRUNK_COMPLETE_NAME[0m           Internal: set by shell wrappers to the command name completions register under (defaults to the binary name)       
  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                  
  [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach  
  [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                 

@@ -273,6 +273,7 @@ If you see path issues, ensure you're using a recent Git for Windows version.
 | `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Set by shell wrapper; wt writes shell commands, wrapper sources the file |
 | `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
 | `WORKTRUNK_SHELL` | Set by the PowerShell (`powershell`) and fish (`fish`) wrappers; selects how wt escapes the EXEC directive payload for that shell |
+| `WORKTRUNK_COMPLETE_NAME` | Set by the bash, zsh, and PowerShell wrappers when they load completions; names the command the registration binds to, so `--cmd` integrations complete |
 
 ## See Also
 
