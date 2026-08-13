@@ -103,6 +103,7 @@ tasks:
       - task: prepare-codex
 
   maintain-codex:
+    desc: Maintain Codex Cloud environment
     platforms: [linux]
     cmds:
       - task: prepare-codex
