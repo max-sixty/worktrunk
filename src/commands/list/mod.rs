@@ -48,7 +48,7 @@
 //! After the skeleton appears, cells fill in progressively as git operations complete.
 //! The slowest operation (CI status) runs with `--full`, or — for the table and
 //! the picker only — when `[list] columns` names `ci`, which forces the column
-//! and its fetch on without `--full`. `--format json` plans off `--full` alone.
+//! and its fetch on without `--full`.
 //!
 //! ## Git Commands Per Worktree
 //!

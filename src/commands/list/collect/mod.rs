@@ -1287,12 +1287,10 @@ pub fn collect(
     //   `[list] summary` off): without it the picker would hide a column `wt list`
     //   shows. CI is already covered — the picker is always `show_full`.
     // - `--format json` → `all_columns` alone (source `Default`), so the
-    //   selection reaches it in neither direction. The every-field contract
-    //   (`src/cli/mod.rs`) already rules out the narrowing half; the forcing
-    //   half is out too, because a presentation setting shouldn't decide
-    //   whether a machine-readable call fetches from a forge — `--full` is
-    //   the switch for that, and it's the one a caller controls (#3787).
-    //   `collected` reports what the run actually gathered either way.
+    //   selection reaches it in neither direction: the every-field contract
+    //   (`src/cli/mod.rs`) rules out narrowing, and a display setting must not
+    //   decide whether a machine-readable call reaches a forge — `--full` is
+    //   the switch for that (#3787).
     //
     // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
     // / diffs / ahead-behind walks (#3133), while a default column gated off by

@@ -36,6 +36,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -180,11 +181,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# `columns` selects and orders the columns to render; omit it for the default set.[0m
-[107m [0m [2m# It is meant to drive a per-invocation alias (https://worktrunk.dev/extending/#aliases)[0m
-[107m [0m [2m# (`wt --config-set 'list.columns=[…]' list`), giving a named view without[0m
-[107m [0m [2m# disturbing the default `wt list`. A static setting works but pins one layout[0m
-[107m [0m [2m# over a table that otherwise adapts to `--full` and terminal width.[0m
+[107m [0m [2m# `columns` selects and orders the columns the `wt list` table and the `wt switch`[0m
+[107m [0m [2m# picker render; `--format json` ignores it and always emits every field. Omit it[0m
+[107m [0m [2m# for the default set. It is meant to drive a per-invocation[0m
+[107m [0m [2m# alias (https://worktrunk.dev/extending/#aliases) (`wt --config-set 'list.columns=[…]' list`),[0m
+[107m [0m [2m# giving a named view without disturbing the default `wt list`. A static setting[0m
+[107m [0m [2m# works but pins one layout over a table that otherwise adapts to `--full` and[0m
+[107m [0m [2m# terminal width.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Valid built-in names:[0m
 [107m [0m [2m#[0m
@@ -213,13 +216,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
 [107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
 [107m [0m [2m# template — since listing can't supply the data.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# The selection drives the table and the `wt switch` picker; `wt list --format[0m
-[107m [0m [2m# json` ignores it in both directions. JSON always emits every field, and a[0m
-[107m [0m [2m# listed `ci` or `summary` does not force its collection on there — that stays[0m
-[107m [0m [2m# with `--full` and `[list] summary`, so a display setting never decides whether[0m
-[107m [0m [2m# a machine-readable call reaches a forge. Which data a run gathered is reported[0m
-[107m [0m [2m# in schema 2's `collected`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

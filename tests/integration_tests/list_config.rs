@@ -1108,11 +1108,9 @@ columns = ["branch", "age"]
     );
 }
 
-/// The selection doesn't reach JSON in the forcing direction either. A listed
-/// `ci` renders the CI column in the table without `--full` (asserted in
-/// `test_list_config_listed_column_overrides_full_gate`), but `--format json`
-/// plans off `--full` alone: a display setting must not decide whether a
-/// machine-readable call reaches a forge (#3787). Asserted on schema 2's
+/// A listed `ci` renders the CI column in the table without `--full` (asserted
+/// in `test_list_config_listed_column_overrides_full_gate`), but `--format
+/// json` plans off `--full` alone (#3787). Asserted on schema 2's
 /// `collected.ci`, which records what the plan requested rather than what a
 /// fetch returned — so this needs no forge and no `gh` on PATH.
 #[rstest]

@@ -35,6 +35,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -228,11 +229,13 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m 
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m     [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
-[2mcolumns[0m selects and orders the columns to render; omit it for the default set.
-It is meant to drive a per-invocation alias
-([2mwt --config-set 'list.columns=[…]' list[0m), giving a named view without
-disturbing the default [2mwt list[0m. A static setting works but pins one layout
-over a table that otherwise adapts to [2m--full[0m and terminal width.
+[2mcolumns[0m selects and orders the columns the [2mwt list[0m table and the [2mwt switch[0m
+picker render; [2m--format json[0m ignores it and always emits every field. Omit it
+for the default set. It is meant to drive a per-invocation
+alias ([2mwt --config-set 'list.columns=[…]' list[0m),
+giving a named view without disturbing the default [2mwt list[0m. A static setting
+works but pins one layout over a table that otherwise adapts to [2m--full[0m and
+terminal width.
 
 Valid built-in names:
 
@@ -261,13 +264,6 @@ since [2m--full[0m only bundles columns into the default table rather than gat
 named one. A column whose data source is missing still stays hidden — [2msummary[0m
 needs an LLM command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m
 template — since listing can't supply the data.
-
-The selection drives the table and the [2mwt switch[0m picker; [2mwt list --format[0m
-json[2m ignores it in both directions. JSON always emits every field, and a[0m
-listed [2mci[0m or [2msummary[0m does not force its collection on there — that stays
-with [2m--full[0m and [2m[list] summary[0m, so a display setting never decides whether
-a machine-readable call reaches a forge. Which data a run gathered is reported
-in schema 2's [2mcollected[0m.
 
 [1mCustom columns [experimental][0m
 
