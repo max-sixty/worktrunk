@@ -813,7 +813,12 @@ fn command_header(cmd: &str, context: Option<&str>) -> String {
 /// log even when nothing ran.
 ///
 /// Below Debug both targets are disabled and this is a no-op.
-fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::process::Output>) {
+fn log_output(
+    trace: &CommandTrace,
+    stdin: Option<&[u8]>,
+    output: Option<&std::process::Output>,
+    redact_stdout: Option<StdoutRedactor>,
+) {
     // `log::max_level` (held at the verbosity/`RUST_LOG` ceiling by the
     // `LogTracer` cap in `logging::init`) is the coarse "deep logging on at
     // all?" gate that skips building the full *and* bounded output strings
@@ -832,6 +837,12 @@ fn log_output(trace: &CommandTrace, stdin: Option<&[u8]>, output: Option<&std::p
     let (stdout, stderr) = output
         .map(|o| (o.stdout.as_slice(), o.stderr.as_slice()))
         .unwrap_or_default();
+    // Redact the *logged* stdout only. The caller already holds the real
+    // output; this copy is what reaches `trace.log` / `subprocess.log`, so a
+    // command carrying private data (the `worktrunk.config.*` git-config read)
+    // keeps it out of the `-vv` bundle without losing the rest of its output.
+    let redacted = redact_stdout.map(|f| f(stdout));
+    let stdout = redacted.as_deref().unwrap_or(stdout);
     if !stdin.is_empty() || !stdout.is_empty() || !stderr.is_empty() {
         tracing::debug!(
             target: SUBPROCESS_FULL_TARGET,
@@ -1039,6 +1050,11 @@ fn kill_timed_out_tree(pid: u32) {
 // Builder-style command execution
 // ============================================================================
 
+/// Transform applied to a command's captured stdout before it is written to
+/// the debug/subprocess logs — never to the bytes returned to the caller. See
+/// [`Cmd::redact_logged_stdout`].
+type StdoutRedactor = fn(&[u8]) -> Vec<u8>;
+
 /// Builder for executing commands with two modes of operation.
 ///
 /// - `.run()` — captures output, provides logging/semaphore/tracing
@@ -1115,6 +1131,15 @@ pub struct Cmd {
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
+    /// When set, this transform is applied to captured stdout **before it is
+    /// written to the debug/subprocess logs** — never to the bytes returned to
+    /// the caller. It lets a command whose output carries private data keep
+    /// that data out of the `-vv` diagnostic bundle while still logging the
+    /// rest. The one user is the bulk `git config --list -z` read, which scrubs
+    /// `worktrunk.config.*` values (the experimental private project-config
+    /// source, #3454). Applied only when deep logging is on, so it costs
+    /// nothing on a normal run.
+    redact_logged_stdout: Option<StdoutRedactor>,
 }
 
 struct ExternalCommandLog {
@@ -1153,6 +1178,7 @@ fn record_captured(
     trace: &mut CommandTrace,
     stdin: Option<&[u8]>,
     result: &std::io::Result<std::process::Output>,
+    redact_stdout: Option<StdoutRedactor>,
 ) {
     match result {
         Ok(output) => trace.complete(output.status.success()),
@@ -1160,7 +1186,7 @@ fn record_captured(
     }
     // stdin is logged either way; stdout/stderr only when the command produced
     // output — a command that failed to spawn still leaves its input behind.
-    log_output(trace, stdin, result.as_ref().ok());
+    log_output(trace, stdin, result.as_ref().ok(), redact_stdout);
 }
 
 /// Structured error from [`Cmd::delayed_stream`].
@@ -1280,7 +1306,20 @@ impl Cmd {
             ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
+            redact_logged_stdout: None,
         }
+    }
+
+    /// Redact captured stdout before it reaches the debug/subprocess logs.
+    ///
+    /// The transform never touches the output returned from `run()`; it applies
+    /// only to the copy `log_output` writes when deep logging is on. Use it for
+    /// a command whose stdout carries data that must not land in the `-vv`
+    /// diagnostic bundle — currently the bulk `git config --list -z` read,
+    /// which passes [`crate::config::redact_worktrunk_config_z`].
+    pub fn redact_logged_stdout(mut self, redactor: StdoutRedactor) -> Self {
+        self.redact_logged_stdout = Some(redactor);
+        self
     }
 
     /// Create a new command builder for the given program.
@@ -1675,7 +1714,12 @@ impl Cmd {
             }
         };
 
-        record_captured(&mut trace, self.stdin_data.as_deref(), &result);
+        record_captured(
+            &mut trace,
+            self.stdin_data.as_deref(),
+            &result,
+            self.redact_logged_stdout,
+        );
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -1724,6 +1768,11 @@ impl Cmd {
             self.timeout.is_none() && next.timeout.is_none(),
             "pipe_into does not support timeouts"
         );
+        // The source's own stdout is routed to the sink (empty capture), so its
+        // redactor only ever matters for the source-stage log below; the sink
+        // is a different program and logs unredacted. No config read uses
+        // pipe_into today — this keeps the field honored if one ever does.
+        let source_redact_stdout = self.redact_logged_stdout;
         assert!(
             self.external_label.is_none() && next.external_label.is_none(),
             "pipe_into does not support external() logging"
@@ -1875,7 +1924,7 @@ impl Cmd {
             // source's stdout (the OS pipe), not its own input, so it is logged
             // with `None` — the intermediate stream stays out of the deep log.
             let second_result = second_child.wait_with_output();
-            record_captured(&mut second_trace, None, &second_result);
+            record_captured(&mut second_trace, None, &second_result, None);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
@@ -1892,7 +1941,12 @@ impl Cmd {
             // The source's own stdin (the commit list) is logged under `  < `,
             // symmetric with `run`. Only the intermediate diff stream — the
             // source's stdout, routed to the sink via OS pipe — stays out.
-            record_captured(&mut first_trace, source_stdin.as_deref(), &first_result);
+            record_captured(
+                &mut first_trace,
+                source_stdin.as_deref(),
+                &first_result,
+                source_redact_stdout,
+            );
 
             (first_result, second_result)
         });
