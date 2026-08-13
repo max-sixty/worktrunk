@@ -1,35 +1,25 @@
-# Codex Cloud environment
+# Codex Cloud
 
-These scripts configure the `universal` Codex Cloud image for Worktrunk's full
-development and test suite.
+The environment uses the `universal` image, caching, unrestricted internet,
+and no variables or secrets.
 
-Create a Codex Cloud environment with the `universal` image, container caching
-enabled, unrestricted agent internet access, and no environment variables or
-secrets.
-
-Use this setup command:
+Setup command:
 
 ```bash
-printf '%s  %s\n' '67e4ec050b9d5f372be5a897362a057cdc835883848db81bdb61fe0eaa77f913' scripts/codex-cloud/setup.sh | sha256sum -c - && bash scripts/codex-cloud/setup.sh
+TASKFILE_SHA=342b9134ce86621c9ee22bac3518ace25dba356f872d99521037255dbe3cc5bd; printf '%s  %s\n' "$TASKFILE_SHA" scripts/codex-cloud/Taskfile.yaml | sha256sum -c - && MISE_NO_CONFIG=1 MISE_HTTP_RETRIES=6 mise x task@3.52.0 -- task -t scripts/codex-cloud/Taskfile.yaml setup-codex
 ```
 
-Use this maintenance command:
+Maintenance command:
 
 ```bash
-printf '%s  %s\n' '241f39eca59e60f5572d932c588803a139a28fb9641df5f1ef6442026966c63a' scripts/codex-cloud/maintenance.sh | sha256sum -c - && bash scripts/codex-cloud/maintenance.sh
+TASKFILE_SHA=342b9134ce86621c9ee22bac3518ace25dba356f872d99521037255dbe3cc5bd; printf '%s  %s\n' "$TASKFILE_SHA" scripts/codex-cloud/Taskfile.yaml | sha256sum -c - && MISE_NO_CONFIG=1 MISE_HTTP_RETRIES=6 mise x task@3.52.0 -- task -t scripts/codex-cloud/Taskfile.yaml maintain-codex
 ```
 
-The checksums are a security boundary: Codex checks out the task branch before
-running environment commands, and the scripts run as root. A branch that
-changes either script must fail verification instead of gaining root execution.
-After an approved script change reaches the default branch, update its checksum
-in the environment settings. That settings change also invalidates the cache.
+The hash prevents a task branch from changing code run as root. After a reviewed
+Taskfile change reaches the default branch, update both environment commands;
+the settings change invalidates the cache.
 
-The agent remains root, while the Cargo wrapper runs builds and tests as the
-image's `ubuntu` user under `tini`. This matches the permission and process
-reaping behavior expected by the test suite.
-
-Validate the environment in a cloud task with:
+Validation:
 
 ```bash
 cargo run -- hook pre-merge --yes

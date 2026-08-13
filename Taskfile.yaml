@@ -1,6 +1,11 @@
 # https://taskfile.dev
 version: "3"
 
+includes:
+  codex:
+    taskfile: ./scripts/codex-cloud/Taskfile.yaml
+    flatten: true
+
 vars:
   REPO_ROOT:
     sh: pwd
