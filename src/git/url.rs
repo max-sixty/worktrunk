@@ -173,9 +173,12 @@ impl GitRemoteUrl {
             // Split the authority off at the first `/` before looking for `@`,
             // exactly as the scheme and SCP-style branches do: `@` is legal in a
             // path, and searching the whole remainder for it lets a later
-            // segment pose as the authority — `ssh://git@attacker.example/a/
-            // b@github.com/org/repo.git` would otherwise report `github.com`,
-            // the identity `project_identifier` keys approvals on, for a remote
+            // segment pose as the authority. In
+            //
+            //     ssh://git@attacker.example/owner/repo@github.com/org/repo.git
+            //
+            // the last `@` would otherwise make the host `github.com` — the
+            // identity `project_identifier` keys approvals on — for a remote
             // git connects to `attacker.example`.
             let (authority, path) = rest.split_once('/')?;
             let host_with_port = authority_host(authority)?;
@@ -1286,16 +1289,15 @@ mod tests {
     #[test]
     fn test_adversarial_empty_user_ssh() {
         // ssh://user@/owner/repo.git - empty host after user@
-        // After split('@').next_back(): "/owner/repo.git"
-        // split_once('/'): host="", path="owner/repo.git"
-        // Empty host is rejected
+        // Authority: "user@" — rsplit_once('@') leaves nothing after the
+        // separator, so the host is empty and the URL is rejected
         assert!(
             GitRemoteUrl::parse("ssh://user@/owner/repo.git").is_none(),
             "Empty host should be rejected"
         );
 
         // ssh://@host.com/owner/repo.git - empty user (@ with nothing before it)
-        // After split('@').next_back(): "host.com/owner/repo.git"
+        // Authority: "@host.com" — rsplit_once('@') gives host "host.com"
         // This parses correctly - the empty user is effectively ignored
         let parsed = GitRemoteUrl::parse("ssh://@host.com/owner/repo.git").unwrap();
         assert_eq!(parsed.host(), "host.com");
