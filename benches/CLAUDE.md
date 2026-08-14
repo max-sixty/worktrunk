@@ -266,18 +266,16 @@ cargo run -p wt-perf -- timeline -- -C target/bench-repos/rust-prune-12-24/repo 
 cargo run -p wt-perf -- setup prune-real     # repair the consumed candidates
 ```
 
-**The `wt remove` exit-delay is machine-dependent and invisible to benches.**
+**The `wt remove` exit-delay is flat in the machine-wide daemon count.**
 After its last message, `wt remove` runs an in-process sweep
-(`run_internal_sweep`) that enumerates `git fsmonitor--daemon` processes
-*machine-wide* and resolves each one's socket with a ~50 ms `lsof` call —
-sequential, before exit, while the shell wrapper waits on the process. On a
-machine with N live daemons that appends roughly `N × 50 ms` of post-output
-latency (measured: 115 daemons → 5.8 s after 0.4 s of actual removal output);
-on daemon-free bench/CI machines it costs nothing, so `remove_e2e` never sees
-it. To observe it, run `wt-perf timeline -- remove <branch>` on a real machine
-and read the `internal-sweep` span and its `lsof -a -p …` children; the
-`fsmonitor sweep: resolving sockets for N daemon(s)` debug line gives the
-count.
+(`run_internal_sweep`) — one `pgrep` for `git fsmonitor--daemon` processes
+plus one `lsof` over the whole comma-separated PID set (~80 ms total; lsof's
+cost is fixed startup, not per-PID work) — before exit, while the shell
+wrapper waits on the process. Daemon-free bench/CI machines pay only the
+`pgrep`, so `remove_e2e` numbers barely include the sweep. To observe it, run
+`wt-perf timeline -- remove <branch>` on a real machine and read the
+`internal-sweep` span; the `fsmonitor sweep: resolving sockets for N
+daemon(s)` debug line gives the count.
 
 ## Output Locations
 
