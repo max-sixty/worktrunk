@@ -16,7 +16,7 @@
 
 - **`wt step copy-ignored` skips a source file that vanishes mid-copy**: the walk collects leaves, then copies them in parallel, so a file removed in between — a concurrent build rewriting `target/`, say — aborted the batch, under `--force` after deleting the destination. The source is stat'd before anything is removed now. ([#3744](https://github.com/max-sixty/worktrunk/pull/3744), fixes [#3743](https://github.com/max-sixty/worktrunk/issues/3743), thanks @dataders for reporting and fixing)
 
-- **`wt step promote` refuses to delete a source it did not fully copy**: across filesystems the move copies then deletes, and an entry with no copy — a socket or FIFO, or a file a concurrent build rewrote mid-walk — was deleted anyway. The copy now reports what it skipped, and a non-zero count fails the move.
+- **`wt step promote` refuses to delete a source it did not fully copy**: across filesystems the move copies then deletes, and an entry with no copy — a socket or FIFO, or a file a concurrent build rewrote mid-walk — was deleted anyway. The copy now reports what it skipped, and a non-zero count fails the move. ([#3820](https://github.com/max-sixty/worktrunk/pull/3820))
 
 - **An `ssh://` remote's host comes from the authority, not a later path segment**: the search for the userinfo `@` covered the whole remainder, so `ssh://git@attacker.example/owner/repo@github.com/org/repo.git` resolved to `github.com` and borrowed that repository's approvals while git dialed the attacker. Every URL form now splits the authority first, so `@` in a namespace parses instead of being rejected. ([#3813](https://github.com/max-sixty/worktrunk/pull/3813))
 
