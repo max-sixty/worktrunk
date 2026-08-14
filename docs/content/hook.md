@@ -261,16 +261,16 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks and JSON context
 
-A hook's stdin carries the terminal when the hook can prompt, and the JSON context when it can't.
+A hook's stdin carries the terminal when the hook runs alone in the foreground, and the JSON context otherwise.
 
-A `pre-*` hook that runs on its own in the foreground gets the terminal, so it can ask before continuing:
+A `pre-*` hook gets the terminal, so it can ask before continuing:
 
 ```toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
 
-Two other forms can't prompt, and receive all template variables as JSON on stdin instead: background (`post-*`) hooks, which run detached with no terminal, and concurrent groups, whose children would otherwise race for one terminal. Adding a second key to the table above turns it into a concurrent group, which is enough to take the terminal away from `gum confirm` — keep a hook that prompts in a table of its own.
+Two forms receive all template variables as JSON on stdin instead: `post-*` hooks, which run detached with no terminal, and concurrent groups, whose children would otherwise race for one terminal. Adding a second key to the table above turns it into a concurrent group, which is enough to take the terminal away from `gum confirm` — keep a hook that prompts in a table of its own. `wt hook <type> --foreground` runs a hook in the foreground whatever its type, so a `post-*` hook invoked that way gets the terminal and no JSON.
 
 The JSON context enables logic that templates can't express:
 
