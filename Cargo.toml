@@ -49,7 +49,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.73.0"
+version = "0.74.0"
 edition = "2024"
 rust-version = "1.96"
 build = "build.rs"
