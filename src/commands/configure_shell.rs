@@ -769,6 +769,13 @@ fn fish_code_lines(source: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Write the autoloaded wrapper: fish's `functions/{cmd}.fish`, nushell's
+/// `vendor/autoload/{cmd}.nu`.
+///
+/// The path is named after the command being installed, so it names the file
+/// worktrunk owns and an existing one there is replaced whole. The read below
+/// only separates "already installed" from "needs writing"; ownership is read
+/// out of a file's contents in one place only, `is_worktrunk_managed_content`.
 fn configure_wrapper_file(
     shell: Shell,
     path: &Path,
