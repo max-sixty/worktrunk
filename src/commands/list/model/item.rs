@@ -359,11 +359,10 @@ pub struct ListData {
     pub collected: Collected,
 }
 
-/// Fact families whose collection is gated (`--full`, `[list] summary`,
-/// a listed `ci`/`summary` column). Ungated families (working tree, counts,
-/// diffs) are always requested. Serialized as-is into the schema-2 JSON
-/// envelope's `collected` field, disambiguating "absent because not
-/// requested".
+/// Fact families whose collection is gated (`--full`, `[list] summary`).
+/// Ungated families (working tree, counts, diffs) are always requested.
+/// Serialized as-is into the schema-2 JSON envelope's `collected` field,
+/// disambiguating "absent because not requested".
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, schemars::JsonSchema)]
 pub struct Collected {
     /// Forge CI/PR data was fetched.

@@ -16,7 +16,7 @@
       ]
     },
     "Collected": {
-      "description": "Fact families whose collection is gated (`--full`, `[list] summary`,\na listed `ci`/`summary` column). Ungated families (working tree, counts,\ndiffs) are always requested. Serialized as-is into the schema-2 JSON\nenvelope's `collected` field, disambiguating \"absent because not\nrequested\".",
+      "description": "Fact families whose collection is gated (`--full`, `[list] summary`).\nUngated families (working tree, counts, diffs) are always requested.\nSerialized as-is into the schema-2 JSON envelope's `collected` field,\ndisambiguating \"absent because not requested\".",
       "properties": {
         "ci": {
           "description": "Forge CI/PR data was fetched.",
