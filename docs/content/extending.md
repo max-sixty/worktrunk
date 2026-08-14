@@ -217,7 +217,7 @@ Aside from the differences below, hooks and aliases behave the same.
 | Force-bind escape | `--var KEY=VALUE` (deprecated in favor of `--KEY=VALUE`, but still force-binds) | None; smart routing is the only path |
 | `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation: `wt <alias> --help` redirects to `wt config alias show` / `dry-run`. `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
 | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
-| Stdin | Foreground (`pre-*`) inherit parent stdin, same as aliases (interactive prompts work); background (`post-*`) receive all template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin (pipes pass through; interactive TUIs like `wt switch` keep the tty) |
+| Stdin | A `pre-*` hook running on its own in the foreground inherits parent stdin, same as aliases (interactive prompts work); background (`post-*`) hooks and concurrent groups receive all template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin (pipes pass through; interactive TUIs like `wt switch` keep the tty) |
 | Template-context extras | `hook_type`, `hook_name`, per-type operation vars (`base`, `target`, `pr_number`, …) | `args` on top of the shared base variables |
 
 </details>

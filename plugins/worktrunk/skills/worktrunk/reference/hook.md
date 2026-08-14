@@ -252,14 +252,18 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks and JSON context
 
-Foreground (`pre-*`) hooks run connected to your terminal, so a hook can prompt before continuing — for example, confirming an action before running it:
+A hook's stdin carries the terminal when the hook can prompt, and the JSON context when it can't.
+
+A `pre-*` hook that runs on its own in the foreground gets the terminal, so it can ask before continuing:
 
 ```toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
 
-Background (`post-*`) hooks run detached, with no terminal. They receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
+Two other forms can't prompt, and receive all template variables as JSON on stdin instead: background (`post-*`) hooks, which run detached with no terminal, and concurrent groups, whose children would otherwise race for one terminal. Adding a second key to the table above turns it into a concurrent group, which is enough to take the terminal away from `gum confirm` — keep a hook that prompts in a table of its own.
+
+The JSON context enables logic that templates can't express:
 
 ```toml
 [post-start]
