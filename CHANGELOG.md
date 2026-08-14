@@ -4,6 +4,8 @@
 
 ### Improved
 
+- **A foreground hook keeps the terminal, so it can ask before continuing**: A `pre-*` hook running on its own now inherits wt's stdin exactly as an alias body already did, so `trust = "gum confirm 'trust this worktree?' && mise trust"` gets a prompt instead of an immediate EOF. (Breaking: that hook no longer receives the JSON context on its stdin — every value is still reachable as a template variable, e.g. `{{ branch }}`. The JSON survives for the two forms that can't be interactive anyway: concurrent groups and detached `post-*` hooks. `wt hook <type> --foreground` runs in the foreground whatever the type, so it gets the terminal too.) Fixes [#3093](https://github.com/max-sixty/worktrunk/issues/3093). ([#3129](https://github.com/max-sixty/worktrunk/pull/3129))
+
 - **`remote_repo` names the repository as the remote spells it**: `repo` is the directory on disk, so a renamed clone reports the new name. `{{ remote_repo }}` takes it from the primary remote's URL, available everywhere `owner` is and unset when no remote parses. ([#3745](https://github.com/max-sixty/worktrunk/pull/3745), thanks @canac)
 
 ## 0.73.0
