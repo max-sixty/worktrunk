@@ -263,7 +263,7 @@ trust = "gum confirm 'trust this worktree?' && mise trust"
 
 Two forms receive all template variables as JSON on stdin instead: detached `post-*` hooks, which have no terminal, and concurrent groups, whose children would otherwise race for one. A table of two or more keys *is* a concurrent group, so adding a second key takes the terminal away from `gum confirm` — keep a hook that prompts in a table of its own. `wt hook <type> --foreground` runs a hook in the foreground whatever its type, so `post-*` follows the same rule there.
 
-Foreground steps run in order and share one stdin, so a step that reads it to EOF leaves nothing for the steps behind it — only one step in a pipeline can prompt. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
+Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat`, a `json.load(sys.stdin)` — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
 The JSON context enables logic that templates can't express:
 

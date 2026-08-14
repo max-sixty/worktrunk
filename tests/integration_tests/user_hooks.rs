@@ -1909,9 +1909,10 @@ fn test_foreground_pipeline_steps_share_one_stdin(repo: TestRepo) {
     use std::process::Stdio;
 
     // Foreground steps run in order against wt's own stdin, so the first one
-    // to read it to EOF leaves nothing behind — only one step in a pipeline
-    // can prompt. Steps accumulate across config files, so a user and a
-    // project hook of the same type reach this shape without an array.
+    // to drain it to EOF leaves nothing behind — which is a property of the
+    // pipe this test constructs, not of a terminal, where each step could
+    // still prompt in turn. Steps accumulate across config files, so a user
+    // and a project hook of the same type reach this shape without an array.
     repo.write_project_config(r#"post-start = ["cat > a.txt", "cat > b.txt"]"#);
 
     let mut cmd = crate::common::wt_command();
