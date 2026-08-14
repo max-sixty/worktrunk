@@ -32,9 +32,32 @@ use worktrunk::styling::{
 use super::hook_filter::{HookSource, ParsedFilter};
 use super::project_config::{ApprovableCommand, Phase, collect_commands_for_hooks};
 
+/// How a batch of project commands gets approved, and what the approval leaves
+/// behind in `approvals.toml`.
+///
+/// `--yes` means different things on either side of the split: on a command
+/// that is about to *run* project commands it grants consent for that run, and
+/// on `wt config approvals add` it grants the record the command exists to
+/// write.
+#[derive(Clone, Copy)]
+pub enum ApprovalMode {
+    /// A command about to run project commands asks for consent, and records a
+    /// `y` so the next run doesn't ask. Without a terminal it errors rather
+    /// than guessing.
+    Prompt,
+    /// `--yes` on such a command: consent is assumed for this invocation and
+    /// nothing is recorded, so the next run asks again.
+    Assume,
+    /// `wt config approvals add`, whose product is the record itself. `yes`
+    /// decides whether it asks first; it writes either way.
+    Record { yes: bool },
+}
+
 /// Batch approval helper used when multiple commands are queued for execution.
 /// Returns `Ok(true)` when execution may continue, `Ok(false)` when the user
-/// declined, and `Err` if config reload/save fails.
+/// declined, and `Err` when the reload fails, when there is no terminal to
+/// prompt on, or when a save that [`ApprovalMode::Record`] exists to make
+/// fails.
 ///
 /// Shows command templates to the user (what gets saved to config), not expanded values.
 /// This ensures users see exactly what they're approving.
@@ -45,7 +68,7 @@ pub fn approve_command_batch(
     commands: &[ApprovableCommand],
     project_id: &str,
     approvals: &Approvals,
-    yes: bool,
+    mode: ApprovalMode,
     commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
     let needs_approval: Vec<&ApprovableCommand> = commands
@@ -60,18 +83,34 @@ pub fn approve_command_batch(
         return Ok(true);
     }
 
-    let approved = if yes {
-        true
-    } else {
-        prompt_for_batch_approval(&needs_approval, project_id)?
+    let approved = match mode {
+        ApprovalMode::Assume => true,
+        // Nothing is being asked, but the batch still prints: it is the record
+        // of what an unattended run just trusted.
+        ApprovalMode::Record { yes: true } => {
+            let project_name = display_project_name(project_id);
+            let count = needs_approval.len();
+            let plural = if count == 1 { "" } else { "s" };
+            print_command_batch(
+                &cformat!(
+                    "{WARNING_SYMBOL} <yellow>Approving <bold>{count}</> command{plural} for <bold>{project_name}</> (--yes):</>"
+                ),
+                &needs_approval,
+            );
+            true
+        }
+        ApprovalMode::Prompt | ApprovalMode::Record { yes: false } => {
+            prompt_for_batch_approval(&needs_approval, project_id, mode)?
+        }
     };
 
     if !approved {
         return Ok(false);
     }
 
-    // Only save approvals when interactively approved, not when using --yes
-    if !yes {
+    // `--yes` on a command that runs project commands consents to that run
+    // alone, so it writes nothing; every other mode records the approval.
+    if !matches!(mode, ApprovalMode::Assume) {
         let mut fresh_approvals = Approvals::load().context("Failed to load approvals")?;
         let commands: Vec<String> = needs_approval
             .iter()
@@ -81,6 +120,15 @@ pub fn approve_command_batch(
             fresh_approvals.approve_commands(project_id.to_string(), commands, &path)
         });
         if let Err(e) = save_result {
+            // On a command that runs project commands the record is a
+            // convenience, so a failed write costs one more prompt rather than
+            // the command the user actually ran. `wt config approvals add` has
+            // nothing else to deliver, so its exit status carries the failure —
+            // an orchestrator that pre-approves and reads only the exit code
+            // would otherwise walk into the prompt it just paid to avoid.
+            if matches!(mode, ApprovalMode::Record { .. }) {
+                return Err(e).context("Failed to save command approval");
+            }
             eprintln!(
                 "{}",
                 warning_message(format!("Failed to save command approval: {e}"))
@@ -95,36 +143,53 @@ pub fn approve_command_batch(
     Ok(true)
 }
 
-fn prompt_for_batch_approval(
-    commands: &[&ApprovableCommand],
-    project_id: &str,
-) -> anyhow::Result<bool> {
-    // Extract just the directory name for display
-    let project_name = Path::new(project_id)
+/// The project's directory name, which is what a user recognizes; the full
+/// identifier is a path or a remote URL.
+fn display_project_name(project_id: &str) -> &str {
+    Path::new(project_id)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(project_id);
-    let count = commands.len();
-    let plural = if count == 1 { "" } else { "s" };
+        .unwrap_or(project_id)
+}
 
-    eprintln!(
-        "{}",
-        cformat!(
-            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
-        )
-    );
-
+/// The batch as the user sees it: a header, then each command's label and its
+/// template. Shared by the prompt and by `--yes` on `wt config approvals add`.
+fn print_command_batch(header: &str, commands: &[&ApprovableCommand]) {
+    eprintln!("{header}");
     for cmd in commands {
         // Uses INFO_SYMBOL (○) since this is a preview, not active execution
         eprintln!("{} {}", INFO_SYMBOL, cmd.label());
         eprintln!("{}", cmd.format_template());
     }
+}
+
+fn prompt_for_batch_approval(
+    commands: &[&ApprovableCommand],
+    project_id: &str,
+    mode: ApprovalMode,
+) -> anyhow::Result<bool> {
+    let project_name = display_project_name(project_id);
+    let count = commands.len();
+    let plural = if count == 1 { "" } else { "s" };
+
+    print_command_batch(
+        &cformat!(
+            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
+        ),
+        commands,
+    );
 
     // Check if stdin is a TTY before attempting to prompt
     // This happens AFTER showing the commands so they appear in CI/CD logs
     // even when the prompt cannot be displayed (fail-fast principle)
     if !io::stdin().is_terminal() {
-        return Err(GitError::NotInteractive.into());
+        // `wt config approvals add` is the pre-approval route, so its own
+        // failure must not send the user back to the command they just ran.
+        let suggest_pre_approval = !matches!(mode, ApprovalMode::Record { .. });
+        return Err(GitError::NotInteractive {
+            suggest_pre_approval,
+        }
+        .into());
     }
 
     // Blank line before prompt for visual separation
@@ -165,7 +230,12 @@ pub fn approve_alias_commands(
         })
         .collect();
 
-    approve_command_batch(&cmds, project_id, &approvals, yes, false)
+    let mode = if yes {
+        ApprovalMode::Assume
+    } else {
+        ApprovalMode::Prompt
+    };
+    approve_command_batch(&cmds, project_id, &approvals, mode, false)
 }
 
 /// Collect project commands for hooks and request batch approval.
@@ -247,7 +317,12 @@ pub fn approve_hooks_filtered(
 
     let project_id = ctx.repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
-    approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)
+    let mode = if ctx.yes {
+        ApprovalMode::Assume
+    } else {
+        ApprovalMode::Prompt
+    };
+    approve_command_batch(&commands, &project_id, &approvals, mode, false)
 }
 
 /// Approve `hook_types` and centralize the "decline → continue without hooks" message.
@@ -319,7 +394,12 @@ pub fn approve_commit_template_append(
     }
 
     let batch = vec![ApprovableCommand::commit_template_append(owned.clone())];
-    let approved = approve_command_batch(&batch, &project_id, &approvals, ctx.yes, true)?;
+    let mode = if ctx.yes {
+        ApprovalMode::Assume
+    } else {
+        ApprovalMode::Prompt
+    };
+    let approved = approve_command_batch(&batch, &project_id, &approvals, mode, true)?;
     if !approved {
         worktrunk::styling::eprintln!(
             "{}",

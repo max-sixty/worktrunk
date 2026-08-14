@@ -565,7 +565,14 @@ pub enum GitError {
     },
 
     // Validation/other errors
-    NotInteractive,
+    /// A prompt was reached with no terminal to show it on.
+    ///
+    /// `suggest_pre_approval` is false when `wt config approvals add` is itself
+    /// the command that could not prompt — its hint would otherwise send the
+    /// user back to the command they just ran.
+    NotInteractive {
+        suggest_pre_approval: bool,
+    },
     HookCommandNotFound {
         name: String,
         available: Vec<String>,
@@ -865,7 +872,7 @@ impl GitError {
                 "Local <bold>{target_branch}</> has diverged from <bold>{upstream}</> — can't fast-forward to a branch based on <bold>{upstream}</>"
             ),
 
-            GitError::NotInteractive => {
+            GitError::NotInteractive { .. } => {
                 "Cannot prompt for approval in non-interactive environment".to_string()
             }
 
@@ -1383,17 +1390,22 @@ impl GitError {
                 )
             }
 
-            GitError::NotInteractive => {
+            GitError::NotInteractive {
+                suggest_pre_approval,
+            } => {
                 let title = self.title();
-                let approvals_cmd = suggest_command("config", &["approvals", "add"], &[]);
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(&title),
-                    hint_message(cformat!(
+                // The pre-approval route is itself unattended, so it carries
+                // `--yes` — a hint reached in CI must name a command that runs
+                // there.
+                let hint = if *suggest_pre_approval {
+                    let approvals_cmd = suggest_command("config approvals add", &[], &["--yes"]);
+                    cformat!(
                         "To skip prompts in CI/CD, add <underline>--yes</>; to pre-approve commands, run <underline>{approvals_cmd}</>"
-                    ))
-                )
+                    )
+                } else {
+                    cformat!("To skip prompts in CI/CD, add <underline>--yes</>")
+                };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
             GitError::HookCommandNotFound { .. } => {

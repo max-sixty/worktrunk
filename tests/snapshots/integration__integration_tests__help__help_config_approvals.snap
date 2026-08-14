@@ -36,6 +36,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -81,6 +82,9 @@ List commands and their approval status for current project:
 Pre-approve all hook and alias commands for current project:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals add[0m
 
+Pre-approve without prompting, for a container or CI job:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals add [0m[2m[36m--yes[0m
+
 Clear approvals for current project:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear[0m
 
@@ -95,7 +99,9 @@ Check whether an unattended run would stop for approval:
 
 [1m[32mHow approvals work[0m
 
-Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.
+Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves.
+
+[2m--yes[0m bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On [2mwt config approvals add[0m the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
 
 [1m[32mReading approval state[0m
 

@@ -165,7 +165,7 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
             );
             match action {
                 ApprovalsCommand::List { format } => list_approvals(format),
-                ApprovalsCommand::Add { all } => add_approvals(all),
+                ApprovalsCommand::Add { all } => add_approvals(all, yes),
                 ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
             }
         }
@@ -641,7 +641,7 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Update { print } => handle_config_update(yes, print),
         ConfigCommand::Approvals { action } => match action {
             ApprovalsCommand::List { format } => list_approvals(format),
-            ApprovalsCommand::Add { all } => add_approvals(all),
+            ApprovalsCommand::Add { all } => add_approvals(all, yes),
             ApprovalsCommand::Clear { global, stale } => clear_approvals(global, stale),
         },
         ConfigCommand::Alias { action } => match action {

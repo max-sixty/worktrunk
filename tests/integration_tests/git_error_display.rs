@@ -368,7 +368,20 @@ fn command_errors_render() {
     );
 
     let cases = [
-        ("non-interactive", GitError::NotInteractive.render()),
+        (
+            "non-interactive",
+            GitError::NotInteractive {
+                suggest_pre_approval: true,
+            }
+            .render(),
+        ),
+        (
+            "non-interactive from the approvals command itself",
+            GitError::NotInteractive {
+                suggest_pre_approval: false,
+            }
+            .render(),
+        ),
         (
             "LLM command failed",
             GitError::LlmCommandFailed {

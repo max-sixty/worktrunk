@@ -19,7 +19,7 @@ use worktrunk::styling::{
 };
 
 use crate::cli::SwitchFormat;
-use crate::commands::command_approval::approve_command_batch;
+use crate::commands::command_approval::{ApprovalMode, approve_command_batch};
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
@@ -189,7 +189,14 @@ pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
 }
 
 /// Handle `wt config approvals add` command - approve all hook and alias commands in the project
-pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
+///
+/// `yes` skips the review prompt, which is what makes the command usable
+/// unattended: the approvals are still written, so an orchestrator can
+/// pre-approve a project's commands before any `wt` run that would execute
+/// them. Templates edited since an earlier approval are re-approved without
+/// comment — read `wt config approvals list --format=json`'s `stale` first to
+/// see them.
+pub fn add_approvals(show_all: bool, yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -219,12 +226,16 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
         commands
     };
 
-    // Call the approval prompt (yes=false to require interactive approval and save)
     // When show_all=true, we've already included all commands in commands_to_approve
     // When show_all=false, we've already filtered to unapproved commands
     // So we pass skip_approval_filter=true to prevent double-filtering
-    let approved =
-        approve_command_batch(&commands_to_approve, &project_id, &approvals, false, true)?;
+    let approved = approve_command_batch(
+        &commands_to_approve,
+        &project_id,
+        &approvals,
+        ApprovalMode::Record { yes },
+        true,
+    )?;
 
     // Show result
     if approved {
