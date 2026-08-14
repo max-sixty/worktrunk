@@ -76,7 +76,7 @@ Prompts for approval of all project commands and saves them to approvals.toml.
 By default, shows only unapproved commands. Use [2m--all[0m to review all commands
 including previously approved ones.
 
-[2m--yes[0m writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval — Reading approval state lists those, for a caller that wants to look before granting them.
+[2m--yes[0m writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval. A caller that wants to look before granting them can list those first — see Reading approval state.
 
 [1m[32mExamples[0m
 
