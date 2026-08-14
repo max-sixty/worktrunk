@@ -588,13 +588,13 @@ fn run_one_command(
     // Foreground steps inherit the parent's stdin so an interactive child keeps
     // its controlling terminal — a `pre-*` hook can prompt (e.g. `gum confirm`
     // before `mise trust`), and an alias body's `wt switch` picker keeps the
-    // tty. The JSON context still reaches concurrent and background (`post-*`)
-    // hooks, which can't be interactive, via their own stdin pipe.
+    // tty. The JSON context still reaches concurrent groups and detached
+    // (`post-*`) hooks, which can't be interactive, via their own stdin pipe;
+    // `execute_shell_command` no longer has a branch that pipes it.
     let log_label = fg_step.announce.log_label(cmd);
     let result = execute_shell_command(
         wt_path,
         &command_str,
-        None,
         log_label.as_deref(),
         directives.clone(),
         fg_step.redirect_stdout_to_stderr,
