@@ -1,9 +1,9 @@
 //! Integration tests for the `wt config approvals` subcommands
 
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, make_snapshot_cmd, repo, set_temp_home_env,
-    setup_snapshot_settings, setup_snapshot_settings_with_home, setup_temp_snapshot_settings,
-    temp_home, wt_command,
+    BareRepoTest, TestRepo, TestRepoBase, make_snapshot_cmd, make_snapshot_cmd_with_global_flags,
+    repo, set_temp_home_env, setup_snapshot_settings, setup_snapshot_settings_with_home,
+    setup_temp_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -177,6 +177,73 @@ fn test_hook_approvals_emits_deprecation_warning(
         cmd.arg("approvals").arg(action);
         assert_cmd_snapshot!(snapshot_name, cmd);
     });
+}
+
+/// `--yes` is what makes `add` usable unattended: with no terminal to prompt
+/// on it lists what it trusts and writes the approvals. The flag is global, so
+/// it records the same thing on either side of the subcommand.
+#[rstest]
+fn test_add_approvals_yes_records_without_a_terminal(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(
+        r#"pre-merge = "cargo test"
+
+[aliases]
+deploy = "echo deploying"
+"#,
+    );
+    repo.commit("Add config");
+
+    snapshot_add_approvals("add_approvals_yes", &repo, &["--yes"]);
+
+    let recorded = fs::read_to_string(repo.test_approvals_path()).unwrap();
+    assert!(recorded.contains("cargo test"), "{recorded}");
+    assert!(recorded.contains("echo deploying"), "{recorded}");
+
+    // Same run again from the global flag position, which reaches the command
+    // through clap's global `--yes` rather than the subcommand's own parse.
+    fs::remove_file(repo.test_approvals_path()).unwrap();
+    let output = make_snapshot_cmd_with_global_flags(&repo, "config", &[], None, &["--yes"])
+        .args(["approvals", "add"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(repo.test_approvals_path()).unwrap(),
+        recorded
+    );
+}
+
+/// The record is all `add` produces, so a write it cannot make fails the
+/// command. A warning plus exit 0 would leave an orchestrator that pre-approves
+/// and reads the exit code walking into the prompt it just paid to avoid.
+#[rstest]
+fn test_add_approvals_yes_fails_when_approvals_cannot_be_saved(repo: TestRepo) {
+    repo.write_project_config(r#"pre-merge = "cargo test""#);
+    repo.commit("Add config");
+
+    // A regular file where the approvals directory would go: creating the
+    // parent fails on every platform, with no permission bits involved.
+    let blocker = repo.test_approvals_path().with_file_name("blocker");
+    fs::write(&blocker, "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "approvals", "add", "--yes"])
+        .env("WORKTRUNK_APPROVALS_PATH", blocker.join("approvals.toml"))
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to save command approval"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("Commands approved"),
+        "a failed write must not report success: {stderr}"
+    );
 }
 
 /// Regression: `wt config approvals add` must walk project aliases as well as

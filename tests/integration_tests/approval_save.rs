@@ -509,9 +509,10 @@ fn test_truly_concurrent_approve_with_threads() {
 
 ///
 /// This tests the lower-level `approve_command()` method fails when permissions
-/// are denied. The higher-level `approve_command_batch()` catches this error and
-/// displays a warning (see src/commands/command_approval.rs:82-85), allowing
-/// commands to execute even when the approval can't be saved.
+/// are denied. On an execution path the higher-level `approve_command_batch()`
+/// catches this error and displays a warning, allowing commands to execute even
+/// when the approval can't be saved; `wt config approvals add` instead
+/// propagates it, since the record is all that command produces.
 ///
 /// TODO: Find a way to test permission errors without skipping when running as root.
 /// Currently skips in containerized environments (Claude Code web, Docker) where
@@ -575,14 +576,11 @@ fn test_permission_error_prevents_save() {
         "Expected save to fail due to permissions, but it succeeded"
     );
 
-    // In the actual code (approve_command_batch), when this error occurs:
-    // 1. It's caught with `if let Err(e) = fresh_config.save()`
-    // 2. Warning is printed: "🟡 Failed to save command approval: {error}"
-    // 3. Hint is printed: "💡 Approval will be requested again next time."
-    // 4. Function returns Ok(true) - execution continues!
-    //
-    // The approval succeeds (commands execute) even though saving failed.
-    // This test verifies the save operation correctly fails with permission errors.
+    // This test verifies the save operation correctly fails with permission
+    // errors. What `approve_command_batch` does with that failure is covered by
+    // `test_add_approvals_yes_fails_when_approvals_cannot_be_saved`
+    // (propagates, for `wt config approvals add`) and by the warning path it
+    // takes for a command that merely runs project commands.
 }
 
 #[test]

@@ -47,7 +47,9 @@ use std::path::Path;
 ///
 /// # Arguments
 ///
-/// * `subcommand` - The subcommand name (e.g., "remove", "switch", "merge")
+/// * `subcommand` - The subcommand name (e.g., "remove", "switch", "merge").
+///   A nested subcommand is written out in full here ("config approvals add"),
+///   so that any flags land after it rather than mid-path.
 /// * `args` - Positional arguments (branch names, paths, etc.)
 /// * `flags` - Additional flags to suggest (e.g., "--force", "-D")
 ///

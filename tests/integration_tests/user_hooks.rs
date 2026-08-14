@@ -1904,6 +1904,59 @@ fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_concurrent_group_keeps_json_under_foreground(repo: TestRepo) {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // A multi-key table parses as `HookStep::Concurrent`, whose children each
+    // get their own JSON pipe — so the terminal `--foreground` hands a lone
+    // step never reaches them. This is the shape that silently takes the tty
+    // away from a `gum confirm`, so pin it rather than leaving it to the docs.
+    repo.write_project_config(
+        r#"[post-start]
+a = "cat > cap_a.txt"
+b = "true"
+"#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--foreground"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn wt hook post-start");
+    child
+        .stdin
+        .take()
+        .expect("stdin piped")
+        .write_all(b"sentinel-from-parent-stdin\n")
+        .expect("failed to write to wt stdin");
+    let output = child.wait_with_output().expect("failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "wt hook post-start --foreground should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let captured = repo.root_path().join("cap_a.txt");
+    let contents = fs::read_to_string(&captured).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&contents).unwrap_or_else(|e| {
+        panic!(
+            "a concurrent child should still receive the JSON context: {e}\nContents: {contents}"
+        )
+    });
+    assert_eq!(
+        json["hook_type"].as_str(),
+        Some("post-start"),
+        "the JSON context should name the hook type"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_pre_commit(repo: TestRepo) {
     // Write project config with pre-commit hook
     repo.write_project_config(r#"pre-commit = "echo 'STANDALONE_PRE_COMMIT' > hook_ran.txt""#);

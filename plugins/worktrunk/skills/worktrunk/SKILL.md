@@ -118,14 +118,14 @@ Agents running `wt merge`, `wt switch`, or other commands that trigger hooks wil
 ○ post-merge install:
   cargo install --path .
 ✗ Cannot prompt for approval in non-interactive environment
-↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add
+↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add --yes
 ```
 
 The resolution is for the user to make the trust decision themselves:
 
 - **`wt config approvals add`** — interactive prompt where the user reviews each command before it is stored to `~/.config/worktrunk/approvals.toml`. Run once per project; the approval persists across invocations until the command template changes or the project moves. This is the path to recommend — the user reviews and consents to exactly the commands that will run.
 
-**When invoked as an agent, stop and escalate to the user.** Approving a project's hooks is a security decision about whether this repository should be trusted to run arbitrary commands on the user's machine — that decision belongs to the user, not the agent. Tell the user to run `wt config approvals add` and let them review the commands. Do not run `--yes` on the user's behalf: it skips the approval gate for that invocation, so reaching for it to unblock a command defeats the protection. `--yes` exists for CI/CD pipelines that already control their own hook contents; it is not a shortcut for an interactive agent to silence an approval prompt.
+**When invoked as an agent, stop and escalate to the user.** Approving a project's hooks is a security decision about whether this repository should be trusted to run arbitrary commands on the user's machine — that decision belongs to the user, not the agent. Tell the user to run `wt config approvals add` and let them review the commands. Do not reach for either `--yes` on the user's behalf: on the blocked command it skips the gate for that invocation, and `wt config approvals add --yes` records every command the project declares with nobody reading them. Both exist for CI/CD pipelines and containers that already control their own hook contents; neither is a shortcut for an interactive agent to silence an approval prompt.
 
 ## Advanced: agent handoffs
 
