@@ -39,24 +39,21 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// Refuses to delete when the copy skipped an entry: the source still holds
 /// content the destination never received, so the delete would destroy it.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
+    let skipped = if is_dir {
+        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?
+    } else {
+        usize::from(copy_leaf(src, dest, None, true)?.is_none())
+    };
+    if skipped > 0 {
+        bail!(
+            "{} was not fully copied, so the source is left in place; run with -vv to list what was skipped",
+            format_path_for_display(src)
+        );
+    }
+
     if is_dir {
-        let skipped = copy_dir_recursive(src, dest, None, true, &Progress::disabled())?;
-        if skipped > 0 {
-            let entry_word = if skipped == 1 { "entry" } else { "entries" };
-            bail!(
-                "{skipped} {entry_word} under {} could not be copied, so the source is left in place; run with -vv to list them",
-                format_path_for_display(src)
-            );
-        }
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        if copy_leaf(src, dest, None, true)?.is_none() {
-            bail!(
-                "{} could not be copied, so the source is left in place; run with -vv for the reason",
-                format_path_for_display(src)
-            );
-        }
-
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
@@ -526,44 +523,12 @@ mod tests {
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
     }
 
-    #[cfg(unix)]
     #[test]
-    fn test_copy_and_remove_keeps_a_directory_holding_an_uncopied_entry() {
+    fn test_copy_and_remove_keeps_a_source_that_was_not_fully_copied() {
         // The move copies then deletes, so an entry the copy skipped would be
-        // destroyed rather than moved. A socket is the deterministic stand-in:
-        // it has no copy, exactly as a source that vanished mid-walk has none.
-        let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("srcdir");
-        let dest = tmp.path().join("destdir");
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("regular.txt"), "content").unwrap();
-        let _listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
-
-        let err = copy_and_remove(&src, &dest, true).unwrap_err();
-
-        assert!(
-            err.to_string().contains("1 entry under")
-                && err.to_string().contains("could not be copied"),
-            "unexpected error: {err}"
-        );
-        assert!(src.join("sock").exists());
-        assert_eq!(
-            fs::read_to_string(src.join("regular.txt")).unwrap(),
-            "content"
-        );
-        // The partial copy is left behind: `check_leftover_staging` is what
-        // stops a later promote from walking past it.
-        assert_eq!(
-            fs::read_to_string(dest.join("regular.txt")).unwrap(),
-            "content"
-        );
-    }
-
-    #[test]
-    fn test_copy_and_remove_keeps_a_file_that_was_not_copied() {
-        // The leaf branch reads `copy_leaf`'s `Ok(None)` the same way. A source
-        // that is already gone is the deterministic case; `fs::remove_file`
-        // must not be reached, since it would delete a file recreated since.
+        // destroyed rather than moved. A source that is already gone is the
+        // deterministic case: `copy_leaf` reports the skip, and the delete —
+        // which would take a file recreated since — must not be reached.
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("gone.txt");
         let dest = tmp.path().join("dest.txt");
@@ -571,9 +536,35 @@ mod tests {
         let err = copy_and_remove(&src, &dest, false).unwrap_err();
 
         assert!(
-            err.to_string().contains("could not be copied"),
+            err.to_string().contains("was not fully copied"),
             "unexpected error: {err}"
         );
         assert!(!dest.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_and_remove_drops_a_non_regular_file() {
+        // A socket has no content the destination can be short of, so it does
+        // not hold up the move. Refusing over one would strand real content:
+        // `distribute_staged` runs after the branch exchange, and a promote
+        // that dies there leaves the staged files behind a `check_leftover_
+        // staging` refusal whose remedy deletes them.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("srcdir");
+        let dest = tmp.path().join("destdir");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("regular.txt"), "content").unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
+        drop(listener);
+
+        copy_and_remove(&src, &dest, true).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("regular.txt")).unwrap(),
+            "content"
+        );
+        assert!(!dest.join("sock").exists());
     }
 }

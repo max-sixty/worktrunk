@@ -202,10 +202,13 @@ struct CopyLeaf {
 /// of the source's. Every such skip logs at debug (`wt -vv`). The tree's own
 /// root is the exception: the caller named it, so its absence is an error.
 ///
-/// Returns how many of the entries the walk collected were not copied. A pure
-/// copy ignores it; a caller that deletes the source afterwards must refuse on a
-/// non-zero count, since the source still holds content the destination never
-/// received. Zero does not prove the destination holds everything the source
+/// Returns how many of the entries the walk collected to copy were not copied.
+/// A pure copy ignores it; a caller that deletes the source afterwards must
+/// refuse on a non-zero count, since the source still holds content the
+/// destination never received. A non-regular file is dropped at classification
+/// rather than counted: it carries no content the destination can be short of,
+/// so refusing over one would cost a caller the whole operation to protect
+/// nothing. Zero does not prove the destination holds everything the source
 /// does — a file created after `read_dir` snapshots its directory is never seen,
 /// and copy-then-delete cannot close that without a rename.
 ///
@@ -286,10 +289,7 @@ pub fn copy_dir_recursive(
                     dest: dest_path,
                 });
             } else {
-                // Sockets and FIFOs have no copy, so the destination never
-                // receives them — a skip like any other.
                 tracing::debug!(path = %src_path.display(), "skipping non-regular file: {}", src_path.display());
-                skipped += 1;
             }
         }
     }
@@ -488,20 +488,21 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_copy_dir_recursive_counts_non_regular_file() {
-        // A socket has no copy, so the destination never receives it. Counting
-        // it keeps `copy_and_remove` from deleting a source that still holds
-        // something the destination does not.
+    fn test_copy_dir_recursive_does_not_count_a_non_regular_file() {
+        // A socket is dropped at classification, not counted: the count exists
+        // so a caller that deletes the source can refuse, and a socket carries
+        // no content that refusal would protect.
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("regular"), b"content").unwrap();
-        let _listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
+        drop(listener);
 
         let skipped = copy_dir_recursive(&src, &dest, None, true, &Progress::disabled()).unwrap();
 
-        assert_eq!(skipped, 1);
+        assert_eq!(skipped, 0);
         assert_eq!(fs::read(dest.join("regular")).unwrap(), b"content");
         assert!(!dest.join("sock").exists());
     }

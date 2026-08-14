@@ -4,7 +4,7 @@
 
 ### Improved
 
-- **A JSON `true` or `null` nested in a `vars` value renders as `True` or `None`**: minijinja 2.22 adopted Jinja2's spelling, so `{{ vars.<key>.<field> }}` into an object set by `wt config state vars set` prints those words. A var whose whole value is `true` stays a string. (Breaking: the old spellings were `true` and `none`.) ([#3795](https://github.com/max-sixty/worktrunk/pull/3795))
+- **A JSON bool or null nested in a `vars` value renders as `True`, `False`, or `None`**: minijinja 2.22 adopted Jinja2's spelling for all three, so `{{ vars.<key>.<field> }}` into an object set by `wt config state vars set` prints those words. A var whose whole value is `true` stays a string. (Breaking: the old spellings were `true`, `false`, and `none`.) ([#3795](https://github.com/max-sixty/worktrunk/pull/3795))
 
 - **`wt config approvals add --yes` records approvals without a terminal**: the command refused every non-interactive run, so a container or CI job could not pre-approve a project it had just cloned. `--yes` now lists what it trusts and writes it, and a save it cannot make fails the command rather than warning and exiting 0. ([#3819](https://github.com/max-sixty/worktrunk/pull/3819))
 
