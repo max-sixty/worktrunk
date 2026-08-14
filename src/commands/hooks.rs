@@ -565,8 +565,8 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
 /// Foreground steps — hook and alias alike — inherit the parent's stdin so an
 /// interactive child keeps the controlling terminal (a `pre-*` hook can prompt;
 /// an alias body's `wt switch` picker works). The JSON context still reaches
-/// concurrent and background (`post-*`) hooks, which can't be interactive, via
-/// their own per-child stdin pipe.
+/// concurrent groups and detached (`post-*`) hooks, which can't be interactive,
+/// via their own per-child stdin pipe.
 ///
 /// Trust model:
 /// - User-source alias steps pass EXEC through. The body lives in the user's

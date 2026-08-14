@@ -31,9 +31,10 @@
 //! git config, so order matters for `vars.*`), so a later command's expansion
 //! can run after an earlier command's child has already started.
 //!
-//! **Stdin**: every child receives the spec's context as JSON on stdin,
-//! matching the foreground hook convention. Commands that don't read stdin
-//! ignore it.
+//! **Stdin**: every child receives the spec's context as JSON on stdin. The
+//! foreground path inherits wt's stdin instead, so a single step there can
+//! prompt (see `execute_shell_command` in `output/handlers.rs`). Commands that
+//! don't read stdin ignore it.
 //!
 //! ## Template freshness
 //!
