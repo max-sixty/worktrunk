@@ -5,15 +5,17 @@ info:
   args:
     - switch
     - "--create"
-    - from-main
+    - from-release-base
     - "--base"
-    - main
+    - release-base
     - "--execute"
     - "echo 'base={{ base }}'"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -23,7 +25,6 @@ info:
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     TERM: alacritty
@@ -38,8 +39,10 @@ info:
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -49,14 +52,14 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-base=main
+base=release-base
 
 ----- stderr -----
 [33m▲[39m [33m[1m--execute[22m will change in a future release: it will run a single program, with arguments after [1m--[22m, not a shell command line[39m
 [2m↳[22m [2mComment at [4mhttps://github.com/max-sixty/worktrunk/issues/2860[24m if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: [4m--execute sh -- -c 'echo '\''base={{ base }}'\'''[24m[22m
-[32m✓[39m [32mCreated branch [1mfrom-main[22m from [1mmain[22m and worktree @ [1m_REPO_.from-main[22m[39m
+[32m✓[39m [32mCreated branch [1mfrom-release-base[22m from [1mrelease-base[22m and worktree @ [1m_REPO_.from-release-base[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.from-main[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'base=main'[0m
+[36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.from-release-base[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'base=release-base'[0m

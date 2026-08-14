@@ -159,7 +159,7 @@ fn legacy_nushell_autoload_dirs(
 /// The first entry is the canonical write target (the current vendor-autoload
 /// dir); the rest are the data-dir fallback and the legacy config-dir locations
 /// kept so install/uninstall can clean up stranded files.
-fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
+pub fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     let dirs = nu_dirs();
     let mut candidates = vec![nushell_vendor_autoload_dir(
         home,
@@ -209,6 +209,29 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
     }
 }
 
+/// Rc/profile files scanned line-by-line for integration lines.
+///
+/// Bash/Zsh/PowerShell integration is one line in an rc file, so these paths
+/// are independent of the binary name; Fish and Nushell use per-name wrapper
+/// files instead and have no line-based config. `config_paths` builds on this
+/// for the line-based shells, so install and uninstall cannot drift apart.
+pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> Vec<PathBuf> {
+    match shell {
+        super::Shell::Bash => {
+            // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
+            vec![home.join(".bashrc")]
+        }
+        super::Shell::Zsh => {
+            let zdotdir = std::env::var("ZDOTDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.to_path_buf());
+            vec![zdotdir.join(".zshrc")]
+        }
+        super::Shell::PowerShell => powershell_profile_paths(home),
+        super::Shell::Fish | super::Shell::Nushell => Vec::new(),
+    }
+}
+
 /// Returns the config file paths for a shell.
 ///
 /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).
@@ -217,15 +240,8 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
     let home = home_dir_required()?;
 
     Ok(match shell {
-        super::Shell::Bash => {
-            // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
-            vec![home.join(".bashrc")]
-        }
-        super::Shell::Zsh => {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.clone());
-            vec![zdotdir.join(".zshrc")]
+        super::Shell::Bash | super::Shell::Zsh | super::Shell::PowerShell => {
+            line_based_config_paths(shell, &home)
         }
         super::Shell::Fish => {
             // For fish, we write to functions/ which is autoloaded on first use.
@@ -250,7 +266,6 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
                 .map(|autoload_dir| autoload_dir.join(format!("{}.nu", cmd)))
                 .collect()
         }
-        super::Shell::PowerShell => powershell_profile_paths(&home),
     })
 }
 

@@ -1,562 +1,474 @@
 use insta::assert_snapshot;
 use std::path::PathBuf;
 use worktrunk::git::{
-    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, WorktrunkError,
+    Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, RefType, WorktrunkError,
     add_hook_skip_hint,
 };
 
-// ============================================================================
-// Worktree errors
-// ============================================================================
-
-#[test]
-fn display_worktree_removal_failed() {
-    let err = GitError::WorktreeRemovalFailed {
-        branch: "feature-x".into(),
-        path: PathBuf::from("/tmp/repo.feature-x"),
-        error: "fatal: worktree is dirty\nerror: could not remove worktree".into(),
-        remaining_entries: None,
-    };
-
-    assert_snapshot!("worktree_removal_failed", err.render());
+fn render_cases(cases: impl IntoIterator<Item = (&'static str, String)>) -> String {
+    cases
+        .into_iter()
+        .map(|(name, output)| format!("## {name}\n\n{output}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[test]
-fn display_worktree_removal_failed_directory_not_empty() {
-    let err = GitError::WorktreeRemovalFailed {
-        branch: "feature-x".into(),
-        path: PathBuf::from("/tmp/repo.feature-x"),
-        error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
-        remaining_entries: Some(vec![
-            ".vite/".into(),
-            "node_modules/".into(),
-            "target/".into(),
-        ]),
-    };
+fn worktree_errors_render() {
+    let cases = [
+        (
+            "removal failed",
+            GitError::WorktreeRemovalFailed {
+                branch: "feature-x".into(),
+                path: PathBuf::from("/tmp/repo.feature-x"),
+                error: "fatal: worktree is dirty\nerror: could not remove worktree".into(),
+                remaining_entries: None,
+            }
+            .render(),
+        ),
+        (
+            "removal left directories",
+            GitError::WorktreeRemovalFailed {
+                branch: "feature-x".into(),
+                path: PathBuf::from("/tmp/repo.feature-x"),
+                error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+                remaining_entries: Some(vec![
+                    ".vite/".into(),
+                    "node_modules/".into(),
+                    "target/".into(),
+                ]),
+            }
+            .render(),
+        ),
+        (
+            "removal left one entry",
+            GitError::WorktreeRemovalFailed {
+                branch: "feature-x".into(),
+                path: PathBuf::from("/tmp/repo.feature-x"),
+                error: "error: failed to remove '/tmp/repo.feature-x/target': Permission denied"
+                    .into(),
+                remaining_entries: Some(vec!["target/".into()]),
+            }
+            .render(),
+        ),
+        (
+            "removal truncates a long entry list",
+            GitError::WorktreeRemovalFailed {
+                branch: "feature-x".into(),
+                path: PathBuf::from("/tmp/repo.feature-x"),
+                error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
+                remaining_entries: Some((0..15).map(|i| format!("dir-{i:02}/")).collect()),
+            }
+            .render(),
+        ),
+        (
+            "creation failed",
+            GitError::WorktreeCreationFailed {
+                branch: "feature-y".into(),
+                base_branch: Some("main".into()),
+                error: "fatal: '/tmp/repo.feature-y' already exists".into(),
+                command: None,
+            }
+            .render(),
+        ),
+        (
+            "creation failed with command",
+            GitError::WorktreeCreationFailed {
+                branch: "fix".into(),
+                base_branch: Some("main".into()),
+                error:
+                    "Preparing worktree (new branch 'fix')\nfatal: cannot lock ref 'refs/heads/fix'"
+                        .into(),
+                command: Some(FailedCommand {
+                    command: "git worktree add /tmp/repo.fix -b fix main".into(),
+                    exit_info: "exit code 128".into(),
+                }),
+            }
+            .render(),
+        ),
+        (
+            "worktree missing",
+            GitError::WorktreeMissing {
+                branch: "stale-branch".into(),
+            }
+            .render(),
+        ),
+        (
+            "no worktree at a leftover directory",
+            GitError::WorktreeNotFoundAtPath {
+                path: PathBuf::from("/tmp/repo/.claude/worktrees/ghost"),
+            }
+            .render(),
+        ),
+        (
+            "branch not found",
+            GitError::BranchNotFound {
+                branch: "nonexistent".into(),
+                show_create_hint: true,
+                last_fetch_ago: None,
+                pr_mr_platform: None,
+            }
+            .render(),
+        ),
+        (
+            "branch not found after stale fetch",
+            GitError::BranchNotFound {
+                branch: "nonexistent".into(),
+                show_create_hint: true,
+                last_fetch_ago: Some("last fetched 3h ago".into()),
+                pr_mr_platform: None,
+            }
+            .render(),
+        ),
+        (
+            "branch not found without create hint",
+            GitError::BranchNotFound {
+                branch: "nonexistent".into(),
+                show_create_hint: false,
+                last_fetch_ago: None,
+                pr_mr_platform: None,
+            }
+            .render(),
+        ),
+        (
+            "numeric branch on unknown forge",
+            GitError::BranchNotFound {
+                branch: "2474".into(),
+                show_create_hint: true,
+                last_fetch_ago: None,
+                pr_mr_platform: None,
+            }
+            .render(),
+        ),
+        (
+            "numeric branch on GitHub",
+            GitError::BranchNotFound {
+                branch: "2474".into(),
+                show_create_hint: true,
+                last_fetch_ago: Some("last fetched 9h ago".into()),
+                pr_mr_platform: Some(RefType::Pr),
+            }
+            .render(),
+        ),
+        (
+            "numeric branch on GitLab",
+            GitError::BranchNotFound {
+                branch: "2474".into(),
+                show_create_hint: true,
+                last_fetch_ago: None,
+                pr_mr_platform: Some(RefType::Mr),
+            }
+            .render(),
+        ),
+        (
+            "worktree path occupied",
+            GitError::WorktreePathOccupied {
+                branch: "feature-z".into(),
+                path: PathBuf::from("/tmp/repo.feature-z"),
+                occupant: Some("other-branch".into()),
+            }
+            .render(),
+        ),
+        (
+            "worktree path exists",
+            GitError::WorktreePathExists {
+                branch: "feature".into(),
+                path: PathBuf::from("/tmp/repo.feature"),
+                create: false,
+            }
+            .render(),
+        ),
+        (
+            "cannot remove main worktree",
+            GitError::CannotRemoveMainWorktree.render(),
+        ),
+    ];
 
-    assert_snapshot!("worktree_removal_failed_directory_not_empty", err.render());
+    assert_snapshot!("worktree_errors", render_cases(cases));
 }
 
 #[test]
-fn display_worktree_removal_failed_with_remaining_entries() {
-    let err = GitError::WorktreeRemovalFailed {
-        branch: "feature-x".into(),
-        path: PathBuf::from("/tmp/repo.feature-x"),
-        error: "error: failed to remove '/tmp/repo.feature-x/target': Permission denied".into(),
-        remaining_entries: Some(vec!["target/".into()]),
-    };
+fn git_state_errors_render() {
+    let cases = [
+        (
+            "detached HEAD while merging",
+            GitError::DetachedHead {
+                action: Some("merge".into()),
+                worktree: None,
+            }
+            .render(),
+        ),
+        (
+            "detached HEAD without action",
+            GitError::DetachedHead {
+                action: None,
+                worktree: None,
+            }
+            .render(),
+        ),
+        (
+            // The detached worktree is the target the user named, not the one
+            // they are standing in, so the hint has to say where to switch.
+            "detached HEAD in a named target worktree",
+            GitError::DetachedHead {
+                action: Some("use /tmp/repo.other as a target".into()),
+                worktree: Some(PathBuf::from("/tmp/repo.other")),
+            }
+            .render(),
+        ),
+        (
+            "rebase in progress",
+            GitError::OperationInProgress {
+                action: "rebase".into(),
+                branch: None,
+            }
+            .render(),
+        ),
+        (
+            "merge in progress",
+            GitError::OperationInProgress {
+                action: "merge".into(),
+                branch: None,
+            }
+            .render(),
+        ),
+        (
+            "operation in progress in the target worktree",
+            GitError::OperationInProgress {
+                action: "push".into(),
+                branch: Some("main".into()),
+            }
+            .render(),
+        ),
+        (
+            "uncommitted changes",
+            GitError::UncommittedChanges {
+                action: Some("remove worktree".into()),
+                branch: None,
+                force_hint: false,
+                dirty_files: Vec::new(),
+            }
+            .render(),
+        ),
+        (
+            "uncommitted changes on named branch",
+            GitError::UncommittedChanges {
+                action: Some("remove worktree".into()),
+                branch: Some("feature-branch".into()),
+                force_hint: false,
+                dirty_files: Vec::new(),
+            }
+            .render(),
+        ),
+        (
+            "uncommitted changes with force hint",
+            GitError::UncommittedChanges {
+                action: Some("remove worktree".into()),
+                branch: Some("feature-branch".into()),
+                force_hint: true,
+                dirty_files: Vec::new(),
+            }
+            .render(),
+        ),
+        (
+            "uncommitted changes with dirty files",
+            GitError::UncommittedChanges {
+                action: Some("remove worktree after merge".into()),
+                branch: Some("feature-auth".into()),
+                force_hint: false,
+                dirty_files: vec![" M auth.rs".into(), "?? .DS_Store".into()],
+            }
+            .render(),
+        ),
+        (
+            "branch already exists",
+            GitError::BranchAlreadyExists {
+                branch: "feature".into(),
+            }
+            .render(),
+        ),
+    ];
 
-    assert_snapshot!(
-        "worktree_removal_failed_with_remaining_entries",
-        err.render()
-    );
+    assert_snapshot!("git_state_errors", render_cases(cases));
 }
 
 #[test]
-fn display_worktree_removal_failed_many_remaining_entries() {
-    let err = GitError::WorktreeRemovalFailed {
-        branch: "feature-x".into(),
-        path: PathBuf::from("/tmp/repo.feature-x"),
-        error: "error: failed to delete '/tmp/repo.feature-x': Directory not empty".into(),
-        remaining_entries: Some((0..15).map(|i| format!("dir-{i:02}/")).collect()),
-    };
+fn integration_errors_render() {
+    let cases = [
+        (
+            "push failed",
+            GitError::PushFailed {
+                target_branch: "main".into(),
+                error: "To /Users/user/workspace/repo/.git\n ! [remote rejected] HEAD -> main (Up-to-date check failed)\nerror: failed to push some refs to '/Users/user/workspace/repo/.git'".into(),
+            }
+            .render(),
+        ),
+        (
+            "conflicting changes",
+            GitError::ConflictingChanges {
+                target_branch: "main".into(),
+                files: vec!["src/main.rs".into(), "src/lib.rs".into()],
+                worktree_path: PathBuf::from("/tmp/repo.main"),
+            }
+            .render(),
+        ),
+        (
+            "not fast-forward",
+            GitError::NotFastForward {
+                target_branch: "main".into(),
+                commits_formatted: "abc1234 Fix bug\ndef5678 Add feature".into(),
+                in_merge_context: false,
+            }
+            .render(),
+        ),
+        (
+            "not fast-forward during merge",
+            GitError::NotFastForward {
+                target_branch: "main".into(),
+                commits_formatted: "abc1234 New commit on main".into(),
+                in_merge_context: true,
+            }
+            .render(),
+        ),
+        (
+            "rebase conflict",
+            GitError::RebaseConflict {
+                target_branch: "main".into(),
+                git_output: "CONFLICT (content): Merge conflict in src/main.rs".into(),
+            }
+            .render(),
+        ),
+    ];
 
-    assert_snapshot!(
-        "worktree_removal_failed_many_remaining_entries",
-        err.render()
-    );
+    assert_snapshot!("integration_errors", render_cases(cases));
 }
 
 #[test]
-fn display_worktree_creation_failed() {
-    let err = GitError::WorktreeCreationFailed {
-        branch: "feature-y".into(),
-        base_branch: Some("main".into()),
-        error: "fatal: '/tmp/repo.feature-y' already exists".into(),
-        command: None,
-    };
-
-    assert_snapshot!("worktree_creation_failed", err.render());
-}
-
-#[test]
-fn display_worktree_creation_failed_with_command() {
-    let err = GitError::WorktreeCreationFailed {
-        branch: "fix".into(),
-        base_branch: Some("main".into()),
-        error: "Preparing worktree (new branch 'fix')\nfatal: cannot lock ref 'refs/heads/fix'"
-            .into(),
-        command: Some(FailedCommand {
-            command: "git worktree add /tmp/repo.fix -b fix main".into(),
-            exit_info: "exit code 128".into(),
-        }),
-    };
-
-    assert_snapshot!("worktree_creation_failed_with_command", err.render());
-}
-
-#[test]
-fn display_worktree_missing() {
-    let err = GitError::WorktreeMissing {
-        branch: "stale-branch".into(),
-    };
-
-    assert_snapshot!("worktree_missing", err.render());
-}
-
-#[test]
-fn branch_not_found() {
-    let err = GitError::BranchNotFound {
-        branch: "nonexistent".into(),
-        show_create_hint: true,
-        last_fetch_ago: None,
-        pr_mr_platform: None,
-    };
-
-    assert_snapshot!("branch_not_found", err.render());
-}
-
-#[test]
-fn branch_not_found_with_fetch_time() {
-    let err = GitError::BranchNotFound {
-        branch: "nonexistent".into(),
-        show_create_hint: true,
-        last_fetch_ago: Some("last fetched 3h ago".into()),
-        pr_mr_platform: None,
-    };
-
-    assert_snapshot!("branch_not_found_with_fetch_time", err.render());
-}
-
-#[test]
-fn branch_not_found_no_create_hint() {
-    let err = GitError::BranchNotFound {
-        branch: "nonexistent".into(),
-        show_create_hint: false,
-        last_fetch_ago: None,
-        pr_mr_platform: None,
-    };
-
-    assert_snapshot!("branch_not_found_no_create_hint", err.render());
-}
-
-#[test]
-fn branch_not_found_numeric_unknown_platform() {
-    // Purely numeric name with unknown platform: hint suggests both `pr:N` and `mr:N`.
-    let err = GitError::BranchNotFound {
-        branch: "2474".into(),
-        show_create_hint: true,
-        last_fetch_ago: None,
-        pr_mr_platform: None,
-    };
-
-    assert_snapshot!("branch_not_found_numeric_unknown_platform", err.render());
-}
-
-#[test]
-fn branch_not_found_numeric_github() {
-    use worktrunk::git::RefType;
-    let err = GitError::BranchNotFound {
-        branch: "2474".into(),
-        show_create_hint: true,
-        last_fetch_ago: Some("last fetched 9h ago".into()),
-        pr_mr_platform: Some(RefType::Pr),
-    };
-
-    assert_snapshot!("branch_not_found_numeric_github", err.render());
-}
-
-#[test]
-fn branch_not_found_numeric_gitlab() {
-    use worktrunk::git::RefType;
-    let err = GitError::BranchNotFound {
-        branch: "2474".into(),
-        show_create_hint: true,
-        last_fetch_ago: None,
-        pr_mr_platform: Some(RefType::Mr),
-    };
-
-    assert_snapshot!("branch_not_found_numeric_gitlab", err.render());
-}
-
-#[test]
-fn display_worktree_path_occupied() {
-    let err = GitError::WorktreePathOccupied {
-        branch: "feature-z".into(),
-        path: PathBuf::from("/tmp/repo.feature-z"),
-        occupant: Some("other-branch".into()),
-    };
-
-    assert_snapshot!("worktree_path_occupied", err.render());
-}
-
-#[test]
-fn display_worktree_path_exists() {
-    let err = GitError::WorktreePathExists {
-        branch: "feature".to_string(),
-        path: PathBuf::from("/tmp/repo.feature"),
-        create: false,
-    };
-
-    assert_snapshot!("worktree_path_exists", err.render());
-}
-
-#[test]
-fn display_cannot_remove_main_worktree() {
-    let err = GitError::CannotRemoveMainWorktree;
-
-    assert_snapshot!("cannot_remove_main_worktree", err.render());
-}
-
-// ============================================================================
-// Git state errors
-// ============================================================================
-
-#[test]
-fn display_detached_head() {
-    let err = GitError::DetachedHead {
-        action: Some("merge".into()),
-    };
-
-    assert_snapshot!("detached_head", err.render());
-}
-
-#[test]
-fn display_detached_head_no_action() {
-    let err = GitError::DetachedHead { action: None };
-
-    assert_snapshot!("detached_head_no_action", err.render());
-}
-
-#[test]
-fn display_uncommitted_changes() {
-    let err = GitError::UncommittedChanges {
-        action: Some("remove worktree".into()),
-        branch: None,
-        force_hint: false,
-        dirty_files: Vec::new(),
-    };
-
-    assert_snapshot!("uncommitted_changes", err.render());
-}
-
-#[test]
-fn display_uncommitted_changes_with_branch() {
-    let err = GitError::UncommittedChanges {
-        action: Some("remove worktree".into()),
-        branch: Some("feature-branch".into()),
-        force_hint: false,
-        dirty_files: Vec::new(),
-    };
-
-    assert_snapshot!("uncommitted_changes_with_branch", err.render());
-}
-
-#[test]
-fn display_uncommitted_changes_with_force_hint() {
-    let err = GitError::UncommittedChanges {
-        action: Some("remove worktree".into()),
-        branch: Some("feature-branch".into()),
-        force_hint: true,
-        dirty_files: Vec::new(),
-    };
-
-    assert_snapshot!("uncommitted_changes_with_force_hint", err.render());
-}
-
-#[test]
-fn display_uncommitted_changes_with_dirty_files() {
-    let err = GitError::UncommittedChanges {
-        action: Some("remove worktree after merge".into()),
-        branch: Some("feature-auth".into()),
-        force_hint: false,
-        dirty_files: vec![" M auth.rs".into(), "?? .DS_Store".into()],
-    };
-
-    assert_snapshot!("uncommitted_changes_with_dirty_files", err.render());
-}
-
-#[test]
-fn display_branch_already_exists() {
-    let err = GitError::BranchAlreadyExists {
-        branch: "feature".into(),
-    };
-
-    assert_snapshot!("branch_already_exists", err.render());
-}
-
-// ============================================================================
-// Merge/push errors
-// ============================================================================
-
-#[test]
-fn display_push_failed() {
-    let err = GitError::PushFailed {
-        target_branch: "main".into(),
-        error: "To /Users/user/workspace/repo/.git\n ! [remote rejected] HEAD -> main (Up-to-date check failed)\nerror: failed to push some refs to '/Users/user/workspace/repo/.git'".into(),
-    };
-
-    assert_snapshot!("push_failed", err.render());
-}
-
-#[test]
-fn display_conflicting_changes() {
-    let err = GitError::ConflictingChanges {
-        target_branch: "main".into(),
-        files: vec!["src/main.rs".into(), "src/lib.rs".into()],
-        worktree_path: PathBuf::from("/tmp/repo.main"),
-    };
-
-    assert_snapshot!("conflicting_changes", err.render());
-}
-
-#[test]
-fn display_not_fast_forward() {
-    let err = GitError::NotFastForward {
-        target_branch: "main".into(),
-        commits_formatted: "abc1234 Fix bug\ndef5678 Add feature".into(),
-        in_merge_context: false,
-    };
-
-    assert_snapshot!("not_fast_forward", err.render());
-}
-
-#[test]
-fn display_not_fast_forward_merge_context() {
-    let err = GitError::NotFastForward {
-        target_branch: "main".into(),
-        commits_formatted: "abc1234 New commit on main".into(),
-        in_merge_context: true,
-    };
-
-    assert_snapshot!("not_fast_forward_merge_context", err.render());
-}
-
-#[test]
-fn display_rebase_conflict() {
-    let err = GitError::RebaseConflict {
-        target_branch: "main".into(),
-        git_output: "CONFLICT (content): Merge conflict in src/main.rs".into(),
-    };
-
-    assert_snapshot!("rebase_conflict", err.render());
-}
-
-// ============================================================================
-// Validation/other errors
-// ============================================================================
-
-#[test]
-fn display_not_interactive() {
-    let err = GitError::NotInteractive;
-
-    assert_snapshot!("not_interactive", err.render());
-}
-
-#[test]
-fn display_llm_command_failed() {
-    let err = GitError::LlmCommandFailed {
-        command: "llm --model claude".into(),
-        error: "Error: API key not found".into(),
-        reproduction_command: None,
-    };
-
-    assert_snapshot!("llm_command_failed", err.render());
-}
-
-#[test]
-fn display_llm_command_failed_with_reproduction() {
-    let err = GitError::LlmCommandFailed {
-        command: "llm --model claude".into(),
-        error: "Error: API key not found".into(),
-        reproduction_command: Some("wt step commit --show-prompt | llm --model claude".into()),
-    };
-
-    assert_snapshot!("llm_command_failed_with_reproduction", err.render());
-}
-
-#[test]
-fn display_project_config_not_found() {
-    let err = GitError::ProjectConfigNotFound {
-        config_path: PathBuf::from("/tmp/repo/.config/wt.toml"),
-    };
-
-    assert_snapshot!("project_config_not_found", err.render());
-}
-
-#[test]
-fn display_parse_error() {
-    let err = GitError::ParseError {
-        message: "Invalid branch name format".into(),
-    };
-
-    assert_snapshot!("parse_error", err.render());
-}
-
-#[test]
-fn display_remote_only_branch() {
-    let err = GitError::RemoteOnlyBranch {
-        branch: "feature".into(),
-        remote: "origin".into(),
-    };
-
-    assert_snapshot!("remote_only_branch", err.render());
-}
-
-#[test]
-fn display_other() {
-    let err = GitError::Other {
-        message: "Unexpected git error".into(),
-    };
-
-    assert_snapshot!("other", err.render());
-}
-
-// ============================================================================
-// WorktrunkError display tests
-// ============================================================================
-
-#[test]
-fn display_hook_command_failed_with_name() {
-    let err = WorktrunkError::HookCommandFailed {
+fn command_errors_render() {
+    let hook_with_name = WorktrunkError::HookCommandFailed {
         hook_type: HookType::PreMerge,
         command_name: Some("test".into()),
         error: "exit code 1".into(),
         exit_code: Some(1),
     };
-
-    assert_snapshot!("hook_command_failed_with_name", err.render());
-}
-
-#[test]
-fn display_hook_command_failed_without_name() {
-    let err = WorktrunkError::HookCommandFailed {
+    let hook_without_name = WorktrunkError::HookCommandFailed {
         hook_type: HookType::PreCreate,
         command_name: None,
         error: "command not found".into(),
         exit_code: Some(127),
     };
-
-    assert_snapshot!("hook_command_failed_without_name", err.render());
-}
-
-/// Shows the complete error with hint, as users would see it.
-#[test]
-fn display_hook_command_failed_with_skip_hint() {
-    let err: anyhow::Error = WorktrunkError::HookCommandFailed {
-        hook_type: HookType::PreMerge,
-        command_name: Some("test".into()),
-        error: "exit code 1".into(),
-        exit_code: Some(1),
-    }
-    .into();
-
-    // Wrap with hint (as done by commands supporting --no-hooks)
-    let err_with_hint = add_hook_skip_hint(err);
-
-    assert_snapshot!(
-        "hook_command_failed_with_skip_hint",
-        err_with_hint
-            .downcast_ref::<HookErrorWithHint>()
-            .expect("wrapped to HookErrorWithHint")
-            .render()
+    let hook_with_hint = add_hook_skip_hint(
+        WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreMerge,
+            command_name: Some("test".into()),
+            error: "exit code 1".into(),
+            exit_code: Some(1),
+        }
+        .into(),
     );
+
+    let cases = [
+        ("non-interactive", GitError::NotInteractive.render()),
+        (
+            "LLM command failed",
+            GitError::LlmCommandFailed {
+                command: "llm --model claude".into(),
+                error: "Error: API key not found".into(),
+                reproduction_command: None,
+            }
+            .render(),
+        ),
+        (
+            "LLM command failed with reproduction",
+            GitError::LlmCommandFailed {
+                command: "llm --model claude".into(),
+                error: "Error: API key not found".into(),
+                reproduction_command: Some(
+                    "wt step commit --show-prompt | llm --model claude".into(),
+                ),
+            }
+            .render(),
+        ),
+        (
+            "project config missing",
+            GitError::ProjectConfigNotFound {
+                config_path: PathBuf::from("/tmp/repo/.config/wt.toml"),
+            }
+            .render(),
+        ),
+        (
+            "parse error",
+            GitError::ParseError {
+                message: "Invalid branch name format".into(),
+            }
+            .render(),
+        ),
+        (
+            "remote-only branch",
+            GitError::RemoteOnlyBranch {
+                branch: "feature".into(),
+                remote: "origin".into(),
+            }
+            .render(),
+        ),
+        (
+            "other git error",
+            GitError::Other {
+                message: "Unexpected git error".into(),
+            }
+            .render(),
+        ),
+        ("named hook failed", hook_with_name.render()),
+        ("unnamed hook failed", hook_without_name.render()),
+        (
+            "hook failed with skip hint",
+            hook_with_hint
+                .downcast_ref::<HookErrorWithHint>()
+                .expect("wrapped to HookErrorWithHint")
+                .render(),
+        ),
+    ];
+
+    assert_snapshot!("command_errors", render_cases(cases));
 }
 
-// ============================================================================
-// Multiline error formatting (tests the pattern used in main.rs catchall)
-// ============================================================================
-
-/// Test that multiline errors without context are formatted with header + gutter.
-/// This is the pattern used in main.rs for untyped anyhow errors.
 #[test]
-fn multiline_error_formatting() {
+fn multiline_error_helpers_normalize_line_endings() {
     use worktrunk::styling::{error_message, format_with_gutter};
 
-    // Simulate what main.rs does for multiline errors without context:
-    // 1. Show "Command failed" header
-    // 2. Show the error content in a gutter
-
-    let multiline_error =
-        "fatal: Unable to read current working directory\nerror: Could not determine cwd";
-
-    let header = error_message("Command failed").to_string();
-    let gutter = format_with_gutter(multiline_error, None);
-
-    // Verify header has error symbol
-    assert!(
-        header.contains("Command failed"),
-        "Header should contain 'Command failed'"
+    let message = "fatal: Unable to read current working directory\nerror: Could not determine cwd";
+    let rendered = format!(
+        "{}\n{}",
+        error_message("Command failed"),
+        format_with_gutter(message, None)
     );
+    assert_snapshot!("multiline_error_formatting", rendered);
 
-    // Verify gutter contains both lines
-    assert!(
-        gutter.contains("fatal: Unable to read"),
-        "Gutter should contain first line"
+    let normalize = |message: &str| message.replace("\r\n", "\n").replace('\r', "\n");
+    let expected = format_with_gutter("line1\nline2\nline3", None);
+    assert_eq!(
+        format_with_gutter(&normalize("line1\r\nline2\r\nline3"), None),
+        expected
     );
-    assert!(
-        gutter.contains("Could not determine cwd"),
-        "Gutter should contain second line"
-    );
-
-    // Snapshot the combined output
-    assert_snapshot!(
-        "multiline_error_formatting",
-        format!("{}\n{}", header, gutter)
+    assert_eq!(
+        format_with_gutter(&normalize("line1\rline2\rline3"), None),
+        expected
     );
 }
 
-/// Test that CRLF and CR line endings are normalized before formatting.
-/// main.rs normalizes: msg.replace("\r\n", "\n").replace('\r', "\n")
-#[test]
-fn multiline_error_crlf_normalization() {
-    use worktrunk::styling::format_with_gutter;
-
-    // Test CRLF (Windows line endings)
-    let crlf_error = "line1\r\nline2\r\nline3";
-    let normalized = crlf_error.replace("\r\n", "\n").replace('\r', "\n");
-    let gutter = format_with_gutter(&normalized, None);
-
-    // All three lines should appear
-    assert!(gutter.contains("line1"), "Should contain line1");
-    assert!(gutter.contains("line2"), "Should contain line2");
-    assert!(gutter.contains("line3"), "Should contain line3");
-
-    // Test CR only (old Mac line endings)
-    let cr_error = "line1\rline2\rline3";
-    let normalized = cr_error.replace("\r\n", "\n").replace('\r', "\n");
-    let gutter = format_with_gutter(&normalized, None);
-
-    assert!(gutter.contains("line1"), "CR: Should contain line1");
-    assert!(gutter.contains("line2"), "CR: Should contain line2");
-    assert!(gutter.contains("line3"), "CR: Should contain line3");
-}
-
-// ============================================================================
-// Integration test: verify error message includes command when git unavailable
-// ============================================================================
-
-/// This is an integration test because it requires running the actual binary.
 #[test]
 #[cfg(unix)]
 fn git_unavailable_error_includes_command() {
-    use crate::common::wt_bin;
-    use std::process::Command;
-
-    let mut cmd = Command::new(wt_bin());
+    let mut cmd = crate::common::wt_command();
     cmd.arg("list")
-        // Set PATH to empty so git isn't found
         .env("PATH", "/nonexistent")
-        // Prevent any fallback mechanisms
         .env_remove("GIT_EXEC_PATH");
 
-    let output = cmd.output().expect("Failed to run wt");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // The error should include the git command that failed
+    let output = cmd.output().expect("run wt without git");
+    assert!(!output.status.success());
     assert!(
-        stderr.contains("Failed to execute: git"),
-        "Error should include 'Failed to execute: git', got: {}",
-        stderr
+        String::from_utf8_lossy(&output.stderr).contains("Failed to execute: git"),
+        "stderr was:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

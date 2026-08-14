@@ -302,7 +302,7 @@ pub(super) fn detect_gitlab_pipeline(
 /// Use [`fetch_mr_details`] with the `iid` to get complete MR info.
 ///
 /// We include `source_project_id` for client-side filtering by source project.
-/// See `parse_owner_repo()` for why we filter by source, not by author.
+/// See the `# Filtering Strategy` docs on [`detect_gitlab`] for why we filter by source, not by author.
 #[derive(Debug, Default, Deserialize)]
 struct GitLabMrAuthor {
     #[serde(default)]
@@ -413,20 +413,34 @@ pub(super) struct GitLabPipeline {
     pub web_url: Option<String>,
 }
 
+/// Map a GitLab pipeline `status` to a [`CiStatus`].
+///
+/// The arms cover every value GitLab documents for the field
+/// ([pipelines API](https://docs.gitlab.com/api/pipelines/)): `created`,
+/// `waiting_for_resource`, `preparing`, `waiting_for_callback`, `pending`,
+/// `running`, `success`, `failed`, `canceling`, `canceled`, `skipped`,
+/// `manual`, `scheduled`. Every non-terminal status groups as `Running` — a
+/// pipeline still moving, whatever it's waiting on — so a status GitLab adds
+/// later is the only thing that reaches the `_` fallback.
 fn parse_gitlab_status(status: Option<&str>) -> CiStatus {
     match status {
-        // "manual" = pipeline waiting for user to trigger a manual job (not failed)
+        // Non-terminal. "manual" = waiting for a user to trigger a manual job;
+        // "canceling" = cancellation in flight, not yet the terminal "canceled".
         Some(
             "running"
             | "pending"
             | "preparing"
             | "waiting_for_resource"
+            | "waiting_for_callback"
             | "created"
             | "scheduled"
-            | "manual",
+            | "manual"
+            | "canceling",
         ) => CiStatus::Running,
         Some("failed" | "canceled") => CiStatus::Failed,
         Some("success") => CiStatus::Passed,
+        // "skipped" and an absent status carry no signal, as does any status
+        // GitLab introduces after the list above.
         Some("skipped") | None => CiStatus::NoCI,
         _ => CiStatus::NoCI,
     }
@@ -497,15 +511,19 @@ mod tests {
 
     #[test]
     fn test_parse_gitlab_status() {
-        // Running states (includes "manual" - waiting for user to trigger)
+        // Non-terminal states. "manual" waits for a user to trigger a job;
+        // "canceling" is cancellation in flight (the terminal form is
+        // "canceled"); "waiting_for_callback" waits on an external system.
         for status in [
             "running",
             "pending",
             "preparing",
             "waiting_for_resource",
+            "waiting_for_callback",
             "created",
             "scheduled",
             "manual",
+            "canceling",
         ] {
             assert_eq!(
                 parse_gitlab_status(Some(status)),

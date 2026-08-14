@@ -1,0 +1,84 @@
+name: coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Keyed per-commit on main, so a merge train can't cancel a queued upload:
+# GitHub cancels the pending run whenever a newer one joins the group, and
+# codecov picks a PR's base by walking back to the newest ancestor that has a
+# report. A main commit that skips its upload therefore leaves later PRs
+# comparing against a stale base. That's why coverage sits outside `ci`, whose
+# group is shared with jobs that hold a run open for hours. PR runs still
+# supersede their own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Swatinem/rust-cache hashes CARGO*/RUST* into the cache key, so these track
+  # ci.yaml (.github/CLAUDE.md → Build environment).
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  code-coverage:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-llvm-cov
+        version: "=0.8.7"
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-nextest
+        version: "=0.9.143"
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Own cache — coverage-instrumented builds differ from the shared test
+        # cache. Already main-gated; cache-bin:false matches everywhere else.
+        cache-bin: "false"
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Install shells (zsh, fish)
+      run: sudo apt-get update && sudo apt-get install -y zsh fish
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.114.1'
+
+    # Ensure nothing remains from caching
+    - run: cargo llvm-cov clean --workspace
+
+    - name: 📊 Generate coverage report
+      # Match the regular suite's process isolation. Cargo's in-process runner
+      # lets one busy PTY test delay another before it can paint its prompt.
+      run: cargo llvm-cov nextest --features shell-integration-tests --cobertura --output-path=cobertura.xml
+
+    - name: Upload code coverage results
+      uses: actions/upload-artifact@v7
+      with:
+        name: code-coverage-report
+        path: cobertura.xml
+
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v7.0.0
+      with:
+        files: cobertura.xml
+        # Soft-fail on fork PRs: secrets aren't available there, so we rely on
+        # tokenless upload, which can hiccup. Keep hard-fail on the main repo.
+        # The head repo is what tells the two apart — `github.repository_owner`
+        # is the base repo's owner on a fork PR too.
+        fail_ci_if_error: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        token: ${{ secrets.CODECOV_TOKEN }}

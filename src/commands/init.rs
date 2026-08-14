@@ -7,6 +7,8 @@ use worktrunk::shell;
 use worktrunk::styling::println;
 
 pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
+    shell::validate_shell_command_name(&cmd)?;
+
     let init = shell::ShellInit::with_prefix(shell, cmd);
 
     // Generate shell integration code (includes dynamic completion registration)
@@ -50,6 +52,7 @@ pub fn handle_init(shell: shell::Shell, cmd: String) -> Result<(), String> {
 /// - Include shell integration (cd-on-switch functionality)
 pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
     let cmd_name = crate::binary_name();
+    shell::validate_shell_command_name(&cmd_name).map_err(anyhow::Error::msg)?;
     let mut stdout = io::stdout();
 
     match shell {
@@ -119,7 +122,10 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
 /// styles before the completer call means `_describe` sees them on the *first* TAB, not
 /// only on the second.
 fn make_zsh_autoload_safe(script: &str, cmd_name: &str) -> String {
-    let func = format!("_clap_dynamic_completer_{}", cmd_name.replace('-', "_"));
+    let func = format!(
+        "_clap_dynamic_completer_{}",
+        shell::clap_completer_ident(cmd_name)
+    );
     let trailing = format!("compdef {func} {cmd_name}");
     let replacement = format!(
         r#"# Single-column display keeps descriptions visually associated with each branch.

@@ -136,12 +136,40 @@ pub fn format_path_for_display(path: &Path) -> String {
     }
 }
 
+/// Expand a leading `~` to the user's home directory.
+///
+/// The inverse of [`format_path_for_display`], which renders home-relative paths
+/// in tilde form. wt prints those paths in its own status lines and hints, so a
+/// user pasting one back — quoted, where the shell leaves `~` alone — names the
+/// same directory wt named. Paths wt derives itself are already absolute and
+/// pass through untouched.
+///
+/// Only a bare `~` or a leading `~/` expands. `~user` is a shell feature that
+/// resolves another account's home directory, which wt does not reimplement, so
+/// it stays a literal relative path — as does a `~` anywhere but the front.
+pub fn expand_tilde(path: &Path) -> Cow<'_, Path> {
+    let Ok(rest) = path.strip_prefix("~") else {
+        return Cow::Borrowed(path);
+    };
+    let Some(home) = home_dir() else {
+        return Cow::Borrowed(path);
+    };
+    Cow::Owned(home.join(rest))
+}
+
 /// Canonicalize a path, resolving parent symlinks even if the path doesn't exist.
 ///
 /// For existing paths, uses standard canonicalization.
 /// For non-existent paths, canonicalizes the longest existing prefix and appends
 /// the remaining components. This handles macOS `/var` -> `/private/var` symlinks
 /// correctly for computed worktree paths that don't exist yet.
+///
+/// A `..` is resolved by the filesystem rather than collapsed lexically, which is
+/// load-bearing where [`paths_match`] decides whether two paths name one
+/// directory: crossing a symlink, the two readings name different directories,
+/// and `WorkingTree::ensure_holds_this_worktree` compares a worktree
+/// registration's recorded path against the directory sitting at it to decide
+/// whether removal may delete that directory.
 pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
     if let Ok(canonical) = canonicalize(path) {
         return canonical;
@@ -213,14 +241,100 @@ pub fn sanitize_for_filename(value: &str) -> String {
     result
 }
 
+/// The command name a path to an executable names: its file name with the
+/// platform's executable suffix stripped.
+///
+/// The one place wt turns `argv[0]` into a command name.
+/// `invocation::binary_name` names wt in the shell integration it generates and
+/// in its own hints; [`testing::mock_stub`](crate::testing::mock_stub) selects a
+/// mock's config by it. A name that resolved differently in the two would be a
+/// silent disagreement about what this process is called. The shell-integration
+/// warning is not a third caller: it reports the name as typed, `.exe` and all,
+/// so it can tell a Windows user to drop the suffix.
+///
+/// Stripping [`std::env::consts::EXE_SUFFIX`] rather than taking
+/// [`Path::file_stem`] keeps a dotted name (`wt.old`, `python3.11`) whole.
+/// `file_stem` cuts at the last dot wherever that dot is, so the same name
+/// resolves differently per platform: Unix's `python3.11` becomes `python3`
+/// while the Windows link `python3.11.exe` keeps `python3.11`. The suffix
+/// matches case-insensitively, because Windows resolves `WT.EXE` and `wt.exe`
+/// to the same file.
+///
+/// Non-UTF8 bytes convert lossily rather than failing. The callers that embed
+/// the name in shell syntax validate it first
+/// ([`shell::validate_shell_command_name`](crate::shell::validate_shell_command_name)),
+/// and a name that can't be spelled is better rejected there than silently
+/// replaced by wt's own.
+///
+/// `None` when the path has no file name, or when the file name is nothing but
+/// the suffix — a degenerate `argv[0]`, which a caller treats as "no name"
+/// rather than panicking inside `main()`.
+///
+/// Not [`shell::extract_filename_from_path`](crate::shell::extract_filename_from_path),
+/// which strips `.exe` on every platform: that one names shells from `$SHELL`
+/// and the process tree, where a Unix-form path can still carry a Windows
+/// `.exe` (Git Bash), while `argv[0]` always spells its name the way the
+/// running platform does.
+pub fn executable_name(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_string_lossy();
+    let name = strip_suffix_ignoring_case(&name, std::env::consts::EXE_SUFFIX);
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Strip `suffix` from the end of `name`, matching it case-insensitively.
+///
+/// The suffix is a parameter because the two callers strip different ones:
+/// [`executable_name`] strips the running platform's
+/// [`std::env::consts::EXE_SUFFIX`], while
+/// [`shell::extract_filename_from_path`](crate::shell::extract_filename_from_path)
+/// strips `.exe` on every platform. It also lets a test on any platform exercise
+/// the Windows answer, which `EXE_SUFFIX` — empty on Unix — cannot.
+///
+/// `str::get` rather than a byte slice, so a name whose trailing bytes fall
+/// mid-character yields the name unchanged instead of panicking. The macOS `ps`
+/// snapshot feeds every process name on the machine through here, so a name
+/// like `日本語` is ordinary input rather than a hypothetical.
+pub(crate) fn strip_suffix_ignoring_case<'a>(name: &'a str, suffix: &str) -> &'a str {
+    let stem_len = name.len().saturating_sub(suffix.len());
+    match name.get(stem_len..) {
+        Some(tail) if tail.eq_ignore_ascii_case(suffix) => &name[..stem_len],
+        _ => name,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{
-        canonicalize_with_parents, format_path_for_display, home_dir, paths_match,
-        sanitize_for_filename, to_posix_path,
+        canonicalize_with_parents, executable_name, expand_tilde, format_path_for_display,
+        home_dir, paths_match, sanitize_for_filename, strip_suffix_ignoring_case, to_posix_path,
     };
+
+    /// The tilde form `format_path_for_display` prints is a form wt reads back,
+    /// so a path from wt's own output can be pasted into a wt command.
+    #[test]
+    fn expand_tilde_round_trips_displayed_paths() {
+        // No skip guard: every platform the suite runs on sets HOME or
+        // USERPROFILE, and skipping would leave the assertion silently unrun.
+        let home = home_dir().expect("HOME or USERPROFILE is set");
+
+        let path = home.join("workspace").join("repo.feature");
+        let displayed = format_path_for_display(&path);
+        assert_eq!(expand_tilde(&PathBuf::from(displayed)), path);
+
+        assert_eq!(expand_tilde(&PathBuf::from("~")), home);
+    }
+
+    /// Only a leading `~` component expands: `~user` is a shell feature wt does
+    /// not reimplement, and a tilde mid-path is an ordinary directory name.
+    #[test]
+    fn expand_tilde_leaves_other_tildes_alone() {
+        for literal in ["~user/repo", "sub/~/repo", "repo~", "../repo.feature"] {
+            let path = PathBuf::from(literal);
+            assert_eq!(expand_tilde(&path), path, "{literal} should not expand");
+        }
+    }
 
     #[test]
     fn shortens_path_under_home() {
@@ -524,5 +638,66 @@ mod tests {
         assert!(paths_match(&existing, &canonical));
 
         let _ = std::fs::remove_dir_all(&existing);
+    }
+
+    /// A dot in `argv[0]` is part of the name, not an extension to drop:
+    /// `file_stem` would cut `wt.old` down to `wt` while leaving the Windows
+    /// `wt.old.exe` whole, and both callers need one answer everywhere.
+    #[test]
+    fn executable_name_strips_only_the_executable_suffix() {
+        let cases = [
+            ("wt", Some("wt")),
+            ("./wt", Some("wt")),
+            ("target/debug/wt", Some("wt")),
+            ("/usr/local/bin/git-wt", Some("git-wt")),
+            ("wt.old", Some("wt.old")),
+            ("python3.11", Some("python3.11")),
+            ("", None),
+            ("/", None),
+        ];
+        for (arg0, expected) in cases {
+            assert_eq!(
+                executable_name(Path::new(arg0)).as_deref(),
+                expected,
+                "{arg0}"
+            );
+        }
+
+        // The suffix stripped is the running platform's own: a Unix file
+        // really named `wt.exe` keeps the name it has.
+        let (exe, suffix_only) = if cfg!(windows) {
+            (Some("wt"), None)
+        } else {
+            (Some("wt.exe"), Some(".exe"))
+        };
+        assert_eq!(executable_name(Path::new("wt.exe")).as_deref(), exe);
+        assert_eq!(executable_name(Path::new(".exe")).as_deref(), suffix_only);
+    }
+
+    /// The `.exe` half of that, on whichever platform runs the test: `EXE_SUFFIX`
+    /// is empty on Unix, so `executable_name` alone can never exercise the
+    /// answer Windows gets.
+    #[test]
+    fn strip_suffix_ignoring_case_matches_every_exe_spelling() {
+        let cases = [
+            ("wt.exe", "wt"),
+            // Windows resolves these to one file, so all three name one command.
+            ("WT.EXE", "WT"),
+            ("wt.Exe", "wt"),
+            ("git-wt.exe", "git-wt"),
+            // Only a suffix: `wt.exe.old` is named for its dot, not its middle.
+            ("wt.exe.old", "wt.exe.old"),
+            ("wt", "wt"),
+            ("exe", "exe"),
+            (".exe", ""),
+            // Trailing bytes falling mid-character are not a suffix match.
+            ("€ab", "€ab"),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(strip_suffix_ignoring_case(name, ".exe"), expected, "{name}");
+        }
+
+        // The empty suffix Unix carries strips nothing.
+        assert_eq!(strip_suffix_ignoring_case("wt.exe", ""), "wt.exe");
     }
 }

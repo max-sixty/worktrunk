@@ -48,4 +48,3 @@ exit_code: 0
   worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ✓ Created branch feature and worktree @ [TEMP]/project/.git.feature
 ↳ To customize worktree locations, run wt config create
-[0m

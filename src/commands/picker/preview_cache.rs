@@ -36,9 +36,11 @@
 //!
 //! Layout: `.git/wt/cache/picker-preview/{mode}-{sig}[-{sig}][-{w}[-{h}]].json`
 //! (the Comments key carries no width — its entry is width-independent raw data).
-//! The diff modes cache the pre-pager rendered string; the pager step in
-//! `compute_and_page_preview` runs on every read, so changing the
-//! configured pager invalidates nothing — the cache is pager-agnostic.
+//! The diff modes cache the pre-pager rendered diff *body* plus the facts
+//! needed to re-render the branch-naming headline on read — see
+//! [`BranchDiffCacheEntry`] for why the name must stay out of the value. The
+//! pager step in `compute_and_page_preview` runs on every read, so changing
+//! the configured pager invalidates nothing — the cache is pager-agnostic.
 //! The Log mode caches a small struct (raw `git log` output + per-commit
 //! stats) and recomputes the dim/bright split and relative-time formatting
 //! on every render — see [`LogCacheEntry`] for why.
@@ -118,6 +120,40 @@ fn upstream_diff_key(branch_sha: &str, upstream_sha: &str, w: usize) -> String {
     format!("upstream-diff-{branch_sha}-{upstream_sha}-{w}.json")
 }
 
+/// Cached payload for the BranchDiff preview.
+///
+/// The key is `(base_sha, branch_sha, width)` — deliberately no branch
+/// *name* — so branches parked at the same commit (common after `wt landed`
+/// resets merged branches to main's tip) share one entry. That sharing is
+/// only sound if the value is name-free: the rendered diff body is a pure
+/// function of the SHAs, but the empty-diff headline names the row's branch,
+/// so the compute path stores `body: None` and the read path re-renders the
+/// headline for its own row. (Caching the finished pane instead served the
+/// first writer's branch name to every same-SHA row.)
+///
+/// Entries from before this struct existed hold a bare rendered string; they
+/// fail to deserialize, read as a miss, and are recomputed and overwritten
+/// in place.
+#[derive(Serialize, Deserialize)]
+pub(super) struct BranchDiffCacheEntry {
+    /// Rendered `git diff --stat` + colored diff; `None` when the diff is
+    /// empty (the caller renders the branch-named headline).
+    pub body: Option<String>,
+}
+
+/// Cached payload for the UpstreamDiff preview — the same name-free split as
+/// [`BranchDiffCacheEntry`]. The ahead/behind counts are pure functions of
+/// `(branch_sha, upstream_sha)` and select which headline the read side
+/// renders when `body` is `None`.
+#[derive(Serialize, Deserialize)]
+pub(super) struct UpstreamDiffCacheEntry {
+    pub ahead: usize,
+    pub behind: usize,
+    /// Rendered `git diff --stat` + colored diff; `None` when the diff is
+    /// empty (the caller renders the branch-named headline from the counts).
+    pub body: Option<String>,
+}
+
 pub(super) fn read_log(repo: &Repository, sha: &str, w: usize, h: usize) -> Option<LogCacheEntry> {
     cache::read(repo, KIND, &log_key(sha, w, h))
 }
@@ -131,7 +167,7 @@ pub(super) fn read_branch_diff(
     base_sha: &str,
     branch_sha: &str,
     w: usize,
-) -> Option<String> {
+) -> Option<BranchDiffCacheEntry> {
     cache::read(repo, KIND, &branch_diff_key(base_sha, branch_sha, w))
 }
 
@@ -140,13 +176,13 @@ pub(super) fn write_branch_diff(
     base_sha: &str,
     branch_sha: &str,
     w: usize,
-    value: &str,
+    value: &BranchDiffCacheEntry,
 ) {
     cache::write_with_lru(
         repo,
         KIND,
         &branch_diff_key(base_sha, branch_sha, w),
-        &value,
+        value,
         MAX_ENTRIES,
     );
 }
@@ -156,7 +192,7 @@ pub(super) fn read_upstream_diff(
     branch_sha: &str,
     upstream_sha: &str,
     w: usize,
-) -> Option<String> {
+) -> Option<UpstreamDiffCacheEntry> {
     cache::read(repo, KIND, &upstream_diff_key(branch_sha, upstream_sha, w))
 }
 
@@ -165,13 +201,13 @@ pub(super) fn write_upstream_diff(
     branch_sha: &str,
     upstream_sha: &str,
     w: usize,
-    value: &str,
+    value: &UpstreamDiffCacheEntry,
 ) {
     cache::write_with_lru(
         repo,
         KIND,
         &upstream_diff_key(branch_sha, upstream_sha, w),
-        &value,
+        value,
         MAX_ENTRIES,
     );
 }
@@ -305,18 +341,38 @@ mod tests {
         assert!(read_log(&repo, "cafe", 80, 24).is_none());
     }
 
+    fn branch_entry(body: &str) -> BranchDiffCacheEntry {
+        BranchDiffCacheEntry {
+            body: Some(body.to_string()),
+        }
+    }
+
     #[test]
     fn branch_diff_roundtrip_and_asymmetric() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_branch_diff(&repo, "base", "tip", 80, "rendered diff");
+        write_branch_diff(&repo, "base", "tip", 80, &branch_entry("rendered diff"));
         assert_eq!(
-            read_branch_diff(&repo, "base", "tip", 80),
+            read_branch_diff(&repo, "base", "tip", 80).unwrap().body,
             Some("rendered diff".to_string())
         );
         // Asymmetric: swapping is a different key.
-        assert_eq!(read_branch_diff(&repo, "tip", "base", 80), None);
+        assert!(read_branch_diff(&repo, "tip", "base", 80).is_none());
+
+        // An empty diff is a valid entry — `body: None` roundtrips, distinct
+        // from a cache miss.
+        write_branch_diff(
+            &repo,
+            "base2",
+            "tip",
+            80,
+            &BranchDiffCacheEntry { body: None },
+        );
+        assert_eq!(
+            read_branch_diff(&repo, "base2", "tip", 80).unwrap().body,
+            None
+        );
     }
 
     #[test]
@@ -324,11 +380,49 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_upstream_diff(&repo, "branch", "upstream", 80, "rendered upstream diff");
-        assert_eq!(
-            read_upstream_diff(&repo, "branch", "upstream", 80),
-            Some("rendered upstream diff".to_string())
+        write_upstream_diff(
+            &repo,
+            "branch",
+            "upstream",
+            80,
+            &UpstreamDiffCacheEntry {
+                ahead: 2,
+                behind: 1,
+                body: Some("rendered upstream diff".to_string()),
+            },
         );
+        let read = read_upstream_diff(&repo, "branch", "upstream", 80).expect("entry exists");
+        assert_eq!(read.ahead, 2);
+        assert_eq!(read.behind, 1);
+        assert_eq!(read.body, Some("rendered upstream diff".to_string()));
+    }
+
+    #[test]
+    fn pre_struct_string_entry_reads_as_miss() {
+        // Entries from before the struct formats cached the finished pane as
+        // a bare JSON string (with the branch name baked in). Those must fail
+        // to deserialize and read as a miss, so the compute path overwrites
+        // them in place instead of serving another branch's headline.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        cache::write_with_lru(
+            &repo,
+            KIND,
+            &branch_diff_key("base", "tip", 80),
+            &"old rendered pane",
+            MAX_ENTRIES,
+        );
+        assert!(read_branch_diff(&repo, "base", "tip", 80).is_none());
+
+        cache::write_with_lru(
+            &repo,
+            KIND,
+            &upstream_diff_key("tip", "up", 80),
+            &"old rendered pane",
+            MAX_ENTRIES,
+        );
+        assert!(read_upstream_diff(&repo, "tip", "up", 80).is_none());
     }
 
     #[test]
@@ -340,19 +434,32 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
 
         write_log(&repo, "x", 80, 24, &sample_log_entry());
-        write_branch_diff(&repo, "x", "x", 80, "branch-diff-value");
-        write_upstream_diff(&repo, "x", "x", 80, "upstream-diff-value");
+        write_branch_diff(&repo, "x", "x", 80, &branch_entry("branch-diff-value"));
+        write_upstream_diff(
+            &repo,
+            "x",
+            "x",
+            80,
+            &UpstreamDiffCacheEntry {
+                ahead: 0,
+                behind: 0,
+                body: Some("upstream-diff-value".to_string()),
+            },
+        );
 
         assert_eq!(
             read_log(&repo, "x", 80, 24).unwrap().raw_log,
             "raw log content"
         );
         assert_eq!(
-            read_branch_diff(&repo, "x", "x", 80).unwrap(),
+            read_branch_diff(&repo, "x", "x", 80).unwrap().body.unwrap(),
             "branch-diff-value"
         );
         assert_eq!(
-            read_upstream_diff(&repo, "x", "x", 80).unwrap(),
+            read_upstream_diff(&repo, "x", "x", 80)
+                .unwrap()
+                .body
+                .unwrap(),
             "upstream-diff-value"
         );
         assert_eq!(count_all(&repo), 3);
@@ -418,7 +525,7 @@ mod tests {
 
         write_log(&repo, "a", 80, 24, &sample_log_entry());
         write_log(&repo, "b", 80, 24, &sample_log_entry());
-        write_branch_diff(&repo, "base", "tip", 80, "z");
+        write_branch_diff(&repo, "base", "tip", 80, &branch_entry("z"));
 
         assert_eq!(count_all(&repo), 3);
         let removed = clear_all(&repo).unwrap();

@@ -619,7 +619,10 @@ where
         .from_env_lossy();
     let exclude_full = target_filter(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
+        // `with_ansi(true)` keeps the formatter emitting styles; the
+        // `AutoStream` writer strips or passes them per anstream's resolved
+        // choice (global override, tty, NO_COLOR/CLICOLOR_FORCE).
+        .with_writer(|| anstream::AutoStream::auto(std::io::stderr()))
         .with_ansi(true)
         .event_format(StderrFormat)
         .with_filter(env_filter.and(exclude_full));
@@ -721,7 +724,7 @@ fn announce_trace_destination() {
     let dir_display = worktrunk::path::format_path_for_display(dir);
     eprintln!(
         "{}",
-        info_message(format!("Verbose logging to {dir_display}/"))
+        info_message(format!("Verbose logging @ {dir_display}/"))
     );
 }
 

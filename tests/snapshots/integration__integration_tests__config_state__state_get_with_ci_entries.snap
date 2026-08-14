@@ -15,11 +15,11 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [107m [0m (none)
 
 [36mCI STATUS CACHE[39m
- Branch  Status Age   Head   
- ─────── ────── ─── ──────── 
- bugfix  failed now 11122233 
- feature passed now abc12345 
- main    none   now deadbeef
+ Branch  Status Age  Head   
+ ─────── ────── ─── ─────── 
+ bugfix  failed now 1112223 
+ feature passed now abc1234 
+ main    none   now deadbee
 
 [36mSUMMARY CACHE[39m
 [107m [0m (none)

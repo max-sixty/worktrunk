@@ -24,9 +24,7 @@ use std::sync::Arc;
 use crossbeam_channel as chan;
 use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
 
-use super::super::model::{
-    ActiveGitOperation, ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
@@ -245,7 +243,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
         }
         TaskKind::GitOperation => {
             if let ItemKind::Worktree(data) = &mut item.kind {
-                data.git_operation = Some(ActiveGitOperation::None);
+                data.git_operation = Some(None);
             }
         }
     }
@@ -432,8 +430,10 @@ pub fn work_items_for_worktree(
     }
 
     // URL status health check task (if we have a URL). Only this single
-    // work item is queued per item — `item.url` was set directly above, so
-    // no placeholder send is needed.
+    // work item is queued per item — the immediate `UrlStatus` placeholder
+    // was already sent through the drain channel above (never written to
+    // `item.url` directly; see the module docstring), so this task needs no
+    // additional placeholder send.
     if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         items.push(WorkItem {

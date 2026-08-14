@@ -252,6 +252,46 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     );
 }
 
+/// An interrupted `--format=json` run still owes its consumer the results it
+/// collected before the signal: the machine-readable answer is emitted on the
+/// abort path too, not just on the completing one. Same in-child SIGTERM as
+/// the test above, for the same reason.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_json_emitted_on_signal_abort(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "for-each",
+            "--format=json",
+            "--",
+            "sh",
+            "-c",
+            "kill -TERM $$",
+        ])
+        .output()
+        .expect("run wt step for-each");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(143),
+        "expected exit 143 (SIGTERM), got {:?}\nstderr: {stderr}",
+        output.status.code(),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("interrupted run must still emit JSON: {e}\nstdout: {stdout}"));
+    let items = json.as_array().expect("results are an array");
+    assert_eq!(
+        items.len(),
+        1,
+        "only the worktree visited before the signal is reported:\n{stdout}"
+    );
+}
+
 /// for-each relocates the user's command into each worktree, so inherited
 /// git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`) must be scrubbed — git
 /// resolves them before walking up from the cwd, so a forwarded value would

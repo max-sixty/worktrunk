@@ -3,6 +3,7 @@
     <div class="toc-sticky">
         {% set current_group = "" %}
         {% for doc_page in docs_section.pages %}
+        {% if not doc_page.extra.hide_from_nav %}
         {% set is_current = current_page and doc_page.permalink == current_page.permalink %}
         {% set page_group = doc_page.extra.group | default(value="") %}
 
@@ -46,6 +47,7 @@
         </div>
         {% endif %}
         {% endfor %}
+        {% endif %}
         {% endif %}
         {% endfor %}
     </div>

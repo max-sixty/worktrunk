@@ -214,7 +214,8 @@ pub struct JsonRemote {
 /// Worktree-specific state
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorktree {
-    /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
+    /// Worktree state: "branch_worktree_mismatch", "duplicate_branch",
+    /// "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
 
@@ -455,6 +456,7 @@ fn worktree_state_to_json(
         Some(WorktreeState::BranchWorktreeMismatch) => {
             return (Some("branch_worktree_mismatch"), None);
         }
+        Some(WorktreeState::DuplicateBranch) => return (Some("duplicate_branch"), None),
         Some(WorktreeState::Prunable) => return (Some("prunable"), data.prunable.clone()),
         Some(WorktreeState::Locked) => return (Some("locked"), data.locked.clone()),
     }
@@ -475,7 +477,7 @@ fn worktree_state_to_json(
 impl JsonCi {
     /// Build a `JsonCi` from a [`PrStatus`], deriving the target-repo metadata
     /// from the PR/MR URL. `provider_override` is the configured
-    /// `[forge].platform` (see [`Repository::forge_platform_override`]); it lets
+    /// `[forge].platform` (see [`Repository::configured_forge_platform`]); it lets
     /// a self-hosted instance whose host can't be auto-detected still report the
     /// right provider.
     pub(crate) fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
@@ -531,7 +533,7 @@ pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> Strin
         }
     }
 
-    // Worktree state (gate 2) — operations (✘⤴⤵) take priority over
+    // Worktree state (gate 2) — operations (✘↻) take priority over
     // location (/⚑⊟⊞). Gate 2 is "operation_state is Some"; the metadata
     // worktree_state is filled synchronously and always Some by the time
     // the operation family is known.
@@ -570,7 +572,7 @@ pub fn to_json_items(
 ) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_from_snapshot().unwrap_or_default();
     let repo_metadata = repo.repo_info();
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
     items
         .iter()
         .map(|item| {
@@ -589,12 +591,13 @@ pub fn to_json_items(
 mod tests {
     use insta::assert_snapshot;
     use worktrunk::git::GitRepoProvider;
+    use worktrunk::git::InProgressOperation;
 
     use super::*;
     use crate::commands::list::ci_status::{CiStatus, PrRef};
     use crate::commands::list::model::{
-        ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
-        WorkingTreeStatus, WorktreeData, WorktreeState,
+        Divergence, MainState, OperationState, StatusSymbols, WorkingTreeStatus, WorktreeData,
+        WorktreeState,
     };
 
     // ============================================================================
@@ -822,8 +825,9 @@ mod tests {
             working_tree_status: None,
             has_conflicts: None,
             has_working_tree_conflicts: None,
-            git_operation: Some(ActiveGitOperation::None),
+            git_operation: Some(None),
             branch_worktree_mismatch: false,
+            duplicate_branch: false,
         }
     }
 
@@ -939,14 +943,14 @@ mod tests {
 
         // Operation state takes priority over worktree state
         let operation = format_raw_symbols(&StatusSymbols {
-            operation_state: Some(OperationState::Rebase),
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
             ..Default::default()
         });
-        assert_snapshot!(operation, @"⤴");
+        assert_snapshot!(operation, @"↻");
 
         // Worktree metadata renders only once the operation-family gate
         // has resolved to "no operation" — otherwise we can't rule out
-        // ✘⤴⤵ taking priority. Callers that want just the metadata
+        // ✘↻ taking priority. Callers that want just the metadata
         // symbol must set both `operation_state` and `worktree_state`.
         let worktree = format_raw_symbols(&StatusSymbols {
             operation_state: Some(OperationState::None),

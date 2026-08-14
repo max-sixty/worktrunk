@@ -21,9 +21,9 @@ expression: "String::from_utf8_lossy(&output.stdout)"
  main    env  staging
 
 [36mCI STATUS CACHE[39m
- Branch  Status Age   Head   
- ─────── ────── ─── ──────── 
- feature passed now abc12345
+ Branch  Status Age  Head   
+ ─────── ────── ─── ─────── 
+ feature passed now abc1234
 
 [36mSUMMARY CACHE[39m
  Branch               Summary               Age 

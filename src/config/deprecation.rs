@@ -45,7 +45,7 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
+    eprint, eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
     warning_message,
 };
 
@@ -484,6 +484,9 @@ pub enum DeprecationKind {
     NoCd,
     /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
     SwitchPickerTimeout,
+    /// `task-timeout-ms` under `[list]` (removed — `[list] timeout-ms` bounds
+    /// the collect phase).
+    ListTaskTimeout,
     /// `[list] json-schema` unset while the default is scheduled to switch to
     /// schema 2 — `wt config update` writes the upcoming `json-schema = 2`.
     /// Warns at the JSON-emitting surface (`resolve_json_schema`), not at
@@ -643,6 +646,17 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     DeprecationRule::Structural(|doc| {
         if for_each_config_table_mut(doc, |_, table| remove_switch_picker_timeout_in(table)) {
             vec![DeprecationKind::SwitchPickerTimeout]
+        } else {
+            Vec::new()
+        }
+    }),
+    // list.task-timeout-ms — removed; `[list] timeout-ms` bounds the collect
+    // phase, and the drain has its own fallback bound.
+    DeprecationRule::Structural(|doc| {
+        if for_each_config_table_mut(doc, |_, table| {
+            remove_section_key_in(table, "list", "task-timeout-ms")
+        }) {
+            vec![DeprecationKind::ListTaskTimeout]
         } else {
             Vec::new()
         }
@@ -1203,6 +1217,21 @@ fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
     }
 }
 
+/// Remove `key` from a top-level `section` in a table (top-level or project).
+/// An emptied section is left in place — it round-trips harmlessly.
+///
+/// A section can be written as a section table (`[list]`) or inline
+/// (`list = { … }`); `toml_edit` surfaces these as different node types, so
+/// each shape gets its own branch — matching the inline-aware `no-cd`/`no-ff`
+/// rules and the two-level [`remove_switch_picker_timeout_in`].
+fn remove_section_key_in(table: &mut toml_edit::Table, section: &str, key: &str) -> bool {
+    match table.get_mut(section) {
+        Some(toml_edit::Item::Table(t)) => t.remove(key).is_some(),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(it))) => it.remove(key).is_some(),
+        _ => false,
+    }
+}
+
 fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> String {
     if migrate_content_doc(&mut doc) {
         doc.to_string()
@@ -1677,6 +1706,15 @@ fn format_warning_lines<'a>(
                     ))
                 );
             }
+            DeprecationKind::ListTaskTimeout => {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    warning_message(cformat!(
+                        "{label}: <bold>list.task-timeout-ms</> is no longer used — <bold>list.timeout-ms</> bounds the collect phase"
+                    ))
+                );
+            }
             DeprecationKind::JsonSchemaUnset => {
                 let _ = writeln!(
                     out,
@@ -1787,6 +1825,41 @@ pub fn nested_key_belongs_in<C: WorktrunkConfig>(path: &str) -> Option<&'static 
         .then(C::Other::description)
 }
 
+/// Note appended to a "belongs in the other config" warning when the
+/// misplaced key also has a `[projects."<id>"]` form in user config, which is
+/// usually what the user was reaching for. A user key in project config is an
+/// attempt to scope a personal setting to one repo; a project key in user
+/// config (`forge`) is an attempt to set it without touching the repo's
+/// committed file. The `[projects."<id>"]` table does both directly.
+///
+/// `key` is the misplaced key (`worktree-path`, or a dotted path like
+/// `list.columns`); the note only fires when its top-level segment is a field
+/// of that table (see [`is_user_project_override_key`](crate::config::is_user_project_override_key)).
+/// Root-only user settings — `skip-shell-integration-prompt`,
+/// `skip-commit-generation-prompt` — have no `[projects."<id>"]` form and no
+/// per-repo semantics, so following the note would just produce a fresh
+/// "unknown field"; they get no note.
+///
+/// Keyed off the destination *description* rather than a config-type gate so
+/// both warning formatters (load-time and `config show`) can share it — they
+/// hold only the `other_description` string, not the config type.
+pub fn scope_to_repo_note(other_description: &str, key: &str) -> Option<&'static str> {
+    let top_level = key.split('.').next().unwrap_or(key);
+    if !crate::config::is_user_project_override_key(top_level) {
+        return None;
+    }
+    if other_description == crate::config::UserConfig::description() {
+        return Some(r#"to scope it to this repo, add it under [projects."<id>"] in user config"#);
+    }
+    // The reverse redirect — a project-config key found in user config — earns
+    // the note only for a whole top-level table (`forge`): its
+    // `[projects."<id>"]` field has the same shape, so the move is valid as
+    // written. A nested path (`list.url`) names a field the projects-entry
+    // type doesn't have, and its correct home really is project config.
+    (other_description == crate::config::ProjectConfig::description() && !key.contains('.'))
+        .then_some(r#"to set it from user config, add it under [projects."<id>"]"#)
+}
+
 /// Classification of an unknown config key for warning purposes.
 pub enum UnknownKeyKind {
     /// Deprecated key in its correct config type — deprecation system handles it
@@ -1871,8 +1944,12 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
         UnknownWarning::TopLevelWrongConfig {
             key,
             other_description,
-        } => cformat!(
-            "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+        } => with_scope_note(
+            cformat!(
+                "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+            ),
+            other_description,
+            key,
         ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
@@ -1884,8 +1961,12 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
         UnknownWarning::NestedWrongConfig {
             path,
             other_description,
-        } => cformat!(
-            "{label} has key <bold>{path}</> which belongs in {other_description} (will be ignored)"
+        } => with_scope_note(
+            cformat!(
+                "{label} has key <bold>{path}</> which belongs in {other_description} (will be ignored)"
+            ),
+            other_description,
+            path,
         ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("{label} has unknown field <bold>{path}</> (will be ignored)")
@@ -1893,9 +1974,24 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
     }
 }
 
+/// Append the project-scoped-user-config note to `message` when the misplaced
+/// `key`'s destination is user config and it's a `[projects."<id>"]` field
+/// (see [`scope_to_repo_note`]). Joined with a semicolon per the house style
+/// for related clauses. The note is plain text so its `[projects."<id>"]`
+/// placeholder isn't parsed as color-print markup. Shared with `config show`
+/// via [`crate::config::with_scope_note`] so the caveat lives in one place.
+pub fn with_scope_note(message: String, other_description: &str, key: &str) -> String {
+    match scope_to_repo_note(other_description, key) {
+        Some(note) => format!("{message}; {note}"),
+        None => message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
+    use insta::assert_snapshot;
 
     /// `USER_ONLY_COMMIT_GENERATION_PATHS` must stay in sync with
     /// `CommitGenerationConfig`: every key except the project-valid
@@ -3221,6 +3317,10 @@ json-schema = 1
             // timeout-ms under an inline `switch` is stripped like the section form
             "switch = { picker = { timeout-ms = 500 } }\n",
             "[select]\ntimeout-ms = 500\n",
+            // list.task-timeout-ms, section and inline forms (project-scoped so
+            // the appended `[list]` below isn't a duplicate table)
+            "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
+            "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
@@ -4240,37 +4340,127 @@ pager = "delta"
     }
 
     #[test]
-    fn test_format_deprecation_warnings_switch_picker_timeout() {
-        let info = DeprecationInfo {
-            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: vec![DeprecationKind::SwitchPickerTimeout],
-            kind: ConfigFileKind::User,
-            main_worktree_path: None,
-        };
-        let output = format_deprecation_warnings(&info);
+    fn test_detect_list_task_timeout_top_level() {
+        let content = r#"
+[list]
+branches = true
+task-timeout-ms = 500
+"#;
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ListTaskTimeout
+        )));
+    }
+
+    #[test]
+    fn test_detect_list_task_timeout_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".list]
+task-timeout-ms = 300
+"#;
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        assert!(has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ListTaskTimeout
+        )));
+    }
+
+    #[test]
+    fn test_detect_list_task_timeout_absent() {
+        let content = r#"
+[list]
+timeout-ms = 500
+"#;
+        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        assert!(!has_kind(&deprecations, |k| matches!(
+            k,
+            DeprecationKind::ListTaskTimeout
+        )));
+    }
+
+    #[test]
+    fn test_migrate_list_task_timeout_removes_key() {
+        let content = r#"
+[list]
+branches = true
+task-timeout-ms = 500
+timeout-ms = 2000
+"#;
+        let result = migrate_content(content);
         assert!(
-            output.contains("switch.picker.timeout-ms"),
-            "Should mention the field: {output}"
+            !result.contains("task-timeout-ms"),
+            "Should strip task-timeout-ms: {result}"
         );
         assert!(
-            output.contains("no longer used"),
-            "Should explain deprecation reason: {output}"
+            result.contains("timeout-ms = 2000") && result.contains("branches"),
+            "Should preserve sibling keys: {result}"
         );
+    }
+
+    #[test]
+    fn test_migrate_list_task_timeout_inline_table() {
+        let content = r#"
+list = { branches = true, task-timeout-ms = 500 }
+"#;
+        let result = migrate_content(content);
+        assert!(!result.contains("task-timeout-ms"));
+        assert!(result.contains("branches"));
+    }
+
+    #[test]
+    fn test_migrate_list_task_timeout_noop_when_absent() {
+        let content = r#"
+[list]
+timeout-ms = 500
+"#;
+        let result = migrate_content(content);
+        assert_eq!(result, content);
     }
 
     // ==================== negated bool format + migration tests ====================
 
     #[test]
-    fn test_format_deprecation_warnings_no_ff_and_no_cd() {
+    fn test_format_deprecation_warnings_all_kinds() {
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: vec![DeprecationKind::NoFf, DeprecationKind::NoCd],
+            // Keep one representative of each warning kind in
+            // DEPRECATION_RULES emission order. Commit-generation includes
+            // both scopes because its formatter has distinct branches.
+            deprecations: vec![
+                DeprecationKind::TemplateVar {
+                    old: "repo_root",
+                    new: "repo_path",
+                },
+                DeprecationKind::CommitGeneration(CommitGenerationDeprecations {
+                    has_top_level: true,
+                    project_keys: vec!["github.com/user/repo".to_string()],
+                }),
+                DeprecationKind::ApprovedCommands,
+                DeprecationKind::Select,
+                DeprecationKind::CiSection,
+                DeprecationKind::NoFf,
+                DeprecationKind::NoCd,
+                DeprecationKind::SwitchPickerTimeout,
+                DeprecationKind::ListTaskTimeout,
+                DeprecationKind::JsonSchemaUnset,
+            ],
             kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
-        let output = format_deprecation_warnings(&info);
-        assert!(output.contains("no-ff"), "Should mention no-ff: {output}");
-        assert!(output.contains("no-cd"), "Should mention no-cd: {output}");
+        assert_snapshot!(format_deprecation_warnings(&info).ansi_strip(), @r#"
+        ▲ User config: template variable repo_root is deprecated in favor of repo_path
+        ▲ User config: [commit-generation] is deprecated in favor of [commit.generation]
+        ▲ User config: [projects."github.com/user/repo".commit-generation] is deprecated in favor of [projects."github.com/user/repo".commit.generation]
+        ▲ User config: approved-commands under [projects] is deprecated in favor of approvals.toml
+        ▲ User config: [select] is deprecated in favor of [switch.picker]
+        ▲ User config: [ci] is deprecated in favor of [forge]
+        ▲ User config: merge.no-ff is deprecated in favor of merge.ff (inverted)
+        ▲ User config: switch.no-cd is deprecated in favor of switch.cd (inverted)
+        ▲ User config: switch.picker.timeout-ms is no longer used — the picker now renders progressively
+        ▲ User config: list.task-timeout-ms is no longer used — list.timeout-ms bounds the collect phase
+        ▲ User config: [list] json-schema is unset; a future release switches the JSON default to schema 2
+        "#);
     }
 
     #[test]
@@ -4488,6 +4678,113 @@ ff = true
             "[commit-generation]\ncommand = \"llm\"\n",
             &path,
             ConfigFileKind::Project,
+        );
+    }
+
+    #[test]
+    fn test_nested_user_only_key_redirects_generally() {
+        use crate::config::{ProjectConfig, UnknownWarning, UserConfig, collect_unknown_warnings};
+
+        // `[list]` is a valid *shared* section (project config accepts `url`),
+        // but `columns` / `full` are user-config display settings. Placing them
+        // in project config redirects to user config rather than reading
+        // "unknown field" — the general "valid in the other config" check, not
+        // the hard-coded commit.generation list (#3469).
+        let warnings = collect_unknown_warnings::<ProjectConfig>(
+            "[list]\ncolumns = [\"branch\"]\nfull = true\n",
+        );
+        assert!(
+            warnings.iter().all(|w| matches!(
+                w,
+                UnknownWarning::NestedWrongConfig { path, other_description }
+                    if (path == "list.columns" || path == "list.full")
+                        && *other_description == "user config"
+            )) && warnings.len() == 2,
+            "expected list.columns/list.full → user config, got {warnings:?}"
+        );
+
+        // A key unknown in *both* configs stays "unknown field".
+        let warnings = collect_unknown_warnings::<ProjectConfig>("[list]\nnonsense-typo = true\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::NestedUnknown { path }] if path == "list.nonsense-typo"
+            ),
+            "expected list.nonsense-typo → unknown, got {warnings:?}"
+        );
+
+        // The reverse direction: `url` is project-only, so it redirects to
+        // project config when found in user config — no scope-to-repo note
+        // there (that only applies to user-config destinations).
+        let warnings = collect_unknown_warnings::<UserConfig>("[list]\nurl = \"x\"\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::NestedWrongConfig { path, other_description }]
+                    if path == "list.url" && *other_description == "project config"
+            ),
+            "expected list.url → project config, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_scope_to_repo_note_destinations() {
+        // Toward user config, the note fires for any misplaced key whose
+        // top-level segment is a `[projects."<id>"]` field.
+        assert!(scope_to_repo_note("user config", "list.columns").is_some());
+        assert!(scope_to_repo_note("user config", "worktree-path").is_some());
+
+        // Toward project config, only a whole top-level table (`forge`) earns
+        // it: the projects-entry `list` is the user type, which has no `url`,
+        // so that advice would be wrong.
+        assert!(scope_to_repo_note("project config", "forge").is_some());
+        assert!(scope_to_repo_note("project config", "list.url").is_none());
+        assert!(scope_to_repo_note("project config", "forge.platform").is_none());
+
+        // Root-only user scalars have no `[projects."<id>"]` form, so following
+        // the note would just yield a fresh "unknown field" — no note.
+        assert!(scope_to_repo_note("user config", "skip-shell-integration-prompt").is_none());
+        assert!(scope_to_repo_note("user config", "skip-commit-generation-prompt").is_none());
+
+        // It reaches the rendered load-warning for a user-config redirect...
+        let note = "to scope it to this repo";
+        let msg = format_load_warning(
+            "Project config",
+            &crate::config::UnknownWarning::NestedWrongConfig {
+                path: "list.columns".to_string(),
+                other_description: "user config",
+            },
+        );
+        assert!(
+            msg.contains(note),
+            "user-config redirect should carry note: {msg}"
+        );
+
+        // ...but not a project-config redirect.
+        let msg = format_load_warning(
+            "User config",
+            &crate::config::UnknownWarning::NestedWrongConfig {
+                path: "list.url".to_string(),
+                other_description: "project config",
+            },
+        );
+        assert!(
+            !msg.contains(note),
+            "project-config redirect should not carry note: {msg}"
+        );
+
+        // ...and not a misplaced root-only user scalar, even though its
+        // destination is user config.
+        let msg = format_load_warning(
+            "Project config",
+            &crate::config::UnknownWarning::TopLevelWrongConfig {
+                key: "skip-shell-integration-prompt".to_string(),
+                other_description: "user config",
+            },
+        );
+        assert!(
+            !msg.contains(note),
+            "root-only user scalar should not carry note: {msg}"
         );
     }
 

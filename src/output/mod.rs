@@ -3,8 +3,9 @@
 //! # Architecture
 //!
 //! For regular output, use `eprintln!`/`println!` directly (from `worktrunk::styling`
-//! for color support). This module handles shell integration directives (cd, exec)
-//! that need to be communicated to the parent shell.
+//! for color support); [`print_json`] serializes a `--format=json` answer to stdout.
+//! This module handles shell integration directives (cd, exec) that need to be
+//! communicated to the parent shell.
 //!
 //! ## Usage
 //!
@@ -22,10 +23,6 @@
 //! - `WORKTRUNK_DIRECTIVE_CD_FILE` — raw path; the wrapper `cd`s to it.
 //! - `WORKTRUNK_DIRECTIVE_EXEC_FILE` — arbitrary shell; the wrapper sources it.
 //!
-//! The legacy single-file `WORKTRUNK_DIRECTIVE_FILE` env var is still honored
-//! for one release to bridge users who upgraded `wt` without restarting
-//! their shell. See `global` for the `DirectiveMode` selection logic.
-//!
 //! When no directive env vars are set (direct binary call):
 //! - Commands execute directly.
 //! - Shell hints are shown for missing integration.
@@ -36,19 +33,22 @@ pub(crate) mod commit_generation;
 pub(crate) mod concurrent;
 mod global;
 pub(crate) mod handlers;
+mod json;
 pub(crate) mod prompt;
 pub(crate) mod shell_integration;
 
 // Re-export the public API
 pub(crate) use global::{
     change_directory, exec_would_be_refused, execute, is_shell_integration_active,
-    mark_cwd_removed, post_hook_display_path, pre_hook_display_path, set_verbosity,
+    mark_cwd_removed, post_hook_display_path, pre_hook_display_path,
+    print_outdated_shell_wrapper_hint_once, retired_shell_wrapper_active, set_verbosity,
     terminate_output, to_logical_path, was_cwd_removed,
 };
 // Re-export output handlers
 pub(crate) use handlers::{
-    BackgroundFallbackMode, DirectivePassthrough, execute_shell_command, execute_user_command,
-    handle_remove_output, handle_switch_output, retained_unmerged_branch_messages,
+    BackgroundFallbackMode, DirectivePassthrough, RemovalExecution, execute_shell_command,
+    execute_user_command, handle_remove_output, handle_switch_output,
+    retained_unmerged_branch_messages,
 };
 // Re-export shell integration functions
 pub(crate) use shell_integration::{
@@ -57,3 +57,5 @@ pub(crate) use shell_integration::{
 };
 // Re-export commit generation functions
 pub(crate) use commit_generation::prompt_commit_generation;
+// Re-export the JSON answer printer
+pub(crate) use json::print_json;

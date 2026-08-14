@@ -67,6 +67,85 @@ fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRep
     assert_eq!(branch, "main");
 }
 
+/// A remote that never answers is bounded, and the fallback it forces is not
+/// persisted. `ls-remote` has no timeout of its own — an unreachable host costs
+/// ~127 s per address on Linux — so detection gives up after
+/// `REMOTE_DETECTION_TIMEOUT` and infers from local branches instead. It must
+/// not write that inference to `worktrunk.default-branch`: the persisted cache
+/// is what stops later calls from re-detecting, so a guess made during an
+/// outage would become the repo's permanent answer.
+///
+/// The stall is reproduced without touching the network — `origin` is a local
+/// path whose `uploadpack` command never returns. The bound under test is
+/// platform-independent; only this vehicle needs a POSIX `sleep`.
+#[rstest]
+#[cfg(unix)]
+fn test_default_branch_unreachable_remote_is_bounded_and_not_cached(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.clear_origin_head();
+    let _ = repo
+        .git_command()
+        .args(["config", "--unset", "worktrunk.default-branch"])
+        .run();
+    // `sh -c '…'` rather than a bare `sleep`: git appends the repository path,
+    // which `sleep` would reject as a second interval but `sh` takes as `$0`.
+    repo.run_git(&["config", "remote.origin.uploadpack", "sh -c 'sleep 120'"]);
+
+    let start = std::time::Instant::now();
+    let branch = Repository::at(repo.root_path()).unwrap().default_branch();
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        branch.as_deref(),
+        Some("main"),
+        "local inference must still answer while the remote hangs"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "ls-remote was not bounded: took {elapsed:?}"
+    );
+
+    let cached = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
+        .run()
+        .unwrap();
+    assert!(
+        !cached.status.success(),
+        "a timed-out detection must not be cached, got {:?}",
+        String::from_utf8_lossy(&cached.stdout).trim()
+    );
+}
+
+/// A remote that fails fast — a deleted upstream, an offline laptop — falls
+/// back to local inference too, and that answer *is* cached. `ls-remote` exits
+/// 128 whether the network is down or the remote simply has no HEAD, so the
+/// two aren't separable without reading git's error text, and re-querying on
+/// every command is what the cache exists to avoid.
+#[rstest]
+fn test_default_branch_unresolvable_remote_falls_back_and_caches(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.clear_origin_head();
+    let _ = repo
+        .git_command()
+        .args(["config", "--unset", "worktrunk.default-branch"])
+        .run();
+    let gone = repo.root_path().join("no-such-remote");
+    repo.run_git(&["config", "remote.origin.url", &gone.to_string_lossy()]);
+
+    let branch = Repository::at(repo.root_path()).unwrap().default_branch();
+    assert_eq!(branch.as_deref(), Some("main"));
+
+    let cached = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
+        .run()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&cached.stdout).trim(), "main");
+}
+
 #[rstest]
 fn test_get_default_branch_no_remote(repo: TestRepo) {
     // Remove origin (fixture has it) for this no-remote test
@@ -300,7 +379,7 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
 
     // Now resolving "^" should fail with an error
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let result = git_repo.resolve_worktree_name("^");
+    let result = git_repo.expand_selector("^");
     assert!(
         result.is_err(),
         "Expected error when resolving ^ without default branch"
@@ -310,6 +389,31 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
         err_msg.contains("Cannot determine default branch"),
         "Error should mention cannot determine default branch, got: {}",
         err_msg
+    );
+}
+
+/// An omitted target reaches the same "cannot determine default branch" error as
+/// `^` does, by a different route: `^` asks the shortcut expander, while
+/// `wt merge` with no argument asks `resolve_target_selector` for the default
+/// directly. Both are how a user meets a repo whose default branch is
+/// unknowable, and only the first had a test.
+#[rstest]
+fn test_omitted_target_fails_when_default_branch_unavailable(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
+        .run()
+        .unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let err = git_repo
+        .require_target_branch(None)
+        .expect_err("an unknowable default branch cannot be a merge target");
+    assert!(
+        err.to_string().contains("Cannot determine default branch"),
+        "got: {err}"
     );
 }
 

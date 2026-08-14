@@ -1,0 +1,199 @@
+# LLM Commit Messages
+
+Worktrunk generates commit messages by building a templated prompt and piping it to an external command. This integrates with `wt merge`, `wt step commit`, and `wt step squash`.
+
+## Setup
+
+Any command that reads a prompt from stdin and outputs a commit message works. Add to `~/.config/worktrunk/config.toml`:
+
+### Claude Code
+
+```toml
+[commit.generation]
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
+```
+
+`--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. `--safe-mode` keeps the run hermetic — no hooks, plugins, MCP, skills, or CLAUDE.md — while leaving authentication working normally, so setups that authenticate via `apiKeyHelper` (not just OAuth or `ANTHROPIC_API_KEY`) still get a key. `--setting-sources='user'` scopes settings to your user config so a project `.claude/settings.json` can't override auth. The remaining flags disable tools, system prompt, and thinking for fast text-only output. `--safe-mode` requires Claude Code ≥ 2.1.169. See [Claude Code docs](https://code.claude.com/docs/en/setup) for installation.
+
+### Codex
+
+```toml
+[commit.generation]
+command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+Uses the fast mini model with low reasoning effort and an empty system prompt for faster output. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+
+### Other tools
+
+```toml
+# opencode — use a fast model variant
+command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+
+# llm
+command = "llm -m claude-haiku-4.5"
+
+# aichat
+command = "aichat -m claude:claude-haiku-4.5"
+```
+
+## Usage
+
+These examples assume a feature worktree with changes to commit.
+
+### wt merge
+
+Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
+
+```bash
+$ wt merge
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
+<span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no rebase needed)</span>
+<span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> feat(auth): Implement JWT authentication system
+<span style='background:var(--bright-white,#fff)'> </span>  auth.rs             | 2 <span class=g>++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  auth_test.rs        | 2 <span class=g>++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  integration_test.rs | 6 <span class=g>++++++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  jwt.rs              | 3 <span class=g>+++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  jwt_test.rs         | 3 <span class=g>+++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  5 files changed, 16 insertions(+)
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=c>◎</span> <span class=c>Removing <b>feature</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
+```
+
+### wt step commit
+
+Stages and commits with LLM-generated message:
+
+```bash
+$ wt step commit
+<span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
+<span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
+```
+
+### wt step squash
+
+Squashes branch commits into one with LLM-generated message:
+
+```bash
+$ wt step squash
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
+```
+
+See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.
+
+## Branch summaries
+
+[experimental]
+
+With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
+
+Summaries appear in:
+
+- **`wt switch`** [interactive picker](https://worktrunk.dev/switch/#interactive-picker) — preview tab 5
+- **`wt list --full`** — the Summary column (see [`wt list`](https://worktrunk.dev/list/#llm-summaries))
+
+Enable in user config:
+
+```toml
+[list]
+summary = true
+```
+
+Summaries are cached and regenerated only when the diff changes.
+
+## Prompt templates
+
+Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts.
+
+### Custom templates
+
+Override the defaults with inline templates:
+
+```toml
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+
+template = """
+Write a commit message for this diff. One line, under 50 chars.
+
+Branch: {{ branch }}
+Diff:
+{{ git_diff }}
+"""
+
+squash-template = """
+Combine these {{ commit_details | length }} commits into one message:
+{% for c in commit_details %}
+- {{ c.subject }}
+{% endfor %}
+
+Diff:
+{{ git_diff }}
+"""
+```
+
+### Template variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
+| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |
+| `{{ branch }}` | Current branch name |
+| `{{ repo }}` | Repository name |
+| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
+| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |
+| `{{ target_branch }}` | Merge target branch (squash template only) |
+| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
+| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
+
+### Template syntax
+
+Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
+
+- **Variables**: `{{ branch }}`, `{{ repo | upper }}`
+- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`
+- **Conditionals**: `{% if recent_commits %}...{% endif %}`
+- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`
+- **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`
+- **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
+
+See `wt config create --help` for the full default templates.
+
+## Appending to the prompt
+
+[experimental]
+
+`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:
+
+```toml
+# .config/wt.toml
+[commit.generation]
+template-append = """
+- Use conventional commits (feat:, fix:, docs:, …)
+- Reference the related issue ID in the body
+"""
+```
+
+When both the user and project set `template-append`, the `<user-guidance>` block comes first, then `<project-guidance>`.
+
+The user fragment needs no approval — it's the developer's own config. For the project fragment, the first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs with just the user fragment (if any).
+
+Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.
+
+## Fallback behavior
+
+When no LLM is configured, worktrunk generates deterministic messages based on changed filenames (e.g., "Changes to auth.rs & config.rs").

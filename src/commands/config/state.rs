@@ -76,14 +76,15 @@ use crate::commands::picker::preview_cache;
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
-use worktrunk::git::{BranchRef, Repository, sha_cache};
+use worktrunk::git::{BranchRef, Repository, resolve_input_path, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, format_heading, format_with_gutter, info_message, println, success_message,
-    warning_message,
+    eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
+    success_message, warning_message,
 };
 
 use crate::cli::{OutputFormat, SwitchFormat};
+use crate::output::print_json;
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use worktrunk::utils::epoch_now;
 
@@ -634,7 +635,7 @@ pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
             "hook_output": hook_output,
             "diagnostic": diagnostic,
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        print_json(&output)?;
         return Ok(());
     }
 
@@ -656,6 +657,8 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
             (buf, "stdin".to_string())
         }
         Some(p) => {
+            // A relative trace path resolves against `-C` — see `resolve_input_path`.
+            let p = resolve_input_path(p);
             let content = std::fs::read_to_string(&p)
                 .with_context(|| format!("Failed to read trace {}", format_path_for_display(&p)))?;
             (content, format_path_for_display(&p).to_string())
@@ -687,7 +690,7 @@ pub fn handle_logs_profile(file: Option<PathBuf>, format: SwitchFormat) -> anyho
     let profile = worktrunk::trace::Profile::from_entries(&entries);
 
     if format == SwitchFormat::Json {
-        println!("{}", serde_json::to_string_pretty(&profile)?);
+        print_json(&profile)?;
     } else {
         show_help_in_pager(&profile.render_text(&source), true);
     }
@@ -721,7 +724,7 @@ pub fn handle_state_get(
         },
         "marker" => {
             let branch_name = match branch {
-                Some(b) => b,
+                Some(b) => repo.require_selected_branch(&b, "get marker")?,
                 None => repo.require_current_branch("get marker for current branch")?,
             };
             if format == SwitchFormat::Json {
@@ -744,7 +747,7 @@ pub fn handle_state_get(
                     }
                     None => serde_json::json!(null),
                 };
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                print_json(&output)?;
             } else {
                 match repo.branch_marker(&branch_name) {
                     Some(marker) => println!("{marker}"),
@@ -754,7 +757,7 @@ pub fn handle_state_get(
         }
         "ci-status" => {
             let branch_name = match branch {
-                Some(b) => b,
+                Some(b) => repo.require_selected_branch(&b, "get ci-status")?,
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
@@ -789,8 +792,10 @@ pub fn handle_state_get(
                 (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
                 (None, None) => {
                     return Err(worktrunk::git::GitError::BranchNotFound {
+                        // Offering `--create` for a name git rejects sends the
+                        // user to a command that fails.
+                        show_create_hint: worktrunk::git::is_valid_branch_name(&branch_name),
                         branch: branch_name,
-                        show_create_hint: true,
                         last_fetch_ago: None,
                         pr_mr_platform: repo.detect_ref_type(),
                     }
@@ -802,14 +807,14 @@ pub fn handle_state_get(
                 .and_then(|ci_branch| PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha));
 
             if format == SwitchFormat::Json {
-                let ci_provider_override = repo.forge_platform_override();
+                let ci_provider_override = repo.configured_forge_platform();
                 let output = pr_status.as_ref().map(|pr| {
                     super::super::list::json_output::JsonCi::from_pr_status(
                         pr,
                         ci_provider_override.as_deref(),
                     )
                 });
-                println!("{}", serde_json::to_string_pretty(&output)?);
+                print_json(&output)?;
             } else {
                 let ci_status = pr_status
                     .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
@@ -857,7 +862,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
         }
         "marker" => {
             let branch_name = match branch {
-                Some(b) => b,
+                Some(b) => repo.require_selected_branch(&b, "set marker")?,
                 None => repo.require_current_branch("set marker for current branch")?,
             };
 
@@ -915,7 +920,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             } else {
                 // Clear CI status for specific branch
                 let branch_name = match branch {
-                    Some(b) => b,
+                    Some(b) => repo.require_selected_branch(&b, "clear ci-status")?,
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
                 if CachedCiStatus::clear_one(&repo, &branch_name)? {
@@ -947,7 +952,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 }
             } else {
                 let branch_name = match branch {
-                    Some(b) => b,
+                    Some(b) => repo.require_selected_branch(&b, "clear marker")?,
                     None => repo.require_current_branch("clear marker for current branch")?,
                 };
 
@@ -1219,6 +1224,11 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // (see handle_state_show_table).
     let default_branch = repo.cached_default_branch();
 
+    // Git's local <remote>/HEAD branch, for scripts that want to detect drift
+    // from the cache above. Local-only (no ls-remote); None when unset or no
+    // remote.
+    let remote_head_branch = repo.remote_head().map(|(_, branch)| branch);
+
     // Get previous branch
     let previous_branch = repo.switch_previous();
 
@@ -1278,6 +1288,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
 
     let output = serde_json::json!({
         "default_branch": default_branch,
+        "remote_head_branch": remote_head_branch,
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
@@ -1292,7 +1303,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "trash": trash,
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    print_json(&output)?;
     Ok(())
 }
 
@@ -1305,7 +1316,26 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // or persist, or it would silently repopulate a just-cleared cache.
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
     match repo.cached_default_branch() {
-        Some(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
+        Some(branch) => {
+            writeln!(out, "{}", format_with_gutter(&branch, None))?;
+            // Flag drift between the persisted cache and git's <remote>/HEAD.
+            // Local-only (reads the symref, no network); fires only when both
+            // resolve and differ — e.g. after a default-branch rename plus
+            // `git remote set-head origin -a`, which the fast path in
+            // `default_branch()` never notices. The key doubles as a user
+            // override, so this surfaces only on inspection, never per-command.
+            if let Some((remote, remote_head)) = repo.remote_head()
+                && remote_head != branch
+            {
+                let warning = warning_message(cformat!(
+                    "Cached branch differs from <bold>{remote}/HEAD</> (<bold>{remote_head}</>)"
+                ));
+                let hint = hint_message(cformat!(
+                    "To adopt it, run <underline>wt config state default-branch set {remote_head}</>; to re-detect, run <underline>wt config state default-branch clear</>"
+                ));
+                writeln!(out, "{warning}\n{hint}")?;
+            }
+        }
         None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
     writeln!(out)?;
@@ -1452,7 +1482,7 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
         "hints": repo.list_shown_hints(),
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    print_json(&output)?;
     Ok(())
 }
 
@@ -1476,6 +1506,13 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
     } else if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(no entries)", None))?;
     } else {
+        // The Head column is here to be eyeballed against the branch's current
+        // head, so it abbreviates to the width git uses — `core.abbrev`, the
+        // same width `wt list`'s Commit cell and the statusline print. One
+        // probe covers every row: `short_sha` per entry would be a `git
+        // rev-parse` fork apiece, and a repo with a cache entry per branch
+        // turned this dump from 26 ms into 267 ms at 50 entries.
+        let abbrev = repo.abbrev_len();
         let rows: Vec<Vec<String>> = entries
             .iter()
             .map(|cached| {
@@ -1487,7 +1524,7 @@ fn render_ci_status_section(out: &mut String, repo: &Repository) -> anyhow::Resu
                     None => "none".to_string(),
                 };
                 let age = format_relative_time_short(cached.checked_at as i64);
-                let head: String = cached.head.chars().take(8).collect();
+                let head: String = cached.head.chars().take(abbrev).collect();
                 vec![cached.branch.clone(), status, age, head]
             })
             .collect();
@@ -1611,7 +1648,7 @@ pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> 
     validate_vars_key(key)?;
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "get variable")?,
         None => repo.require_current_branch("get variable for current branch")?,
     };
 
@@ -1627,7 +1664,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
     validate_vars_key(key)?;
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "set variable")?,
         None => repo.require_current_branch("set variable for current branch")?,
     };
 
@@ -1645,7 +1682,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
 pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "list variables")?,
         None => repo.require_current_branch("list variables for current branch")?,
     };
 
@@ -1656,7 +1693,7 @@ pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow:
             .into_iter()
             .map(|(k, v)| (k, serde_json::Value::String(v)))
             .collect();
-        println!("{}", serde_json::to_string_pretty(&obj)?);
+        print_json(&obj)?;
     } else if entries.is_empty() {
         eprintln!(
             "{}",
@@ -1678,7 +1715,7 @@ pub fn handle_vars_clear(
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
-        Some(b) => b,
+        Some(b) => repo.require_selected_branch(&b, "clear variable")?,
         None => repo.require_current_branch("clear variable for current branch")?,
     };
 

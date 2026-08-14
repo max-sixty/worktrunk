@@ -24,7 +24,7 @@ use ansi_str::AnsiStr;
 use unicode_width::UnicodeWidthStr;
 
 // Re-exports from anstream (auto-detecting output)
-pub use anstream::{eprint, eprintln, print, println, stderr, stdout};
+pub use anstream::{ColorChoice, eprint, eprintln, print, println, stderr, stdout};
 
 // Re-exports from anstyle (for composition)
 pub use anstyle::Style as AnstyleStyle;
@@ -36,7 +36,7 @@ pub use format::{
     wrap_styled_text,
 };
 pub use highlighting::format_toml;
-pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
+pub use hyperlink::{Stream, hyperlink, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
 pub use suggest::{suggest_command, suggest_command_in_dir};
 
@@ -394,6 +394,19 @@ command = "npm install"
         [107m [0m several security vulnerabilities that were identified during the security
         [107m [0m audit last month. The new implementation follows industry best practices and
         [107m [0m includes proper token rotation and expiration handling.
+        ");
+    }
+
+    /// An indented line that wraps keeps its indent on every continuation
+    /// line, so subordinate content (a task-failure message under its
+    /// label) stays visually subordinate instead of rendering flush-left.
+    #[test]
+    fn test_format_with_gutter_preserves_indent_on_wrap() {
+        let indented = "  fatal: Unable to create '/some/long/path/to/repository/.git/worktrees/name/index.lock': File exists.";
+        assert_snapshot!(format_with_gutter(indented, Some(50)), @"
+        [107m [0m   fatal: Unable to create
+        [107m [0m   '/some/long/path/to/repository/.git/worktrees/name/index.lock':
+        [107m [0m   File exists.
         ");
     }
 

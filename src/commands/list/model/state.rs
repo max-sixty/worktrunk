@@ -3,7 +3,7 @@
 //! These represent various states a worktree or branch can be in relative to
 //! the default branch, upstream remote, or git operations in progress.
 
-use worktrunk::git::IntegrationReason;
+use worktrunk::git::{InProgressOperation, IntegrationReason};
 
 /// Upstream divergence state relative to remote tracking branch.
 ///
@@ -74,7 +74,15 @@ impl Divergence {
 /// - For worktrees: whether the path matches the template, or has issues
 /// - For branches (without worktree): shows / to distinguish from worktrees
 ///
-/// Priority order for worktrees: Prunable > Locked > BranchWorktreeMismatch
+/// Priority order for worktrees: Prunable > Locked > DuplicateBranch >
+/// BranchWorktreeMismatch
+///
+/// `DuplicateBranch` and `BranchWorktreeMismatch` share the `⚑` glyph: both
+/// say this worktree's place in the branch ⇔ worktree map is irregular, and
+/// the table already distinguishes them — a repeated Branch cell is the
+/// duplicate, an off-template Path cell the mismatch. The variants stay
+/// separate because the JSON `worktree.state` names the cause, where there
+/// is no glyph budget to spend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum WorktreeState {
     #[strum(serialize = "")]
@@ -83,6 +91,8 @@ pub enum WorktreeState {
     None,
     /// Branch-worktree mismatch: path doesn't match what the template would generate
     BranchWorktreeMismatch,
+    /// The branch is checked out in more than one worktree
+    DuplicateBranch,
     /// Prunable (worktree directory missing)
     Prunable,
     /// Locked (protected from removal)
@@ -95,7 +105,7 @@ impl std::fmt::Display for WorktreeState {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::None => Ok(()),
-            Self::BranchWorktreeMismatch => write!(f, "⚑"),
+            Self::BranchWorktreeMismatch | Self::DuplicateBranch => write!(f, "⚑"),
             Self::Prunable => write!(f, "⊟"),
             Self::Locked => write!(f, "⊞"),
             Self::Branch => write!(f, "/"),
@@ -410,20 +420,23 @@ pub fn tier_counts(
 /// Represents blocking git operations in progress that require resolution.
 /// These take priority over all other states in the Worktree column.
 ///
-/// Priority: Conflicts (✘) > Rebase (⤴) > Merge (⤵)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
+/// Priority: Conflicts (✘) > InProgress (↻)
+///
+/// Every in-progress operation renders the same symbol. What the reader does
+/// about a stopped rebase, merge, cherry-pick, revert, or bisect is identical —
+/// run `git status`, then finish or abort it — so splitting the column across a
+/// glyph per operation asked the reader to distinguish states that lead to the
+/// same next step, and left the operations without a glyph invisible. The
+/// operation's identity is still carried, for `--format=json` to name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OperationState {
     /// No operation in progress
     #[default]
-    #[strum(serialize = "")]
     None,
     /// Actual merge conflicts (unmerged paths in working tree)
     Conflicts,
-    /// Rebase in progress
-    Rebase,
-    /// Merge in progress
-    Merge,
+    /// Git is partway through an operation of its own.
+    InProgress(InProgressOperation),
 }
 
 impl std::fmt::Display for OperationState {
@@ -431,8 +444,7 @@ impl std::fmt::Display for OperationState {
         match self {
             Self::None => Ok(()),
             Self::Conflicts => write!(f, "✘"),
-            Self::Rebase => write!(f, "⤴"),
-            Self::Merge => write!(f, "⤵"),
+            Self::InProgress(_) => write!(f, "↻"),
         }
     }
 }
@@ -442,36 +454,28 @@ impl OperationState {
     ///
     /// Color semantics:
     /// - ERROR (red): Conflicts - blocking problems
-    /// - WARNING (yellow): Rebase, Merge - active/stuck states
+    /// - WARNING (yellow): InProgress - active/stuck states
     pub fn styled(&self) -> Option<String> {
         use color_print::cformat;
         match self {
             Self::None => None,
             Self::Conflicts => Some(cformat!("<red>{self}</>")),
-            Self::Rebase | Self::Merge => Some(cformat!("<yellow>{self}</>")),
+            Self::InProgress(_) => Some(cformat!("<yellow>{self}</>")),
         }
     }
 
     /// Returns the JSON string representation.
+    ///
+    /// The symbol collapses every operation into one glyph; JSON keeps the
+    /// operation's own name, so a consumer can still tell a stopped bisect from
+    /// a stopped rebase.
     pub fn as_json_str(self) -> Option<&'static str> {
-        let s: &'static str = self.into();
-        if s.is_empty() { None } else { Some(s) }
+        match self {
+            Self::None => None,
+            Self::Conflicts => Some("conflicts"),
+            Self::InProgress(operation) => Some(operation.into()),
+        }
     }
-}
-
-/// Active git operation in a worktree
-///
-/// Represents raw data about whether a worktree is in the middle of a git operation.
-/// This is distinct from [`OperationState`] which is the display enum (includes Conflicts,
-/// has symbols/colors).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ActiveGitOperation {
-    #[default]
-    None,
-    /// Rebase in progress (rebase-merge or rebase-apply directory exists)
-    Rebase,
-    /// Merge in progress (MERGE_HEAD exists)
-    Merge,
 }
 
 #[cfg(test)]
@@ -526,6 +530,8 @@ mod tests {
     fn test_worktree_state_display() {
         assert_eq!(format!("{}", WorktreeState::None), "");
         assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚑");
+        // Shares the mismatch glyph; the JSON state names which cause it was.
+        assert_eq!(format!("{}", WorktreeState::DuplicateBranch), "⚑");
         assert_eq!(format!("{}", WorktreeState::Prunable), "⊟");
         assert_eq!(format!("{}", WorktreeState::Locked), "⊞");
         assert_eq!(format!("{}", WorktreeState::Branch), "/");
@@ -919,8 +925,16 @@ mod tests {
     fn test_operation_state_display() {
         assert_eq!(format!("{}", OperationState::None), "");
         assert_eq!(format!("{}", OperationState::Conflicts), "✘");
-        assert_eq!(format!("{}", OperationState::Rebase), "⤴");
-        assert_eq!(format!("{}", OperationState::Merge), "⤵");
+        // Every operation renders the same glyph.
+        for operation in [
+            InProgressOperation::Rebase,
+            InProgressOperation::Merge,
+            InProgressOperation::CherryPick,
+            InProgressOperation::Revert,
+            InProgressOperation::Bisect,
+        ] {
+            assert_eq!(format!("{}", OperationState::InProgress(operation)), "↻");
+        }
     }
 
     #[test]
@@ -928,15 +942,30 @@ mod tests {
         use insta::assert_snapshot;
         assert!(OperationState::None.styled().is_none());
         assert_snapshot!(OperationState::Conflicts.styled().unwrap(), @"[31m✘[39m");
-        assert_snapshot!(OperationState::Rebase.styled().unwrap(), @"[33m⤴[39m");
-        assert_snapshot!(OperationState::Merge.styled().unwrap(), @"[33m⤵[39m");
+        assert_snapshot!(
+            OperationState::InProgress(InProgressOperation::Rebase)
+                .styled()
+                .unwrap(),
+            @"[33m↻[39m"
+        );
     }
 
     #[test]
     fn test_operation_state_as_json_str() {
         assert_eq!(OperationState::None.as_json_str(), None);
         assert_eq!(OperationState::Conflicts.as_json_str(), Some("conflicts"));
-        assert_eq!(OperationState::Rebase.as_json_str(), Some("rebase"));
-        assert_eq!(OperationState::Merge.as_json_str(), Some("merge"));
+        // The symbol is shared; the JSON name is not.
+        assert_eq!(
+            OperationState::InProgress(InProgressOperation::Rebase).as_json_str(),
+            Some("rebase")
+        );
+        assert_eq!(
+            OperationState::InProgress(InProgressOperation::CherryPick).as_json_str(),
+            Some("cherry_pick")
+        );
+        assert_eq!(
+            OperationState::InProgress(InProgressOperation::Bisect).as_json_str(),
+            Some("bisect")
+        );
     }
 }

@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 use color_print::cformat;
-use worktrunk::styling::PROMPT_SYMBOL;
+use worktrunk::styling::{PROMPT_SYMBOL, eprint, eprintln};
 
 /// Response from a `[y/N/?]` prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub fn prompt_yes_no_preview(
     show_preview: impl Fn(),
 ) -> io::Result<PromptResponse> {
     // Blank line before first prompt for visual separation
-    worktrunk::styling::eprintln!();
+    eprintln!();
 
     loop {
         eprint!(

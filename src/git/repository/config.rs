@@ -1,13 +1,57 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
 
 use crate::config::ProjectConfig;
 
-use super::{DefaultBranchName, GitError, Repository};
+use crate::git::CommandError;
+use crate::path::format_path_for_display;
+
+use super::{DefaultBranchName, GitError, Repository, Selector};
+
+/// How long `git ls-remote` may run before default-branch detection gives up.
+///
+/// The query normally answers in 100 ms–2 s, and until this bound nothing
+/// limited how long it could take *not* to answer: an unanswered SYN costs
+/// ~127 s per address on Linux (`tcp_syn_retries=6`) and git tries each of a
+/// host's addresses in turn, so a remote behind a dropped VPN or a dead host
+/// stalled `wt list --full` and `wt switch` for minutes. The bound is far
+/// above a slow-but-working handshake and far below that, so it separates the
+/// two cases without a judgement call.
+const REMOTE_DETECTION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Outcome of the remote half of default-branch detection.
+enum RemoteDetection {
+    /// The remote — or git's local `<remote>/HEAD` cache for it — named a branch.
+    Found(String),
+    /// There is no remote, or the query failed — no HEAD, no such repository,
+    /// an offline laptop. Whatever the local branches say stands in, and it is
+    /// cached: `ls-remote` exits 128 for all of those alike, so telling a
+    /// down network from a remote that simply has no HEAD would mean reading
+    /// git's error text, and re-querying on every command is the cost the
+    /// cache exists to avoid. Only a timeout separates cleanly, via
+    /// `ErrorKind::TimedOut`.
+    Unavailable,
+    /// The query hit [`REMOTE_DETECTION_TIMEOUT`]. The default branch is
+    /// unknown rather than absent, so local inference answers this invocation
+    /// but is not written to `worktrunk.default-branch`: a guess made while
+    /// the network was down would otherwise outlive the outage, and the
+    /// persisted cache is exactly what stops later calls from re-detecting.
+    TimedOut,
+}
+
+/// Whether a command failed by exceeding its [`crate::shell_exec::Cmd::timeout`].
+///
+/// `Cmd::run` reports the kill as an [`std::io::Error`], which `anyhow`
+/// context wraps but preserves in the chain.
+fn timed_out(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>()
+        .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut)
+}
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
@@ -67,15 +111,15 @@ impl Repository {
     /// Removes the canonical form (matching what git emits) to stay in
     /// sync with `set_config_value` and `config_last`.
     pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
-        let output = self.run_command_output(&["config", "--unset", key])?;
+        let args = ["config", "--unset", key];
+        let output = self.run_command_output(&args)?;
         let existed = if output.status.success() {
             true
         } else if output.status.code() == Some(5) {
             // --unset exit code 5 = key didn't exist
             false
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
         };
         if let Some(lock) = self.cache.all_config.get() {
             // `shift_remove` preserves remaining order (swap_remove would
@@ -94,15 +138,15 @@ impl Repository {
     /// surfaced as `Err`). Use this instead of `run_command` + `.unwrap_or_default()`,
     /// which conflates the two.
     pub fn get_config_regexp(&self, pattern: &str) -> anyhow::Result<String> {
-        let output = self.run_command_output(&["config", "--get-regexp", pattern])?;
+        let args = ["config", "--get-regexp", pattern];
+        let output = self.run_command_output(&args)?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else if output.status.code() == Some(1) {
             // Exit 1 = no keys matched the pattern
             Ok(String::new())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --get-regexp {}: {}", pattern, stderr.trim());
+            Err(CommandError::from_failed_output("git", &args, &output).into())
         }
     }
 
@@ -365,12 +409,15 @@ impl Repository {
     /// Detection strategy:
     /// 1. Check worktrunk cache (`git config worktrunk.default-branch`)
     /// 2. Try primary remote's local cache (e.g., `origin/HEAD`)
-    /// 3. Query remote (`git ls-remote`) — may take 100 ms–2 s (sole wire fallback)
+    /// 3. Query remote (`git ls-remote`) — may take 100 ms–2 s (sole wire
+    ///    fallback), bounded by `REMOTE_DETECTION_TIMEOUT`
     /// 4. Infer from local branches if no remote
     ///
     /// Detection results are cached to `worktrunk.default-branch` for future
-    /// calls. Result is also cached in the shared repo cache (shared across
-    /// all worktrees).
+    /// calls, except when step 3 timed out — see `RemoteDetection::TimedOut`.
+    /// Result is also cached in the shared repo cache (shared across all
+    /// worktrees), timeouts included: one invocation waits out the bound once,
+    /// not once per caller.
     ///
     /// To minimize latency on the rare cold-clone case:
     /// - Defer calling this until after fast, local checks (see e497f0f for an example).
@@ -398,14 +445,19 @@ impl Repository {
                 }
 
                 // Detect: try remote, then local inference
-                let detected = self.detect_from_remote().or_else(|| {
-                    self.infer_default_branch_locally()
+                let remote = self.detect_from_remote();
+                let persist = !matches!(remote, RemoteDetection::TimedOut);
+                let detected = match remote {
+                    RemoteDetection::Found(branch) => Some(branch),
+                    RemoteDetection::Unavailable | RemoteDetection::TimedOut => self
+                        .infer_default_branch_locally()
                         .inspect_err(|e| tracing::debug!(error = %e, "Local inference failed: {e}"))
-                        .ok()
-                });
+                        .ok(),
+                };
 
                 // Cache detected result to git config for future runs
-                if let Some(ref branch) = detected
+                if persist
+                    && let Some(ref branch) = detected
                     && let Err(e) = self.set_config_value("worktrunk.default-branch", branch)
                 {
                     tracing::debug!(error = %e, "Failed to persist default-branch cache: {e}");
@@ -417,38 +469,90 @@ impl Repository {
     }
 
     /// Try to detect default branch from remote.
-    fn detect_from_remote(&self) -> Option<String> {
-        let remote = self.primary_remote().ok()?;
+    fn detect_from_remote(&self) -> RemoteDetection {
+        let Ok(remote) = self.primary_remote() else {
+            return RemoteDetection::Unavailable;
+        };
 
         // Try git's local cache for this remote (e.g., origin/HEAD)
         if let Ok(branch) = self.local_default_branch(&remote) {
-            return Some(branch);
+            return RemoteDetection::Found(branch);
         }
 
         // Query remote directly (may be slow)
-        self.query_remote_default_branch(&remote).ok()
+        match self.query_remote_default_branch(&remote) {
+            Ok(branch) => RemoteDetection::Found(branch),
+            Err(e) if timed_out(&e) => {
+                tracing::debug!(
+                    "Remote default-branch query exceeded {REMOTE_DETECTION_TIMEOUT:?}; \
+                     falling back to local inference without caching it"
+                );
+                RemoteDetection::TimedOut
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Remote default-branch query failed: {e}");
+                RemoteDetection::Unavailable
+            }
+        }
     }
 
     /// Resolve a target branch from an optional override
     ///
-    /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
+    /// If target is Some, expands special symbols ("@", "-", "^") via `expand_selector`.
     /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
     ///
     /// Note: This does not validate that the target exists. Use `require_target_branch` or
     /// `require_target_ref` for validation before approval prompts.
     pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
+        Ok(self.resolve_target_selector(target)?.token().to_string())
+    }
+
+    /// [`resolve_target_branch`](Self::resolve_target_branch), keeping the
+    /// [`Selector`] rather than flattening it to the name.
+    ///
+    /// The `require_target_*` pair needs what the selector carries: whether the
+    /// token is still one the user typed, which is what decides the path arm
+    /// below. A default branch read from the cache is nobody's path, so the
+    /// `None` target is a rewrite like any other.
+    pub fn resolve_target_selector(&self, target: Option<&str>) -> anyhow::Result<Selector> {
         match target {
-            Some(b) => self.resolve_worktree_name(b),
-            None => self.default_branch().ok_or_else(|| {
-                GitError::Other {
-                    message: cformat!(
-                        "Cannot determine default branch. Specify target explicitly or run <bold>wt config state default-branch set BRANCH</>"
-                    ),
-                }
-                .into()
-            }),
+            Some(b) => self.expand_selector(b),
+            None => self
+                .default_branch()
+                .map(Selector::rewritten_to)
+                .ok_or_else(|| {
+                    GitError::Other {
+                        message: cformat!(
+                            "Cannot determine default branch. Specify target explicitly or run <bold>wt config state default-branch set BRANCH</>"
+                        ),
+                    }
+                    .into()
+                }),
         }
+    }
+
+    /// The worktree a target names by path, when the target is one.
+    ///
+    /// The path arm of a merge or rebase target: `wt merge ../repo.main` names
+    /// the same branch as `wt merge main`. Refs win, so this runs only once the
+    /// caller's own ref lookup has failed, and only for a target the user typed
+    /// — which [`Selector::names_a_path`] answers outright, where this used to
+    /// infer it by checking whether expansion had changed the string.
+    ///
+    /// The worktree is returned whole rather than just its branch, so `None`
+    /// means "nothing registered here" alone. A detached worktree — `Some` with
+    /// no branch — is the case that makes the distinction load-bearing: it is
+    /// reachable by path and by nothing else, so folding it into `None` would
+    /// let a caller report a worktree `wt list` shows as absent.
+    fn target_worktree_at_path(
+        &self,
+        selector: &Selector,
+    ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
+        if !selector.names_a_path() {
+            return Ok(None);
+        }
+        self.worktree_at_input_path(selector.token())
     }
 
     /// Resolve and validate a target that must be a branch.
@@ -462,17 +566,41 @@ impl Repository {
     /// the generic "branch not found" — the user didn't type that name,
     /// the persisted cache did.
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
-        let branch = self.resolve_target_branch(target)?;
+        let selector = self.resolve_target_selector(target)?;
+        let branch = selector.token().to_string();
         if !self.branch(&branch).exists()? {
-            if target.is_none() {
-                if self.is_unborn_branch(&branch) {
-                    return Err(GitError::UnbornDefaultBranch { branch }.into());
+            match self.target_worktree_at_path(&selector)? {
+                Some((_, Some(from_path))) => return Ok(from_path),
+                // A worktree is there, so the path resolved — it just has no
+                // branch to be the target of a merge or a push.
+                Some((path, None)) => {
+                    return Err(GitError::DetachedHead {
+                        action: Some(cformat!(
+                            "use <bold>{}</> as a target",
+                            format_path_for_display(&path)
+                        )),
+                        worktree: Some(path),
+                    }
+                    .into());
                 }
-                return Err(GitError::StaleDefaultBranch { branch }.into());
+                None => {}
+            }
+            if target.is_none() {
+                return Err(self.uncached_default_branch_error(branch));
+            }
+            // Nothing is registered at the path, which is what this error
+            // asserts; the arms above consumed both worktree cases. A target
+            // is spelled in a wider vocabulary than a worktree selector, so
+            // this stays here rather than routing through `resolve_selector`.
+            if let Some(path) = self.path_selector_directory(&branch) {
+                return Err(GitError::WorktreeNotFoundAtPath { path }.into());
             }
             return Err(GitError::BranchNotFound {
+                // Offering `--create` for a name git rejects sends the user to
+                // a command that fails; the argument was a path spelling,
+                // whether or not a directory happens to sit at it.
+                show_create_hint: super::is_valid_branch_name(&branch),
                 branch,
-                show_create_hint: true,
                 last_fetch_ago: None,
                 pr_mr_platform: self.detect_ref_type(),
             }
@@ -491,17 +619,37 @@ impl Repository {
     /// [`GitError::StaleDefaultBranch`] with cache-reset hints rather than
     /// the generic "reference not found".
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
-        let reference = self.resolve_target_branch(target)?;
+        let selector = self.resolve_target_selector(target)?;
+        let reference = selector.token().to_string();
         if !self.ref_exists(&reference)? {
+            if let Some((_, Some(from_path))) = self.target_worktree_at_path(&selector)? {
+                return Ok(from_path);
+            }
+            // No path claim here: a commit-ish is spelled in a wider vocabulary
+            // than a worktree selector, and `ReferenceNotFound` names all of it.
             if target.is_none() {
-                if self.is_unborn_branch(&reference) {
-                    return Err(GitError::UnbornDefaultBranch { branch: reference }.into());
-                }
-                return Err(GitError::StaleDefaultBranch { branch: reference }.into());
+                return Err(self.uncached_default_branch_error(reference));
             }
             return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
+    }
+
+    /// The error for a default branch that came from the cache rather than the
+    /// user, and then didn't resolve.
+    ///
+    /// The one part of `require_target_branch` and `require_target_ref` that is
+    /// identical rather than merely parallel: the rest of those two differ in
+    /// their existence predicate, their extra arms, and their final error, and
+    /// forcing them together would cost more in parameters than the duplication
+    /// does.
+    fn uncached_default_branch_error(&self, branch: String) -> anyhow::Error {
+        if self.is_unborn_branch(&branch) {
+            // No cache-reset hint: the cached name is right, the branch just
+            // has no commits yet.
+            return GitError::UnbornDefaultBranch { branch }.into();
+        }
+        GitError::StaleDefaultBranch { branch }.into()
     }
 
     /// True when `branch` is checked out as an unborn HEAD (no commits yet)
@@ -582,7 +730,10 @@ impl Repository {
     }
 
     pub(super) fn query_remote_default_branch(&self, remote: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["ls-remote", "--symref", remote, "HEAD"])?;
+        let stdout = self.run_command_bounded(
+            &["ls-remote", "--symref", remote, "HEAD"],
+            Some(REMOTE_DETECTION_TIMEOUT),
+        )?;
         DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
     }
 
@@ -623,6 +774,27 @@ impl Repository {
             .filter(|s| !s.is_empty())
     }
 
+    /// Read the primary remote's locally-cached HEAD without touching the
+    /// network, as `(remote_name, branch)` — the branch `<remote>/HEAD`
+    /// resolves to (e.g. `("origin", "main")`).
+    ///
+    /// Unlike [`default_branch`](Self::default_branch), this never queries the
+    /// remote (`git ls-remote`), never infers from local branches, and never
+    /// persists a result: it reports only git's own `<remote>/HEAD` symref.
+    /// Returns `None` when there is no primary remote or its HEAD is not set
+    /// locally (e.g. `git remote set-head` was never run).
+    ///
+    /// State inspection (`wt config state`) uses this to flag when the
+    /// persisted `worktrunk.default-branch` cache has drifted from
+    /// `origin/HEAD` — e.g. after a default-branch rename followed by
+    /// `git remote set-head origin -a`, which the fast-path cache in
+    /// `default_branch()` won't otherwise notice.
+    pub fn remote_head(&self) -> Option<(String, String)> {
+        let remote = self.primary_remote().ok()?;
+        let branch = self.local_default_branch(&remote).ok()?;
+        Some((remote, branch))
+    }
+
     // =========================================================================
     // Project config
     // =========================================================================
@@ -631,13 +803,25 @@ impl Repository {
     ///
     /// If `WORKTRUNK_PROJECT_CONFIG_PATH` is set, returns that path (used for
     /// test isolation so the spawned `wt` does not pick up this repo's
-    /// `.config/wt.toml`). A missing file at that path still resolves to
-    /// `Ok(None)` via `ProjectConfig::load`, matching the no-config case.
+    /// `.config/wt.toml`). An empty value means no project config. A relative
+    /// value resolves against the same worktree root the default
+    /// `.config/wt.toml` is anchored to — never the process cwd, which would
+    /// make the override silently depend on the invocation directory — and
+    /// errors when no worktree root exists to anchor it. A missing file at the
+    /// resulting path still resolves to `Ok(None)` via `ProjectConfig::load`,
+    /// matching the no-config case.
     ///
-    /// Otherwise: uses the current worktree when inside one (both normal and
-    /// bare repos). For bare repos at the bare root (outside any worktree),
-    /// falls back to the primary worktree. Returns `None` when no worktree can
-    /// be determined (bare repo with no linked worktrees).
+    /// Without the override: uses the current worktree when inside one (both
+    /// normal and bare repos). For bare repos at the bare root (outside any
+    /// worktree), falls back to the primary worktree. When the default branch
+    /// is checked out in no worktree (so `primary_worktree()` is `None`),
+    /// there is no on-disk path to return here — `ProjectConfig::load` reads
+    /// the committed default-branch config from the object store via
+    /// [`default_branch_project_config_content`](Self::default_branch_project_config_content)
+    /// so project config (and every project hook) isn't silently dropped while
+    /// the primary is parked on another branch (#3461). That fallback is for
+    /// the no-override case only: an override always names the config source
+    /// outright.
     ///
     /// "The current worktree" is whatever this `Repository` was rooted at, so
     /// the answer to "which `.config/wt.toml` does a hook read" is decided by
@@ -645,8 +829,34 @@ impl Repository {
     /// is resolved against — is the spec in the `commands::hooks` module docs
     /// (`src/commands/hooks.rs`).
     pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
-        if let Ok(path) = std::env::var("WORKTRUNK_PROJECT_CONFIG_PATH") {
-            return Ok(Some(PathBuf::from(path)));
+        let override_path = std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").map(PathBuf::from);
+        if let Some(path) = &override_path {
+            if path.as_os_str().is_empty() {
+                // An empty override means no project config, matching a
+                // missing file at the override path.
+                return Ok(None);
+            }
+            if path.is_absolute() {
+                return Ok(Some(path.clone()));
+            }
+            // Windows-only forms that are neither absolute nor purely
+            // relative — drive-relative (`C:cfg`) or rooted without a drive
+            // (`\cfg`, `/tmp/x`) — would resolve against the process drive or
+            // replace the anchor under `Path::join`; reject them rather than
+            // silently keep the cwd dependence this resolution exists to
+            // eliminate.
+            #[cfg(windows)]
+            if path.has_root()
+                || matches!(
+                    path.components().next(),
+                    Some(std::path::Component::Prefix(_))
+                )
+            {
+                anyhow::bail!(
+                    "WORKTRUNK_PROJECT_CONFIG_PATH ({}) is neither fully absolute nor relative; use an absolute path including the drive",
+                    path.display()
+                );
+            }
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
@@ -654,21 +864,103 @@ impl Repository {
         // forks on the typical alias path.
         let info = self.current_worktree().prewarm_info().unwrap_or_default();
 
-        if let Some(root) = info.root {
-            // Inside a worktree — use it (normal repo or linked worktree in
-            // bare repo). `root` is `Some` iff the batch saw us inside a work
-            // tree, so no separate `is_inside` check.
-            return Ok(Some(root.join(".config").join("wt.toml")));
+        // Inside a worktree — use it (normal repo or linked worktree in bare
+        // repo; `root` is `Some` iff the batch saw us inside a work tree). At
+        // the bare root, fall back to the primary worktree (the one holding
+        // the default branch); when the default branch is checked out in no
+        // worktree, there is no root and no on-disk path — `ProjectConfig::load`
+        // then reads the committed default-branch config from the object store
+        // via `default_branch_project_config_content` (#3461).
+        let root = match info.root {
+            Some(root) => Some(root),
+            None if self.is_bare().unwrap_or(false) => self.primary_worktree()?,
+            None => None,
+        };
+
+        let Some(relative) = override_path else {
+            return Ok(root.map(|root| root.join(".config").join("wt.toml")));
+        };
+        let Some(root) = root else {
+            anyhow::bail!(
+                "WORKTRUNK_PROJECT_CONFIG_PATH is relative ({}) but there is no worktree root to resolve it against; use an absolute path",
+                relative.display()
+            );
+        };
+        Ok(Some(root.join(relative)))
+    }
+
+    /// Content of the default branch's committed `.config/wt.toml`, read from
+    /// the object store via `git show`, for the one state where the on-disk
+    /// path can't supply it: a bare repo whose default branch is checked out in
+    /// no worktree.
+    ///
+    /// In a bare layout the primary worktree normally holds the default branch,
+    /// so its on-disk `.config/wt.toml` *is* the default branch's project
+    /// config and [`project_config_path`](Self::project_config_path) resolves
+    /// it directly. When the primary worktree is transiently parked on another
+    /// branch (a common agent-driven workflow), no worktree exposes the default
+    /// branch's config on disk; returning nothing there would silently drop the
+    /// entire project config and every project hook (#3461). Reading the
+    /// committed copy from the object store restores it without depending on
+    /// which branch is checked out where — and, unlike scanning worktrees for
+    /// any `.config/wt.toml`, always reads the *default branch's* config rather
+    /// than whatever branch a worktree happens to be parked on.
+    ///
+    /// Returns `None` cheaply — before touching the object store — for every
+    /// other repo shape (non-bare repos, and bare repos whose default branch is
+    /// checked out somewhere), so the common load path never pays for the extra
+    /// `git show`. Also returns `None` when the default branch ships no project
+    /// config (`git show` exits non-zero for a path absent from the tree),
+    /// matching the no-config case.
+    ///
+    /// This is a best-effort resolver: the `is_bare` / `primary_worktree`
+    /// checks re-run calls that `project_config_path` already made
+    /// successfully on this path, and a `git show` failure degrades to "no
+    /// project config" (no hooks) rather than surfacing — the same
+    /// error-swallowing shape `alias.rs` uses for config resolution, and safe
+    /// because the fallback only ever adds hooks, never risks data.
+    ///
+    /// The read resolves the default branch **by name**
+    /// (`<default-branch>:.config/wt.toml`), not via `HEAD`. `git show` resolves
+    /// `HEAD` against the invocation cwd's per-worktree HEAD, and this runs with
+    /// `discovery_path` as cwd — a linked worktree parked on some other branch
+    /// when `wt` is invoked from inside one (the common agent case). Reading
+    /// `HEAD` there would read that worktree's branch, dropping or mis-sourcing
+    /// the default branch's config; an absolute branch ref is cwd-independent.
+    /// The returned `PathBuf` is a display-only label of the form
+    /// `<default-branch>:.config/wt.toml` — a git revision spec, not a
+    /// filesystem path. Nothing is read from or written to it; it only
+    /// annotates diagnostics (e.g. a parse error) with the object-store source.
+    pub fn default_branch_project_config_content(&self) -> Option<(String, PathBuf)> {
+        // An explicit WORKTRUNK_PROJECT_CONFIG_PATH override names the config
+        // source outright — an empty value or a missing file at the override
+        // path means no project config — so the committed fallback must not
+        // supersede it (the override exists for test isolation, where reading
+        // the repo's own committed config is exactly the leak being prevented).
+        if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
+            return None;
+        }
+        if !self.is_bare().unwrap_or(false) {
+            return None;
+        }
+        // Only the "default branch checked out nowhere" state needs this; when
+        // the default branch is checked out somewhere, its on-disk path already
+        // resolved (and stays authoritative — e.g. a deletion there wins).
+        if self.primary_worktree().ok().flatten().is_some() {
+            return None;
         }
 
-        if self.is_bare().unwrap_or(false) {
-            // At bare repo root — use primary worktree
-            return Ok(self
-                .primary_worktree()?
-                .map(|p| p.join(".config").join("wt.toml")));
+        let spec = format!("{}:.config/wt.toml", self.default_branch()?);
+        match self.run_command_output(&["show", &spec]) {
+            Ok(output) if output.status.success() => Some((
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                PathBuf::from(&spec),
+            )),
+            // A non-zero exit (typically 128, path absent from the tree) or a
+            // rare spawn failure: treat as "no project config", the same result
+            // as an absent file on disk.
+            _ => None,
         }
-
-        Ok(None)
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
@@ -749,6 +1041,44 @@ mod tests {
             .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
             .unwrap();
         assert_eq!(output, "");
+    }
+
+    #[test]
+    fn test_get_config_regexp_failure_is_command_error() {
+        // A real failure (invalid pattern, exit 6) must surface as a typed
+        // `CommandError` — unlike exit 1, which means "no keys matched".
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.get_config_regexp("(").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --get-regexp (");
+    }
+
+    #[test]
+    fn test_unset_config_failure_is_command_error() {
+        // A real failure (invalid key, exit 1) must surface as a typed
+        // `CommandError` — unlike exit 5, which means "key didn't exist".
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.unset_config("inva lid.key").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --unset inva lid.key");
+    }
+
+    #[test]
+    fn test_config_read_failure_is_command_error() {
+        // Corrupting the config after the repository is open (the bulk map
+        // populates lazily) makes `git config --list -z` fail — the failure
+        // must surface as a typed `CommandError`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = repo.config_value("user.name").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git config --list -z");
     }
 
     #[test]

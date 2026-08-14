@@ -222,6 +222,61 @@ fn test_state_clear_default_branch_empty(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No default branch cache to clear");
 }
 
+#[rstest]
+fn test_state_show_default_branch_drift_warns(mut repo: TestRepo) {
+    // origin/HEAD points at main (the fixture default)...
+    repo.setup_remote("main");
+    // ...but the persisted cache still names a branch from before a rename.
+    // This is the shape after a GitHub default-branch rename + `git remote
+    // set-head origin -a`: the fast-path cache in default_branch() never
+    // re-validates against origin/HEAD, so `wt config state` calls it out.
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "old-default"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_state_show_default_branch_no_drift_when_matching(mut repo: TestRepo) {
+    // Cache matches origin/HEAD — no warning, just the value.
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "main"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("DEFAULT BRANCH"));
+    // No drift → no divergence warning.
+    assert!(
+        !stdout.contains("differs from"),
+        "expected no drift warning when cache matches origin/HEAD:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_state_get_json_reports_remote_head_branch(mut repo: TestRepo) {
+    repo.setup_remote("main");
+    repo.git_command()
+        .args(["config", "worktrunk.default-branch", "old-default"])
+        .run()
+        .unwrap();
+
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(json["default_branch"], "old-default");
+    assert_eq!(json["remote_head_branch"], "main");
+}
+
 // ============================================================================
 // previous-branch
 // ============================================================================
@@ -508,6 +563,40 @@ fn test_logs_profile_from_file(repo: TestRepo) {
     cmd.current_dir(repo.root_path());
     let output = cmd.output().unwrap();
     assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PERFORMANCE PROFILE"), "stdout: {stdout}");
+}
+
+/// A relative trace path resolves against `-C`, the way git resolves the path
+/// arguments in its own command line.
+///
+/// Run from outside the repo, so the process cwd and the `-C` directory
+/// disagree: the trace is only reachable from the latter.
+#[rstest]
+fn test_logs_profile_from_file_honors_directory_flag(repo: TestRepo) {
+    std::fs::write(repo.root_path().join("captured.log"), PROFILE_FIXTURE_TRACE).unwrap();
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args([
+        "-C",
+        &root,
+        "config",
+        "state",
+        "logs",
+        "profile",
+        "captured.log",
+    ]);
+    cmd.current_dir(&outside);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "profile should read the trace named relative to -C: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("PERFORMANCE PROFILE"), "stdout: {stdout}");
 }
@@ -1709,12 +1798,15 @@ fn test_state_get_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_with_ci_entries(repo: TestRepo) {
-    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
+    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in
+    // snapshots. The heads are placeholders, so what the snapshot pins is the
+    // table's shape; that the width is git's own is pinned separately by
+    // `test_state_get_ci_head_uses_git_abbreviation`.
     write_ci_cache(
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
@@ -1722,7 +1814,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "bugfix",
         &format!(
-            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555","branch":"bugfix"}}"#
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"11122233","branch":"bugfix"}}"#
         ),
     );
 
@@ -1730,7 +1822,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "main",
         &format!(
-            r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678","branch":"main"}}"#
+            r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef","branch":"main"}}"#
         ),
     );
 
@@ -1739,6 +1831,48 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     state_get_settings().bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+/// The CI cache's Head column abbreviates through git, so a head reads at the
+/// same width in `wt config state` as it does in `wt list`'s Commit column and
+/// in the statusline — all of them `core.abbrev`, none of them a slice of their
+/// own. Snapshots can't pin this: the width git picks scales with the repo's
+/// object count, and the SHA a test repo commits to isn't fixed.
+#[rstest]
+fn test_state_get_ci_head_uses_git_abbreviation(repo: TestRepo) {
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#),
+    );
+
+    let expected = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "--short", &head])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let output = wt_state_get_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let row = stdout
+        .lines()
+        .find(|l| l.contains("main") && l.contains("none"))
+        .unwrap_or_else(|| panic!("no CI cache row for main:\n{stdout}"));
+    assert!(
+        row.split_whitespace().any(|cell| cell == expected),
+        "expected the git-abbreviated head {expected:?} in the CI row: {row:?}"
+    );
+    assert!(
+        !stdout.contains(&head),
+        "the full SHA should not reach the table:\n{stdout}"
+    );
 }
 
 #[rstest]
@@ -1788,7 +1922,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
@@ -1850,6 +1984,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "markers": [],
       "max_pr_number": null,
       "previous_branch": null,
+      "remote_head_branch": null,
       "summaries": [],
       "trash": [],
       "vars": []
@@ -1945,6 +2080,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
           ],
           "max_pr_number": null,
           "previous_branch": "feature",
+          "remote_head_branch": null,
           "summaries": [
             {
               "branch": "feature",
@@ -2047,6 +2183,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "markers": [],
           "max_pr_number": null,
           "previous_branch": null,
+          "remote_head_branch": null,
           "summaries": [],
           "trash": [],
           "vars": []
@@ -3076,7 +3213,7 @@ fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo
         "stderr should include the clap conflict: {stderr}"
     );
     assert!(
-        stderr.contains("performance profile, and diagnostics saved"),
+        stderr.contains("Diagnostics and performance profile saved"),
         "stderr should mention the verbose diagnostic: {stderr}"
     );
 
@@ -3084,5 +3221,45 @@ fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo
     assert!(
         diagnostic_path.exists(),
         "diagnostic should be written for post-dispatch clap errors"
+    );
+}
+
+/// `--branch` takes a selector, so `@` means the current branch rather than a
+/// state key literally named `@` — the state commands share one vocabulary with
+/// the rest of wt instead of storing whatever token was typed.
+#[rstest]
+fn state_branch_flag_resolves_selectors(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature");
+
+    let set = repo
+        .wt_command()
+        .current_dir(&worktree)
+        .args(["config", "state", "marker", "set", "wip", "--branch", "@"])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "setting a marker via @ should succeed: {}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    // Read it back from elsewhere, naming the same branch by its worktree path.
+    let get = repo
+        .wt_command()
+        .args([
+            "config",
+            "state",
+            "marker",
+            "get",
+            "--branch",
+            worktree.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&get.stdout).trim(),
+        "wip",
+        "the marker set via @ should read back via the worktree's path: {}",
+        String::from_utf8_lossy(&get.stderr)
     );
 }

@@ -13,6 +13,8 @@ use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, success_message, verbosity,
 };
 
+use crate::output::print_json;
+
 use super::shared::{list_and_filter_ignored_entries, resolve_copy_ignored_config};
 
 /// Handle `wt step copy-ignored` command
@@ -44,14 +46,7 @@ pub fn step_copy_ignored(
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
-        Some(branch) => {
-            let path = repo.worktree_for_branch(branch)?.ok_or_else(|| {
-                worktrunk::git::GitError::WorktreeNotFound {
-                    branch: branch.to_string(),
-                }
-            })?;
-            (path, branch.to_string())
-        }
+        Some(branch) => (repo.require_worktree(branch)?, branch.to_string()),
         None => {
             // Default source is the primary worktree (main worktree for normal repos,
             // default branch worktree for bare repos).
@@ -69,11 +64,7 @@ pub fn step_copy_ignored(
     };
 
     let dest_path = match to {
-        Some(branch) => repo.worktree_for_branch(branch)?.ok_or_else(|| {
-            worktrunk::git::GitError::WorktreeNotFound {
-                branch: branch.to_string(),
-            }
-        })?,
+        Some(branch) => repo.require_worktree(branch)?,
         None => repo.current_worktree().root()?,
     };
 
@@ -87,7 +78,7 @@ pub fn step_copy_ignored(
                 "files": 0,
                 "bytes": 0,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         } else {
             eprintln!(
                 "{}",
@@ -119,7 +110,7 @@ pub fn step_copy_ignored(
                 "files": 0,
                 "bytes": 0,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         } else {
             eprintln!(
                 "{}",
@@ -155,7 +146,7 @@ pub fn step_copy_ignored(
                 "files": 0,
                 "bytes": 0,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         } else {
             eprintln!("{}", info_message("No matching files to copy"));
         }
@@ -185,7 +176,7 @@ pub fn step_copy_ignored(
                 "to": dest_path,
                 "entries": entries,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
             return Ok(());
         }
         let items: Vec<String> = entries_to_copy
@@ -297,7 +288,7 @@ pub fn step_copy_ignored(
             "files": copied_count,
             "bytes": copied_bytes,
         });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        print_json(&payload)?;
     } else {
         // Show summary
         let file_word = if copied_count == 1 { "file" } else { "files" };

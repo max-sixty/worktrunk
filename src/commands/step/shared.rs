@@ -191,40 +191,102 @@ pub(super) fn list_and_filter_ignored_entries(
 
 /// List ignored entries using git ls-files
 ///
-/// Uses `git ls-files --ignored --exclude-standard -o --directory` which:
+/// Uses `git ls-files -z --ignored --exclude-standard -o --directory` which:
 /// - Handles all gitignore sources (global, .gitignore, .git/info/exclude, nested)
 /// - Stops at directory boundaries (--directory) to avoid listing thousands of files
+///
+/// `-z` NUL-terminates the entries and, crucially, disables path quoting. Without
+/// it, `core.quotePath` (git's default) renders a non-ASCII name like
+/// `data/Report — Q1.txt` as `"data/Report \342\200\224 Q1.txt"` — surrounding
+/// quotes and octal escapes included — which is then treated as a literal path and
+/// never found on disk. NUL splitting also sidesteps the newline-in-filename edge
+/// case that line splitting can't represent.
 fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
+    let args = [
+        "ls-files",
+        "-z",
+        "--ignored",
+        "--exclude-standard",
+        "-o",
+        "--directory",
+    ];
     let output = Cmd::new("git")
-        .args([
-            "ls-files",
-            "--ignored",
-            "--exclude-standard",
-            "-o",
-            "--directory",
-        ])
+        .args(args)
         .current_dir(worktree_path)
         .context(context)
         .run()
         .context("Failed to run git ls-files")?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git ls-files failed: {}", stderr.trim());
+        return Err(worktrunk::git::CommandError::from_failed_output("git", &args, &output).into());
     }
 
-    // Parse output: directories end with /
+    // Parse output: NUL-separated entries; directories end with /
     let entries = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| {
-            let is_dir = line.ends_with('/');
-            let path = worktree_path.join(line.trim_end_matches('/'));
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let is_dir = entry.ends_with('/');
+            let path = worktree_path.join(entry.trim_end_matches('/'));
             (path, is_dir)
         })
         .collect();
 
     Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use worktrunk::git::CommandError;
+    use worktrunk::testing::TestRepo;
+
+    /// A hard `git ls-files` failure (here: a fatal config error) must
+    /// surface as a typed `CommandError`.
+    #[test]
+    fn list_ignored_entries_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
+
+        let err = super::list_ignored_entries(test.root_path(), "test").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(cmd_err.command_string().starts_with("git ls-files"));
+    }
+
+    /// An ignored file whose name contains non-ASCII characters must be
+    /// discovered with a real filesystem path. With `core.quotePath` (git's
+    /// default), `git ls-files` renders such a name as `"data/Report
+    /// \342\200\224 Q1.txt"` — quotes and octal escapes included — which does
+    /// not exist on disk. Discovery must return the actual path.
+    #[test]
+    fn list_ignored_entries_handles_non_ascii_names() {
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path();
+
+        // A tracked file in data/ keeps `--directory` from collapsing the
+        // directory into a single entry, so the individual filename is listed.
+        std::fs::create_dir(root.join("data")).unwrap();
+        std::fs::write(root.join("data/keep.md"), "tracked").unwrap();
+        std::fs::write(root.join(".gitignore"), "*.txt\n").unwrap();
+        test.run_git(&["add", "-A"]);
+        test.run_git(&["commit", "-m", "add tracked"]);
+
+        // Ignored file with an em dash (U+2014) in its name.
+        let ignored_name = "Report — Q1.txt";
+        let ignored_path = root.join("data").join(ignored_name);
+        std::fs::write(&ignored_path, "x").unwrap();
+
+        let entries = super::list_ignored_entries(root, "test").unwrap();
+        let (path, is_dir) = entries
+            .iter()
+            .find(|(path, _)| path.file_name().and_then(|n| n.to_str()) == Some(ignored_name))
+            .expect("non-ASCII ignored file should be discovered");
+        assert!(!is_dir);
+        assert!(
+            path.exists(),
+            "discovered path does not exist on disk: {path:?}"
+        );
+    }
 }

@@ -61,14 +61,28 @@ mod imp {
     /// Delay before the first frame renders, so sub-second operations stay silent.
     const STARTUP_DELAY: Duration = Duration::from_millis(300);
     /// `Watchdog` waits longer before nagging — a configured LLM routinely takes
-    /// a couple of seconds, and the caller has already printed a "Generating…"
+    /// a few seconds, and the caller has already printed a "Generating…"
     /// line, so the watchdog only surfaces once a command is genuinely slow.
-    const WATCHDOG_STARTUP_DELAY: Duration = Duration::from_secs(2);
+    const WATCHDOG_STARTUP_DELAY: Duration = Duration::from_secs(4);
     /// Second tier: once a command has run this long, the bare status line
     /// isn't enough to debug it, so the exact invocation is revealed in a gutter
     /// beneath the status — cleared with the rest of the block when the command
     /// finishes.
     const WATCHDOG_ESCALATE_DELAY: Duration = Duration::from_secs(10);
+
+    /// Whether either spinner renders at all — the shared half of both `start`
+    /// gates, checked alongside the TTY (and, for [`Watchdog`], verbosity).
+    ///
+    /// A terminal *erases* an in-place redraw, so a frame never survives into
+    /// what the user is left with. A PTY test capturing the raw byte stream
+    /// keeps every frame instead, and whether any were drawn at all depends on
+    /// whether load pushed the operation past a startup delay above — with the
+    /// elapsed seconds baked into the bytes. So the test PTY environments set
+    /// `WORKTRUNK_TEST_SPINNERS=0` and capture only the output that persists.
+    /// Counters are unaffected: this gates the render, not the accounting.
+    fn spinners_enabled() -> bool {
+        !matches!(std::env::var("WORKTRUNK_TEST_SPINNERS").as_deref(), Ok("0"))
+    }
 
     /// Shared state between the spinner and its ticker thread. `rendered` flips
     /// true once the ticker has actually drawn a line, so `Drop` clears the line
@@ -103,14 +117,15 @@ mod imp {
     }
 
     impl Progress {
-        /// Start a progress reporter, enabling the spinner iff stderr is a TTY.
+        /// Start a progress reporter, enabling the spinner iff stderr is a TTY
+        /// and `spinners_enabled`.
         ///
         /// `verb` is the present-participle label shown to the user (e.g.
         /// `"Copying"`, `"Removing"`). Spawns a background ticker thread when a
         /// TTY is detected. When stderr is not a TTY, returns a disabled
         /// reporter that still counts but renders nothing.
         pub fn start(verb: &'static str) -> Self {
-            Self::start_with(verb, std::io::stderr().is_terminal())
+            Self::start_with(verb, std::io::stderr().is_terminal() && spinners_enabled())
         }
 
         /// Dispatch helper that picks the enabled or disabled branch from an
@@ -292,12 +307,13 @@ mod imp {
     ///
     /// Unlike [`Progress`] (which counts work units), `Watchdog` just tracks
     /// elapsed time. After a startup delay it renders a dim one-line status —
-    /// `↳ Waiting for the commit message (4s)` — redrawn in place each second;
-    /// the ticking counter is the "still alive" signal. After a longer delay it
-    /// escalates, revealing the exact command in a gutter beneath the status:
+    /// `↳ Waiting for the commit generation command (4s)` — redrawn in place
+    /// each second; the ticking counter is the "still alive" signal. After a
+    /// longer delay it escalates, revealing the exact command in a gutter
+    /// beneath the status:
     ///
     /// ```text
-    /// ↳ Waiting for the commit message (12s)
+    /// ↳ Waiting for the commit generation command (12s)
     ///    sh -c 'claude -p --model=haiku'
     /// ```
     ///
@@ -319,16 +335,19 @@ mod imp {
     impl Watchdog {
         /// Start a watchdog for a slow subprocess.
         ///
-        /// `waiting_for` names what is being awaited (e.g. `"the commit
-        /// message"`). `command`, if given, is the exact invocation — revealed
-        /// in a gutter beneath the status line once the command runs past the
-        /// escalation delay, so a slow or stuck command is debuggable.
+        /// `waiting_for` names the running operation (e.g. `"the commit
+        /// generation command"`). `command`, if given, is the exact
+        /// invocation — revealed in a gutter beneath the status line once the
+        /// command runs past the escalation delay, so a slow or stuck command
+        /// is debuggable.
         ///
-        /// Enabled only when stderr is a TTY and verbosity is 0 — under
-        /// `-v`/`-vv` the structured diagnostics take over, and a non-TTY (piped)
-        /// context renders nothing.
+        /// Enabled only when stderr is a TTY, verbosity is 0, and
+        /// `spinners_enabled` — under `-v`/`-vv` the structured diagnostics
+        /// take over, and a non-TTY (piped) context renders nothing.
         pub fn start(waiting_for: &str, command: Option<&str>) -> Self {
-            let enabled = std::io::stderr().is_terminal() && crate::styling::verbosity() == 0;
+            let enabled = std::io::stderr().is_terminal()
+                && crate::styling::verbosity() == 0
+                && spinners_enabled();
             Self::start_with(waiting_for, command, enabled)
         }
 
@@ -630,9 +649,9 @@ mod imp {
         fn test_watchdog_block_status_only() {
             // Before escalation (no command) the block is a single dim status
             // row. A wide width leaves the status untruncated.
-            let block = watchdog_block("the commit message", 4, None, Some(200));
+            let block = watchdog_block("the commit generation command", 4, None, Some(200));
             assert_eq!(block.len(), 1);
-            assert!(block[0].contains("Waiting for the commit message"));
+            assert!(block[0].contains("Waiting for the commit generation command"));
             assert!(block[0].contains("(4s)"));
             assert!(block[0].contains('↳'));
             assert!(!block[0].contains('…'));
@@ -645,13 +664,13 @@ mod imp {
             // command, since bash highlighting interleaves ANSI codes between
             // tokens (a word itself is never split mid-token).
             let block = watchdog_block(
-                "the commit message",
+                "the commit generation command",
                 12,
                 Some("claude --model=haiku"),
                 Some(200),
             );
             assert!(block.len() >= 2);
-            assert!(block[0].contains("Waiting for the commit message"));
+            assert!(block[0].contains("Waiting for the commit generation command"));
             assert!(block.join("\n").contains("claude"));
         }
 
@@ -662,7 +681,7 @@ mod imp {
             // soft-wrapped second row desyncs the in-place cursor math.
             use ansi_str::AnsiStr;
             use unicode_width::UnicodeWidthStr;
-            let block = watchdog_block("the squash commit message", 1234, None, Some(20));
+            let block = watchdog_block("the commit generation command", 1234, None, Some(20));
             assert_eq!(block.len(), 1);
             let visible = block[0].ansi_strip();
             assert!(UnicodeWidthStr::width(visible.as_ref()) <= 20);
@@ -672,7 +691,7 @@ mod imp {
         #[test]
         fn test_watchdog_start_with_non_tty_is_disabled() {
             assert!(
-                Watchdog::start_with("the commit message", None, false)
+                Watchdog::start_with("the commit generation command", None, false)
                     .ticker
                     .is_none()
             );
@@ -680,7 +699,7 @@ mod imp {
 
         #[test]
         fn test_watchdog_start_with_tty_is_enabled() {
-            let w = Watchdog::start_with("the commit message", None, true);
+            let w = Watchdog::start_with("the commit generation command", None, true);
             assert!(w.ticker.is_some());
             w.finish();
         }
@@ -694,7 +713,7 @@ mod imp {
             // far-off escalation delay keeps the gutter absent for the whole
             // poll, so the `!escalated` assertion holds regardless of timing.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 Some("sh -c 'claude -p'"),
                 Duration::from_millis(10),
                 Duration::from_secs(3600),
@@ -720,7 +739,7 @@ mod imp {
             // can't race the ticker into rendering under load; finish() wakes the
             // parked thread immediately regardless.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 None,
                 Duration::from_secs(3600),
                 WATCHDOG_ESCALATE_DELAY,
@@ -739,7 +758,7 @@ mod imp {
             // is what we're verifying. Generous timeout, fast poll — fast when
             // healthy, reliable under load.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 Some("sh -c 'claude -p'"),
                 Duration::from_millis(10),
                 Duration::from_millis(30),
@@ -767,7 +786,7 @@ mod imp {
             // load; escalation is gated on `command.is_some()`, so `!escalated`
             // holds at any instant no matter how long the loop runs.
             let w = Watchdog::enabled_with_delays(
-                "the commit message",
+                "the commit generation command",
                 None,
                 Duration::from_millis(10),
                 Duration::from_millis(30),

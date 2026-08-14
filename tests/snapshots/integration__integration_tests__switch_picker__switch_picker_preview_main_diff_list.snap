@@ -1,8 +1,0 @@
----
-source: tests/integration_tests/switch_picker.rs
-expression: list
----
->
-    Branch   Status        HEAD±    main↕     main…±  Remot
-  @ main         ^
-> + feature      ↑                 ↑2       +10

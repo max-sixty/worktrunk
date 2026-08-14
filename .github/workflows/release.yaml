@@ -115,6 +115,13 @@ jobs:
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container && matrix.container.image || null }}
+    # This job doesn't deploy anything; the environment scopes
+    # SIGNPATH_API_TOKEN so it isn't readable by every workflow the repo runs.
+    # It is deliberately not `release`, which also holds the publish
+    # credentials — see .github/CLAUDE.md. The policy admits tags only, so
+    # setting `pr-run-mode = "upload"` in dist-workspace.toml would make GitHub
+    # reject this job on a PR ref.
+    environment: signing
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
@@ -150,6 +157,80 @@ jobs:
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
+      # SignPath is on a self-signed test certificate while the project's OSS
+      # application is under review, so signing failures are expected and must
+      # not block crates.io/homebrew/winget/AUR publishing.
+      - name: Upload unsigned Windows artifact
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
+        id: upload-unsigned-windows-artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          # The file is already a zip, and upload-artifact wraps its uploads
+          # in a storage zip unless told not to — SignPath would then look
+          # for the PE files one level too deep. archive: false also makes
+          # the artifact take the file's own name (ignoring `name:`), which
+          # is what the signing step's output directory has to work around.
+          archive: false
+          path: target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
+      - name: Submit SignPath signing request
+        id: signpath
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.upload-unsigned-windows-artifact.outcome == 'success'
+        continue-on-error: true
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '56bf7020-7661-4b4e-ad77-b627278eaefd'
+          project-slug: 'worktrunk'
+          signing-policy-slug: 'test-signing'
+          github-artifact-id: '${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}'
+          wait-for-completion: true
+          # A scratch directory, not target/distrib: SignPath names the
+          # download after the artifact, so it would land beside the build as
+          # …zip.zip and leave the unsigned original in place — how v0.69.1
+          # shipped unsigned. The next step takes whatever lands here.
+          output-artifact-directory: 'target/signpath'
+          # Without this the action unpacks the returned zip into loose files
+          # instead of saving it back whole.
+          skip-decompress: true
+      - name: Replace the Windows artifact with the signed one
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.signpath.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          signed=(target/signpath/*)
+          if [ ${#signed[@]} -ne 1 ]; then
+            echo "::error::expected one signed artifact, found ${#signed[@]}: ${signed[*]-}"
+            exit 1
+          fi
+          # Check the replacement before it overwrites the build: shipping an
+          # unsigned zip is tolerable while the certificate is a test one,
+          # shipping a corrupt one never is.
+          python .github/verify-windows-signature.py "${signed[0]}"
+          mv "${signed[0]}" target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
+      # Deliberately not continue-on-error, unlike the signing steps: shipping
+      # unsigned is tolerable while the certificate is a test one, shipping a
+      # checksum that doesn't match the zip is not. That is also why this
+      # doesn't fold into the step above.
+      - name: Recompute checksum for signed Windows artifact
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
+        shell: bash
+        run: |
+          cd target/distrib
+          # -b matches cargo-dist's own checksum format (`<hash> *<filename>`);
+          # sha256sum's default text mode omits the asterisk.
+          sha256sum -b worktrunk-x86_64-pc-windows-msvc.zip > worktrunk-x86_64-pc-windows-msvc.zip.sha256
+      # Records what the release actually ships. The step above gates the
+      # overwrite; this one answers the question the logs never could — a
+      # signing request can complete while the signed file never reaches the
+      # release, which is how v0.69.1 shipped unsigned.
+      - name: Report whether the shipped Windows artifact is signed
+        if: contains(matrix.targets, 'x86_64-pc-windows-msvc')
+        continue-on-error: true
+        shell: bash
+        run: python .github/verify-windows-signature.py target/distrib/worktrunk-x86_64-pc-windows-msvc.zip
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
@@ -295,18 +376,29 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
+  # Auth is via crates.io Trusted Publishing (GitHub Actions OIDC): the job mints
+  # a short-lived, auto-revoked token per run instead of a long-lived API token.
+  # This requires a Trusted Publisher to be configured for the crate on
+  # crates.io, scoped to this repo, the `release.yaml` workflow, and the
+  # `release` environment.
   publish-cargo:
     needs:
       - plan
       - host
     runs-on: ubuntu-24.04
     environment: release
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     steps:
       - uses: actions/checkout@v7
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
       - name: Publish to crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --package worktrunk
 
   publish-winget:
@@ -314,6 +406,7 @@ jobs:
       - plan
       - host
     runs-on: ubuntu-24.04
+    environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     env:
       GH_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
@@ -336,6 +429,7 @@ jobs:
       - plan
       - host
     runs-on: "ubuntu-24.04"
+    environment: release
     env:
       GITHUB_USER: "worktrunk-bot"
       GITHUB_EMAIL: "worktrunk-bot@users.noreply.github.com"
@@ -377,7 +471,7 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" .github/aur/PKGBUILD
           cat .github/aur/PKGBUILD
       - name: Publish AUR package
-        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
         with:
           pkgname: worktrunk-bin
           pkgbuild: .github/aur/PKGBUILD

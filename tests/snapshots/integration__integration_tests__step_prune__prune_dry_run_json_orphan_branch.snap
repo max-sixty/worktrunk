@@ -5,6 +5,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
 [
   {
     "branch": "orphan-integrated",
+    "branch_deleted": true,
     "kind": "branch_only",
     "path": null,
     "reason": "same commit as",

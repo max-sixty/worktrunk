@@ -107,8 +107,7 @@ jobs:
     # `required-features = ["cli", "syntax-highlighting"]` (Cargo.toml) because
     # it execs the `wt` binary and snapshots its highlighted output, so cargo
     # runs it only on combinations that satisfy both and runs lib + doc tests
-    # everywhere. No target filter, so default-members builds the mock-stub
-    # helper bin the lib suite shells out to.
+    # everywhere.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
@@ -128,7 +127,7 @@ jobs:
         save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.83.0
+      uses: taiki-e/install-action@v2.85.11
       with:
         tool: cargo-hack
 
@@ -183,7 +182,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.67.0"
+        version: "=0.72.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -254,8 +253,6 @@ jobs:
       run: rustup target add ${{ matrix.target }}
 
     - name: 🧪 Tests
-      env:
-        NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo nextest run --target ${{ matrix.target }}
 
   check-unused-dependencies:
@@ -287,7 +284,7 @@ jobs:
         crate: cargo-udeps
         version: "=0.1.61"
 
-    - uses: clechasseur/rs-cargo@v5.0.6
+    - uses: clechasseur/rs-cargo@v5.0.7
       with:
         command: udeps
         args: --all-targets
@@ -429,6 +426,13 @@ jobs:
       - link-check
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
+    environment:
+      name: tend
+      # A secret scope, not a deploy target — see .github/CLAUDE.md. The cron
+      # gate above keeps this off the workflow's pull_request and
+      # workflow_dispatch triggers, whose refs the `tend` policy can refuse;
+      # its push trigger is `main`-only, which the policy already admits.
+      deployment: false
     permissions:
       contents: read
       issues: write

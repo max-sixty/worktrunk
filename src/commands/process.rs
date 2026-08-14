@@ -491,9 +491,9 @@ fn spawn_detached_exec_windows(
 /// step is best-effort and additive — failures log at debug level and the
 /// `wt remove` operation proceeds regardless.
 ///
-/// It DOES delay process exit — the shell wrapper waits on it — by roughly
-/// one `pgrep` plus one `lsof` over the whole daemon PID set (~80ms, flat in
-/// the machine-wide daemon count; see the `internal-sweep` /
+/// It DOES delay process exit — the shell wrapper waits on it — by two
+/// spawns: one `pgrep` plus one `lsof` over the whole daemon PID set, flat in
+/// the machine-wide daemon count (see the `internal-sweep` /
 /// `enumerate-fsmonitor-daemons` trace spans and benches/CLAUDE.md
 /// § Recording `wt remove` / `wt step prune` staging).
 ///

@@ -118,14 +118,45 @@ export def --env --wrapped {{ cmd }} [...args] {
         # variables persist, `cd` affects later commands, etc.).
         # Env changes (export) won't persist in the nushell session, but no
         # worktrunk code emits export directives.
-        if ($exec_file | path exists) and (open $exec_file --raw | str trim | is-not-empty) {
+        #
+        # `try` for the same reason as the binary call above: a body that exits
+        # non-zero raises a ShellError that would unwind the whole `def`, skipping
+        # cleanup (leaking all three temp files) and discarding the stdout this
+        # function still has to return. Catching it also makes the body's exit code
+        # a value we can fold in, rather than one the unwind happens to carry out.
+        let exec_exit = if ($exec_file | path exists) and (open $exec_file --raw | str trim | is-not-empty) {
             let script = open $exec_file --raw
-            ^sh -c $script
+            try { ^sh -c $script; 0 } catch { $env.LAST_EXIT_CODE }
+        } else {
+            0
         }
 
-        rm -f $cd_file $exec_file
+        # First non-zero wins, wt before the body — the precedence the bash, zsh
+        # and fish wrappers apply to their `src_exit`.
+        let exit_code = if $exit_code != 0 { $exit_code } else { $exec_exit }
+
         let output = (open $stdout_file --raw)
-        rm -f $stdout_file
+
+        # Clean up all three temp files at once, after the last read of any of them.
+        #
+        # A bare `rm` here is shadowable by the user's own `alias rm = ...`:
+        # nushell resolves aliases at parse time, and `config.nu` runs before the
+        # vendor autoload dir this file lives in, so the alias is already in scope
+        # when this `def` is parsed. A `trash`-style alias then leaks the temp
+        # files, and an alias that exits non-zero raises a ShellError that aborts
+        # the wrapper before it can return `$output` — swallowing the command's
+        # stdout entirely.
+        #
+        # `^rm` bypasses aliases, but it's external-only, so Windows (where the
+        # nushell builtin is the only `rm`) keeps the builtin. `try` covers both
+        # branches so cleanup can never abort the wrapper. `hide rm` is not an
+        # option: it's a parse-time keyword that leaks out of this function into
+        # the user's session, silently unbinding their alias.
+        if $nu.os-info.family == "windows" {
+            try { rm -f $cd_file $exec_file $stdout_file }
+        } else {
+            try { ^rm -f $cd_file $exec_file $stdout_file }
+        }
 
         # Return stdout or propagate failure as the function's last expression.
         # Using a failing external command (not `error make`) so nushell treats it

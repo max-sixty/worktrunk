@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommitMessageDetail, Repository};
+use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
@@ -100,9 +100,9 @@ pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
 /// ([`generate_summary_core`](crate::summary::generate_summary_core), up to 8
 /// under a semaphore), where
 /// per-call spinners would interleave.
-fn watch_llm_command(command: &str, waiting_for: &str) -> worktrunk::progress::Watchdog {
+fn watch_llm_command(command: &str) -> worktrunk::progress::Watchdog {
     let invocation = render_llm_invocation(command).ok();
-    worktrunk::progress::Watchdog::start(waiting_for, invocation.as_deref())
+    worktrunk::progress::Watchdog::start("the commit generation command", invocation.as_deref())
 }
 
 /// Format a reproduction command, only wrapping with `sh -c` if needed.
@@ -130,17 +130,52 @@ fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
 /// Track whether template-file deprecation warning has been shown this session
 static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
 
-/// Maximum diff size in characters before filtering kicks in
-const DIFF_SIZE_THRESHOLD: usize = 400_000;
+/// Byte budget for the diff embedded in a prompt. ~25k tokens for typical
+/// code; syntax-dense content (hashes, minified assets) tokenizes as low as
+/// ~2 bytes/token, so the worst case is ~50k tokens — bounded well under
+/// small-model context windows, where the old 400k threshold was not.
+const DIFF_BUDGET: usize = 100_000;
 
-/// Maximum lines per file after truncation
+/// Maximum lines per file section once the diff exceeds the budget
 const MAX_LINES_PER_FILE: usize = 50;
 
-/// Maximum number of files to include after truncation
-const MAX_FILES: usize = 50;
+/// Maximum bytes per line once the diff exceeds the budget. A line-count cap
+/// alone passes single-line minified/generated files through whole; this
+/// bounds each section to `MAX_LINES_PER_FILE * MAX_LINE_LEN` bytes so no
+/// one file eats the whole budget.
+const MAX_LINE_LEN: usize = 500;
+
+/// Maximum diffstat lines, applied at any diff size. The stat is one line
+/// per file, so a many-thousand-file diff would otherwise dwarf the
+/// truncated diff itself.
+const STAT_MAX_LINES: usize = 200;
+
+/// Maximum squashed commits rendered into a squash prompt; a synthetic
+/// "(N earlier commits omitted)" entry stands in for the older tail. This
+/// bounds the one prompt input the diff budget doesn't cover — subjects from
+/// a branch with thousands of commits would otherwise grow the prompt
+/// without limit.
+const MAX_SQUASH_COMMITS: usize = 200;
 
 /// Lock file patterns that are filtered out when diff is too large
 const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
+
+/// Git `-c` overrides forcing the `a/`/`b/` diff prefix format regardless of
+/// user config: `diff.noprefix`, `diff.mnemonicPrefix`, and (git >= 2.45)
+/// `diff.srcPrefix`/`diff.dstPrefix` can all change the header format that
+/// [`parse_diff_sections`] splits file sections on, so every full diff
+/// destined for [`prepare_diff`] must carry these flags. Unknown config keys
+/// are ignored by older git.
+pub(crate) const DIFF_PREFIX_OVERRIDES: [&str; 8] = [
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "diff.mnemonicPrefix=false",
+    "-c",
+    "diff.srcPrefix=a/",
+    "-c",
+    "diff.dstPrefix=b/",
+];
 
 /// Prepared diff output with optional filtering applied
 pub(crate) struct PreparedDiff {
@@ -201,26 +236,39 @@ fn parse_diff_sections(diff: &str) -> Vec<(&str, &str)> {
     sections
 }
 
-/// Truncate a diff section to max lines, keeping the header
-fn truncate_diff_section(section: &str, max_lines: usize) -> String {
-    let lines: Vec<&str> = section.lines().collect();
-    if lines.len() <= max_lines {
-        return section.to_string();
+/// Cap a line at [`MAX_LINE_LEN`] bytes, cutting at a char boundary
+fn truncate_line(line: &str) -> Cow<'_, str> {
+    if line.len() <= MAX_LINE_LEN {
+        return Cow::Borrowed(line);
     }
+    let mut end = MAX_LINE_LEN;
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    Cow::Owned(format!("{}... (line truncated)", &line[..end]))
+}
 
-    // Find where the actual diff content starts (after the @@ line)
-    let header_end = lines.iter().position(|l| l.starts_with("@@")).unwrap_or(0);
-    let header_lines = header_end + 1; // Include the first @@ line
+/// Truncate a diff section to max lines (keeping at least the header lines,
+/// through the first `@@` hunk marker) and cap each surviving line at
+/// [`MAX_LINE_LEN`] bytes. Output is LF-normalized.
+fn truncate_diff_section(section: &str, max_lines: usize) -> String {
+    let line_count = section.lines().count();
+    let total_lines = if line_count <= max_lines {
+        line_count
+    } else {
+        let header_lines = section
+            .lines()
+            .position(|l| l.starts_with("@@"))
+            .map_or(1, |i| i + 1);
+        max_lines.max(header_lines)
+    };
 
-    let content_lines = max_lines.saturating_sub(header_lines);
-    let total_lines = header_lines + content_lines;
-
-    let mut result: String = lines
-        .iter()
-        .take(total_lines)
-        .map(|l| format!("{}\n", l))
-        .collect();
-    let omitted = lines.len() - total_lines;
+    let mut result = String::new();
+    for line in section.lines().take(total_lines) {
+        result.push_str(&truncate_line(line));
+        result.push('\n');
+    }
+    let omitted = line_count - total_lines;
     if omitted > 0 {
         result.push_str(&format!("\n... ({} lines omitted)\n", omitted));
     }
@@ -228,19 +276,49 @@ fn truncate_diff_section(section: &str, max_lines: usize) -> String {
     result
 }
 
-/// Prepare diff for LLM consumption, applying filtering if needed
+/// Cap the diffstat at [`STAT_MAX_LINES`] lines plus an omission marker. No
+/// line is special-cased: the summary path concatenates two `--stat` blocks
+/// (branch + working tree), so "the last line is the total" doesn't hold in
+/// general.
+fn truncate_stat(stat: String) -> String {
+    let line_count = stat.lines().count();
+    if line_count <= STAT_MAX_LINES {
+        return stat;
+    }
+
+    let mut out = String::new();
+    for line in stat.lines().take(STAT_MAX_LINES) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "... ({} more files)\n",
+        line_count - STAT_MAX_LINES
+    ));
+    out
+}
+
+/// Prepare diff for LLM consumption, applying filtering if needed.
+///
+/// The stat is always capped at [`STAT_MAX_LINES`]. A diff at or under
+/// [`DIFF_BUDGET`] passes through unchanged. Over budget, lock-file sections
+/// are dropped; if that isn't enough, each section is truncated (line count
+/// and line length) and sections accumulate in diff order until the budget
+/// is spent — the accumulation is the output bound, the per-section caps
+/// only keep one file from eating the whole budget.
 pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
-    // If under threshold, pass through unchanged
-    if diff.len() < DIFF_SIZE_THRESHOLD {
+    let stat = truncate_stat(stat);
+
+    if diff.len() <= DIFF_BUDGET {
         return PreparedDiff { diff, stat };
     }
 
     tracing::debug!(
         count = diff.len(),
-        threshold = DIFF_SIZE_THRESHOLD,
-        "Diff size ({} chars) exceeds threshold ({}), filtering",
+        budget = DIFF_BUDGET,
+        "Diff size ({} bytes) exceeds budget ({}), filtering",
         diff.len(),
-        DIFF_SIZE_THRESHOLD
+        DIFF_BUDGET
     );
 
     // Step 1: Filter out lock files
@@ -259,43 +337,52 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
         );
     }
 
-    let filtered_diff: String = filtered_sections
+    let filtered_len: usize = filtered_sections
         .iter()
-        .map(|(_, content)| *content)
-        .collect();
+        .map(|(_, content)| content.len())
+        .sum();
 
-    // If filtering lock files brought us under threshold, we're done
-    if filtered_diff.len() < DIFF_SIZE_THRESHOLD {
+    // If filtering lock files brought us under budget, we're done
+    if filtered_len <= DIFF_BUDGET {
         return PreparedDiff {
-            diff: filtered_diff,
+            diff: filtered_sections
+                .iter()
+                .map(|(_, content)| *content)
+                .collect(),
             stat,
         };
     }
 
-    // Step 2: Truncate each file and limit file count
+    // Step 2: Truncate each section, accumulating until the budget is spent
     tracing::debug!(
-        count = filtered_diff.len(),
-        "Still too large ({} chars), truncating to {} lines/file, {} files max",
-        filtered_diff.len(),
+        count = filtered_len,
+        "Still too large ({} bytes), truncating to {} lines/file within a {} byte budget",
+        filtered_len,
         MAX_LINES_PER_FILE,
-        MAX_FILES
+        DIFF_BUDGET
     );
 
-    let truncated: String = filtered_sections
-        .iter()
-        .take(MAX_FILES)
-        .map(|(_, content)| truncate_diff_section(content, MAX_LINES_PER_FILE))
-        .collect();
+    let mut truncated = String::new();
+    let mut included = 0;
+    for (_, content) in &filtered_sections {
+        let section = truncate_diff_section(content, MAX_LINES_PER_FILE);
+        if truncated.len() + section.len() > DIFF_BUDGET {
+            break;
+        }
+        truncated.push_str(&section);
+        included += 1;
+    }
 
-    let files_omitted = filtered_sections.len().saturating_sub(MAX_FILES);
-    let final_diff = if files_omitted > 0 {
-        format!("{}\n... ({} files omitted)\n", truncated, files_omitted)
-    } else {
-        truncated
-    };
+    let files_omitted = filtered_sections.len() - included;
+    if files_omitted > 0 {
+        truncated.push_str(&format!(
+            "\n... ({} files omitted, see diffstat)\n",
+            files_omitted
+        ));
+    }
 
     PreparedDiff {
-        diff: final_diff,
+        diff: truncated,
         stat,
     }
 }
@@ -304,7 +391,7 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 ///
 /// All fields are available to both commit and squash templates.
 /// Squash-specific fields (`commit_details`, `target_branch`) are empty/None for regular commits.
-struct TemplateContext<'a> {
+struct PromptContext<'a> {
     /// The diff to describe (staged changes for commit, combined diff for squash)
     git_diff: &'a str,
     /// Diff statistics summary (output of git diff --stat)
@@ -425,32 +512,29 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     // entirely. See conversation around PR #2136 for sketch.
 
     let shell = ShellConfig::get()?;
+    let args: Vec<&str> = shell
+        .args
+        .iter()
+        .map(String::as_str)
+        .chain([command])
+        .collect();
     let output = Cmd::new(shell.executable.to_string_lossy())
-        .args(&shell.args)
-        .arg(command)
+        .args(args.iter().copied())
         .external("commit.generation")
         .stdin_bytes(prompt)
         .run()
         .context("Failed to spawn LLM command")?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        if stderr.is_empty() {
-            // Fall back to stdout or exit code when stderr is empty
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stdout = stdout.trim();
-            if stdout.is_empty() {
-                anyhow::bail!(
-                    "LLM command failed with exit code {}",
-                    output.status.code().unwrap_or(-1)
-                );
-            } else {
-                anyhow::bail!("{}", stdout);
-            }
-        } else {
-            anyhow::bail!("{}", stderr);
-        }
+        // Shell basename only — the full install path is noise (and on
+        // Windows leaks the Git Bash location); same rule as
+        // `render_llm_invocation`.
+        let shell_name = shell
+            .executable
+            .file_name()
+            .unwrap_or(shell.executable.as_os_str())
+            .to_string_lossy();
+        return Err(CommandError::from_failed_output(shell_name, &args, &output).into());
     }
 
     let message = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -524,13 +608,15 @@ fn load_template(
 /// Squash-specific variables (empty for regular commits):
 /// - `commit_details`: Commits being squashed. Each element renders as its
 ///   subject when printed bare and exposes `.subject` / `.body` properties.
+///   Capped at [`MAX_SQUASH_COMMITS`]; the older tail is represented by one
+///   synthetic "(N earlier commits omitted)" entry.
 /// - `commits`: Commit subjects being squashed (deprecated — see #2984;
 ///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
 fn build_prompt(
     config: &CommitGenerationConfig,
     template_type: TemplateType,
-    context: &TemplateContext<'_>,
+    context: &PromptContext<'_>,
 ) -> anyhow::Result<String> {
     // Get template source based on type
     let (template, type_name) = match template_type {
@@ -577,16 +663,30 @@ fn build_prompt(
     // element renders as its subject (see `CommitDetailValue`), so a migrated
     // `{% for c in commit_details %}{{ c }}` reads identically to the old
     // `{% for c in commits %}{{ c }}`.
-    let commits_chronological: Vec<&String> = context
+    //
+    // The list is capped at `MAX_SQUASH_COMMITS` — the one prompt input the
+    // diff budget doesn't bound. Details arrive newest-first, so the newest
+    // are kept and a synthetic entry stands in for the older tail; it renders
+    // first in the chronological order below.
+    let omitted_commits = context
         .commit_details
+        .len()
+        .saturating_sub(MAX_SQUASH_COMMITS);
+    let synthetic_tail = (omitted_commits > 0).then(|| CommitMessageDetail {
+        subject: format!("... ({} earlier commits omitted)", omitted_commits),
+        body: String::new(),
+    });
+    let kept_details = &context.commit_details[..context.commit_details.len() - omitted_commits];
+    let details_chronological: Vec<&CommitMessageDetail> = synthetic_tail
         .iter()
-        .rev()
+        .chain(kept_details.iter().rev())
+        .collect();
+    let commits_chronological: Vec<&String> = details_chronological
+        .iter()
         .map(|detail| &detail.subject)
         .collect();
-    let commit_details_chronological: Vec<Value> = context
-        .commit_details
+    let commit_details_chronological: Vec<Value> = details_chronological
         .iter()
-        .rev()
         .map(|detail| {
             Value::from_object(CommitDetailValue {
                 subject: detail.subject.clone(),
@@ -664,21 +764,19 @@ pub(crate) fn generate_commit_message(
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
+        // Prompt-build failures (git plumbing) propagate as-is; only a
+        // failure of the LLM command itself gets the `LlmCommandFailed`
+        // wrapper — mirroring `generate_squash_message`.
+        let prompt = build_commit_prompt(commit_generation_config, index_override, project_append)?;
         // A slow or hung command is otherwise silent (stdout is captured); the
         // watchdog surfaces a "still waiting" status. Held until this function
         // returns, clearing the block before the caller prints the message.
-        let _watchdog = watch_llm_command(command, "the commit message");
+        let _watchdog = watch_llm_command(command);
         // Commit generation is explicitly configured - fail if it doesn't work
-        return try_generate_commit_message(
-            command,
-            commit_generation_config,
-            index_override,
-            project_append,
-        )
-        .map_err(|e| {
+        return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
-                error: e.to_string(),
+                error: e.display_message(),
                 reproduction_command: Some(format_reproduction_command(
                     "wt step commit --show-prompt",
                     command,
@@ -690,13 +788,11 @@ pub(crate) fn generate_commit_message(
 
     // Fallback: generate a descriptive commit message based on changed files
     let repo = Repository::current()?;
-    let mut name_only = Cmd::new("git")
-        .args(["diff", "--staged", "--name-only", "-z"])
-        .current_dir(repo.discovery_path());
-    if let Some(path) = index_override {
-        name_only = name_only.env("GIT_INDEX_FILE", path);
-    }
-    let file_list = run_git_capture(name_only, "diff --staged --name-only")?;
+    let file_list = run_git_capture(
+        &["diff", "--staged", "--name-only", "-z"],
+        repo.discovery_path(),
+        index_override,
+    )?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -723,28 +819,26 @@ pub(crate) fn generate_commit_message(
     Ok(message)
 }
 
-fn try_generate_commit_message(
-    command: &str,
-    config: &CommitGenerationConfig,
-    index_override: Option<&Path>,
-    project_append: Option<&str>,
-) -> anyhow::Result<String> {
-    let prompt = build_commit_prompt(config, index_override, project_append)?;
-    execute_llm_command(command, &prompt)
-}
-
-/// Run a git `Cmd` and bail on non-zero exit, mirroring [`Repository::run_command`].
+/// Run a git command and capture stdout, mirroring [`Repository::run_command`]
+/// (including its [`CommandError`] on non-zero exit).
 ///
 /// Used by call sites that need to set `GIT_INDEX_FILE` (`--dry-run`) and so can't go
 /// through `Repository::run_command`. Without this check, a failing `git diff` would
 /// silently feed an empty diff to the LLM.
-fn run_git_capture(cmd: Cmd, what: &str) -> anyhow::Result<String> {
+fn run_git_capture(
+    args: &[&str],
+    cwd: &Path,
+    index_override: Option<&Path>,
+) -> anyhow::Result<String> {
+    let mut cmd = Cmd::new("git").args(args.iter().copied()).current_dir(cwd);
+    if let Some(index) = index_override {
+        cmd = cmd.env("GIT_INDEX_FILE", index);
+    }
     let output = cmd
         .run()
-        .with_context(|| format!("Failed to execute git {what}"))?;
+        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git {what} failed: {}", stderr.trim());
+        return Err(CommandError::from_failed_output("git", args, &output).into());
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -764,30 +858,16 @@ pub(crate) fn build_commit_prompt(
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
-    let cwd = repo.discovery_path().to_path_buf();
+    let cwd = repo.discovery_path();
 
-    // Use -c flags to ensure consistent format regardless of user's git config
-    // (diff.noprefix, diff.mnemonicPrefix, etc. could break our parsing)
-    let mut diff_cmd = Cmd::new("git")
-        .args([
-            "-c",
-            "diff.noprefix=false",
-            "-c",
-            "diff.mnemonicPrefix=false",
-            "--no-pager",
-            "diff",
-            "--staged",
-        ])
-        .current_dir(&cwd);
-    let mut diff_stat_cmd = Cmd::new("git")
-        .args(["--no-pager", "diff", "--staged", "--stat"])
-        .current_dir(&cwd);
-    if let Some(index) = index_override {
-        diff_cmd = diff_cmd.env("GIT_INDEX_FILE", index);
-        diff_stat_cmd = diff_stat_cmd.env("GIT_INDEX_FILE", index);
-    }
-    let diff_output = run_git_capture(diff_cmd, "diff --staged")?;
-    let diff_stat = run_git_capture(diff_stat_cmd, "diff --staged --stat")?;
+    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
+    diff_args.extend(["--no-pager", "diff", "--staged"]);
+    let diff_output = run_git_capture(&diff_args, cwd, index_override)?;
+    let diff_stat = run_git_capture(
+        &["--no-pager", "diff", "--staged", "--stat"],
+        cwd,
+        index_override,
+    )?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -803,7 +883,7 @@ pub(crate) fn build_commit_prompt(
 
     let recent_commits = repo.recent_commit_subjects(None, 5);
 
-    let context = TemplateContext {
+    let context = PromptContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
         branch: &current_branch,
@@ -841,11 +921,11 @@ pub(crate) fn generate_squash_message(
 
         // See `generate_commit_message` — keep a slow squash-message generation
         // from being silent.
-        let _watchdog = watch_llm_command(command, "the squash commit message");
+        let _watchdog = watch_llm_command(command);
         return execute_llm_command(command, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
                 command: command.clone(),
-                error: e.to_string(),
+                error: e.display_message(),
                 reproduction_command: Some(format_reproduction_command(
                     "wt step squash --show-prompt",
                     command,
@@ -881,24 +961,16 @@ pub(crate) fn build_squash_prompt(
     let repo = Repository::current()?;
 
     // Get the combined diff and diffstat for all commits being squashed
-    // Use -c flags to ensure consistent format regardless of user's git config
-    let diff_output = repo.run_command(&[
-        "-c",
-        "diff.noprefix=false",
-        "-c",
-        "diff.mnemonicPrefix=false",
-        "--no-pager",
-        "diff",
-        merge_base,
-        "HEAD",
-    ])?;
+    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
+    diff_args.extend(["--no-pager", "diff", merge_base, "HEAD"]);
+    let diff_output = repo.run_command(&diff_args)?;
     let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
     let recent_commits = repo.recent_commit_subjects(Some(merge_base), 5);
-    let context = TemplateContext {
+    let context = PromptContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
         branch: current_branch,
@@ -950,7 +1022,7 @@ pub(crate) fn test_commit_generation(
         "fix: Handle edge case in parser".to_string(),
         "docs: Update README".to_string(),
     ];
-    let context = TemplateContext {
+    let context = PromptContext {
         git_diff: SYNTHETIC_DIFF,
         git_diff_stat: SYNTHETIC_DIFF_STAT,
         branch: "feature/example",
@@ -967,11 +1039,11 @@ pub(crate) fn test_commit_generation(
 
     // The connectivity test shells out the same way real generation does, so a
     // slow command would be just as silent — surface the same waiting status.
-    let _watchdog = watch_llm_command(command, "the test commit message");
+    let _watchdog = watch_llm_command(command);
     execute_llm_command(command, &prompt).map_err(|e| {
         worktrunk::git::GitError::LlmCommandFailed {
             command: command.clone(),
-            error: e.to_string(),
+            error: e.display_message(),
             reproduction_command: None, // Already a test command
         }
         .into()
@@ -1001,17 +1073,35 @@ mod tests {
         );
     }
 
-    /// `run_git_capture` must surface a non-zero exit as an error that names the `what`
-    /// label and includes the captured stderr — without that, the dry-run path would
-    /// feed an empty diff to the LLM on a `git` failure.
+    /// `run_git_capture` must surface a non-zero exit as a typed [`CommandError`]
+    /// carrying the command and its captured stderr — without that, the dry-run
+    /// path would feed an empty diff to the LLM on a `git` failure.
     #[test]
     fn test_run_git_capture_bails_on_nonzero_exit() {
-        let cmd = Cmd::new("git").args(["frobnicate-nonexistent"]);
-        let err = run_git_capture(cmd, "frobnicate").unwrap_err();
-        let msg = format!("{err}");
+        let err = run_git_capture(&["frobnicate-nonexistent"], Path::new("."), None).unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git frobnicate-nonexistent");
         assert!(
-            msg.contains("git frobnicate failed:"),
-            "error message should name the `what` label; got: {msg}"
+            cmd_err.stderr.contains("frobnicate-nonexistent"),
+            "stderr should name the failing command; got: {}",
+            cmd_err.stderr
+        );
+    }
+
+    /// A failing LLM command must surface as a typed [`CommandError`] carrying
+    /// the exit code and captured output — `LlmCommandFailed` and the summary
+    /// pane read the detail via `display_message`.
+    #[test]
+    fn test_execute_llm_command_failure_is_command_error() {
+        let err = execute_llm_command("printf 'oops' >&2; exit 3", "prompt").unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.exit_code, Some(3));
+        assert_eq!(err.display_message(), "oops");
+        // Basename only — no install-path leakage (see render_llm_invocation).
+        assert!(
+            !cmd_err.program.contains('/') && !cmd_err.program.contains('\\'),
+            "shell program has directory components: {}",
+            cmd_err.program
         );
     }
 
@@ -1075,8 +1165,8 @@ mod tests {
         branch: &'a str,
         recent_commits: Option<&'a Vec<String>>,
         repo_name: &'a str,
-    ) -> TemplateContext<'a> {
-        TemplateContext {
+    ) -> PromptContext<'a> {
+        PromptContext {
             git_diff,
             git_diff_stat: "",
             branch,
@@ -1096,8 +1186,8 @@ mod tests {
         repo_name: &'a str,
         commit_details: &'a [CommitMessageDetail],
         target_branch: &'a str,
-    ) -> TemplateContext<'a> {
-        TemplateContext {
+    ) -> PromptContext<'a> {
+        PromptContext {
             git_diff,
             git_diff_stat: "",
             branch,
@@ -2085,45 +2175,119 @@ index abc..def 100644
 
     #[test]
     fn test_prepare_diff_filters_lock_files() {
-        // Create a diff just over the threshold with a lock file
-        let regular_content = "x".repeat(100_000);
-        let lock_content = "y".repeat(350_000);
+        // Over budget only because of the lock file: filtering it restores
+        // the regular content untouched (multi-line, so line caps would show)
+        let regular_content = "line of code\n".repeat(3_000);
+        let lock_content = "y".repeat(150_000);
 
         let diff = format!(
-            r#"diff --git a/src/main.rs b/src/main.rs
-{}
-diff --git a/Cargo.lock b/Cargo.lock
-{}
-"#,
+            "diff --git a/src/main.rs b/src/main.rs\n{}diff --git a/Cargo.lock b/Cargo.lock\n{}\n",
             regular_content, lock_content
         );
         let stat = "2 files changed".to_string();
 
         let prepared = prepare_diff(diff, stat);
 
-        // Lock file should be filtered out
         assert!(!prepared.diff.contains("Cargo.lock"));
         assert!(prepared.diff.contains("src/main.rs"));
+        // The surviving section is under budget, so it passes through whole
+        assert!(prepared.diff.contains(&regular_content));
     }
 
     #[test]
-    fn test_prepare_diff_filters_then_truncates() {
-        // Create many non-lock files that exceed threshold even after lock filtering
+    fn test_prepare_diff_accumulates_sections_up_to_budget() {
+        // Many multi-line files that exceed the budget even after per-file
+        // truncation: sections accumulate in diff order until the budget is
+        // spent, and the rest are reported against the diffstat
         let mut diff = String::new();
         for i in 0..100 {
             diff.push_str(&format!(
-                "diff --git a/file{}.rs b/file{}.rs\n{}\n",
+                "diff --git a/file{}.rs b/file{}.rs\n{}",
                 i,
                 i,
-                "x".repeat(5000)
+                "line of code that is well under the length cap\n".repeat(200)
             ));
         }
+        assert!(diff.len() > DIFF_BUDGET);
 
         let stat = "100 files changed".to_string();
         let prepared = prepare_diff(diff, stat);
 
-        // Should be truncated (max 50 files)
-        assert!(prepared.diff.contains("files omitted"));
+        assert!(prepared.diff.contains("file0.rs"));
+        assert!(prepared.diff.contains("lines omitted"));
+        assert!(prepared.diff.contains("files omitted, see diffstat"));
+        // The omission marker is the only content past the budget
+        assert!(prepared.diff.len() < DIFF_BUDGET + 100);
+    }
+
+    #[test]
+    fn test_prepare_diff_caps_single_line_files() {
+        // A minified single-line file slips through a line-count cap; the
+        // line-length cap must bound it. Multi-byte content exercises the
+        // char-boundary cut.
+        let minified = format!("+{}", "测".repeat(80_000)); // ~240k bytes, one line
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n+fn real_change() {{}}\ndiff --git a/dist/bundle.min.js b/dist/bundle.min.js\n{}\n",
+            minified
+        );
+        let stat = "2 files changed".to_string();
+
+        let prepared = prepare_diff(diff, stat);
+
+        assert!(prepared.diff.contains("real_change"));
+        assert!(prepared.diff.contains("line truncated"));
+        assert!(prepared.diff.len() < DIFF_BUDGET + 100);
+    }
+
+    #[test]
+    fn test_truncate_stat_caps_lines() {
+        // Small stat passes through unchanged
+        let small = " src/main.rs | 4 ++++\n 1 file changed, 4 insertions(+)\n".to_string();
+        assert_eq!(truncate_stat(small.clone()), small);
+
+        // Oversized stat keeps the head plus an omission marker
+        let mut stat = String::new();
+        for i in 0..500 {
+            stat.push_str(&format!(" src/file{}.rs | 2 +-\n", i));
+        }
+        stat.push_str(" 500 files changed, 500 insertions(+), 500 deletions(-)\n");
+
+        let truncated = truncate_stat(stat);
+        let lines: Vec<&str> = truncated.lines().collect();
+        assert_eq!(lines.len(), STAT_MAX_LINES + 1);
+        assert_eq!(lines[0], " src/file0.rs | 2 +-");
+        assert_eq!(lines[STAT_MAX_LINES - 1], " src/file199.rs | 2 +-");
+        assert_eq!(lines[STAT_MAX_LINES], "... (301 more files)");
+    }
+
+    #[test]
+    fn test_build_squash_prompt_caps_commit_count() {
+        // Details arrive newest-first; over MAX_SQUASH_COMMITS the newest are
+        // kept and a synthetic entry for the older tail renders first in the
+        // chronological list.
+        let config = CommitGenerationConfig {
+            squash_template: Some(
+                "{% for c in commit_details %}- {{ c }}\n{% endfor %}".to_string(),
+            ),
+            ..Default::default()
+        };
+        let commit_details: Vec<CommitMessageDetail> = (0..MAX_SQUASH_COMMITS + 50)
+            .map(|i| CommitMessageDetail {
+                subject: format!("commit {}", i),
+                body: String::new(),
+            })
+            .collect();
+        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
+
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+
+        assert!(prompt.starts_with("- ... (50 earlier commits omitted)\n"));
+        // Newest (index 0) renders last; the oldest kept (index 199) follows
+        // the marker; the 50 oldest are gone.
+        assert!(prompt.ends_with("- commit 0\n"));
+        assert!(prompt.contains("- commit 199\n"));
+        assert!(!prompt.contains("- commit 200\n"));
+        assert_eq!(prompt.lines().count(), MAX_SQUASH_COMMITS + 1);
     }
 
     #[test]

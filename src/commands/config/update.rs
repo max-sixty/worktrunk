@@ -15,8 +15,8 @@ use worktrunk::config::{
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    eprintln, format_bash_with_gutter, hint_message, info_message, success_message,
-    suggest_command_in_dir,
+    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, println,
+    success_message, suggest_command_in_dir,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -111,7 +111,7 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
             );
         }
 
-        std::fs::write(&candidate.config_path, &candidate.migrated)
+        worktrunk::utils::write_atomically(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
         eprintln!(
             "{}",
@@ -183,9 +183,9 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Err(_) => return Ok(None),
     };
 
-    let config_path = match repo.project_config_path() {
-        Ok(Some(path)) => path,
-        _ => return Ok(None),
+    let config_path = match repo.project_config_path()? {
+        Some(path) => path,
+        None => return Ok(None),
     };
     if !config_path.exists() {
         return Ok(None);

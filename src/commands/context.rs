@@ -46,22 +46,30 @@ impl CommandEnv {
         })
     }
 
-    /// Load the command environment for a named worktree (by branch name).
+    /// Load the command environment for a named worktree.
     ///
-    /// Resolves the worktree path from the branch name rather than the current
+    /// Resolves the worktree from the selector rather than the current
     /// directory, and roots `repo` at that worktree — so a command run with
     /// `--branch <b>` (e.g. `wt step commit --branch <b>`) and its hooks
     /// (`pre-commit` / `post-commit`) operate on, and resolve `.config/wt.toml`
     /// from, `<b>`'s worktree rather than the cwd. See the `commands::hooks`
     /// module docs for the hook config-resolution rule.
-    pub fn for_branch(config: UserConfig, branch: &str) -> anyhow::Result<Self> {
-        let worktree_path = Repository::current()?
-            .worktree_for_branch(branch)?
-            .ok_or_else(|| anyhow::anyhow!("no worktree for branch '{branch}'"))?;
+    ///
+    /// `branch` carries the resolved branch, not the selector, so a worktree
+    /// named by path expands `{{ branch }}` to the branch checked out there.
+    pub fn for_selector(config: UserConfig, selector: &str) -> anyhow::Result<Self> {
+        let repo = Repository::current()?;
+        let worktree_path = repo.require_worktree(selector)?;
+        // Re-read the branch off the resolved worktree rather than the
+        // selector, which may have been the path. The lookup is against the
+        // cached worktree list `require_worktree` just walked.
+        let branch = repo
+            .worktree_at_path(&worktree_path)?
+            .and_then(|(_, branch)| branch);
 
         Ok(Self {
             repo: Repository::at(&worktree_path)?,
-            branch: Some(branch.to_string()),
+            branch,
             config,
             worktree_path,
         })
@@ -105,6 +113,7 @@ impl CommandEnv {
         self.branch.as_deref().ok_or_else(|| {
             worktrunk::git::GitError::DetachedHead {
                 action: Some(action.into()),
+                worktree: None,
             }
             .into()
         })

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use worktrunk::HookType;
+use worktrunk::config::TemplateContext;
 
 use super::hook_filter::HookSource;
 
@@ -18,7 +18,7 @@ pub struct PipelineSpec {
     pub hook_type: HookType,
     pub source: HookSource,
     /// Base context variables for template expansion.
-    pub context: HashMap<String, String>,
+    pub context: TemplateContext,
     pub steps: Vec<PipelineStepSpec>,
     /// Directory for per-command log files.
     ///
@@ -58,14 +58,14 @@ mod tests {
 
     #[test]
     fn test_pipeline_spec_roundtrip() {
+        let mut context = TemplateContext::default();
+        context.insert("branch", "feature/auth");
         let spec = PipelineSpec {
             worktree_path: "/tmp/test-worktree".into(),
             branch: "feature/auth".into(),
             hook_type: HookType::PostCreate,
             source: HookSource::User,
-            context: [("branch".into(), "feature/auth".into())]
-                .into_iter()
-                .collect(),
+            context,
             log_dir: "/tmp/test-worktree/.git/wt/logs".into(),
             steps: vec![
                 PipelineStepSpec::Single {

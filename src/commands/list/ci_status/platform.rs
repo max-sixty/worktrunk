@@ -1,12 +1,12 @@
 //! Forge dispatch for CI status detection.
 //!
-//! Given a [`CiPlatform`] (resolved by [`Repository::ci_platform`]), routes to
+//! Given a [`ForgeKind`] (resolved by [`Repository::ci_platform`]), routes to
 //! the GitHub (`gh`), GitLab (`glab`), Gitea (`tea`), or Azure DevOps (`az`)
 //! backend and checks whether that CLI is installed.
 
 use std::sync::OnceLock;
 
-use worktrunk::git::{CiPlatform, Repository};
+use worktrunk::git::{ForgeKind, Repository};
 
 use super::{CiBranchName, PrStatus, azure, gitea, github, gitlab, tool_available};
 
@@ -34,45 +34,45 @@ impl CiToolsAvailable {
 }
 
 /// Whether the CLI tool for this platform is installed (cached).
-fn is_tool_available(platform: CiPlatform) -> bool {
+fn is_tool_available(platform: ForgeKind) -> bool {
     match platform {
-        CiPlatform::GitHub => CiToolsAvailable::get().gh,
-        CiPlatform::GitLab => CiToolsAvailable::get().glab,
-        CiPlatform::Gitea => CiToolsAvailable::get().tea,
-        CiPlatform::AzureDevOps => CiToolsAvailable::get().az,
+        ForgeKind::GitHub => CiToolsAvailable::get().gh,
+        ForgeKind::GitLab => CiToolsAvailable::get().glab,
+        ForgeKind::Gitea => CiToolsAvailable::get().tea,
+        ForgeKind::AzureDevOps => CiToolsAvailable::get().az,
     }
 }
 
 /// Detect CI status from a PR/MR.
 fn detect_pr_mr(
-    platform: CiPlatform,
+    platform: ForgeKind,
     repo: &Repository,
     branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
     match platform {
-        CiPlatform::GitHub => github::detect_github(repo, branch, local_head),
-        CiPlatform::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
-        CiPlatform::Gitea => gitea::detect_gitea_pr(repo, branch, local_head),
-        CiPlatform::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
+        ForgeKind::GitHub => github::detect_github(repo, branch, local_head),
+        ForgeKind::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
+        ForgeKind::Gitea => gitea::detect_gitea_pr(repo, branch, local_head),
+        ForgeKind::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
     }
 }
 
 /// Detect CI status from a branch workflow/pipeline (fallback when no PR/MR).
 fn detect_branch(
-    platform: CiPlatform,
+    platform: ForgeKind,
     repo: &Repository,
     branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
     match platform {
-        CiPlatform::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
+        ForgeKind::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
         // GitLab pipelines use the bare branch name (not "origin/feature").
-        CiPlatform::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
+        ForgeKind::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
         // Gitea queries the combined commit status by SHA, but owner/repo come
         // from the branch's own remote (so remote-only rows hit the right repo).
-        CiPlatform::Gitea => gitea::detect_gitea_commit_status(repo, branch, local_head),
-        CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, branch, local_head),
+        ForgeKind::Gitea => gitea::detect_gitea_commit_status(repo, branch, local_head),
+        ForgeKind::AzureDevOps => azure::detect_azure_pipeline(repo, branch, local_head),
     }
 }
 
@@ -80,7 +80,7 @@ fn detect_branch(
 ///
 /// Returns `None` if the CLI tool isn't installed or no CI status is found.
 pub(super) fn detect_ci(
-    platform: CiPlatform,
+    platform: ForgeKind,
     repo: &Repository,
     branch: &CiBranchName,
     local_head: &str,

@@ -169,15 +169,19 @@ pub enum PromoteResult {
     AlreadyInMain(String),
 }
 
-/// Resolve the branch to promote when no explicit argument was passed.
+/// Resolve the branch to promote.
 ///
-/// From the main worktree, restore the default branch. From a linked worktree,
-/// promote the current branch.
+/// An explicit argument goes through the worktree selector, so the branch can be
+/// named by its worktree's path as well as by name. With no argument: from the
+/// main worktree, restore the default branch; from a linked worktree, promote
+/// the current branch.
 fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Result<String> {
     use worktrunk::git::GitError;
 
     if let Some(b) = branch {
-        return Ok(b.to_string());
+        // Promoting swaps two branches between worktrees, so a detached
+        // worktree has nothing to swap in.
+        return repo.require_selected_branch(b, "promote");
     }
 
     let current_wt = repo.current_worktree();
@@ -190,6 +194,7 @@ fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Res
         current_wt.branch()?.ok_or_else(|| {
             GitError::DetachedHead {
                 action: Some("promote".into()),
+                worktree: None,
             }
             .into()
         })
@@ -313,6 +318,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         .clone()
         .ok_or_else(|| GitError::DetachedHead {
             action: Some("promote".into()),
+            worktree: Some(main_path.clone()),
         })?;
 
     // Resolve the branch to promote (default_branch computed lazily, only when needed)

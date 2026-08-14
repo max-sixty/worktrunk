@@ -12,15 +12,18 @@ use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{Approvals, ProjectConfig, require_approvals_path};
 use worktrunk::git::{GitError, Repository};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, success_message, warning_message,
 };
 
+use crate::cli::SwitchFormat;
 use crate::commands::command_approval::approve_command_batch;
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
+use crate::output::print_json;
 
 /// Every approvable command a project config declares: hooks in lifecycle
 /// order, then aliases (alphabetical), then any commit-message guidance.
@@ -49,8 +52,38 @@ fn require_project_config(repo: &Repository) -> anyhow::Result<ProjectConfig> {
         .ok_or(GitError::ProjectConfigNotFound { config_path })?)
 }
 
+/// One project command and whether its template is currently approved.
+#[derive(serde::Serialize)]
+struct JsonApprovalCommand<'a> {
+    /// `post-start`, `pre-merge`, `alias`, `commit-template-append`, …
+    phase: String,
+    /// The command's name within its phase; absent for an unnamed command
+    /// and for the commit-template fragment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    template: &'a str,
+    approved: bool,
+}
+
+/// Structured form of `wt config approvals list`.
+///
+/// `state` is the single field a caller branches on before scheduling a
+/// non-interactive run; `commands` and `stale` say which commands produced it.
+/// Stale approvals are their own list rather than a `state`, because they
+/// co-occur with any of the three — and they are what `--yes` would silently
+/// re-approve, so an orchestrator preserving the approval model has to see
+/// them separately.
+#[derive(serde::Serialize)]
+struct JsonApprovals<'a> {
+    state: &'static str,
+    commands: Vec<JsonApprovalCommand<'a>>,
+    /// Templates approved earlier but since edited or removed from the
+    /// project config.
+    stale: Vec<&'a str>,
+}
+
 /// Handle `wt config approvals list` - show approval status for all project commands
-pub fn list_approvals() -> anyhow::Result<()> {
+pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -67,6 +100,32 @@ pub fn list_approvals() -> anyhow::Result<()> {
         .map(|cmd| cmd.command.template.as_str())
         .collect();
     let stale = approvals.stale_approvals(&project_id, &templates);
+
+    if format == SwitchFormat::Json {
+        let json_commands: Vec<_> = commands
+            .iter()
+            .map(|cmd| JsonApprovalCommand {
+                phase: cmd.phase.to_string(),
+                name: cmd.command.name.as_deref(),
+                template: &cmd.command.template,
+                approved: approvals.is_command_approved(&project_id, &cmd.command.template),
+            })
+            .collect();
+        // An empty command set is not the same answer as an approved one, so
+        // the three states aren't derivable from `commands` alone.
+        let state = if json_commands.is_empty() {
+            "no_commands"
+        } else if json_commands.iter().any(|cmd| !cmd.approved) {
+            "approval_required"
+        } else {
+            "approved"
+        };
+        return print_json(&JsonApprovals {
+            state,
+            commands: json_commands,
+            stale,
+        });
+    }
 
     if commands.is_empty() && stale.is_empty() {
         eprintln!("{}", info_message("No commands configured in project"));
@@ -256,6 +315,7 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
 
         if approval_count == 0 {
             eprintln!("{}", info_message("No approvals to clear for this project"));
+            emit_pattern_entries_hint(&approvals, &project_id)?;
             return Ok(());
         }
 
@@ -270,7 +330,29 @@ pub fn clear_approvals(global: bool, stale: bool) -> anyhow::Result<()> {
                 if approval_count == 1 { "" } else { "s" }
             ))
         );
+        emit_pattern_entries_hint(&approvals, &project_id)?;
     }
 
+    Ok(())
+}
+
+/// After a per-project clear — or one with nothing exact to remove — name the
+/// hand-written pattern entries still approving commands for this project.
+/// `clear` only ever touches the exact entry, so without this the approval
+/// survives with nothing pointing at the entry supplying it.
+fn emit_pattern_entries_hint(approvals: &Approvals, project_id: &str) -> anyhow::Result<()> {
+    let keys = approvals.matching_pattern_keys(project_id);
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let label = if keys.len() == 1 { "entry" } else { "entries" };
+    let keys = keys.join(", ");
+    let path = format_path_for_display(&require_approvals_path()?);
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Commands approved by pattern {label} <underline>{keys}</> still apply; to change them, edit <underline>{path}</>"
+        ))
+    );
     Ok(())
 }

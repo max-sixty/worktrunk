@@ -48,7 +48,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, alias_context_filter,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, VarScope, alias_context_filter,
     format_alias_variables, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
@@ -605,20 +605,23 @@ fn run_alias(
     let referenced = alias_context_filter(referenced);
     let mut context_map = {
         let _span = Span::new("build_hook_context");
-        build_hook_context(&ctx, &extra_refs, Some(&referenced))?
+        build_hook_context(&ctx, &extra_refs, VarScope::Referenced(&referenced))?
     };
     // Forward positional CLI args to templates as `{{ args }}`. Encoded as a
-    // JSON list so it flows through the stable `HashMap<String, String>`
-    // context — `expand_template` rehydrates it into a `ShellArgs` sequence.
+    // JSON list so it flows through the context's flat string map —
+    // `expand_template` rehydrates it into a `ShellArgs` sequence.
     context_map.insert(
-        ALIAS_ARGS_KEY.to_string(),
+        ALIAS_ARGS_KEY,
         serde_json::to_string(&opts.positional_args)
             .expect("Vec<String> serialization should never fail"),
     );
 
     if verbosity() >= 1 {
-        let vars = format_alias_variables(&context_map, Some(&referenced));
-        eprintln!("{}", info_message("template variables:"));
+        let vars = format_alias_variables(&context_map, VarScope::Referenced(&referenced));
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{}</> template variables:", opts.name))
+        );
         eprintln!("{}", format_with_gutter(&vars, None));
     }
 

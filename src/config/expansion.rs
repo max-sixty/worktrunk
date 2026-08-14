@@ -21,6 +21,7 @@ use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::git::{Diagnostic, HookType, Repository};
@@ -50,6 +51,7 @@ pub const REPO_VARS: &[&str] = &[
     "repo",
     "repo_path",
     "owner",
+    "remote_repo",
     "primary_worktree_path",
     "default_branch",
     "remote",
@@ -79,7 +81,7 @@ pub fn base_vars() -> Vec<&'static str> {
 
 /// Reserved context key carrying a JSON-encoded `Vec<String>` of positional
 /// CLI args forwarded to an alias. The key flows through
-/// `HashMap<String, String>` — stable for stdin JSON — and
+/// [`TemplateContext`]'s flat string map — stable for stdin JSON — and
 /// [`expand_template`] rehydrates it as a `ShellArgs` object so bare
 /// `{{ args }}` renders as a space-joined, shell-escaped string while
 /// indexing, iteration, and `length` behave like a sequence.
@@ -105,6 +107,104 @@ pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
 /// row before the table skeleton renders, so only row-identity data that is
 /// already in memory at that point is offered.
 pub const LIST_COLUMN_VARS: &[&str] = &["branch", "worktree_path", "worktree_name"];
+
+/// The resolved template variables for one command invocation.
+///
+/// Wraps the map `build_hook_context` produces and owns every operation on
+/// it: expansion, the JSON a hook child reads on stdin, and the `-v` variables
+/// table. Callers hold this rather than a bare map so the borrow
+/// [`expand_template`] needs, the `serde_json` call, and the `(unset)` /
+/// `(unused)` rendering each have one home.
+///
+/// Serializes transparently, so the JSON a child reads and the pipeline spec a
+/// background runner deserializes are both the flat `{"branch": "…", …}`
+/// object the [`ALIAS_ARGS_KEY`] contract describes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TemplateContext(HashMap<String, String>);
+
+impl TemplateContext {
+    /// Wrap a resolved variable map. `build_hook_context` is the producer;
+    /// nothing else assembles a context from scratch.
+    pub fn from_vars(vars: HashMap<String, String>) -> Self {
+        Self(vars)
+    }
+
+    /// Bind `key`, replacing any existing value.
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.0.insert(key.into(), value.into());
+    }
+
+    /// The value bound to `key`.
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
+    }
+
+    /// Unbind `key`, so it renders as `(unset)` and is absent from the JSON.
+    pub fn remove(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+
+    /// Expand `template` against these variables, escaping interpolated values
+    /// per `escape_mode`. `name` labels the template in errors.
+    pub fn expand(
+        &self,
+        template: &str,
+        escape_mode: ShellEscapeMode,
+        repo: &Repository,
+        name: &str,
+    ) -> Result<String, TemplateExpandError> {
+        self.expand_with(template, escape_mode, repo, name, VarsMode::Resolve)
+    }
+
+    /// [`Self::expand`], with control over how `{{ vars.<key> }}` resolves.
+    pub fn expand_with(
+        &self,
+        template: &str,
+        escape_mode: ShellEscapeMode,
+        repo: &Repository,
+        name: &str,
+        vars_mode: VarsMode,
+    ) -> Result<String, TemplateExpandError> {
+        let vars: HashMap<&str, &str> = self
+            .0
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        expand_template_with(template, &vars, escape_mode, repo, name, vars_mode)
+    }
+
+    /// The JSON form piped to a child's stdin.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(&self.0)
+            .expect("HashMap<String, String> serialization should never fail")
+    }
+}
+
+/// Which template variables a context build has to resolve.
+///
+/// The choice follows from who reads the finished [`TemplateContext`], not
+/// from what kind of command is running — see `build_hook_context`.
+#[derive(Debug, Clone, Copy)]
+pub enum VarScope<'a> {
+    /// Only the templates read the map, so a var they don't name is never
+    /// looked up. The set comes from `referenced_vars_for_config` or
+    /// [`referenced_vars_for_templates`].
+    Referenced(&'a BTreeSet<String>),
+    /// Something reads keys the templates never mention: a child consuming
+    /// the JSON on stdin, or a command whose output is the variable listing.
+    All,
+}
+
+impl VarScope<'_> {
+    /// Whether `key` has to be resolved.
+    pub fn wants(&self, key: &str) -> bool {
+        match self {
+            VarScope::All => true,
+            VarScope::Referenced(referenced) => referenced.contains(key),
+        }
+    }
+}
 
 /// The context in which a template will be expanded.
 ///
@@ -171,8 +271,8 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     }
 }
 
-/// Vars added by the hook execution infrastructure itself (`expand_commands`
-/// / `expand_command_template`), regardless of hook type.
+/// Vars added by the hook execution infrastructure itself (`prepare_steps`),
+/// regardless of hook type.
 const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
 
 /// All template variables available in a given scope.
@@ -219,16 +319,14 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// distinction here.
 fn format_variables_table(
     vars: &[&'static str],
-    ctx: &HashMap<String, String>,
-    referenced: Option<&BTreeSet<String>>,
+    ctx: &TemplateContext,
+    scope: VarScope<'_>,
 ) -> String {
     let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
     vars.iter()
-        .map(|var| match ctx.get(*var) {
+        .map(|var| match ctx.get(var) {
             Some(value) => format!("{var:<max_name$} = {value}"),
-            None if referenced.is_some_and(|r| !r.contains(*var)) => {
-                cformat!("<dim>{var:<max_name$} = (unused)</>")
-            }
+            None if !scope.wants(var) => cformat!("<dim>{var:<max_name$} = (unused)</>"),
             None => format!("{var:<max_name$} = (unset)"),
         })
         .collect::<Vec<_>>()
@@ -241,7 +339,7 @@ fn format_variables_table(
 /// active, operation, repo, exec, infrastructure.
 ///
 /// Deprecated aliases and `vars.*` (user state) are intentionally omitted.
-pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>) -> String {
+pub fn format_hook_variables(hook_type: HookType, ctx: &TemplateContext) -> String {
     let vars: Vec<&'static str> = ACTIVE_VARS
         .iter()
         .chain(hook_extras(hook_type))
@@ -250,7 +348,7 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
         .chain(HOOK_INFRASTRUCTURE_VARS)
         .copied()
         .collect();
-    format_variables_table(&vars, ctx, None)
+    format_variables_table(&vars, ctx, VarScope::All)
 }
 
 /// Format the resolved template variables for an alias invocation.
@@ -263,14 +361,10 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
 /// contract; the table displays it space-joined and shell-escaped so it
 /// matches what `{{ args }}` substitutes in templates.
 ///
-/// `referenced` (the set of vars the body actually substitutes) controls
-/// the dim `(unused)` marker for vars the operation skipped computing —
-/// the reader sees what's reachable without paying for values the body
-/// won't substitute.
-pub fn format_alias_variables(
-    ctx: &HashMap<String, String>,
-    referenced: Option<&BTreeSet<String>>,
-) -> String {
+/// `scope` is the one the context was built with, so vars it skipped render as
+/// dim `(unused)` — the reader sees what's reachable without paying for values
+/// the body won't substitute.
+pub fn format_alias_variables(ctx: &TemplateContext, scope: VarScope<'_>) -> String {
     let vars: Vec<&'static str> = ACTIVE_VARS
         .iter()
         .copied()
@@ -282,9 +376,20 @@ pub fn format_alias_variables(
     if let Some(json) = ctx.get(ALIAS_ARGS_KEY) {
         let args: Vec<String> = serde_json::from_str(json)
             .expect("ALIAS_ARGS_KEY is always serialized from a Vec<String>");
-        display_ctx.insert(ALIAS_ARGS_KEY.into(), shell_join(&args));
+        display_ctx.insert(ALIAS_ARGS_KEY, shell_join(&args));
     }
-    format_variables_table(&vars, &display_ctx, referenced)
+    format_variables_table(&vars, &display_ctx, scope)
+}
+
+/// Format the resolved template variables for a bare template expansion
+/// (`wt step eval`), whose scope is exactly [`base_vars`] — no hook operation
+/// or infrastructure vars, no alias `args`.
+///
+/// Same curated ordering and `(unset)` treatment as [`format_hook_variables`],
+/// so the four `-v` variable listings (hook foreground, hook background, alias,
+/// eval) render one family.
+pub fn format_base_variables(ctx: &TemplateContext) -> String {
+    format_variables_table(&base_vars(), ctx, VarScope::All)
 }
 
 /// Extend `referenced` with the implicit context-map keys an alias dispatch
@@ -351,6 +456,41 @@ impl Object for ShellArgs {
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&shell_join(&self.0))
     }
+}
+
+/// Stands in for the `vars` map in a preview, rendering each reference back as
+/// the `{{ vars.<path> }}` that produced it.
+///
+/// A preview shows what a command *will* run, and `vars.*` values are read from
+/// git config when the step runs — after any earlier step in the pipeline has
+/// written them. Resolving one at preview time would show a value the run may
+/// not use, so the reference stands for itself while everything around it
+/// expands normally.
+///
+/// Each key access returns another `LiteralVars` carrying the path so far, so
+/// nested access (`{{ vars.config.port }}`) round-trips too. The formatter
+/// installed by `expand_template` writes it through unescaped, as it does
+/// `ShellArgs`.
+#[derive(Debug)]
+struct LiteralVars(String);
+
+impl Object for LiteralVars {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        Some(Value::from_object(LiteralVars(format!("{}.{key}", self.0))))
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{{{ {} }}}}", self.0)
+    }
+}
+
+/// How template expansion resolves `{{ vars.<key> }}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarsMode {
+    /// Read values from git config — what a command runs with.
+    Resolve,
+    /// Render each reference back as `{{ vars.<key> }}`, for a preview.
+    Literal,
 }
 
 /// Space-join POSIX-shell-escaped args — the canonical rendering of
@@ -778,16 +918,35 @@ pub fn template_environment(repo: &Repository) -> Environment<'static> {
 /// positives from literal text like `template_vars.txt`. Templates that fail
 /// to parse contribute nothing — a syntax error surfaces later at expansion
 /// time with a richer message.
-fn referenced_vars(template: &str) -> std::collections::HashSet<String> {
+fn referenced_vars(template: &str) -> BTreeSet<String> {
     minijinja::Environment::new()
         .template_from_str(template)
-        .map(|tmpl| tmpl.undeclared_variables(false))
+        .map(|tmpl| tmpl.undeclared_variables(false).into_iter().collect())
         .unwrap_or_default()
 }
 
 /// Check if a template references a specific top-level variable.
 pub fn template_references_var(template: &str, var: &str) -> bool {
     referenced_vars(template).contains(var)
+}
+
+/// Union of top-level variables referenced across `templates`.
+///
+/// Builds the `referenced` filter for `build_hook_context` at sites that expand
+/// bare template strings rather than a
+/// [`CommandConfig`](super::CommandConfig) — currently `wt switch --execute`,
+/// whose command and trailing args are two separate expansion positions over
+/// one shared context map.
+///
+/// Non-erroring, unlike `referenced_vars_for_config`: an unparsable template
+/// contributes nothing, and its syntax error surfaces from the caller's own
+/// validation, which names the position at fault. Under-collecting is
+/// therefore harmless — the vars a broken template named are ones it never
+/// gets to read.
+pub fn referenced_vars_for_templates<'a>(
+    templates: impl IntoIterator<Item = &'a str>,
+) -> BTreeSet<String> {
+    templates.into_iter().flat_map(referenced_vars).collect()
 }
 
 /// Union of top-level variables referenced across every command in `cfg`.
@@ -818,10 +977,12 @@ pub fn referenced_vars_for_config(
 
 /// Parse-only syntax check for a template.
 ///
-/// Hook and alias preparation runs this on every template so syntax errors
-/// (e.g. `{{ vars..foo }}`) abort before the first pipeline step runs;
-/// rendering — and with it semantic errors like undefined variables — is
-/// deferred to execution time. The error matches [`expand_template`]'s
+/// Every path that runs hooks calls this on each template, via
+/// `PreparedPipeline::validated`, so syntax errors (e.g. `{{ vars..foo }}`) abort
+/// before the first pipeline step runs; rendering — and with it semantic errors
+/// like undefined variables — is deferred to execution time. Alias dispatch has
+/// already parsed each template for argument routing by then, so it skips the
+/// check. The error matches [`expand_template`]'s
 /// parse-failure shape so syntax errors render identically wherever they
 /// surface.
 pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), TemplateExpandError> {
@@ -938,6 +1099,22 @@ pub fn expand_template(
     repo: &Repository,
     name: &str,
 ) -> Result<String, TemplateExpandError> {
+    expand_template_with(template, vars, escape_mode, repo, name, VarsMode::Resolve)
+}
+
+/// [`expand_template`], with control over how `{{ vars.<key> }}` resolves.
+///
+/// Previews pass [`VarsMode::Literal`] so a `vars.*` reference renders back as
+/// itself while every other variable expands; execution passes
+/// [`VarsMode::Resolve`].
+pub fn expand_template_with(
+    template: &str,
+    vars: &HashMap<&str, &str>,
+    escape_mode: ShellEscapeMode,
+    repo: &Repository,
+    name: &str,
+    vars_mode: VarsMode,
+) -> Result<String, TemplateExpandError> {
     // Build context map with raw values (shell escaping is applied at output time via formatter).
     // The `args` key is reserved: run_alias encodes positional CLI args as a JSON list string,
     // and we rehydrate it here as a `ShellArgs` object so `{{ args }}` behaves sequence-like.
@@ -972,7 +1149,11 @@ pub fn expand_template(
             // output avoids re-escaping the whole joined string as one
             // opaque token. Iteration and indexing yield plain string
             // values that still flow through the generic escape branch.
-            if value.downcast_object_ref::<ShellArgs>().is_some() {
+            // `LiteralVars` renders the `{{ vars.<key> }}` reference itself,
+            // which must reach the preview unquoted.
+            if value.downcast_object_ref::<ShellArgs>().is_some()
+                || value.downcast_object_ref::<LiteralVars>().is_some()
+            {
                 write!(out, "{value}")?;
                 return Ok(());
             }
@@ -1014,13 +1195,25 @@ pub fn expand_template(
     // Only look up vars data if the parsed template references the top-level
     // `vars` object (avoids a git process spawn per expansion while supporting
     // every MiniJinja access form without false positives from literal text).
-    if tmpl.undeclared_variables(false).contains("vars")
-        && let Some(branch) = vars.get("branch")
-    {
-        context.insert(
-            "vars".to_string(),
-            vars_map_to_value(&repo.vars_entries(branch)),
-        );
+    // A preview injects `LiteralVars` instead, which needs no branch and no
+    // git config read.
+    if tmpl.undeclared_variables(false).contains("vars") {
+        match vars_mode {
+            VarsMode::Literal => {
+                context.insert(
+                    "vars".to_string(),
+                    Value::from_object(LiteralVars("vars".to_string())),
+                );
+            }
+            VarsMode::Resolve => {
+                if let Some(branch) = vars.get("branch") {
+                    context.insert(
+                        "vars".to_string(),
+                        vars_map_to_value(&repo.vars_entries(branch)),
+                    );
+                }
+            }
+        }
     }
 
     let result = tmpl
@@ -1160,6 +1353,28 @@ mod tests {
 
     fn test_repo() -> TestRepo {
         TestRepo::new()
+    }
+
+    #[test]
+    fn test_template_references_var_for_vars() {
+        // Real vars references
+        assert!(template_references_var("{{ vars.container }}", "vars"));
+        assert!(template_references_var("{{vars.container}}", "vars"));
+        assert!(template_references_var(
+            "docker run --name {{ vars.name }}",
+            "vars"
+        ));
+        assert!(template_references_var(
+            "{% if vars.key %}yes{% endif %}",
+            "vars"
+        ));
+
+        // Literal text — not a template reference
+        assert!(!template_references_var(
+            "echo hello > template_vars.txt",
+            "vars"
+        ));
+        assert!(!template_references_var("no vars references here", "vars"));
     }
 
     #[test]
@@ -2226,67 +2441,52 @@ mod tests {
     }
 
     #[test]
-    fn test_redact_credentials_https_token() {
-        // GitHub-style personal access token
-        assert_eq!(
-            redact_credentials("https://ghp_token123@github.com/owner/repo"),
-            "https://[REDACTED]@github.com/owner/repo"
-        );
-        // GitLab-style token
-        assert_eq!(
-            redact_credentials("https://glpat-xxxxxxxxxxxx@gitlab.com/owner/repo.git"),
-            "https://[REDACTED]@gitlab.com/owner/repo.git"
-        );
-    }
+    fn test_redact_credentials() {
+        let cases = [
+            (
+                "GitHub personal access token",
+                "https://ghp_token123@github.com/owner/repo",
+                "https://[REDACTED]@github.com/owner/repo",
+            ),
+            (
+                "GitLab personal access token",
+                "https://glpat-xxxxxxxxxxxx@gitlab.com/owner/repo.git",
+                "https://[REDACTED]@gitlab.com/owner/repo.git",
+            ),
+            (
+                "HTTPS username and password",
+                "https://user:password123@github.com/owner/repo",
+                "https://[REDACTED]@github.com/owner/repo",
+            ),
+            (
+                "HTTPS without credentials",
+                "https://github.com/owner/repo",
+                "https://github.com/owner/repo",
+            ),
+            (
+                "SSH URL",
+                "git@github.com:owner/repo.git",
+                "git@github.com:owner/repo.git",
+            ),
+            ("branch name", "main", "main"),
+            ("branch name with slash", "feature/auth", "feature/auth"),
+            ("filesystem path", "/path/to/worktree", "/path/to/worktree"),
+            ("empty value", "", ""),
+            (
+                "git protocol token",
+                "git://token@github.com/owner/repo.git",
+                "git://[REDACTED]@github.com/owner/repo.git",
+            ),
+            (
+                "path and query after credentials",
+                "https://token@github.com/owner/repo.git?ref=main",
+                "https://[REDACTED]@github.com/owner/repo.git?ref=main",
+            ),
+        ];
 
-    #[test]
-    fn test_redact_credentials_https_user_pass() {
-        // Username:password format
-        assert_eq!(
-            redact_credentials("https://user:password123@github.com/owner/repo"),
-            "https://[REDACTED]@github.com/owner/repo"
-        );
-    }
-
-    #[test]
-    fn test_redact_credentials_no_credentials() {
-        // Normal HTTPS URL without credentials - unchanged
-        assert_eq!(
-            redact_credentials("https://github.com/owner/repo"),
-            "https://github.com/owner/repo"
-        );
-        // SSH URL - unchanged (no credentials in URL format)
-        assert_eq!(
-            redact_credentials("git@github.com:owner/repo.git"),
-            "git@github.com:owner/repo.git"
-        );
-    }
-
-    #[test]
-    fn test_redact_credentials_non_url() {
-        // Non-URL values pass through unchanged
-        assert_eq!(redact_credentials("main"), "main");
-        assert_eq!(redact_credentials("feature/auth"), "feature/auth");
-        assert_eq!(redact_credentials("/path/to/worktree"), "/path/to/worktree");
-        assert_eq!(redact_credentials(""), "");
-    }
-
-    #[test]
-    fn test_redact_credentials_git_protocol() {
-        // git:// protocol with credentials
-        assert_eq!(
-            redact_credentials("git://token@github.com/owner/repo.git"),
-            "git://[REDACTED]@github.com/owner/repo.git"
-        );
-    }
-
-    #[test]
-    fn test_redact_credentials_preserves_path() {
-        // Full URL with path and query should preserve everything after host
-        assert_eq!(
-            redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
-            "https://[REDACTED]@github.com/owner/repo.git?ref=main"
-        );
+        for (name, input, expected) in cases {
+            assert_eq!(redact_credentials(input), expected, "{name}: {input}");
+        }
     }
 
     #[test]
@@ -2390,7 +2590,7 @@ mod tests {
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
-                r#"{"port": 3000, "debug": true}"#,
+                r#"{"port": 3000, "debug": true, "note": null}"#,
             ])
             .current_dir(test.path())
             .run()
@@ -2429,6 +2629,9 @@ mod tests {
             .unwrap(),
             "3000"
         );
+        // A JSON bool or null reaches minijinja as a real bool/none, so each
+        // renders the way minijinja renders it: `True`/`False`/`None` since
+        // 2.22, which adopted Jinja2's spelling for all three together.
         assert_eq!(
             expand_template(
                 "{{ vars.config.debug }}",
@@ -2438,7 +2641,18 @@ mod tests {
                 "test"
             )
             .unwrap(),
-            "true"
+            "True"
+        );
+        assert_eq!(
+            expand_template(
+                "{{ vars.config.note }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "None"
         );
 
         // Array index access
@@ -2732,6 +2946,20 @@ mod tests {
             .is_ok()
         );
 
+        // Remote-derived repo vars validate in every scope
+        assert!(
+            validate_template("{{ owner }}/{{ remote_repo }}", hook, &test.repo, "test").is_ok()
+        );
+        assert!(
+            validate_template(
+                "{{ remote_repo }}",
+                ValidationScope::Alias,
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
         // Deprecated vars still valid in every scope
         assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
 
@@ -2870,6 +3098,30 @@ mod tests {
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
     }
 
+    /// The `--execute` filter unions across the command and its trailing args,
+    /// which are separate expansion positions over one context map — a var
+    /// named only in an arg still has to be computed.
+    #[test]
+    fn test_referenced_vars_for_templates_unions_positions() {
+        let refs = referenced_vars_for_templates(["echo {{ commit }}", "--onto={{ branch }}"]);
+        assert_eq!(
+            refs.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["branch", "commit"]
+        );
+    }
+
+    /// Unparsable templates contribute nothing rather than erroring — the
+    /// caller's own validation reports the syntax error, naming which position
+    /// was at fault.
+    #[test]
+    fn test_referenced_vars_for_templates_skips_unparsable() {
+        let refs = referenced_vars_for_templates(["{{ unclosed", "echo {{ commit }}"]);
+        assert_eq!(
+            refs.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["commit"]
+        );
+    }
+
     #[test]
     fn test_referenced_vars_for_config_syntax_error_propagates() {
         let cfg = super::super::CommandConfig::single("echo {{ unclosed");
@@ -2902,19 +3154,19 @@ mod tests {
 
     #[test]
     fn test_format_hook_variables_groups_and_unset() {
-        let mut ctx: HashMap<String, String> = HashMap::new();
-        ctx.insert("branch".into(), "feature".into());
-        ctx.insert("worktree_path".into(), "/tmp/feature".into());
-        ctx.insert("worktree_name".into(), "feature".into());
-        ctx.insert("base".into(), "main".into());
-        ctx.insert("base_worktree_path".into(), "/tmp/main".into());
-        ctx.insert("target".into(), "-".into());
+        let mut ctx = TemplateContext::default();
+        ctx.insert("branch", "feature");
+        ctx.insert("worktree_path", "/tmp/feature");
+        ctx.insert("worktree_name", "feature");
+        ctx.insert("base", "main");
+        ctx.insert("base_worktree_path", "/tmp/main");
+        ctx.insert("target", "-");
         // target_worktree_path deliberately absent — mimics `wt switch -`
-        ctx.insert("repo".into(), "demo".into());
-        ctx.insert("repo_path".into(), "/tmp/demo".into());
-        ctx.insert("cwd".into(), "/tmp/feature".into());
-        ctx.insert("hook_type".into(), "pre-switch".into());
-        ctx.insert("hook_name".into(), "show-variables".into());
+        ctx.insert("repo", "demo");
+        ctx.insert("repo_path", "/tmp/demo");
+        ctx.insert("cwd", "/tmp/feature");
+        ctx.insert("hook_type", "pre-switch");
+        ctx.insert("hook_name", "show-variables");
 
         assert_snapshot!(format_hook_variables(HookType::PreSwitch, &ctx), @r"
         branch                = feature
@@ -2932,6 +3184,7 @@ mod tests {
         repo                  = demo
         repo_path             = /tmp/demo
         owner                 = (unset)
+        remote_repo           = (unset)
         primary_worktree_path = (unset)
         default_branch        = (unset)
         remote                = (unset)
@@ -2945,8 +3198,8 @@ mod tests {
     #[test]
     fn test_format_hook_variables_filters_operation() {
         // pre-commit only has `target` in operation scope — no base*, pr_*, etc.
-        let mut ctx: HashMap<String, String> = HashMap::new();
-        ctx.insert("target".into(), "main".into());
+        let mut ctx = TemplateContext::default();
+        ctx.insert("target", "main");
         let out = format_hook_variables(HookType::PreCommit, &ctx);
         assert!(out.contains("target                = main"), "got: {out}");
         assert!(
@@ -2961,18 +3214,18 @@ mod tests {
 
     #[test]
     fn test_format_alias_variables_includes_args_no_hook_keys() {
-        let mut ctx: HashMap<String, String> = HashMap::new();
-        ctx.insert("branch".into(), "feature".into());
-        ctx.insert("worktree_path".into(), "/tmp/feature".into());
-        ctx.insert("worktree_name".into(), "feature".into());
-        ctx.insert("repo".into(), "demo".into());
-        ctx.insert("repo_path".into(), "/tmp/demo".into());
-        ctx.insert("cwd".into(), "/tmp/feature".into());
+        let mut ctx = TemplateContext::default();
+        ctx.insert("branch", "feature");
+        ctx.insert("worktree_path", "/tmp/feature");
+        ctx.insert("worktree_name", "feature");
+        ctx.insert("repo", "demo");
+        ctx.insert("repo_path", "/tmp/demo");
+        ctx.insert("cwd", "/tmp/feature");
         // args is JSON-encoded per `ALIAS_ARGS_KEY` contract; the table
         // decodes and shell-renders it to match `{{ args }}` substitution.
-        ctx.insert(ALIAS_ARGS_KEY.into(), r#"["a","b c"]"#.into());
+        ctx.insert(ALIAS_ARGS_KEY, r#"["a","b c"]"#);
 
-        let out = format_alias_variables(&ctx, None);
+        let out = format_alias_variables(&ctx, VarScope::All);
         assert!(
             out.contains("args                  = a 'b c'"),
             "got: {out}"
@@ -2985,9 +3238,9 @@ mod tests {
 
     #[test]
     fn test_format_alias_variables_args_empty() {
-        let mut ctx: HashMap<String, String> = HashMap::new();
-        ctx.insert(ALIAS_ARGS_KEY.into(), "[]".into());
-        let out = format_alias_variables(&ctx, None);
+        let mut ctx = TemplateContext::default();
+        ctx.insert(ALIAS_ARGS_KEY, "[]");
+        let out = format_alias_variables(&ctx, VarScope::All);
         // Empty args render as an empty string after the `=` — distinct from
         // `(unset)`, which means the key was absent entirely. `args` sits last
         // in alias ordering, so the output ends with it.

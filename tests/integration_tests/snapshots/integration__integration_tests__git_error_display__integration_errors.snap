@@ -1,0 +1,35 @@
+---
+source: tests/integration_tests/git_error_display.rs
+expression: render_cases(cases)
+---
+## push failed
+
+[31m✗[39m [31mCan't push to local [1mmain[22m branch[39m
+[107m [0m To /Users/user/workspace/repo/.git
+[107m [0m  ! [remote rejected] HEAD -> main (Up-to-date check failed)
+[107m [0m error: failed to push some refs to '/Users/user/workspace/repo/.git'
+
+## conflicting changes
+
+[31m✗[39m [31mCan't push to local [1mmain[22m branch: conflicting uncommitted changes[39m
+[107m [0m src/main.rs
+[107m [0m src/lib.rs
+[2m↳[22m [2mCommit or stash these changes in [4m/tmp/repo.main[24m first[22m
+
+## not fast-forward
+
+[31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
+[107m [0m abc1234 Fix bug
+[107m [0m def5678 Add feature
+[2m↳[22m [2mTo rebase onto [4mmain[24m, run [4mwt step rebase main[24m[22m
+
+## not fast-forward during merge
+
+[31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
+[107m [0m abc1234 New commit on main
+[2m↳[22m [2mTo incorporate these changes, run [4mwt merge main[24m again[22m
+
+## rebase conflict
+
+[31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
+[107m [0m CONFLICT (content): Merge conflict in src/main.rs

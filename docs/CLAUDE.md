@@ -89,7 +89,7 @@ When adding new positioned elements:
 Three categories, kept in sync by `test_docs_are_in_sync` (run it after any doc change; it auto-updates out-of-sync pages):
 
 1. **Command pages** (config, hook, list, merge, remove, step, switch): `dev/*.example.toml` (via `include_str!`) → `src/cli/mod.rs` *(PRIMARY SOURCE)* → `docs/content/{command}.md` → `skills/worktrunk/reference/{command}.md`. Within `src/cli/mod.rs`, `after_long_help` carries the conceptual prose; clap attributes (`about`, `long_about`, doc comments on args) carry usage, options, and examples. Mechanism details: "Command page generation" below.
-2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk): `docs/content/*.md` is PRIMARY; edit it directly, the skill reference auto-syncs.
+2. **Non-command docs** (claude-code, code-signing, extending, faq, llm-commits, tips-patterns, worktrunk): `docs/content/*.md` is PRIMARY; edit it directly, the skill reference auto-syncs.
 3. **Skill-only files** (shell-integration.md, troubleshooting.md): edit `skills/worktrunk/reference/` directly, no docs equivalent. When adding one, also add a `linguist-generated=false` line to `.gitattributes` — the broad `skills/worktrunk/reference/*.md linguist-generated=true` rule otherwise marks it generated, collapsing real edits in GitHub PR diffs.
 
 Never hand-edit a generated mirror.
@@ -104,7 +104,7 @@ Help text renders in three contexts; check all three when editing:
 
 Because web docs concatenate everything, the `after_long_help` opener must not restate `about`/`subtitle` — start with new information (see "Command documentation structure" below for opener patterns). Link text must stand alone when the URL is stripped (terminal help drops the URL, keeping only the text): use `` [`wt foo`](...) `` for commands (the backticks signal a `--help` lookup) or a descriptive phrase for doc sections; avoid bare labels that match the destination's heading.
 
-After editing `after_long_help`, also refresh the help snapshots: `cargo insta test --accept -- --test integration "test_help"`.
+After editing `after_long_help`, also refresh the help snapshots: `cargo insta test --accept --test integration -- test_help`.
 
 ### Config doc TOML blocks
 
@@ -162,6 +162,8 @@ Each command has three documentation pieces in `src/cli/mod.rs`:
 3. **after_long_help must not repeat** — Start with NEW information that expands on or provides context for the definition. Each piece should add information the previous pieces didn't provide.
 
 4. **after_long_help should mostly stand alone** — The opener should give context or purpose, not just continue with details that only make sense after reading the definition. Avoid non-sequiturs.
+
+5. **Give a behavior the share of the docs that matches its share of the feature** — every paragraph is read by everyone who runs `--help`, so length is a claim on that attention. A guard or edge case that is a tiny share of the command usually gets zero words: its own error message states it at the moment it matters, and the help page leaves it implicit. Reserve prose for what most users of the command meet.
 
 **Good patterns for after_long_help openers:**
 
@@ -304,7 +306,7 @@ This expands during `--help-page` generation to:
 - The subcommand's help reference is formatted as a nested `### Command reference`
 
 **Use cases:**
-- `wt config create` — Shows the actual config file templates (via `include_str!`)
+- `wt list statusline` — Surfaces output formats that would otherwise be terminal-only
 - `wt config state marker` — Shows per-key examples not in the parent
 
 All AUTO-GENERATED markers use a consistent format with START and END tags:

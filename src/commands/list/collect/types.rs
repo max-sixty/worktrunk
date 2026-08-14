@@ -5,12 +5,10 @@
 //! - `TaskError` and `ErrorCause` - error handling for failed tasks
 //! - `DrainOutcome` and `MissingResult` - timeout diagnostic info
 
-use worktrunk::git::LineDiff;
+use worktrunk::git::{InProgressOperation, LineDiff};
 
 use super::super::ci_status::PrStatus;
-use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus};
 
 /// Task results sent as each git operation completes.
 /// These enable progressive rendering - update UI as data arrives.
@@ -85,10 +83,10 @@ pub(crate) enum TaskResult {
         /// Some(false) = dirty working tree would not conflict
         has_working_tree_conflicts: Option<bool>,
     },
-    /// Git operation in progress (rebase/merge)
+    /// Git operation in progress, `None` when there is none
     GitOperation {
         item_idx: usize,
-        git_operation: ActiveGitOperation,
+        git_operation: Option<InProgressOperation>,
     },
     /// User-defined status from git config
     UserMarker {

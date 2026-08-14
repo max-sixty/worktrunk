@@ -7,8 +7,23 @@ use anstyle::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Truncate a styled string to a visible width budget, preserving escapes.
-/// Escape sequences (ANSI/OSC) are zero-width; ellipsis ("…") is added when truncating.
-/// Appends ESC[0m on truncation to avoid style bleed.
+///
+/// The budget counts what the terminal draws: escape sequences (ANSI/OSC) are
+/// zero-width, and characters are measured by their unicode width, so a cut
+/// never lands inside an escape and never overshoots on wide characters. Text
+/// that already fits is returned untouched.
+///
+/// A cut ends the kept prefix with "…", after trimming the trailing whitespace
+/// the cut exposed so no space hangs before the marker. Trimming is
+/// best-effort: `ansi_cut` closes any style still open at the cut, and that
+/// trailing escape blocks it.
+///
+/// A cut that keeps any escape also appends a reset, so a style opened before
+/// the cut can't bleed past it. Text with no escapes has nothing to close and
+/// stays plain.
+///
+/// A zero budget yields an empty string; a budget with room for nothing but the
+/// ellipsis yields the bare ellipsis, with no prefix and so no reset.
 pub fn truncate_visible(rendered: &str, max_width: usize) -> String {
     truncate_visible_with_ellipsis(rendered, max_width, "…")
 }
@@ -28,10 +43,7 @@ fn truncate_visible_with_ellipsis(rendered: &str, max_width: usize, ellipsis: &s
     let ellipsis_width = UnicodeWidthStr::width(ellipsis);
     let budget = max_width.saturating_sub(ellipsis_width);
     if budget == 0 {
-        let mut out = String::new();
-        out.push_str(ellipsis);
-        out.push_str("\u{1b}[0m");
-        return out;
+        return ellipsis.to_owned();
     }
 
     let mut cut_at = 0;
@@ -46,8 +58,12 @@ fn truncate_visible_with_ellipsis(rendered: &str, max_width: usize, ellipsis: &s
     }
 
     let mut out = rendered.ansi_cut(..cut_at).into_owned();
+    out.truncate(out.trim_end().len());
+    let carries_style = out.contains('\u{1b}');
     out.push_str(ellipsis);
-    out.push_str("\u{1b}[0m");
+    if carries_style {
+        out.push_str(&anstyle::Reset.to_string());
+    }
     out
 }
 
@@ -198,22 +214,24 @@ mod tests {
         assert_eq!(UnicodeWidthStr::width(s.ansi_strip().as_ref()), 1,);
     }
 
-    /// truncate_visible respects visual width, handles emoji, and appends reset codes.
+    /// truncate_visible keeps the result within the visible budget, counting
+    /// escapes as zero-width and wide characters as their display width.
     #[test]
     fn test_truncate_visible() {
         use ansi_str::AnsiStr;
 
         let visible_width = |s: &str| UnicodeWidthStr::width(s.ansi_strip().as_ref());
 
-        // Truncates colored text to budget, ends with reset
-        let colored = "\u{1b}[31mhello\u{1b}[0m";
-        let out = truncate_visible(colored, 3);
+        // Escapes don't consume budget
+        let out = truncate_visible("\u{1b}[31mhello\u{1b}[0m", 3);
         assert_eq!(visible_width(&out), 3);
-        assert!(out.ends_with("\u{1b}[0m"));
 
         // Wide emoji (width 2) truncated to budget 1
         let out = truncate_visible("🚀", 1);
         assert_eq!(visible_width(&out), 1);
+
+        // A wide character straddling the cut is dropped, not split
+        assert_eq!(truncate_visible("café ☕ and more", 7), "café…");
 
         // Zero width → empty
         assert!(truncate_visible("hello world", 0).is_empty());
@@ -224,6 +242,30 @@ mod tests {
         // Budget of 1 stays within limit
         let out = truncate_visible("hello", 1);
         assert!(visible_width(&out) <= 1);
+    }
+
+    /// The ellipsis replaces the whitespace a cut exposes; where the cut lands
+    /// mid-word it fills the budget exactly.
+    #[test]
+    fn test_truncate_visible_trims_before_the_ellipsis() {
+        assert_eq!(truncate_visible("hello world", 7), "hello…");
+
+        let out = truncate_visible("This is a very long message that needs truncation", 30);
+        assert_eq!(out, "This is a very long message t…");
+        assert_eq!(UnicodeWidthStr::width(out.as_str()), 30);
+    }
+
+    /// A cut closes the styles it leaves open, and leaves plain text plain.
+    #[test]
+    fn test_truncate_visible_resets_only_styled_cuts() {
+        assert!(!truncate_visible("hello world", 8).contains('\u{1b}'));
+
+        let out = truncate_visible("\u{1b}[31mhello world\u{1b}[0m", 8);
+        assert!(out.ends_with("…\u{1b}[0m"), "{out:?}");
+
+        // Budget with room for nothing but the ellipsis keeps no prefix, so
+        // there is no style to close.
+        assert_eq!(truncate_visible("\u{1b}[31mhello\u{1b}[0m", 1), "…");
     }
 
     /// StyledLine composition: push, extend, render, plain_text all produce correct output.

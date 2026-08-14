@@ -89,6 +89,43 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_configure_shell_rejects_unsafe_cmd_without_modifying_rc(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    let original = "# Existing config\n";
+    fs::write(&zshrc_path, original).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("zsh")
+        .arg("--yes")
+        .arg("--cmd")
+        .arg("wt; touch /tmp/pwn")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unsafe command name must not emit shell code:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Invalid shell integration command name"),
+        "expected validation error, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(&zshrc_path).unwrap(), original);
+}
+
+#[rstest]
 fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present
     let zshrc_path = temp_home.path().join(".zshrc");
@@ -126,6 +163,39 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     let content = fs::read_to_string(&zshrc_path).unwrap();
     let count = content.matches("wt config shell init").count();
     assert_eq!(count, 1, "Should only have one wt config shell init line");
+}
+
+#[rstest]
+fn test_configure_shell_already_exists_noncanonical_line(repo: TestRepo, temp_home: TempDir) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\neval \"$(wt config shell init zsh)\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("zsh")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "install should treat the existing manual line as configured:\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    let count = content.matches("wt config shell init").count();
+    assert_eq!(count, 1, "Should not append a duplicate shell init line");
 }
 
 #[rstest]
@@ -338,6 +408,57 @@ fn test_configure_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     );
 }
 
+/// Installing fish integration reclaims `conf.d/{cmd}.fish` whatever it holds.
+///
+/// The path names the command being installed, so it's worktrunk's; the file's
+/// contents don't enter into it. Leaving this one would break the install
+/// besides — `conf.d` is sourced at startup, so a `function wt` defined there
+/// is already loaded when fish would otherwise autoload `functions/wt.fish`.
+#[rstest]
+fn test_configure_shell_fish_reclaims_conf_d_path(repo: TestRepo, temp_home: TempDir) {
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let stale = conf_d.join("wt.fish");
+    // No worktrunk header, and nothing a content test would recognize.
+    fs::write(&stale, "function wt\n    command wt-old $argv\nend\n").unwrap();
+    // A neighbour under another name is untouched: only `{cmd}.fish` is ours.
+    let neighbour = conf_d.join("aliases.fish");
+    let neighbour_content = "# reminder: wt config shell init fish\nalias ll 'ls -l'\n";
+    fs::write(&neighbour, neighbour_content).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "install failed: {output:?}");
+
+    assert!(
+        temp_home
+            .path()
+            .join(".config/fish/functions/wt.fish")
+            .exists(),
+        "install should write functions/wt.fish"
+    );
+    assert!(
+        !stale.exists(),
+        "install should reclaim conf.d/wt.fish: {stale:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&neighbour).unwrap(),
+        neighbour_content,
+        "a conf.d file under another name is not worktrunk's"
+    );
+    // The removal is reported, not silent.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deprecated"),
+        "install should report the conf.d cleanup:\n{stderr}"
+    );
+}
+
 /// Test that legacy cleanup happens even when new file already exists with correct content
 ///
 /// This handles the case where:
@@ -363,7 +484,11 @@ fn test_configure_shell_fish_legacy_cleanup_even_when_already_exists(
     // Also create completions (so it reports "all already configured")
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
-    fs::write(completions_d.join("wt.fish"), "# completions").unwrap();
+    fs::write(
+        completions_d.join("wt.fish"),
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     // Create legacy conf.d file (old location that should be cleaned up)
     let conf_d = temp_home.path().join(".config/fish/conf.d");
@@ -429,7 +554,11 @@ fn test_uninstall_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
     let completions_file = completions_d.join("wt.fish");
-    fs::write(&completions_file, "# completions").unwrap();
+    fs::write(
+        &completions_file,
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -539,7 +668,11 @@ fn test_configure_shell_fish_dry_run_does_not_delete_legacy(repo: TestRepo, temp
     // Create completions (so it reports "all already configured")
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
-    fs::write(completions_d.join("wt.fish"), "# completions").unwrap();
+    fs::write(
+        completions_d.join("wt.fish"),
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     // Create legacy conf.d file that should NOT be deleted in dry-run mode
     let conf_d = temp_home.path().join(".config/fish/conf.d");
@@ -575,6 +708,158 @@ fn test_configure_shell_fish_dry_run_does_not_delete_legacy(repo: TestRepo, temp
         new_file.exists(),
         "functions/wt.fish should be preserved: {:?}",
         new_file
+    );
+}
+
+/// `--dry-run` must *preview* the legacy files it would remove (issue #3644).
+///
+/// The cleanup takes back the legacy fish `conf.d/{cmd}.fish`; a preview run has
+/// to name that removal, not just the files it would add. Regression guard for
+/// the gap where `--dry-run` returned an empty `legacy_cleanups`, so the deletion
+/// never appeared before it happened.
+#[rstest]
+fn test_configure_shell_fish_dry_run_previews_legacy_removal(repo: TestRepo, temp_home: TempDir) {
+    // Bootstrap the canonical location with an actual install so functions/ and
+    // completions/ hold the exact content install writes (i.e. "already
+    // configured"), leaving only the legacy file as a pending change.
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    // A stale legacy conf.d file the cleanup would take back.
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish", "--dry-run"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "dry-run failed: {output:?}");
+
+    // The preview (stdout) must name the legacy removal.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("deprecated") && stdout.contains("conf.d"),
+        "--dry-run should preview the legacy conf.d removal:\n{stdout}"
+    );
+
+    // ...and must not actually remove anything.
+    assert!(
+        legacy_file.exists(),
+        "--dry-run must not delete legacy conf.d/wt.fish: {legacy_file:?}"
+    );
+}
+
+/// When everything is already configured, removing the legacy file needs the
+/// user's consent — declining the prompt preserves it (issue #3644).
+///
+/// The already-configured branch used to run the cleanup and return without
+/// prompting at all, deleting a hand-written `conf.d/wt.fish` as a silent side
+/// effect. Now it prompts; declining must leave the file in place.
+#[rstest]
+fn test_configure_shell_fish_legacy_removal_declined_when_already_configured(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Bootstrap the canonical location so a second install is a pure no-op except
+    // for the legacy cleanup.
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Run without --yes and decline the prompt.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish"])
+        .current_dir(repo.root_path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    use std::io::Write as _;
+    child.stdin.take().unwrap().write_all(b"n\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    // Declining is a non-zero exit ("Cancelled by user"), and the file survives.
+    assert!(
+        !output.status.success(),
+        "declining should exit non-zero: {output:?}"
+    );
+    assert!(
+        legacy_file.exists(),
+        "declining must preserve legacy conf.d/wt.fish: {legacy_file:?}"
+    );
+}
+
+/// Accepting the prompt in the already-configured branch removes the legacy file
+/// (issue #3644).
+///
+/// The complement of the decline test: confirming the `Remove deprecated shell
+/// integration files?` prompt proceeds with the cleanup that used to run
+/// unprompted.
+#[rstest]
+fn test_configure_shell_fish_legacy_removal_accepted_when_already_configured(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let mut bootstrap = wt_command();
+    repo.configure_wt_cmd(&mut bootstrap);
+    set_temp_home_env(&mut bootstrap, temp_home.path());
+    bootstrap.env("SHELL", "/bin/fish");
+    bootstrap
+        .args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+    assert!(bootstrap.output().unwrap().status.success());
+
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Run without --yes and accept the prompt.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish"])
+        .current_dir(repo.root_path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    use std::io::Write as _;
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "accepting should succeed: {output:?}"
+    );
+    assert!(
+        !legacy_file.exists(),
+        "accepting must remove legacy conf.d/wt.fish: {legacy_file:?}"
     );
 }
 
@@ -880,21 +1165,22 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
             .arg("--yes")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @"
+        assert_cmd_snapshot!(cmd, @r#"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
+        [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
-        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload/wt.nu[22m
-        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
+        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
-        ");
+        "#);
     });
 
     // Verify the file no longer contains the integration
@@ -944,21 +1230,23 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
             .arg("--yes")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @"
+        assert_cmd_snapshot!(cmd, @r#"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
+        [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init bash)"[0m[2m; [0m[2m[35mfi[0m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload/wt.nu[22m
-        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
+        [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
+        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.local/share/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
-        ");
+        "#);
     });
 
     // Verify both files no longer contain the integration
@@ -1109,6 +1397,300 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
         content.contains("export PATH=$HOME/bin:$PATH"),
         "PATH export should be preserved"
     );
+}
+
+#[rstest]
+fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home: TempDir) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/zsh");
+    install_cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    install_cmd
+        .args([
+            "config", "shell", "install", "zsh", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let installed = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(installed.contains("git-wt config shell init zsh"));
+
+    // A hand-written line in the `git wt` dispatch form, which install never
+    // emits: uninstall recognizes worktrunk's integration by whatever name it
+    // is invoked under, not only the names install writes.
+    fs::write(
+        &zshrc_path,
+        format!("{installed}eval \"$(git wt config shell init zsh)\"\n"),
+    )
+    .unwrap();
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/zsh");
+    uninstall_cmd
+        .args(["config", "shell", "uninstall", "zsh", "--yes"])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !content.contains("git-wt config shell init zsh"),
+        "Custom command integration should be removed"
+    );
+    assert!(
+        !content.contains("wt config shell init zsh"),
+        "Default command and `git wt` integration should also be removed (scan-all)"
+    );
+    assert!(
+        content.contains("# Existing config"),
+        "Unrelated comment should be preserved"
+    );
+}
+
+/// Uninstall deletes lines out of a file the user owns, so a line that merely
+/// quotes an integration command must survive — and every line it does take
+/// must be named in the output, since `--yes` skips the confirmation.
+#[rstest]
+fn test_uninstall_preserves_user_lines_quoting_the_init_command(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Each survivor puts `wt config shell init` in argument position while an
+    // exec keyword sits elsewhere on the line — the shape that makes the
+    // whole-line execution-context check alone insufficient.
+    let survivors = [
+        r#"alias setup='echo "run: wt config shell init fish | source"'"#,
+        r#"echo "wt config shell init bash | source""#,
+    ];
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        format!(
+            "{}\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+            survivors.join("\n"),
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.args(["config", "shell", "uninstall", "zsh", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    for survivor in survivors {
+        assert!(
+            content.contains(survivor),
+            "User's own line should survive uninstall: {survivor}\nremaining:\n{content}"
+        );
+    }
+    assert!(
+        !content.contains("command wt config shell init zsh"),
+        "worktrunk's own integration line should be removed:\n{content}"
+    );
+
+    // The removed line is named, so a --yes run still shows what it took.
+    // The gutter syntax-highlights it, so compare against stripped output.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let plain = regex::Regex::new(r"\x1b\[[0-9;]*m")
+        .unwrap()
+        .replace_all(&stderr, "");
+    assert!(
+        plain.contains("command wt config shell init zsh"),
+        "Uninstall should show the line it removed:\n{plain}"
+    );
+}
+
+#[rstest]
+fn test_uninstall_scan_removes_custom_cmd_fish_files(repo: TestRepo, temp_home: TempDir) {
+    let fish_functions = temp_home.path().join(".config/fish/functions");
+    let fish_completions = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&fish_functions).unwrap();
+    fs::create_dir_all(&fish_completions).unwrap();
+    let default_function = fish_functions.join("wt.fish");
+    let default_completion = fish_completions.join("wt.fish");
+    fs::write(&default_function, "function wt\nend\n").unwrap();
+    fs::write(&default_completion, "complete --command wt\n").unwrap();
+
+    // A second worktrunk-managed wrapper left over from an earlier install
+    // under another name, and an orphaned completion whose wrapper is already
+    // gone: both carry worktrunk's markers, so scan-all removes them too.
+    let stale_wrapper = fish_functions.join("old-wt.fish");
+    fs::write(
+        &stale_wrapper,
+        "# worktrunk shell integration for fish\nfunction old-wt\nend\n",
+    )
+    .unwrap();
+    let orphan_completion = fish_completions.join("stale.fish");
+    fs::write(
+        &orphan_completion,
+        "# worktrunk completions for fish\ncomplete --command stale\n",
+    )
+    .unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/fish");
+    install_cmd
+        .args([
+            "config", "shell", "install", "fish", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let custom_function = fish_functions.join("git-wt.fish");
+    let custom_completion = fish_completions.join("git-wt.fish");
+    assert!(custom_function.exists());
+    assert!(custom_completion.exists());
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/fish");
+    uninstall_cmd
+        .args(["config", "shell", "uninstall", "fish", "--yes"])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    // Scan-all removes every worktrunk-managed file (git-wt install, the stale
+    // second wrapper, the orphaned completion) but leaves the hand-written
+    // wt.fish stubs alone — they carry no worktrunk marker.
+    assert!(!custom_function.exists());
+    assert!(!custom_completion.exists());
+    assert!(!stale_wrapper.exists());
+    assert!(!orphan_completion.exists());
+    assert!(default_function.exists());
+    assert!(default_completion.exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_uninstall_shell_powershell_removes_integration_line(repo: TestRepo, temp_home: TempDir) {
+    // Unix-only: the Windows profile path comes from the real Documents
+    // folder, which a temp HOME does not redirect.
+    let profile_dir = temp_home.path().join(".config/powershell");
+    fs::create_dir_all(&profile_dir).unwrap();
+    let profile = profile_dir.join("Microsoft.PowerShell_profile.ps1");
+    fs::write(
+        &profile,
+        "# my profile\nInvoke-Expression (& wt config shell init powershell)\nSet-Alias ll Get-ChildItem\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "shell", "uninstall", "powershell", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The old pre-Out-String integration line is removed; everything else stays.
+    let content = fs::read_to_string(&profile).unwrap();
+    assert!(
+        !content.contains("config shell init"),
+        "Integration line should be removed:\n{content}"
+    );
+    assert!(content.contains("# my profile"));
+    assert!(content.contains("Set-Alias ll Get-ChildItem"));
+}
+
+#[rstest]
+fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    // Pin the vendor-autoload dir so the target is deterministic across
+    // platforms and independent of whether `nu` is on the runner's PATH.
+    let nu_autoload = home.join(".local/share/nushell/vendor/autoload");
+    fs::create_dir_all(&nu_autoload).unwrap();
+    let default_config = nu_autoload.join("wt.nu");
+    fs::write(&default_config, "def --env --wrapped wt [] {}\n").unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &nu_autoload);
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args([
+            "config", "shell", "install", "nu", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let custom_config = nu_autoload.join("git-wt.nu");
+    assert!(custom_config.exists());
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &nu_autoload);
+    uninstall_cmd.env("SHELL", "/bin/nu");
+    uninstall_cmd
+        .args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    // Scan-all removes git-wt.nu (worktrunk-managed by content) but leaves the
+    // hand-written wt.nu stub alone (no `config shell init … | source` marker).
+    assert!(!custom_config.exists());
+    assert!(default_config.exists());
 }
 
 #[rstest]
@@ -1556,7 +2138,11 @@ fn test_uninstall_shell_dry_run_fish(repo: TestRepo, temp_home: TempDir) {
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
     let completions_file = completions_d.join("wt.fish");
-    fs::write(&completions_file, "# fish completions").unwrap();
+    fs::write(
+        &completions_file,
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -1599,7 +2185,11 @@ fn test_uninstall_shell_dry_run_fish_canonical(repo: TestRepo, temp_home: TempDi
     let completions_d = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&completions_d).unwrap();
     let completions_file = completions_d.join("wt.fish");
-    fs::write(&completions_file, "# fish completions").unwrap();
+    fs::write(
+        &completions_file,
+        "# worktrunk completions for fish\ncomplete --command wt\n",
+    )
+    .unwrap();
 
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -1746,15 +2336,11 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
-        // Treat shells as not installed by default; the test exercises the
-        // single-zsh path. Mirrors the STATIC_TEST_ENV_VARS values used by
-        // Command-based tests, applied explicitly here because
-        // configure_pty_command intentionally keeps the PTY env minimal.
-        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+        // Detection keys on SHELL alone, which puts the test on the single-zsh
+        // path: the baseline's "not installed" and empty-parent-shell defaults
+        // rule out the host's process ancestry — the test harness and whatever
+        // shell ran it, zsh on a dev box and bash on CI, flipping the zsh-only
+        // compinit/restart output between them.
         cmd.env("SHELL", "/bin/zsh");
         // Skip the compinit probe and force the advisory to appear. The probe spawns
         // `zsh -ic` which triggers global zshrc configs that can produce "insecure
@@ -1871,11 +2457,6 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
-        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
-        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
         cmd.env("SHELL", "/bin/zsh");
 
         let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
@@ -2337,21 +2918,23 @@ fn test_nushell_install_cleans_stranded_legacy(repo: TestRepo, temp_home: TempDi
     );
 }
 
-/// Data safety: install must NOT delete a `wt.nu` at a legacy location that
-/// isn't worktrunk-managed (no worktrunk header) — it could be the user's own
-/// file. Only files carrying the worktrunk header are cleaned up (issue #2878).
+/// The stranded-file cleanup is scoped by path, so it reclaims `{cmd}.nu` at a
+/// legacy autoload dir whatever the file holds — and touches nothing else in
+/// that directory (issue #2878).
 #[rstest]
-fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: TempDir) {
+fn test_nushell_install_reclaims_only_the_command_name(repo: TestRepo, temp_home: TempDir) {
     let home = canonical_temp_home(&temp_home);
     let autoload = home.join(".local/share/nushell/vendor/autoload");
 
-    // A user-authored wt.nu at the legacy config-dir location — no worktrunk
-    // header, so it must be left untouched.
     let legacy_dir = home.join(".config/nushell/vendor/autoload");
     fs::create_dir_all(&legacy_dir).unwrap();
+    // No worktrunk header: the path is what makes it worktrunk's.
     let legacy = legacy_dir.join("wt.nu");
-    let user_content = "# my own wt helper\ndef wt [] { echo hi }\n";
-    fs::write(&legacy, user_content).unwrap();
+    fs::write(&legacy, "def wt [] { echo hi }\n").unwrap();
+    // A neighbour under another name stays put.
+    let neighbour = legacy_dir.join("helpers.nu");
+    let neighbour_content = "def hi [] { echo hi }\n";
+    fs::write(&neighbour, neighbour_content).unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -2368,16 +2951,15 @@ fn test_nushell_install_keeps_unmanaged_legacy_file(repo: TestRepo, temp_home: T
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Canonical wrapper written, user's legacy file preserved verbatim.
     assert!(autoload.join("wt.nu").exists(), "canonical wrapper missing");
     assert!(
-        legacy.exists(),
-        "unmanaged legacy wt.nu must be preserved: {legacy:?}"
+        !legacy.exists(),
+        "install should reclaim the legacy wt.nu: {legacy:?}"
     );
     assert_eq!(
-        fs::read_to_string(&legacy).unwrap(),
-        user_content,
-        "unmanaged legacy file must be left unchanged"
+        fs::read_to_string(&neighbour).unwrap(),
+        neighbour_content,
+        "a legacy-dir file under another name is not worktrunk's"
     );
 }
 

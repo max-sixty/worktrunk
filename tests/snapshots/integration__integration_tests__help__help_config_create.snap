@@ -9,6 +9,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -25,8 +33,10 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -82,6 +92,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)[0m
 [107m [0m [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
 [107m [0m [2m# - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)[0m
+[107m [0m [2m# - `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed[0m
 [107m [0m [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
@@ -169,8 +180,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
-[107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m# timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `columns` selects and orders the columns to render; omit it for the default set.[0m
 [107m [0m [2m# It is meant to drive a per-invocation alias (https://worktrunk.dev/extending/#aliases)[0m
@@ -287,7 +297,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.[0m
+[107m [0m [2m# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m
@@ -305,7 +315,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See how the layers rank (https://worktrunk.dev/config/#precedence).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
@@ -315,6 +325,33 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
 [107m [0m [2m# step.copy-ignored.exclude = [".repo-local-cache/"][0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# #### Matching several repositories with one entry[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Every repository on a self-hosted forge whose hostname carries no brand[0m
+[107m [0m [2m# [projects."git.company.example/*"][0m
+[107m [0m [2m# forge.platform = "gitlab"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Everything under one namespace shares a layout[0m
+[107m [0m [2m# [projects."git.company.example/platform/*"][0m
+[107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start
+[107m [0m with that string.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# #### Forge platform and hostname[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `forge` names the forge for the matched repositories — the user-level counterpart of the project config's forge platform (https://worktrunk.dev/config/#forge-platform) block, for a self-hosted host whose name carries no `github`, `gitlab`, or `gitea` for detection to read.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [projects."git.company.example/*"][0m
+[107m [0m [2m# forge.platform = "gitlab"                    # or "github", "gitea" (experimental), "azure-devops" (experimental)[0m
+[107m [0m [2m# forge.hostname = "api.git.company.example"   # API host, when the remote's own host isn't it[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Both fields describe the host rather than the repository, which is why a pattern keyed to a hostname suits them, and why an SSH alias resolved through `~/.ssh/config` — where the name in the remote URL is local to one machine — belongs here rather than in a repository's committed config. A repository's own `[forge]` block still wins over any entry here, field by field: a repository that sets only `platform` still takes a matching entry's `hostname`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:[0m
 [107m [0m [2m#[0m
@@ -444,14 +481,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Appending to the prompt [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:[0m
+[107m [0m [2m# `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# template-append = """[0m
 [107m [0m [2m# - Explain the rationale in the body, not just the change[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# The project config (https://worktrunk.dev/config/#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.[0m
+[107m [0m [2m# How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
@@ -484,16 +521,17 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Forge platform[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:[0m
+[107m [0m [2m# The forge is read from the remote's hostname: any host carrying `github`, `gitlab`, or `gitea` anywhere in it, plus the Azure DevOps service domains. Name the forge explicitly for a host carrying none of those, such as a Forgejo instance at `forge.example.com`:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
 [107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# When many repositories share one self-hosted host, name it once in user config with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# ## Commit-message append [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a minijinja (https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate
-[107m [0m as project-defined hooks.[0m
+[107m [0m [2m# `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# template-append = """[0m
@@ -501,7 +539,8 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# - Reference the relevant issue ID in the body[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Only `template-append` is honored from the project file. The LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a `[commit.generation] template-append` of its own; it renders into a separate `<user-guidance>` block immediately before this one.[0m
+[107m [0m [2m# The first time the fragment is used (and whenever it changes), `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks. Only `template-append` is honored from the project file; the LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/), since they describe per-developer environment (which CLI is installed, which agent the developer prefers). How the fragment renders: the LLM commits guide
+[107m [0m (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m
@@ -510,7 +549,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = [".cache/", ".turbo/"][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.[0m
+[107m [0m [2m# Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Aliases[0m
 [107m [0m [2m#[0m

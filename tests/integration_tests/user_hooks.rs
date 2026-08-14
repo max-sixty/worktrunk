@@ -1204,6 +1204,50 @@ fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
     );
 }
 
+/// The other half of that contract: a *syntax* error anywhere in the pipeline
+/// aborts before step 1. Preparation parses every template
+/// (`PreparedPipeline::validated`), so a pipeline that can't render in full never
+/// starts — where a semantic error, rendered per step, lets earlier steps run.
+///
+/// Driven through `wt merge`'s pre-commit hooks rather than `wt hook
+/// pre-commit`, because the `wt hook` CLI parses every template up front to
+/// route shorthand arguments (`referenced_vars_union`) and would catch the
+/// error before preparation, leaving the preparation-time guard untested.
+#[rstest]
+fn test_foreground_pipeline_syntax_error_aborts_before_first_step(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("uncommitted.txt"), "uncommitted content").unwrap();
+
+    repo.write_test_config(
+        r#"pre-commit = [
+    { first = "echo FIRST_RAN > syntax_first_marker.txt" },
+    { broken = "echo {{ bad..syntax }}" },
+]
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "an unparsable template should fail the merge"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("syntax error"),
+        "error should name the syntax failure, got: {stderr}"
+    );
+    assert!(
+        !feature_wt.join("syntax_first_marker.txt").exists(),
+        "step 1 must not run when a later step's template can't parse: {stderr}"
+    );
+}
+
 /// When removing the current worktree (cd back to main), both post-remove and
 /// post-switch hooks fire. They should appear on a single combined announcement line.
 #[rstest]
@@ -2967,6 +3011,34 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
     );
 }
 
+/// A symbolic switch argument (`@`, `-`, `^`) is resolved to its concrete branch
+/// name before the pre-switch hook runs, so `{{ branch }}` carries the resolved
+/// destination — not the literal token. Here `@` resolves to the current branch.
+#[rstest]
+fn test_user_pre_switch_branch_var_resolves_symbolic(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo '{{ branch }}' > pre_switch_symbolic.txt"
+"#,
+    );
+
+    // `@` resolves to the current branch (main), not the literal "@".
+    snapshot_switch("user_pre_switch_branch_symbolic", &repo, &["@"]);
+
+    let marker_file = repo.root_path().join("pre_switch_symbolic.txt");
+    assert!(
+        marker_file.exists(),
+        "Pre-switch hook should have created marker"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "main",
+        "symbolic '@' should resolve to the concrete branch 'main', got: '{}'",
+        contents.trim(),
+    );
+}
+
 /// When removing the current worktree, post-switch hooks should fire
 /// because the user is implicitly switched back to the primary worktree.
 /// Regression test for https://github.com/max-sixty/worktrunk/issues/1450
@@ -3893,7 +3965,7 @@ lint = "cargo clippy"
         assert_cmd_snapshot!("docs_hook_pre_merge", {
             let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "--yes"], None);
             cmd.env("PATH", &new_path);
-            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str);
             cmd
         });
     });
