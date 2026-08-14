@@ -4,6 +4,8 @@
 
 ### Improved
 
+- **`wt config approvals add --yes` records approvals without a terminal**: the command refused every non-interactive run, so a container that had just cloned a project could only pre-approve it by hand-writing `approvals.toml` from `wt config approvals list --format=json`. `--yes` now lists what it trusts and writes it. A save it cannot make fails the command rather than warning and exiting 0, since the record is all `add` produces — a change that applies to the interactive run too.
+
 - **`remote_repo` names the repository as the remote spells it**: `repo` is the directory on disk, so a renamed clone reports the new name. `{{ remote_repo }}` takes it from the primary remote's URL, available everywhere `owner` is and unset when no remote parses. ([#3745](https://github.com/max-sixty/worktrunk/pull/3745), thanks @canac)
 
 ## 0.73.0

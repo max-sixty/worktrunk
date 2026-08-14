@@ -578,7 +578,7 @@ fn test_permission_error_prevents_save() {
 
     // This test verifies the save operation correctly fails with permission
     // errors. What `approve_command_batch` does with that failure is covered by
-    // `test_add_approvals_yes_fails_when_the_approvals_file_cannot_be_written`
+    // `test_add_approvals_yes_fails_when_approvals_cannot_be_saved`
     // (propagates, for `wt config approvals add`) and by the warning path it
     // takes for a command that merely runs project commands.
 }
