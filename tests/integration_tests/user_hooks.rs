@@ -1857,6 +1857,53 @@ fn test_standalone_hook_post_start_foreground(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // `--foreground` routes a `post-*` hook through the single-step foreground
+    // path, which inherits wt's stdin rather than piping the JSON context — so
+    // the hook can prompt in the mode that exists to debug it. (The detached
+    // default still gets the JSON; see `test_post_start_json_stdin`.)
+    repo.write_project_config(r#"post-start = "cat > captured.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--foreground"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn wt hook post-start");
+    child
+        .stdin
+        .take()
+        .expect("stdin piped")
+        .write_all(b"sentinel-from-parent-stdin\n")
+        .expect("failed to write to wt stdin");
+    let output = child.wait_with_output().expect("failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "wt hook post-start --foreground should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let captured = repo.root_path().join("captured.txt");
+    assert!(
+        captured.exists(),
+        "captured.txt should have been created from the inherited stdin"
+    );
+
+    let contents = fs::read_to_string(&captured).unwrap();
+    assert_eq!(
+        contents, "sentinel-from-parent-stdin\n",
+        "`--foreground` should hand the hook the parent's raw stdin, not the JSON context"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_pre_commit(repo: TestRepo) {
     // Write project config with pre-commit hook
     repo.write_project_config(r#"pre-commit = "echo 'STANDALONE_PRE_COMMIT' > hook_ran.txt""#);
