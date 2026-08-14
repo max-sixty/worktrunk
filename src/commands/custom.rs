@@ -30,6 +30,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+use worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
@@ -48,7 +49,8 @@ use crate::enhance_clap_error;
 /// for project-config aliases.
 ///
 /// On success (child exit code 0), returns `Ok(())`. On non-zero exit, returns
-/// `WorktrunkError::AlreadyDisplayed` with the child's exit code so `main`
+/// `WorktrunkError::AlreadyDisplayed` with the child's exit code (or
+/// `Interrupted` for a signal kill) so `main`
 /// can propagate it without printing an extra error line. When the command
 /// isn't found on PATH, returns `AlreadyDisplayed` via `enhance_clap_error`
 /// with clap's standard exit code 2.
@@ -130,6 +132,9 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
 fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
     let mut cmd = Command::new(path);
     cmd.args(args);
+    // Explicitly invoked extensions remain trusted with split CD/EXEC; only
+    // the retired sourceable single-file capability is forbidden.
+    cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
@@ -150,15 +155,19 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
         return Ok(());
     }
 
-    // Propagate the exact exit code — including signal codes on Unix — so
-    // `wt foo` behaves like running `wt-foo` directly. We use
-    // `AlreadyDisplayed` (not `ChildProcessExited`) because the custom
-    // command has already reported its own failure to the user; `wt` should
-    // just forward the exit code without adding a second error line.
+    // Propagate the exact exit status so `wt foo` behaves like running
+    // `wt-foo` directly. A signal kill surfaces as `Interrupted` (exit
+    // `128 + sig`, rendered per shell convention — a signal-killed child
+    // usually never got to report anything, and wt's own survival suppresses
+    // the shell's "Terminated" line). A plain non-zero exit surfaces as
+    // `AlreadyDisplayed` (not `ChildProcessExited`): the custom command
+    // already reported its own failure, so `wt` just forwards the code
+    // without adding a second error line.
     #[cfg(unix)]
     if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
-        return Err(WorktrunkError::AlreadyDisplayed {
-            exit_code: 128 + sig,
+        return Err(WorktrunkError::Interrupted {
+            signal: sig,
+            hint: None,
         }
         .into());
     }
@@ -241,25 +250,28 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_custom_propagates_signal_exit_code() {
-        use std::os::unix::fs::PermissionsExt;
+        // Exec a stable system binary (`/bin/sh -c 'kill -TERM $$'`) rather than
+        // writing a script to a tempdir and exec'ing it. Writing an executable
+        // and immediately exec'ing it races with other test threads: a
+        // concurrent fork+exec elsewhere in the suite can inherit a writable fd
+        // to the just-written file, so this exec sporadically fails with
+        // ETXTBSY, surfacing as a spawn error instead of the signal error we
+        // assert on. `/bin/sh` is never written by the test, so it can't race.
+        // The production code path (spawn, wait, signal handling) is identical.
+        let sh = Path::new("/bin/sh");
+        let args = [OsString::from("-c"), OsString::from("kill -TERM $$")];
 
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let script = dir.path().join("wt-signal-test");
-        std::fs::write(&script, "#!/bin/sh\nkill -TERM $$\n").expect("write script");
-        let mut perms = std::fs::metadata(&script)
-            .expect("stat script")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod script");
+        use worktrunk::git::ErrorExt;
 
-        let err = run_custom(&script, &[], None).expect_err("child killed by SIGTERM");
+        let err = run_custom(sh, &args, None).expect_err("child killed by SIGTERM");
         let wt_err = err
             .downcast_ref::<WorktrunkError>()
-            .expect("signal should surface as WorktrunkError::AlreadyDisplayed");
+            .expect("signal should surface as WorktrunkError::Interrupted");
         match wt_err {
-            WorktrunkError::AlreadyDisplayed { exit_code } => {
-                // SIGTERM = 15, and the shell-style convention is 128 + signal.
-                assert_eq!(*exit_code, 128 + 15);
+            WorktrunkError::Interrupted { signal, hint: None } => {
+                assert_eq!(*signal, 15);
+                // The shell-style convention is 128 + signal.
+                assert_eq!(err.exit_code(), Some(143));
             }
             other => panic!("unexpected WorktrunkError variant: {other:?}"),
         }

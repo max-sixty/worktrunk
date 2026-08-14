@@ -42,6 +42,9 @@ Usage: [1m[36mwt config approvals clear[0m [36m[OPTIONS][0m
   [1m[36m-g[0m, [1m[36m--global[0m
           Clear global approvals
 
+      [1m[36m--stale[0m
+          Clear only stale approvals
+
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
@@ -64,6 +67,7 @@ Usage: [1m[36mwt config approvals clear[0m [36m[OPTIONS][0m
 Removes saved approvals, requiring re-approval on next command run.
 
 By default, clears approvals for the current project. Use [2m--global[0m to clear
-all approvals across all projects.
+all approvals across all projects, or [2m--stale[0m to clear only approvals for
+commands no longer in the project config (edited or removed since approval).
 
 ----- stderr -----

@@ -8,6 +8,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -24,6 +32,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -38,7 +47,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
        [1m[36mwt list[0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mstatusline[0m  Single-line status for shell prompts
+  [1m[36mstatusline[0m  Single-line status for the current worktree
 
 [1m[32mOptions:[0m
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
@@ -104,11 +113,11 @@ branch's changes. The [2mmain…±[0m line diffs are local git, so they show b
 List all worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Remote⇅  Commit    Ag[22m[2m…[0m
-[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02a  30[22m[2m…[0m
-[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee0834  4d[22m[2m…[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68b[0m[2m  5h[22m[2m…[0m
-[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee0834[0m[2m  4d[22m[2m…[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age[22m[2m…[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02  30m[22m[2m…[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee083  4d [22m[2m…[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m  5h [22m[2m…[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m  4d [22m[2m…[0m
 [107m [0m [0m
 [107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden[0m
 
@@ -144,7 +153,8 @@ Output as JSON for scripting:
 
   Column                                  Shows                                 
  ──────── ───────────────────────────────────────────────────────────────────── 
- Branch   Branch name                                                           
+ Branch   Branch name; a detached worktree has none, so it shows its short hash 
+          in dim yellow                                                         
  Status   Compact symbols (see below)                                           
  HEAD±    Uncommitted changes: +added -deleted lines                            
  main↕    Commits ahead/behind default branch                                   
@@ -157,11 +167,16 @@ Output as JSON for scripting:
  URL      Dev server URL from project config; dimmed if port is not listening   
  (custom) User-defined custom columns from [2m[list.custom-columns][0m user config    
           [experimental]                                                        
- Commit   Short hash (8 chars)                                                  
+ Commit   Short hash, abbreviated per [2mcore.abbrev[0m                               
  Age      Time since last commit                                                
  Message  Last commit message (truncated)                                       
 
 The [2mmain[0m header label is used regardless of the default branch's actual name.
+
+[2mmain↕[0m and [2mmain…±[0m measure against the default branch's upstream tip when the 
+local copy lags it — so in a fork whose local [2mmain[0m trails [2morigin/main[0m, a branch 
+reads as ahead of the real mainline, not of a stale local checkout. The [2m↑[0m/[2m↓[0m/[2m↕[0m 
+Status symbols derive from these counts, so they track the upstream tip too.
 
 [32mGutter[0m
 
@@ -226,9 +241,11 @@ are cached until the branch's diff changes.
 [32mCustom columns [experimental][0m
 
 Each [2m[list.custom-columns][0m entry in user config adds a column: the key is the 
-header, the template renders each row's cell. Templates can reference per-branch
- [2m{{ vars.* }}[0m stored with [2mwt config state vars set[0m — useful for tracking what 
-each of many (often agent-driven) branches is for:
+header, the template renders each row's cell. Templates read two per-branch 
+namespaces — [2m{{ vars.* }}[0m, stored with [2mwt config state vars set[0m, and [2m{{ 
+[2mgit.branch.* }}[0m, the branch's own git config under [2mbranch.<name>.*[0m (a [2mjira[0m key 
+you set yourself, or the git-native [2mdescription[0m) — useful for tracking what each
+ of many (often agent-driven) branches is for:
 
 [107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
@@ -261,20 +278,27 @@ maps to a boolean in the [2mworking_tree[0m object:
 [32mWorktree[0m
 
 An in-progress git operation, a worktree-location attribute, or a branch with no
- worktree. One symbol shows, highest priority first ([2m✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /[0m):
+ worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⚑ > /[0m):
 
- Symbol                   JSON                               Meaning            
- ────── ───────────────────────────────────────── ───────────────────────────── 
- [31m✘[0m      [2moperation_state[0m [2m"conflicts"[0m               Merge conflicts               
- [33m⤴[0m      [2moperation_state[0m [2m"rebase"[0m                  Rebase in progress            
- [33m⤵[0m      [2moperation_state[0m [2m"merge"[0m                   Merge in progress             
- [31m⚑[0m      [2mworktree.state[0m [2m"branch_worktree_mismatch"[0m Branch name doesn't match the 
-                                                  worktree path                 
- [33m⊟[0m      [2mworktree.state[0m [2m"prunable"[0m                 Prunable (worktree directory  
-                                                  missing)                      
- [33m⊞[0m      [2mworktree.state[0m [2m"locked"[0m                   Locked worktree               
- [2m/[0m      [2mkind[0m [2m"branch"[0m                             Branch without a worktree (no 
-                                                  [2mworktree[0m object)              
+ Symb              JSON                               Meaning                   
+  ol                                                                            
+ ──── ────────────────────────────── ────────────────────────────────────────── 
+ [31m✘[0m    [2moperation_state[0m [2m"conflicts"[0m    Merge conflicts                            
+ [33m↻[0m    [2moperation_state[0m [2m"rebase"[0m,      A git operation is in progress; [2mgit status[0m 
+      [2m"merge"[0m, [2m"cherry_pick"[0m,        names it                                   
+      [2m"revert"[0m, [2m"bisect"[0m                                                        
+ [33m⊟[0m    [2mworktree.state[0m [2m"prunable"[0m      Prunable (worktree directory missing)      
+ [33m⊞[0m    [2mworktree.state[0m [2m"locked"[0m        Locked worktree                            
+ [2m[33m⚑[0m    [2mworktree.state[0m                 Branch checked out in more than one        
+      [2m"duplicate_branch"[0m             worktree, so [2mwt[0m resolves it to whichever   
+                                     git lists first; every worktree on the     
+                                     branch is flagged                          
+ [2m[33m⚑[0m    [2mworktree.state[0m                 Worktree isn't at the path its branch      
+      [2m"branch_worktree_mismatch"[0m     implies — including a detached one, which  
+                                     has no branch to imply a path and so is    
+                                     never at home                              
+ [2m/[0m    [2mkind[0m [2m"branch"[0m                  Branch without a worktree (no [2mworktree[0m     
+                                     object)                                    
 
 [32mDefault branch[0m
 
@@ -287,16 +311,16 @@ symbol is one [2mmain_state[0m value:
  ──── ────────── ────────────────────────────────────────────────────────────── 
  [2m^[0m    [2m"is_main"[0m  The main worktree (the repo's home worktree)                   
  [2m∅[0m    [2m"orphan"[0m   No common ancestor with the default branch                     
- [33m✗[0m    [2m"would_con[0m Merging into the default branch would conflict (simulated with 
-      [2mflict"[0m     [2mgit merge-tree[0m); with [2m--full[0m, the check includes uncommitted   
-                 changes                                                        
  [2m_[0m    [2m"empty"[0m    Same commit as the default branch, working tree clean — safe   
                  to remove; row dimmed                                          
- [2m–[0m    [2m"same_comm[0m Same commit as the default branch, but with uncommitted        
-      [2mit"[0m        changes                                                        
  [2m⊂[0m    [2m"integrate[0m Content integrated into the default branch or merge target via 
       [2md"[0m         different history; the matching check is in [2mintegration_reason[0m 
                  ; row dimmed                                                   
+ [33m✗[0m    [2m"would_con[0m Merging into the default branch would conflict (simulated with 
+      [2mflict"[0m     [2mgit merge-tree[0m) and the branch isn't already integrated; with  
+                 [2m--full[0m, the check includes uncommitted changes                 
+ [2m–[0m    [2m"same_comm[0m Same commit as the default branch, but with uncommitted        
+      [2mit"[0m        changes                                                        
  [2m↕[0m    [2m"diverged"[0m Both ahead of and behind the default branch                    
  [2m↑[0m    [2m"ahead"[0m    Has commits the default branch doesn't                         
  [2m↓[0m    [2m"behind"[0m   Missing commits the default branch has                         
@@ -327,7 +351,124 @@ These appear across all columns while the table is loading:
 
 [1m[32mJSON output[0m
 
-Query structured data with [2m--format=json[0m:
+[2m--format=json[0m emits structured data in one of two schemas while the format
+migrates: [2m[list] json-schema = 2[0m selects the envelope format below, [2m= 1[0m
+the original bare-array format. Unset emits schema 1 with a warning
+([2mwt config update[0m adopts [2m= 2[0m); a future release flips the default to
+schema 2 and later removes schema 1.
+
+[32mSchema 2[0m
+
+One envelope object. Items carry independent facts; rendered strings
+(including the collapsed Status value) live under [2mdisplay[0m:
+
+[107m [0m [2m{[0m
+[107m [0m [2m  "schema": 2,[0m
+[107m [0m [2m  "repo": {[0m
+[107m [0m [2m    "default_branch": "main",[0m
+[107m [0m [2m    "forge": {"url": "https://github.com/org/repo", "provider": "github",[0m
+[107m [0m [2m "host": "github.com", "owner": "org", "name": "repo", "remote": "origin"}[0m
+[107m [0m [2m  },[0m
+[107m [0m [2m  "collected": {"ci": false, "summary": false},[0m
+[107m [0m [2m  "items": [[0m
+[107m [0m [2m    {[0m
+[107m [0m [2m      "branch": "feature",[0m
+[107m [0m [2m "head": {"sha": "05a4a45d…", "short_sha": "05a4a45", "subject": "Add login
+[107m [0m page",[0m
+[107m [0m [2m               "committed_at": "2025-01-01T08:00:00Z"},[0m
+[107m [0m [2m "worktree": {"path": "/home/user/repo.feature", "main": false, "current":
+[107m [0m true,[0m
+[107m [0m [2m "previous": false, "detached": false, "branch_mismatch": false,[0m
+[107m [0m [2m                   "duplicate_branch": false,[0m
+[107m [0m [2m "changes": {"staged": false, "modified": true, "untracked": false,[0m
+[107m [0m [2m "renamed": false, "deleted": false, "conflicted": false,[0m
+[107m [0m [2m                               "diff": {"added": 10, "deleted": 2}}},[0m
+[107m [0m [2m "default_branch": {"ahead": 3, "behind": 1, "diff": {"added": 50, "deleted":
+[107m [0m 20},[0m
+[107m [0m [2m "orphan": false, "integration": null, "merge_conflicts": false},[0m
+[107m [0m [2m "upstream": {"remote": "origin", "branch": "feature", "ahead": 0, "behind":
+[107m [0m 2},[0m
+[107m [0m [2m "display": {"state": "diverged", "symbols": "!↕", "statusline": "feature …"}[0m
+[107m [0m [2m    }[0m
+[107m [0m [2m  ][0m
+[107m [0m [2m}[0m
+
+How "no value" reads:
+
+- [1mAbsent[0m — nothing to report: not applicable ([2mworktree[0m on a branch-only
+  row), not requested this run (the envelope's [2mcollected[0m records what was),
+  or determined-empty (no PR, no lock, not integrated).
+- [1m[2mnull[0m[0m — requested but not determined: a task timed out, the branch was
+  too stale for the expensive checks, or a forge fetch failed. This is the
+  JSON form of the table's [2m·[0m placeholder.
+
+jq treats absent and [2mnull[0m identically in path expressions, so filters need
+no null checks; [2mhas()[0m distinguishes the two when it matters.
+
+Item fields:
+
+  Field                               Description                               
+ ─────── ────────────────────────────────────────────────────────────────────── 
+ [2mbranch[0m  Branch name; null for a detached-HEAD worktree. Remote rows carry the  
+         bare name with the remote in [2mremote[0m                                    
+ [2mremote[0m  Remote name, present only on remote-only branch rows                   
+ [2mhead[0m    [2m{sha, short_sha, subject, committed_at}[0m; null for unborn branches.     
+         [2mcommitted_at[0m is RFC 3339 UTC                                           
+ [2mworktre[0m [2m{path, main, current, previous, detached, locked, prunable, branch_mis[0m 
+ [2me[0m       [2mmatch, duplicate_branch, operation, changes}[0m; absent on branch-only    
+         rows. [2mlocked[0m/[2mprunable[0m are [2m{reason}[0m objects and can co-occur; [2moperation[0m 
+         is [2m"rebase"[0m or [2m"merge"[0m; [2mchanges[0m holds the five working-tree flags plus 
+         [2mconflicted[0m and [2mdiff {added, deleted}[0m                                   
+ [2mdefault[0m Relation to the default branch:                                        
+ [2m_branch[0m [2m{ahead, behind, diff, orphan, integration, merge_conflicts}[0m; absent on 
+         the default branch itself. [2mintegration.reason[0m is one of [2msame_commit[0m,   
+         [2mancestor[0m, [2mno_added_changes[0m, [2mtrees_match[0m, [2mmerge_adds_nothing[0m,           
+         [2mpatch_id_match[0m; a dirty tree skips the checks, leaving [2mintegration[0m     
+         null                                                                   
+ [2mupstrea[0m Tracking branch: [2m{remote, branch, ahead, behind}[0m; absent when none is  
+ [2mm[0m       configured                                                             
+ [2mpr[0m      Open PR/MR: [2m{number, url, review, mergeable, repo}[0m; collected with     
+         [2m--full[0m or a listed [2mci[0m column. [2mreview[0m uses the schema 1 [2mci.review_state[0m 
+         vocabulary; [2mmergeable[0m is false when the forge reports conflicts, null  
+         otherwise                                                              
+ [2mchecks[0m  CI pipeline: [2m{status, source, stale}[0m; [2mstatus[0m is [2mpassed[0m, [2mrunning[0m, or    
+         [2mfailed[0m — null when a conflicts report masks it                         
+ [2mdev_ser[0m [2m{url, listening}[0m from the project's [2mlist.url[0m template                  
+ [2mver[0m                                                                            
+ [2msummary[0m LLM branch summary (requires [2m[list] summary = true[0m)                    
+ [2mvars[0m    Per-branch variables from [2mwt config state vars[0m                         
+ [2mdisplay[0m Rendered strings: [2mstate[0m (schema 1's [2mmain_state[0m vocabulary), [2msymbols[0m,   
+         [2mstatusline[0m (with ANSI colors and OSC 8 hyperlinks), [2mcolumns[0m            
+         (custom-column cells keyed by header)                                  
+
+Schema 1 names map directly: [2mcommit[0m → [2mhead[0m, [2mworking_tree[0m →
+[2mworktree.changes[0m, [2mmain[0m + [2mmain_state[0m → [2mdefault_branch[0m +
+[2mdisplay.state[0m, [2mremote[0m → [2mupstream[0m, [2mci[0m → [2mpr[0m + [2mchecks[0m, [2murl[0m +
+[2murl_active[0m → [2mdev_server[0m, [2mstatusline[0m/[2msymbols[0m/[2mcolumns[0m → [2mdisplay.*[0m,
+and the per-item [2mrepo[0m moves to the envelope's [2mrepo.forge[0m.
+
+[107m [0m [2m# Current worktree path (for scripts)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.items[] | select(.worktree.current) | [0m
+[107m [0m [2m[32m.worktree.path'[0m
+[107m [0m [0m
+[107m [0m [2m# Branches with uncommitted changes[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.worktree.changes.modified)'[0m
+[107m [0m [0m
+[107m [0m [2m# Integrated branches (safe to remove)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.display.state == "integrated" [0m
+[107m [0m [2m[32mor .display.state == "empty") | .branch'[0m
+[107m [0m [0m
+[107m [0m [2m# Worktrees ahead of upstream (needs pushing)[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.items[] | select(.upstream.ahead > 0) | .branch'[0m
+
+A JSON Schema for the envelope is published at
+worktrunk.dev/schema/list-v2.json.
+It describes what [2mwt[0m writes, so a field the absence rule can omit is
+optional there rather than required-and-null.
+
+[32mSchema 1[0m
+
+The original bare-array format, and the default while unset:
 
 [107m [0m [2m# Current worktree path (for scripts)[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m
@@ -392,7 +533,7 @@ Query structured data with [2m--format=json[0m:
                              not configured                                     
  [2msummary[0m         string      LLM-generated branch summary; [2m--full[0m only, then    
                              absent when not configured or no summary           
- [2mstatusline[0m      string      Pre-formatted status with ANSI colors              
+ [2mstatusline[0m      string      Pre-formatted status with colors and links         
  [2msymbols[0m         string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)    
  [2mvars[0m            object      Per-branch variables from [2mwt config state vars[0m     
                              (absent when empty)                                
@@ -449,8 +590,8 @@ Present only for worktree-kind items. [2mstate[0m is the worktree-location att
 
   Field    Type                            Description                          
  ──────── ─────── ───────────────────────────────────────────────────────────── 
- [2mstate[0m    string  [2m"branch_worktree_mismatch"[0m, [2m"prunable"[0m, or [2m"locked"[0m (absent   
-                  when normal)                                                  
+ [2mstate[0m    string  [2m"branch_worktree_mismatch"[0m, [2m"duplicate_branch"[0m, [2m"prunable"[0m,   
+                  or [2m"locked"[0m (absent when normal)                              
  [2mreason[0m   string  Reason for locked/prunable state                              
  [2mdetached[0m boolean HEAD is detached                                              
 
@@ -494,8 +635,8 @@ primary remote. [2mci.repo[0m describes the repository targeted by the PR/MR U
 The single highest-priority state describing the branch's relation to the 
 default branch; absent when none applies (a normal up-to-date branch). Each 
 value is one Default-branch symbol — see Default branch for the symbol and the 
-full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"would_conflict"[0m, [2m"empty"[0m, 
-[2m"same_commit"[0m, [2m"integrated"[0m, [2m"diverged"[0m, [2m"ahead"[0m, [2m"behind"[0m).
+full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"empty"[0m, [2m"integrated"[0m, 
+[2m"would_conflict"[0m, [2m"same_commit"[0m, [2m"diverged"[0m, [2m"ahead"[0m, [2m"behind"[0m).
 
 [32mintegration_reason values[0m
 

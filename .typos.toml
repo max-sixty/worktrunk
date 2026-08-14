@@ -22,6 +22,10 @@ ba = "ba"  # Part of commit hashes like e28e0ba
 ede = "ede"  # Part of commit hashes like ede2fd3
 # ANSI escape codes in snapshots make is_main/is_current/is_previous look like "mis"
 mis = "mis"
+# `lsof -F pn` field spec (PID + name) in the fsmonitor sweep; typos maps the
+# lowercase token `pn` to "on", which silently breaks the field request (`on`
+# is offset+name, dropping the `p<pid>` record opener the parser splits on).
+pn = "pn"
 # Intentional typos in tests for "did you mean?" suggestions
 deplyo = "deplyo"
 comit = "comit"

@@ -24,7 +24,7 @@ use ansi_str::AnsiStr;
 use unicode_width::UnicodeWidthStr;
 
 // Re-exports from anstream (auto-detecting output)
-pub use anstream::{eprint, eprintln, print, println, stderr, stdout};
+pub use anstream::{ColorChoice, eprint, eprintln, print, println, stderr, stdout};
 
 // Re-exports from anstyle (for composition)
 pub use anstyle::Style as AnstyleStyle;
@@ -36,7 +36,7 @@ pub use format::{
     wrap_styled_text,
 };
 pub use highlighting::format_toml;
-pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
+pub use hyperlink::{Stream, hyperlink, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
 pub use suggest::{suggest_command, suggest_command_in_dir};
 
@@ -79,12 +79,15 @@ pub fn verbosity() -> u8 {
 /// 2. The `COLUMNS` env var, for scripts and piped contexts where detection
 ///    fails. `COLUMNS` carries a width but has no height counterpart, so the
 ///    height comes back `None`; callers that need a height supply their own
-///    fallback.
+///    fallback. A `COLUMNS` of `0` is treated as no width at all (returns
+///    `None`), so absurd values fall through to untruncated rendering.
 ///
-/// Does **not** probe the parent process tree — that fallback is expensive
-/// (spawns `ps` up to 10 times plus `stty`) and only useful for `wt statusline`
-/// under Claude Code, where no TTY is inherited. Statusline calls
-/// [`terminal_width_for_statusline`] instead.
+/// Under Claude Code the statusline subprocess inherits no TTY, so direct
+/// detection fails and the `COLUMNS` fallback supplies the width — Claude Code
+/// sets `COLUMNS`/`LINES` to the terminal dimensions before running the script
+/// (since v2.1.153). Statusline callers route through
+/// [`terminal_width_for_statusline`], which reserves a margin for Claude Code's
+/// own UI chrome.
 pub fn terminal_dimensions() -> Option<(usize, Option<usize>)> {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong).
     // Check stderr first (status messages), then stdout (table output).
@@ -95,8 +98,16 @@ pub fn terminal_dimensions() -> Option<(usize, Option<usize>)> {
     }
 
     // Fall back to COLUMNS (width only — there is no height equivalent) for
-    // scripts, piped contexts, or when detection fails.
-    let columns = std::env::var("COLUMNS").ok()?.parse::<usize>().ok()?;
+    // scripts, piped contexts, or when detection fails. A zero width is as
+    // undetectable as no `COLUMNS` at all, so treat it as absent — otherwise
+    // callers that subtract a margin (e.g. the statusline) collapse the
+    // content budget to zero and drop every segment instead of falling
+    // through to an untruncated render.
+    let columns = std::env::var("COLUMNS")
+        .ok()?
+        .parse::<usize>()
+        .ok()
+        .filter(|c| *c > 0)?;
     Some((columns, None))
 }
 
@@ -108,84 +119,26 @@ pub fn terminal_width() -> Option<usize> {
     terminal_dimensions().map(|(width, _)| width)
 }
 
-/// Terminal width for `wt statusline`, including a subprocess-compat fallback.
+/// Columns reserved for Claude Code's own UI chrome (e.g. an "Approaching
+/// context limit" message) when sizing the statusline, so the line doesn't
+/// render flush to the terminal edge.
+const STATUSLINE_UI_RESERVED_COLUMNS: usize = 5;
+
+/// Terminal width for `wt statusline`, reserving a margin for Claude Code's UI.
 ///
 /// Claude Code invokes `wt statusline` as a subprocess with pipes for stdin,
-/// stdout, and stderr — so [`terminal_width`] always returns `None`, and the
-/// statusline output would overflow the bar.
-/// As a last resort, this walks up to 10 parent processes looking for a TTY
-/// and asks `stty size` for its dimensions, reserving 5 columns for Claude
-/// Code's own UI messages.
+/// stdout, and stderr, so direct detection ([`terminal_width`]) returns `None`.
+/// Since v2.1.153 Claude Code sets `COLUMNS`/`LINES` to the terminal dimensions
+/// before running the script, so [`terminal_width`]'s `COLUMNS` fallback
+/// supplies the width. A few columns are reserved for Claude Code's own UI
+/// messages. Returns `None` when no width is detectable (e.g. an older Claude
+/// Code that doesn't set `COLUMNS`), in which case the statusline renders
+/// everything untruncated.
 ///
-/// Every other caller should use [`terminal_width`] — the parent-TTY walk is
-/// a statusline-specific workaround, not a general fallback.
+/// Every other caller should use [`terminal_width`] — the reserved margin is a
+/// statusline-specific concern.
 pub fn terminal_width_for_statusline() -> Option<usize> {
-    statusline_width_fallback(terminal_width())
-}
-
-/// Apply the parent-TTY fallback to a width returned by [`terminal_width`].
-///
-/// Split from [`terminal_width_for_statusline`] so tests can exercise the
-/// fallback path without racing the process-wide `COLUMNS` env var.
-fn statusline_width_fallback(base: Option<usize>) -> Option<usize> {
-    #[cfg(unix)]
-    if base.is_none() {
-        return detect_parent_tty_width();
-    }
-    base
-}
-
-/// Detect terminal width by walking up the process tree to find a TTY.
-///
-/// This is a fallback for subprocesses (like Claude Code hooks) that don't have
-/// direct TTY access. Walks up to 10 parent processes looking for one with a TTY,
-/// then queries that TTY's size via `stty` and [`statusline_width_from_stty_size`].
-#[cfg(unix)]
-fn detect_parent_tty_width() -> Option<usize> {
-    use crate::shell_exec::Cmd;
-
-    let mut pid = std::process::id().to_string();
-
-    for _ in 0..10 {
-        let output = Cmd::new("ps")
-            .args(["-o", "ppid=,tty=", "-p", &pid])
-            .run()
-            .ok()?;
-
-        let info = String::from_utf8_lossy(&output.stdout);
-        let mut parts = info.split_whitespace();
-        let ppid = parts.next()?;
-        let tty = parts.next()?;
-
-        // Valid TTY found (not "?" or "??")
-        if !tty.is_empty() && tty != "?" && tty != "??" {
-            // Query TTY size using stty
-            let size = Cmd::new("sh")
-                .args(["-c", &format!("stty size < /dev/{tty}")])
-                .run()
-                .ok()?;
-
-            return statusline_width_from_stty_size(&String::from_utf8_lossy(&size.stdout));
-        }
-
-        if ppid == "1" || ppid == "0" {
-            break;
-        }
-        pid = ppid.to_string();
-    }
-
-    None
-}
-
-/// Convert `stty size` output (`"<rows> <cols>"`) into a statusline width.
-///
-/// Reserves 5 columns for Claude Code's UI messages (like "Approaching
-/// context limit"). Returns `None` when the output has no parseable column
-/// count.
-#[cfg(unix)]
-fn statusline_width_from_stty_size(stty_size: &str) -> Option<usize> {
-    let cols = stty_size.split_whitespace().nth(1)?.parse::<usize>().ok()?;
-    Some(cols.saturating_sub(5))
+    terminal_width().map(|w| w.saturating_sub(STATUSLINE_UI_RESERVED_COLUMNS))
 }
 
 /// Calculate visual width of a string, ignoring ANSI escape codes
@@ -219,26 +172,21 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     #[test]
-    fn statusline_width_fallback_returns_base_when_known() {
-        // Fast path: if `terminal_width()` found a real width, use it as-is.
-        assert_eq!(statusline_width_fallback(Some(80)), Some(80));
-        assert_eq!(statusline_width_fallback(Some(1)), Some(1));
-    }
-
-    #[test]
-    fn statusline_width_fallback_probes_parent_tty_when_unknown() {
-        // Slow path: `None` signals "direct detection failed" — the helper
-        // then walks the process tree. Whether a TTY is found depends on the
-        // test environment, so only assert the return type.
-        let _ = statusline_width_fallback(None);
-    }
-
-    #[test]
     fn terminal_width_for_statusline_returns_a_width() {
         // End-to-end smoke test. Under cargo test, `COLUMNS=80` is set in
-        // `.cargo/config.toml`, so the fast path always finds a width.
+        // `.cargo/config.toml`, so a width is always detectable.
         let width = terminal_width_for_statusline();
         assert!(width.expect("COLUMNS=80 is set in .cargo/config.toml") > 0);
+    }
+
+    #[test]
+    fn terminal_width_for_statusline_reserves_ui_margin() {
+        // The statusline width is the detected width less a fixed margin for
+        // Claude Code's own UI chrome, saturating rather than underflowing.
+        assert_eq!(
+            terminal_width_for_statusline(),
+            terminal_width().map(|w| w.saturating_sub(STATUSLINE_UI_RESERVED_COLUMNS)),
+        );
     }
 
     #[test]
@@ -258,21 +206,6 @@ mod tests {
         let (width, _height) =
             terminal_dimensions().expect("COLUMNS=80 is set in .cargo/config.toml");
         assert!(width > 0);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn statusline_width_from_stty_size_reserves_five_columns() {
-        // `stty size` prints "<rows> <cols>"; the column count loses 5 to
-        // Claude Code's UI chrome.
-        assert_eq!(statusline_width_from_stty_size("24 200"), Some(195));
-        assert_eq!(statusline_width_from_stty_size("24 80"), Some(75));
-        // Saturates rather than underflowing on a terminal narrower than 5.
-        assert_eq!(statusline_width_from_stty_size("24 3"), Some(0));
-        // No parseable column count.
-        assert_eq!(statusline_width_from_stty_size(""), None);
-        assert_eq!(statusline_width_from_stty_size("24"), None);
-        assert_eq!(statusline_width_from_stty_size("24 wide"), None);
     }
 
     #[test]
@@ -461,6 +394,19 @@ command = "npm install"
         [107m [0m several security vulnerabilities that were identified during the security
         [107m [0m audit last month. The new implementation follows industry best practices and
         [107m [0m includes proper token rotation and expiration handling.
+        ");
+    }
+
+    /// An indented line that wraps keeps its indent on every continuation
+    /// line, so subordinate content (a task-failure message under its
+    /// label) stays visually subordinate instead of rendering flush-left.
+    #[test]
+    fn test_format_with_gutter_preserves_indent_on_wrap() {
+        let indented = "  fatal: Unable to create '/some/long/path/to/repository/.git/worktrees/name/index.lock': File exists.";
+        assert_snapshot!(format_with_gutter(indented, Some(50)), @"
+        [107m [0m   fatal: Unable to create
+        [107m [0m   '/some/long/path/to/repository/.git/worktrees/name/index.lock':
+        [107m [0m   File exists.
         ");
     }
 

@@ -29,107 +29,56 @@
 // #2685 / #2704 actually pushes on.
 //
 // Benchmark variants:
-//   - picker_preview/warm/typical-8
-//   - picker_preview/cold/typical-8
+//   - picker_preview/warm/8-worktrees
+//   - picker_preview/cold/8-worktrees
 //
 // Run examples:
 //   cargo bench --bench picker_preview                 # all variants
 //   cargo bench --bench picker_preview warm            # warm only
-//   cargo bench --bench picker_preview -- --exact picker_preview/warm/typical-8
+//   cargo bench --bench picker_preview -- --exact picker_preview/warm/8-worktrees
 
 #[cfg(not(unix))]
 fn main() {
-    // Picker is Unix-only; benchmark is a no-op on Windows.
+    // This benchmark is intentionally a no-op on Windows.
 }
 
 #[cfg(unix)]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 #[cfg(unix)]
-use std::path::Path;
-#[cfg(unix)]
-use std::process::Command;
-#[cfg(unix)]
-use worktrunk::testing::isolate_subprocess_env;
-#[cfg(unix)]
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, setup_fake_remote};
+use wt_perf::{CacheState, FixtureRecipe, bench_wt, wt_command};
 
 #[cfg(unix)]
 fn bench_picker_preview(c: &mut Criterion) {
     let mut group = c.benchmark_group("picker_preview");
-    // The picker workload runs a few hundred ms warm on typical-8 (the
-    // ~1.4s median quoted in `src/commands/picker/mod.rs` is on a different
-    // fixture; measured ~320ms / ~370ms warm/cold here on a 14-core M-series
-    // box). Sticking with `sample_size(10)` per #2685's lead and budgeting
-    // 35s gives Criterion enough headroom to fit 10 samples without the
-    // "increase target time" warning under either cache mode.
+    // Use Criterion's minimum sample count and enough measurement time for the
+    // full preview workload under either cache mode.
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(35));
 
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
+    let total_worktrees = 8;
 
-    for worktrees in [8] {
-        for cold in [false, true] {
-            let label = if cold { "cold" } else { "warm" };
-            let config = RepoConfig::typical(worktrees);
+    for cache in CacheState::WARM_AND_COLD {
+        group.bench_with_input(
+            BenchmarkId::new(cache.label(), format!("{total_worktrees}-worktrees")),
+            &cache,
+            |b, &cache| {
+                let fixture = FixtureRecipe::generated(total_worktrees - 1).create();
 
-            group.bench_with_input(
-                BenchmarkId::new(label, format!("typical-{worktrees}")),
-                &(config, cold),
-                |b, (config, cold)| {
-                    let temp = create_repo(config);
-                    let repo_path = temp.path().join("repo");
-                    setup_fake_remote(&repo_path);
+                let make_cmd = || {
+                    let mut cmd = wt_command(binary, fixture.path(), None);
+                    cmd.args(["switch", "--no-cd"])
+                        .env("WORKTRUNK_PREVIEW_BENCH", "1");
+                    cmd
+                };
 
-                    let make_cmd = || {
-                        let mut cmd = Command::new(binary);
-                        cmd.args(["switch", "--no-cd"]).current_dir(&repo_path);
-                        isolate_subprocess_env(&mut cmd, None);
-                        cmd.env("WORKTRUNK_PREVIEW_BENCH", "1");
-                        cmd
-                    };
-
-                    if *cold {
-                        // The picker writes to `.git/wt/cache/picker-preview/`
-                        // (Log / BranchDiff / UpstreamDiff entries). Without
-                        // invalidation, iter 1 measures real cost and iter 2+
-                        // measure cache hits.
-                        //
-                        // `BatchSize::PerIteration` (not `SmallInput`):
-                        // under `SmallInput`, criterion calls `setup` for an
-                        // entire batch up front and then runs the timed
-                        // routines back-to-back — so the first `wt switch`
-                        // in a batch is cold but the rest hit a freshly
-                        // populated `.git/wt/cache/`, biasing the "cold"
-                        // measurement warm. `PerIteration` invalidates
-                        // immediately before every measured iteration; the
-                        // setup itself is far cheaper than a `wt switch`
-                        // invocation, so per-iteration `Instant::now`
-                        // overhead doesn't dominate.
-                        b.iter_batched(
-                            || invalidate_caches_auto(&repo_path),
-                            |_| {
-                                let output = make_cmd().output().unwrap();
-                                assert!(
-                                    output.status.success(),
-                                    "Benchmark command failed:\nstderr: {}",
-                                    String::from_utf8_lossy(&output.stderr)
-                                );
-                            },
-                            criterion::BatchSize::PerIteration,
-                        );
-                    } else {
-                        b.iter(|| {
-                            let output = make_cmd().output().unwrap();
-                            assert!(
-                                output.status.success(),
-                                "Benchmark command failed:\nstderr: {}",
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        });
-                    }
-                },
-            );
-        }
+                // Cold matters here: the picker writes to
+                // `.git/wt/cache/picker-preview/` (Log / BranchDiff /
+                // UpstreamDiff entries), so without invalidation iter 1
+                // measures real cost and iter 2+ measure cache hits.
+                bench_wt(b, fixture.path(), cache, make_cmd);
+            },
+        );
     }
 
     group.finish();

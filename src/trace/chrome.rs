@@ -8,7 +8,7 @@
 //! - **Complete events** (`ph: "X"`): Command executions and in-process spans, both with duration
 //! - **Instant events** (`ph: "I"`): Milestones without duration (e.g., "Showed skeleton")
 //!
-//! See [`crate::trace`] for the capture pipeline and SQL query examples.
+//! See [`crate::trace`] for the capture pipeline.
 //!
 //! # Format Reference
 //!
@@ -58,9 +58,6 @@ struct TraceEventArgs {
     context: Option<String>,
     /// Whether the command succeeded (always true for instant events)
     success: bool,
-    /// Duration in milliseconds (human-readable, only for command events)
-    #[serde(rename = "duration_ms", skip_serializing_if = "Option::is_none")]
-    duration_ms: Option<f64>,
 }
 
 /// The top-level Chrome Trace Format structure.
@@ -98,10 +95,15 @@ pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
                 TraceEntryKind::Command {
                     command, duration, ..
                 } => {
-                    // Categorize by program type
+                    // Categorize by program type. The forge CLIs worktrunk
+                    // shells out to — `gh`/`glab` and also `az` (Azure DevOps)
+                    // and `tea` (Gitea) — group under `network`.
                     let cat = if command.starts_with("git ") {
                         Some("git".to_string())
-                    } else if command.starts_with("gh ") || command.starts_with("glab ") {
+                    } else if ["gh ", "glab ", "az ", "tea "]
+                        .iter()
+                        .any(|prefix| command.starts_with(prefix))
+                    {
                         Some("network".to_string())
                     } else {
                         None
@@ -119,7 +121,6 @@ pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
                         args: Some(TraceEventArgs {
                             context: entry.context.clone(),
                             success: entry.is_success(),
-                            duration_ms: Some(duration.as_secs_f64() * 1000.0),
                         }),
                     }
                 }
@@ -136,7 +137,6 @@ pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
                         args: Some(TraceEventArgs {
                             context: entry.context.clone(),
                             success: true,
-                            duration_ms: None,
                         }),
                     }
                 }
@@ -152,7 +152,6 @@ pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
                     args: Some(TraceEventArgs {
                         context: entry.context.clone(),
                         success: true,
-                        duration_ms: Some(duration.as_secs_f64() * 1000.0),
                     }),
                 },
             }
@@ -187,6 +186,7 @@ mod tests {
                 command: command.to_string(),
                 duration: Duration::from_millis(duration_ms),
                 result: TraceResult::Completed { success: true },
+                reads_stdin: false,
             },
             start_time_us,
             thread_id,
@@ -281,7 +281,9 @@ mod tests {
             make_command_entry("git status", 10, Some(0), Some(1)),
             make_command_entry("gh pr list", 100, Some(0), Some(2)),
             make_command_entry("glab mr list", 100, Some(0), Some(3)),
-            make_command_entry("echo hello", 1, Some(0), Some(4)),
+            make_command_entry("az repos pr show", 100, Some(0), Some(4)),
+            make_command_entry("tea api /repos/x/y", 100, Some(0), Some(5)),
+            make_command_entry("echo hello", 1, Some(0), Some(6)),
         ];
 
         let json = to_chrome_trace(&entries);
@@ -289,9 +291,12 @@ mod tests {
         let events = parsed["traceEvents"].as_array().unwrap();
 
         assert_eq!(events[0]["cat"], "git");
+        // All forge CLIs (gh, glab, az, tea) group under `network`.
         assert_eq!(events[1]["cat"], "network");
         assert_eq!(events[2]["cat"], "network");
-        assert!(events[3]["cat"].is_null()); // No category for other commands
+        assert_eq!(events[3]["cat"], "network");
+        assert_eq!(events[4]["cat"], "network");
+        assert!(events[5]["cat"].is_null()); // No category for other commands
     }
 
     #[test]
@@ -304,7 +309,6 @@ mod tests {
 
         assert_eq!(events[0]["args"]["context"], "feature");
         assert_eq!(events[0]["args"]["success"], true);
-        assert_eq!(events[0]["args"]["duration_ms"], 10.0);
     }
 
     // ========================================================================
@@ -331,12 +335,10 @@ mod tests {
         assert_eq!(events[0]["cat"], "milestone");
         assert!(events[0]["dur"].is_null()); // No duration for instant events
         assert_eq!(events[0]["args"]["success"], true);
-        assert!(events[0]["args"]["duration_ms"].is_null());
     }
 
     #[test]
     fn test_span_event() {
-        // 8000 µs (= 8 ms exactly) avoids float-precision noise in duration_ms.
         let entries = vec![make_span_entry("config_load", 8000, Some(1000000), Some(1))];
 
         let json = to_chrome_trace(&entries);
@@ -351,7 +353,6 @@ mod tests {
         assert_eq!(events[0]["cat"], "wt");
         assert!(events[0]["s"].is_null());
         assert_eq!(events[0]["args"]["success"], true);
-        assert_eq!(events[0]["args"]["duration_ms"], 8.0);
     }
 
     #[test]

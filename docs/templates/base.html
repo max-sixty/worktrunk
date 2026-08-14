@@ -213,12 +213,14 @@
                 {% set docs_section = get_section(path="_index.md") %}
                 {% set current_group = "" %}
                 {% for doc_page in docs_section.pages %}
+                {% if not doc_page.extra.hide_from_nav %}
                 {% set page_group = doc_page.extra.group | default(value="") %}
                 {% if page_group != current_group and page_group != "" %}
                 <div class="mobile-toc-group">{{ page_group }}</div>
                 {% set_global current_group = page_group %}
                 {% endif %}
                 <a class="mobile-toc-item" href="{{ doc_page.permalink | safe }}">{{ doc_page.title }}</a>
+                {% endif %}
                 {% endfor %}
             </div>
         </div>

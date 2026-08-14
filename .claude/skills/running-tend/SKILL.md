@@ -47,26 +47,16 @@ source-compiling installs cascaded into bash-tool interrupts that blocked
 even `pwd` and `echo`. (Pre-built single-script installers like Determinate
 Nix's are fine — see **Weekly Maintenance: MSRV & Toolchain** for the one we
 use. The block is specifically about long-running cargo compiles.) Instead,
-query Codecov directly:
+query Codecov directly, following `tests/CLAUDE.md` → **Coverage
+Investigation** for the endpoints and their traps.
+
+If the Codecov API markers aren't enough, download the `code-coverage-report`
+artifact from the PR head's `coverage` workflow run — it contains a
+`cobertura.xml` with per-line hit counts:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-curl -sL "https://api.codecov.io/api/v2/gh/${REPO%/*}/repos/${REPO#*/}/compare/?pullid=<N>" > /tmp/codecov.json
-
-# Patch-level summary per file:
-jq '.files[] | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
-
-# Uncovered added lines in a specific changed file
-# (coverage.head is a LineType enum: 0=hit, 1=miss, 2=partial — filter on 1=miss):
-jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
-```
-
-If the Codecov API markers aren't enough, download the `code-coverage-report`
-artifact from the PR head's `ci` workflow run — it contains a `cobertura.xml`
-with per-line hit counts:
-
-```bash
-# Find the ci run on the PR head SHA:
+# Find the coverage run on the PR head SHA:
 CI_RUN=$(gh api "repos/$REPO/commits/<sha>/check-runs" --jq '.check_runs[] | select(.name == "code-coverage") | .details_url | capture("runs/(?<id>[0-9]+)") | .id')
 # List artifacts, then download the coverage one:
 gh api "repos/$REPO/actions/runs/$CI_RUN/artifacts" --jq '.artifacts[] | {name, id}'
@@ -102,19 +92,19 @@ Before opening a `fix/ci-*` PR, classify the failure:
   PR. The maintainer will rerun CI. Comment on the run or exit silently; a
   permanent config change for a one-off timeout is churn the maintainer will
   close.
-- **Flaky test** (known-flaky or first-seen PTY/shell test) — exit without a
-  PR (same behavior as prior test-flake ci-fix runs).
+- **Flaky test** (known-flaky or first-seen PTY/shell test) — try to fix it.
 - **Real regression** — proceed with a fix PR.
 
 **Non-required ≠ transient.** A non-required job (e.g. `collect affected coverage`, `affected tests (linux, advisory)`) can fail from a real regression. The required/non-required distinction is about merge-blocking, not about how the failure is classified. If a deterministic build error (`error[E...]`, "binary not found", "ambiguous candidates", missing target) repeats across consecutive runs of the same shape, it's a real regression even when the job is advisory. Reserve "transient" for non-deterministic causes: `BrokenPipe`, `connection reset`, runner disk full, GitHub API timeouts, host-availability blips.
 
 **Lychee link-check timeouts are always transient** unless the same URL has
-failed on at least two separate runs within the last few days. `.config/lychee.toml`
+failed on at least two separate runs within the last few days. The check runs
+as the `link-check` job in the `nightly` workflow. `.config/lychee.toml`
 already sets `max_retries = 6` and lists known-unreliable hosts; one timeout
 is not enough evidence to extend that list. Signals you have a transient
 failure, not a broken link:
 
-- The previous CI run on the same or a nearby commit passed.
+- The previous run on the same or a nearby commit passed.
 - Only `[TIMEOUT]` is reported (not `404`/`403`/`410`).
 - The URL is reachable from a local `curl`.
 
@@ -149,21 +139,29 @@ addressed is intentional.
 
 When you need more information to diagnose a reported bug, the **primary
 ask is `wt -vv <command>`**. Re-running the failing command with `-vv`
-writes `.git/wt/logs/diagnostic.md` — a single report containing wt/git/OS
-versions, shell integration, `wt config show`, `git worktree list
---porcelain`, and a `trace.log` of every git invocation with its output —
-and prints a `gh gist create --web <path>` hint. One gist URL pasted into
-the issue gives us most of what we'd otherwise ask for piecemeal, so lead
-with this for unexplained failures rather than chaining version/config/repro
-questions across multiple round-trips.
+writes a diagnostic bundle — a single report containing wt/git/OS versions,
+shell integration, `wt config show`, `git worktree list --porcelain`, and a
+`trace.log` of every git invocation with its output. The `-vv` output prints
+the bundle's exact absolute path (`Diagnostics and performance profile
+saved @ …`) followed by a ready-to-run `gh gist create --web
+<path>` line — **point the user at those printed lines; don't hand them a
+hardcoded path**. In particular, never tell them to `cat
+.git/wt/logs/diagnostic.md`: inside a linked worktree `.git` is a gitdir
+*file*, not a directory, so that path fails with `Not a directory (os error
+20)` (`ENOTDIR`). The bundle actually lives under the git *common* dir —
+`"$(git rev-parse --git-common-dir)/wt/logs/diagnostic.md"` resolves from any
+worktree, and the printed absolute path already points there. One gist URL
+pasted into the issue gives us most of what we'd otherwise ask for piecemeal,
+so lead with this for unexplained failures rather than chaining
+version/config/repro questions across multiple round-trips.
 
 When the report is about a slow `wt` command, read its **Performance profile**
 section first. It renders the same breakdown as `wt config state logs profile`
 (subprocess time by command type, slowest calls, repeated `(command, context)`
 pairs) directly from the bundled `trace.log`, so you can spot redundant git
-calls and slow commands without parsing the raw trace by hand. The deeper
-per-render cache analysis is a separate tool — see **Weekly Maintenance:
-Statusline Cache-Check**.
+calls and slow commands without parsing the raw trace by hand. The same
+report run against a statusline capture is the weekly per-render cache
+check — see **Weekly Maintenance: Statusline Cache-Check**.
 
 Reach for narrower asks only when the diagnostic is overkill:
 
@@ -186,6 +184,18 @@ Comment on the issue with what's known, ask the reporter for the concrete sympto
 When an issue is clearly a duplicate, close it after commenting. Use
 `gh issue close <number>` and tell the reporter: if they believe this was
 closed in error, they can let us know and we'll reopen it.
+
+### Check `--config-set` before calling a setting unpinnable
+
+`wt --config-set '<toml>'` overrides any user config key for one invocation,
+above both config files and `WORKTRUNK_SECTION__KEY` env vars ([inline config
+overrides](https://worktrunk.dev/config/#inline-config-overrides-config-set)).
+The resolver just reads `repo.config().<key>` and shows no sign of that layer,
+so before writing "there's no way to do X per invocation", ask whether X is a
+config key: the ask is usually already met, and the reply is a `--config-set`
+recipe plus a docs fix where the docs don't connect the flag to the setting.
+Pinning is all that covers — weigh the request's residual asks on their own
+merits.
 
 ### Suggesting Aliases for Niche Feature Requests
 
@@ -212,6 +222,17 @@ across every repo. It's the project's preferred extension point.
 4. Post the tested alias with usage examples.
 5. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/).
+
+### Weigh the root-cause fix before shipping a config/docs workaround
+
+When a mismatch or false-positive report has an obvious configurable
+workaround (a template change, a config value, an alias), don't stop at
+documenting it. First check whether the workaround is **lossy or
+foot-gunny**, and weigh a proportionate **root-cause code fix** before
+opening a docs-only PR. A "docs-only, no risk" framing is not the same as
+good guidance — a zero-code-risk change can still steer users toward a
+collision-prone or lossy config. If you do recommend a config change,
+surface its downsides in the PR body up front, not only when challenged.
 
 ### Don't fix tests by adding skip guards
 
@@ -278,8 +299,8 @@ Pinned third-party versions in CI are invisible to Dependabot — it follows `Ca
 
 For each weekly run, check upstream and bump:
 
-- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/ci.yaml`, `.github/workflows/nightly.yaml`, and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
-- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Three call sites: `ci.yaml` (`code-coverage`), `nightly.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
+- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/{affected,ci,coverage,nightly}.yaml` and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-affected`, `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. `cargo-affected` is pinned twice in `affected.yaml`; move both together. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
+- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Four call sites: `coverage.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
 - **`taiki-e/install-action@v2.x`** `tool: zola@<ver>` in the `check-docs` job — latest from `gh api repos/getzola/zola/releases/latest --jq '.tag_name'`.
 - **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
 
@@ -288,9 +309,9 @@ Discovery shortcut: a recent green CI run on `main` flags cargo-install drift di
 ## Weekly Maintenance: Statusline Cache-Check
 
 Detect new in-process cache-miss duplicates introduced by recent changes by
-running `wt-perf cache-check` against a real `wt list statusline --claude-code`
-trace. The render runs on every Claude Code prompt redraw, so duplicate git
-subprocesses there compound into measurable fseventsd / IPC load.
+profiling a real `wt list statusline --claude-code` trace. The render runs on
+every Claude Code prompt redraw, so duplicate git subprocesses there compound
+into measurable fseventsd / IPC load.
 
 ```bash
 # Run from any worktree of this repo
@@ -300,12 +321,12 @@ cat > /tmp/statusline-input.json <<'EOF'
 EOF
 sed -i '' "s|REPLACE_WITH_CWD|$PWD|" /tmp/statusline-input.json
 
-RUST_LOG=debug cargo run --release -- list statusline --claude-code \
-  < /tmp/statusline-input.json 2>&1 \
-  | cargo run -p wt-perf -- cache-check
+cargo run --release -- -vv list statusline --claude-code \
+  < /tmp/statusline-input.json > /dev/null
+cargo run --release -- config state logs profile --format=json | jq .cache
 ```
 
-The report flags commands invoked more than once with the same context.
+The `.cache` report flags commands invoked more than once with the same context.
 Triage each duplicate:
 
 - **Legitimate** (different cwd, different ref form that can't be normalized,
@@ -359,4 +380,4 @@ maintenance, verify the month matches the current month and update it if stale.
 ## Per-Workflow References
 
 - **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search
-- **Nightly sweep**: `@references/nightly-cleaner.md` — branch naming
+- **Nightly sweep**: `@references/nightly-cleaner.md` — survey checklist, branch naming, CI-breakage ownership

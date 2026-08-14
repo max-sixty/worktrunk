@@ -20,7 +20,6 @@
 //! convenience.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +28,7 @@ use super::ConfigError;
 
 use crate::config::deprecation::normalize_template_vars;
 use crate::path::format_path_for_display;
+use crate::utils::write_atomically;
 
 /// Approved commands, stored in `approvals.toml`.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -202,7 +202,8 @@ impl Approvals {
             output
         };
 
-        write_approvals_file(path, &output)?;
+        write_atomically(path, &output)
+            .map_err(|e| ConfigError(format!("Failed to write approvals file: {e}")))?;
 
         Ok(())
     }
@@ -214,28 +215,6 @@ fn save_parent(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-fn write_approvals_file(path: &Path, output: &str) -> Result<(), ConfigError> {
-    let parent = save_parent(path);
-    let mut temp = tempfile::Builder::new()
-        .prefix(".approvals.")
-        .suffix(".tmp")
-        .tempfile_in(parent)
-        .map_err(|e| ConfigError(format!("Failed to create temporary approvals file: {e}")))?;
-
-    temp.write_all(output.as_bytes())
-        .map_err(|e| ConfigError(format!("Failed to write temporary approvals file: {e}")))?;
-    temp.flush()
-        .map_err(|e| ConfigError(format!("Failed to flush temporary approvals file: {e}")))?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|e| ConfigError(format!("Failed to sync temporary approvals file: {e}")))?;
-
-    temp.persist(path)
-        .map_err(|e| ConfigError(format!("Failed to replace approvals file: {}", e.error)))?;
-
-    Ok(())
-}
-
 // =========================================================================
 // Queries
 // =========================================================================
@@ -245,16 +224,21 @@ impl Approvals {
     ///
     /// Normalizes template variables before comparing, so approvals match
     /// regardless of whether they were saved with deprecated variable names.
+    ///
+    /// A `*` pattern key approves its commands for every project it matches,
+    /// the same keys `[projects."…"]` settings use. Only a hand-written entry
+    /// is ever a pattern: [`Self::approve_commands`] records under the exact
+    /// project identifier and refuses one that contains `*`, so approving a
+    /// command in one repository never widens to another.
     pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
         let normalized_command = normalize_template_vars(command);
-        self.projects
-            .get(project)
-            .map(|p| {
+        crate::config::matching_project_keys(&self.projects, project)
+            .into_iter()
+            .any(|p| {
                 p.approved_commands
                     .iter()
                     .any(|c| normalize_template_vars(c) == normalized_command)
             })
-            .unwrap_or(false)
     }
 
     /// Iterate over projects and their approved commands.
@@ -262,6 +246,49 @@ impl Approvals {
         self.projects
             .iter()
             .map(|(id, p)| (id.as_str(), p.approved_commands.as_slice()))
+    }
+
+    /// Pattern keys whose approved commands cover `project` — the entries
+    /// [`Self::is_command_approved`] consults beyond the exact one. Always
+    /// hand-written (the write paths refuse `*`), so mutations never touch
+    /// them; `wt config approvals clear` names them in a hint, making an
+    /// approval that survives a clear traceable to the entry that supplies it.
+    pub fn matching_pattern_keys(&self, project: &str) -> Vec<&str> {
+        self.projects
+            .iter()
+            .filter(|(key, p)| {
+                key.contains('*')
+                    && !p.approved_commands.is_empty()
+                    && super::user::project_match::matches(key, project)
+            })
+            .map(|(key, _)| key.as_str())
+            .collect()
+    }
+
+    /// Approved commands for `project` that match none of `templates` (after
+    /// template-variable normalization) — approvals left behind when a config
+    /// command was edited or removed.
+    ///
+    /// Reads the exact key only, unlike [`Self::is_command_approved`]. A
+    /// pattern entry's commands are shared with every repository it matches,
+    /// and this drives `wt config approvals clear --stale`, so judging them
+    /// against one repository's config would let that repository revoke
+    /// approvals the others still rely on.
+    pub fn stale_approvals<'a>(&'a self, project: &str, templates: &[&str]) -> Vec<&'a str> {
+        let normalized: Vec<_> = templates
+            .iter()
+            .map(|t| normalize_template_vars(t))
+            .collect();
+        self.projects
+            .get(project)
+            .map(|p| {
+                p.approved_commands
+                    .iter()
+                    .filter(|c| !normalized.contains(&normalize_template_vars(c)))
+                    .map(String::as_str)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -330,34 +357,36 @@ impl Approvals {
         Ok(approvals)
     }
 
-    /// Add an approved command and save.
+    /// Add an approved command and save. See [`Self::approve_commands`].
     pub fn approve_command(
         &mut self,
         project: String,
         command: String,
         approvals_path: &Path,
     ) -> Result<(), ConfigError> {
-        self.with_locked_mutation(approvals_path, |approvals| {
-            if approvals.is_command_approved(&project, &command) {
-                return false;
-            }
-            approvals
-                .projects
-                .entry(project)
-                .or_default()
-                .approved_commands
-                .push(command);
-            true
-        })
+        self.approve_commands(project, vec![command], approvals_path)
     }
 
     /// Add multiple approved commands in a single locked operation.
+    ///
+    /// Refuses a `project` containing `*`: reads treat such a key as a pattern
+    /// (see `config::user::project_match`), so a persisted entry would approve
+    /// the commands for every repository the pattern matches. Refusing here is
+    /// what makes pattern entries hand-written only — the guarantee
+    /// [`Self::is_command_approved`] documents. The caller's approval still
+    /// covers the current run; it just isn't remembered.
     pub fn approve_commands(
         &mut self,
         project: String,
         commands: Vec<String>,
         approvals_path: &Path,
     ) -> Result<(), ConfigError> {
+        if project.contains('*') {
+            return Err(ConfigError(format!(
+                "Cannot save approvals for `{project}`: `*` in the identifier reads as a \
+                 pattern, so the entry would apply to every repository it matches"
+            )));
+        }
         self.with_locked_mutation(approvals_path, |approvals| {
             let entry = approvals.projects.entry(project).or_default();
             let mut changed = false;
@@ -393,6 +422,43 @@ impl Approvals {
             approvals.projects.remove(&project);
             true
         })
+    }
+
+    /// Remove approvals for `project` that match none of `templates` (the
+    /// project's current command set) and save. Returns the removed commands.
+    ///
+    /// Staleness is recomputed under the file lock via [`Self::stale_approvals`],
+    /// so an approval another process records between the caller's read and
+    /// this call is never removed by mistake.
+    pub fn revoke_stale(
+        &mut self,
+        project: &str,
+        templates: &[&str],
+        approvals_path: &Path,
+    ) -> Result<Vec<String>, ConfigError> {
+        let mut removed = Vec::new();
+        self.with_locked_mutation(approvals_path, |approvals| {
+            let stale: Vec<String> = approvals
+                .stale_approvals(project, templates)
+                .into_iter()
+                .map(String::from)
+                .collect();
+            if stale.is_empty() {
+                return false;
+            }
+            let Some(project_config) = approvals.projects.get_mut(project) else {
+                return false;
+            };
+            project_config
+                .approved_commands
+                .retain(|c| !stale.contains(c));
+            if project_config.approved_commands.is_empty() {
+                approvals.projects.remove(project);
+            }
+            removed = stale;
+            true
+        })?;
+        Ok(removed)
     }
 
     /// Clear all approvals for all projects and save.
@@ -461,6 +527,144 @@ mod tests {
     fn test_empty_approvals() {
         let approvals = Approvals::default();
         assert!(!approvals.is_command_approved("any/project", "any command"));
+    }
+
+    #[test]
+    fn test_pattern_key_approves_every_project_it_matches() {
+        // A hand-written pattern entry — the only way one appears, since every
+        // write path keys by the exact identifier.
+        let approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+"#,
+        )
+        .unwrap();
+
+        assert!(approvals.is_command_approved("git.company.example/owner/repo", "npm install"));
+        assert!(
+            approvals.is_command_approved("git.company.example/group/team/repo", "npm install")
+        );
+        assert!(!approvals.is_command_approved("github.com/owner/repo", "npm install"));
+        assert!(!approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+    }
+
+    #[test]
+    fn test_matching_pattern_keys_names_covering_entries() {
+        let approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+
+[projects."git.company.example/owner/repo"]
+approved-commands = ["npm test"]
+
+[projects."git.company.example/owner/*"]
+approved-commands = []
+
+[projects."github.com/*"]
+approved-commands = ["make"]
+"#,
+        )
+        .unwrap();
+
+        // The exact key, a non-matching pattern, and a matching pattern with
+        // no commands are all excluded — only entries actually supplying
+        // approvals are worth naming.
+        assert_eq!(
+            approvals.matching_pattern_keys("git.company.example/owner/repo"),
+            vec!["git.company.example/*"]
+        );
+        assert!(
+            approvals
+                .matching_pattern_keys("codeberg.org/owner/repo")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_approving_a_starred_identifier_is_refused() {
+        // An identifier can itself contain `*` (a remote URL or no-remote
+        // path-fallback with a star in it). Persisting it verbatim would
+        // create an entry reads treat as a pattern — approving the command
+        // for every repository the star matches — so the write is refused
+        // and the caller's approval covers the current run only.
+        let (_temp_dir, path) = test_dir();
+        let mut approvals = Approvals::default();
+
+        let err = approvals
+            .approve_commands(
+                "git.company.example/owner/re*po".to_string(),
+                vec!["npm install".to_string()],
+                &path,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("pattern"), "got: {err}");
+        assert!(
+            !approvals.is_command_approved("git.company.example/owner/re*po", "npm install"),
+            "nothing may be recorded in memory"
+        );
+        assert!(!path.exists(), "nothing may be written to disk");
+    }
+
+    #[test]
+    fn test_approving_under_a_pattern_writes_the_exact_key() {
+        // Approving in one repository must not widen an existing pattern entry
+        // to cover a command the user was only asked about once.
+        let (_temp_dir, path) = test_dir();
+        let mut approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+"#,
+        )
+        .unwrap();
+        // Mutations reload under the file lock, so the fixture has to be on
+        // disk for the pattern entry to survive into the mutation.
+        approvals.save_to(&path).unwrap();
+
+        approvals
+            .approve_command(
+                "git.company.example/owner/repo".to_string(),
+                "npm test".to_string(),
+                &path,
+            )
+            .unwrap();
+
+        assert!(approvals.is_command_approved("git.company.example/owner/repo", "npm test"));
+        assert!(
+            !approvals.is_command_approved("git.company.example/other/repo", "npm test"),
+            "the pattern entry must not have absorbed the new approval"
+        );
+    }
+
+    #[test]
+    fn test_clearing_one_project_leaves_a_matching_pattern_intact() {
+        let (_temp_dir, path) = test_dir();
+        let mut approvals: Approvals = toml::from_str(
+            r#"
+[projects."git.company.example/*"]
+approved-commands = ["npm install"]
+
+[projects."git.company.example/owner/repo"]
+approved-commands = ["npm test"]
+"#,
+        )
+        .unwrap();
+        approvals.save_to(&path).unwrap();
+
+        approvals
+            .revoke_project("git.company.example/owner/repo", &path)
+            .unwrap();
+
+        assert!(
+            !approvals.is_command_approved("git.company.example/owner/repo", "npm test"),
+            "the repository's own approval is gone"
+        );
+        assert!(
+            approvals.is_command_approved("git.company.example/owner/repo", "npm install"),
+            "the pattern entry other repositories share is untouched"
+        );
     }
 
     #[test]
@@ -634,9 +838,8 @@ mod tests {
         );
         let err = replacement.save_to(&path).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("Failed to create temporary approvals file"),
-            "Expected temporary file creation error, got: {}",
+            err.to_string().contains("Failed to write approvals file"),
+            "Expected a write error, got: {}",
             err
         );
 
@@ -942,6 +1145,75 @@ approved-command = ["npm test"]
         approvals.save_to(&path).unwrap();
         // Now revoke_project should find the project but see empty commands → no-op
         approvals.revoke_project("project-a", &path).unwrap();
+    }
+
+    /// Stale = approved but matching no config template, with the same
+    /// normalization as `is_command_approved`: an approval saved with a
+    /// deprecated variable name still matches its canonical config command.
+    #[test]
+    fn test_stale_approvals() {
+        let (_temp_dir, path) = test_dir();
+
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(
+                "project".to_string(),
+                vec![
+                    "npm test".to_string(),
+                    "echo {{ repo_root }}".to_string(),
+                    "removed command".to_string(),
+                ],
+                &path,
+            )
+            .unwrap();
+
+        let stale = approvals.stale_approvals("project", &["npm test", "echo {{ repo_path }}"]);
+        assert_eq!(stale, vec!["removed command"]);
+        assert!(
+            approvals
+                .stale_approvals("other-project", &["npm test"])
+                .is_empty()
+        );
+    }
+
+    /// `revoke_stale` removes only approvals matching no template (same
+    /// normalization as `stale_approvals`), keeps the rest, and drops the
+    /// project entry entirely when nothing remains.
+    #[test]
+    fn test_revoke_stale() {
+        let (_temp_dir, path) = test_dir();
+
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_commands(
+                "project".to_string(),
+                vec![
+                    "npm test".to_string(),
+                    "echo {{ repo_root }}".to_string(),
+                    "removed command".to_string(),
+                ],
+                &path,
+            )
+            .unwrap();
+
+        let templates = ["npm test", "echo {{ repo_path }}"];
+        let removed = approvals
+            .revoke_stale("project", &templates, &path)
+            .unwrap();
+        assert_eq!(removed, vec!["removed command"]);
+        assert!(approvals.is_command_approved("project", "npm test"));
+        assert!(approvals.is_command_approved("project", "echo {{ repo_root }}"));
+
+        // Nothing stale left — a second call is a no-op.
+        let removed = approvals
+            .revoke_stale("project", &templates, &path)
+            .unwrap();
+        assert!(removed.is_empty());
+
+        // Every remaining approval stale — the project entry disappears.
+        let removed = approvals.revoke_stale("project", &[], &path).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(!approvals.projects.contains_key("project"));
     }
 
     #[test]

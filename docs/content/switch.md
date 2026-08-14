@@ -40,6 +40,10 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 {{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
 
+## Naming a worktree
+
+Worktrees are addressed by branch name, and every argument that takes one also accepts the path of the worktree itself — resolved after the branch, so a directory never shadows a branch sharing its name. A path names what a branch cannot: a detached worktree, or one of two checkouts of the same branch. Relative paths resolve against `-C` and a leading `~` against the home directory, so a path worktrunk printed can be pasted back.
+
 ## Shortcuts
 
 | Shortcut | Meaning |
@@ -75,7 +79,7 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree named as entered text |
-| `Alt-x` | Remove selected worktree/branch |
+| `Alt-x` | Remove selected worktree/branch (never forces) |
 | `Alt-y` | Copy selected branch name to the clipboard |
 | `Alt-o` | Open the selected row's PR/MR URL in the browser |
 | `Alt-r` | Refresh the list (pick up worktrees created elsewhere) |
@@ -101,7 +105,7 @@ Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `
 4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
 5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
 6. **pr** — The selected row's PR/MR, for any row whose branch has one
-7. **comments** — The PR/MR's comment thread, fetched from the forge on `--prs` rows
+7. **comments** — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
 
 On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every `Alt-N` accelerator stays visible.
 
@@ -149,7 +153,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCH]</span>
-          Branch name, shortcut, or PR/MR URL
+          Branch, worktree path, shortcut, or PR/MR URL
 
           Opens interactive picker if omitted. Shortcuts: <b>^</b> (default branch), <b>-</b> (previous), <b>@</b>
           (current), <b>pr:{N}</b> (GitHub PR), <b>mr:{N}</b> (GitLab MR)
@@ -176,8 +180,13 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Replaces the wt process with the command after switching, giving it full terminal control.
           Useful for launching editors, AI agents, or other interactive tools.
 
+          Without a branch argument, the interactive picker opens and the command runs against the
+          selected worktree — so <b>wt switch -x claude</b> picks a worktree, then launches Claude Code
+          there.
+
           Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
-<b>          base }}</b> and <b>{{ base_worktree_path }}</b> require <b>--create</b>.
+<b>          base }}</b> and <b>{{ base_worktree_path }}</b> describe the source: the selected base with <b>--create</b>,
+          or the invoking worktree when switching to an existing worktree.
 
           Especially useful with shell aliases:
 

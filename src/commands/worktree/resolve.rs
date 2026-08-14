@@ -1,74 +1,23 @@
-//! Worktree resolution and path computation.
+//! Worktree path computation and display.
 //!
-//! Functions for resolving worktree arguments and computing expected paths.
+//! Where a worktree *belongs* — the `worktree-path` template, the expected-path
+//! check that names a worktree in output, and the bare-repo template prompt.
+//! Turning what the user typed into a worktree is the opposite direction and
+//! lives in [`Repository::resolve_worktree`](worktrunk::git::Repository::resolve_worktree).
 
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::Context;
 use color_print::cformat;
 use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, ResolvedWorktree};
+use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_toml, hint_message, info_message, success_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
-
-/// Resolve a worktree argument using branch-first lookup.
-///
-/// Resolution order:
-/// 1. Special symbols ("@", "-", "^") are handled specially
-/// 2. Resolve argument as branch name
-/// 3. If branch has a worktree, return it
-/// 4. Fall back to path-based lookup (supports detached worktrees)
-/// 5. Otherwise, return branch-only (no worktree)
-///
-/// If branch lookup fails to find a worktree, the argument is tried as a
-/// filesystem path (absolute or relative to CWD). This supports removing
-/// detached HEAD worktrees which have no branch name.
-pub fn resolve_worktree_arg(repo: &Repository, name: &str) -> anyhow::Result<ResolvedWorktree> {
-    // Special symbols - delegate to Repository for consistent error handling
-    match name {
-        "@" | "-" | "^" => {
-            return repo.resolve_worktree(name);
-        }
-        _ => {}
-    }
-
-    // Resolve as branch name
-    let branch = repo.resolve_worktree_name(name)?;
-
-    // Branch-first: check if branch has worktree anywhere
-    if let Some(path) = repo.worktree_for_branch(&branch)? {
-        return Ok(ResolvedWorktree::Worktree {
-            path,
-            branch: Some(branch),
-        });
-    }
-
-    // No worktree for branch - fall back to path-based lookup (supports detached worktrees)
-    let candidate = Path::new(name);
-    // Try as absolute path, or resolve relative to CWD
-    let abs_path = if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .context("Failed to determine current directory")?
-            .join(candidate)
-    };
-    if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
-        return Ok(ResolvedWorktree::Worktree {
-            path,
-            branch: wt_branch,
-        });
-    }
-
-    // No worktree for branch and no worktree at the path
-    Ok(ResolvedWorktree::BranchOnly { branch })
-}
 
 /// Compute the expected worktree path for a branch name.
 ///
@@ -131,21 +80,6 @@ pub fn is_worktree_at_expected_path(
             .unwrap_or(false),
         None => false,
     }
-}
-
-/// Returns the expected path if `actual_path` differs from the template-computed path.
-///
-/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
-/// Used to show path mismatch warnings in switch, picker, remove, and merge.
-pub fn path_mismatch(
-    repo: &Repository,
-    branch: &str,
-    actual_path: &std::path::Path,
-    config: &UserConfig,
-) -> Option<PathBuf> {
-    compute_worktree_path(repo, branch, config)
-        .ok()
-        .filter(|expected| !paths_match(actual_path, expected))
 }
 
 /// Compute a user-facing display name for a worktree.
@@ -246,9 +180,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     let example_bad = format!("{parent_name}/{repo_name}.{sanitized}");
     let example_good = format!("{parent_name}/{sanitized}");
 
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+    let config_path_display = worktrunk::config::config_path_for_display();
 
     // Non-interactive: warn and show the config to add.
     if !std::io::stdin().is_terminal() {
@@ -337,53 +269,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_template_references_repo_name_default() {
-        // Default template uses {{ repo }}
-        assert!(template_references_repo_name(
-            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
-        ));
-    }
+    fn test_template_references_repo_name() {
+        let cases = [
+            (
+                "default template",
+                "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}",
+                true,
+            ),
+            ("repo with filter", "{{ repo | sanitize }}", true),
+            (
+                "deprecated main_worktree alias",
+                "{{ main_worktree }}.{{ branch }}",
+                true,
+            ),
+            (
+                "repo_path is a distinct variable",
+                "{{ repo_path }}/../{{ branch | sanitize }}",
+                false,
+            ),
+            (
+                "no repository variable",
+                "../{{ branch | sanitize }}",
+                false,
+            ),
+            ("expression without spaces", "{{repo}}.{{branch}}", true),
+            (
+                "repo outside an expression",
+                "my-repo-path/{{ branch }}",
+                false,
+            ),
+            ("repo suffix in myrepo", "{{ myrepo }}", false),
+            ("repo suffix in norepo", "{{ norepo }}", false),
+        ];
 
-    #[test]
-    fn test_template_references_repo_name_with_filter() {
-        assert!(template_references_repo_name("{{ repo | sanitize }}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_deprecated_alias() {
-        assert!(template_references_repo_name(
-            "{{ main_worktree }}.{{ branch }}"
-        ));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_not_repo_path() {
-        // {{ repo_path }} should NOT match
-        assert!(!template_references_repo_name(
-            "{{ repo_path }}/../{{ branch | sanitize }}"
-        ));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_no_repo() {
-        assert!(!template_references_repo_name("../{{ branch | sanitize }}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_no_spaces() {
-        assert!(template_references_repo_name("{{repo}}.{{branch}}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_no_braces() {
-        // "repo" outside template expressions should not match
-        assert!(!template_references_repo_name("my-repo-path/{{ branch }}"));
-    }
-
-    #[test]
-    fn test_template_references_repo_name_substring_prefix() {
-        // "myrepo" should NOT match — "repo" is a suffix of a longer identifier
-        assert!(!template_references_repo_name("{{ myrepo }}"));
-        assert!(!template_references_repo_name("{{ norepo }}"));
+        for (name, template, expected) in cases {
+            assert_eq!(
+                template_references_repo_name(template),
+                expected,
+                "{name}: {template}"
+            );
+        }
     }
 }

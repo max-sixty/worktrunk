@@ -1,0 +1,96 @@
+---
+source: tests/integration_tests/git_error_display.rs
+expression: render_cases(cases)
+---
+## removal failed
+
+[31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
+[107m [0m fatal: worktree is dirty
+[107m [0m error: could not remove worktree
+
+## removal left directories
+
+[31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
+[107m [0m error: failed to delete '/tmp/repo.feature-x': Directory not empty
+[2m↳[22m [2mRemaining in directory: [4m.vite/, node_modules/, target/[24m[22m
+[2m↳[22m [2mA background process may be writing files; try [4mwt remove[24m (without --foreground)[22m
+
+## removal left one entry
+
+[31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
+[107m [0m error: failed to remove '/tmp/repo.feature-x/target': Permission denied
+[2m↳[22m [2mRemaining in directory: [4mtarget/[24m[22m
+
+## removal truncates a long entry list
+
+[31m✗[39m [31mFailed to remove worktree for [1mfeature-x[22m @ [1m/tmp/repo.feature-x[22m[39m
+[107m [0m error: failed to delete '/tmp/repo.feature-x': Directory not empty
+[2m↳[22m [2mRemaining in directory: [4mdir-00/, dir-01/, dir-02/, dir-03/, dir-04/, dir-05/, dir-06/, dir-07/, dir-08/, dir-09/, and 5 more[24m[22m
+[2m↳[22m [2mA background process may be writing files; try [4mwt remove[24m (without --foreground)[22m
+
+## creation failed
+
+[31m✗[39m [31mFailed to create worktree for [1mfeature-y[22m from base [1mmain[22m[39m
+[107m [0m fatal: '/tmp/repo.feature-y' already exists
+
+## creation failed with command
+
+[31m✗[39m [31mFailed to create worktree for [1mfix[22m from base [1mmain[22m[39m
+[107m [0m Preparing worktree (new branch 'fix')
+[107m [0m fatal: cannot lock ref 'refs/heads/fix'
+[2m↳[22m [2mFailed command, [4mexit code 128[24m:[22m
+[107m [0m [2m[0m[2m[34mgit[0m[2m worktree add /tmp/repo.fix [0m[2m[36m-b[0m[2m fix main[0m
+
+## worktree missing
+
+[31m✗[39m [31mWorktree directory missing for [1mstale-branch[22m[39m
+[2m↳[22m [2mTo clean up, run [4mgit worktree prune[24m[22m
+
+## no worktree at a leftover directory
+
+[31m✗[39m [31mNo worktree @ [1m/tmp/repo/.claude/worktrees/ghost[22m[39m
+[2m↳[22m [2mThe directory exists but is not a worktree; to list worktrees, run [4mwt list[24m[22m
+
+## branch not found
+
+[31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+[2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
+
+## branch not found after stale fetch
+
+[31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+[2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m (last fetched 3h ago)[22m
+
+## branch not found without create hint
+
+[31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+[2m↳[22m [2mTo list branches, run [4mwt list --branches --remotes[24m[22m
+
+## numeric branch on unknown forge
+
+[31m✗[39m [31mNo branch named [1m2474[22m[39m
+[2m↳[22m [2mTo switch to PR #2474 or MR !2474, run [4mwt switch pr:2474[24m or [4mwt switch mr:2474[24m; to create a new branch, run [4mwt switch --create 2474[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
+
+## numeric branch on GitHub
+
+[31m✗[39m [31mNo branch named [1m2474[22m[39m
+[2m↳[22m [2mTo switch to PR #2474, run [4mwt switch pr:2474[24m; to create a new branch, run [4mwt switch --create 2474[24m; to list branches, run [4mwt list --branches --remotes[24m (last fetched 9h ago)[22m
+
+## numeric branch on GitLab
+
+[31m✗[39m [31mNo branch named [1m2474[22m[39m
+[2m↳[22m [2mTo switch to MR !2474, run [4mwt switch mr:2474[24m; to create a new branch, run [4mwt switch --create 2474[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
+
+## worktree path occupied
+
+[31m✗[39m [31mCannot switch to [1mfeature-z[22m — there's a worktree at the expected path [1m/tmp/repo.feature-z[22m on branch [1mother-branch[22m[39m
+[2m↳[22m [2mTo switch the worktree at [4m/tmp/repo.feature-z[24m to [4mfeature-z[24m, run [4mcd /tmp/repo.feature-z && git switch feature-z[24m[22m
+
+## worktree path exists
+
+[31m✗[39m [31mDirectory already exists: [1m/tmp/repo.feature[22m[39m
+[2m↳[22m [2mTo remove manually, run [4mrm -rf /tmp/repo.feature[24m; to overwrite (with backup), run [4mwt switch --clobber feature[24m[22m
+
+## cannot remove main worktree
+
+[31m✗[39m [31mThe main worktree cannot be removed[39m

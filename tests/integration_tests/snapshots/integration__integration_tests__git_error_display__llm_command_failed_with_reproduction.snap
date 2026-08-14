@@ -1,8 +1,0 @@
----
-source: tests/integration_tests/git_error_display.rs
-expression: err.render()
----
-[31m✗[39m [31mCommit generation command failed[39m
-[107m [0m Error: API key not found
-[2m○[22m Ran command:
-[107m [0m wt step commit --show-prompt | llm --model claude

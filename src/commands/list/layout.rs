@@ -95,7 +95,9 @@
 //! which means empty penalties don't apply in progressive mode.
 //!
 //! Exceptions that we can compute instantly from items:
-//! - `path`: true only if any worktree has `branch_worktree_mismatch` (computed from items)
+//! - `path`: true only if some worktree's path carries information the branch
+//!   column doesn't — `branch_worktree_mismatch` or `duplicate_branch` (computed
+//!   from items)
 //! - `branch_diff`/`ci_status`: false if their required task is skipped
 //!
 //! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
@@ -105,12 +107,13 @@
 //!
 //! Some columns have non-standard behavior that extends beyond the basic two-tier model:
 //!
-//! 1. **CiStatus** and **Summary** - Visibility gate (`show_full` flag)
-//!    - Both require `show_full=true` — they reach off-machine (CI status over
-//!      the network, branch summaries via the LLM), so they're hidden by default
-//!    - Gated via `skip_tasks`: when `show_full=false`, their `TaskKind` is in
-//!      `skip_tasks` and the column is filtered out entirely (bypasses the tier
-//!      system)
+//! 1. **CiStatus** and **Summary** - Hidden in the default table without `--full`
+//!    - Both reach off-machine (CI status over the network, branch summaries via
+//!      the LLM), so the default table hides them until `--full`
+//!    - Gated via the run plan (`tasks`): the planner omits their `TaskKind` when
+//!      they're gated off, so `renders_given_run` filters the column out entirely
+//!      (bypasses the tier system). A `[list] columns` listing forces them on —
+//!      the planner then includes the task and the column renders
 //!    - **BranchDiff** (`main…±`) is pure local git, so it is *not* gated — it
 //!      shows by default and follows the normal two-tier priority (6/16);
 //!      CiStatus is 5/15
@@ -142,7 +145,7 @@
 //! // Build candidates from centralized COLUMN_SPECS registry
 //! let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
 //!     .iter()
-//!     .filter(|spec| /* visibility gate: skip_tasks */)
+//!     .filter(|spec| /* visibility gate: renders_given_run(tasks) */)
 //!     .map(|spec| ColumnCandidate {
 //!         spec,
 //!         priority: if spec.kind.has_data(&data_flags) {
@@ -159,7 +162,7 @@
 //! // Allocate columns in priority order, building pending list
 //! for candidate in candidates {
 //!     if candidate.spec.kind == ColumnKind::Message {
-//!         // Special handling: flexible width (min 20, preferred 50)
+//!         // Special handling: flexible width (min 10, max 100)
 //!     } else if let Some(ideal) = candidate.spec.kind.ideal(...) {
 //!         if let allocated = try_allocate(&mut remaining, ideal.width, ...) {
 //!             pending.push(PendingColumn { spec: candidate.spec, width: allocated, format: ideal.format });
@@ -203,9 +206,6 @@ use super::custom_columns::ResolvedCustomColumn;
 
 // Re-export DiffVariant for external use (e.g., picker module)
 pub use super::columns::DiffVariant;
-
-/// Width of short commit hash display (first 8 hex characters)
-const COMMIT_HASH_WIDTH: usize = 8;
 
 /// Ensures a column width is at least as wide as its header.
 ///
@@ -294,7 +294,7 @@ pub struct ColumnDataFlags {
     pub upstream: bool,
     pub url: bool,
     pub ci_status: bool,
-    pub path: bool, // True if any worktree has branch_worktree_mismatch
+    pub path: bool, // True if a worktree is off-template or shares its branch
 }
 
 /// Layout metadata including position mask for Status column
@@ -528,6 +528,9 @@ pub struct LayoutConfig {
     pub max_summary_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
+    /// How every cell in this layout presents a reference with a URL behind it.
+    /// Set once for the whole render — see [`LinkStyle`].
+    pub link_style: LinkStyle,
 }
 
 /// `Send + Sync` snapshot of the column geometry: `(kind, start, width)` per
@@ -535,9 +538,23 @@ pub struct LayoutConfig {
 /// threads, so renderers running outside `collect` — the picker's `--prs`
 /// thread — take this snapshot to place their cells on the same grid as the
 /// worktree rows.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ColumnGrid {
     pub columns: Vec<GridColumn>,
+    /// The layout's [`LinkStyle`], so a row rendered off-thread presents its
+    /// references exactly as the worktree rows beside it do.
+    pub link_style: LinkStyle,
+}
+
+impl Default for ColumnGrid {
+    /// An empty grid places no cells, so it emits nothing either way;
+    /// [`LinkStyle::Expanded`] is the inert choice.
+    fn default() -> Self {
+        Self {
+            columns: Vec::new(),
+            link_style: LinkStyle::Expanded,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -565,6 +582,7 @@ impl LayoutConfig {
                     width: col.width,
                 })
                 .collect(),
+            link_style: self.link_style,
         }
     }
 }
@@ -598,17 +616,110 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
+/// How one render presents a reference that has a URL behind it — a PR number
+/// (`#3604`) or a dev-server port (`:11486`).
+///
+/// A reference is short because the URL rides inside the OSC 8 escape, and two
+/// facts decide whether it can: whether the terminal draws OSC 8, and whether
+/// the destination delivers the escape there intact. One value answers both for
+/// a whole render, so a row's cells cannot disagree — a cell that underlines a
+/// reference whose escape something downstream strips leaves an underline with
+/// nothing to click.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkStyle {
+    /// An underlined OSC 8 link. A dev-server URL shows as `:3000` with the URL
+    /// itself inside the escape.
+    Linked,
+    /// The same short text, with neither escape nor underline: the picker feeds
+    /// its rows through skim, whose pipeline mangles OSC 8 into garbage like
+    /// `^[8;;…`. Nothing on those rows is clickable, so nothing is underlined.
+    /// The column is sized for the short form either way, so a dev-server URL
+    /// still collapses to `:3000`.
+    Unlinked,
+    /// The terminal doesn't draw OSC 8, so there is no escape to hide a URL in
+    /// and a dev-server URL prints in full, staying copyable. A PR reference
+    /// reads the same as under [`Unlinked`](Self::Unlinked) — it has nothing to
+    /// expand.
+    Expanded,
+}
+
+impl LinkStyle {
+    /// Resolve the style from the one thing a caller knows that the terminal
+    /// probe doesn't: whether its output reaches the terminal intact.
+    fn for_destination(carries_escapes: bool) -> Self {
+        match (supports_hyperlinks(Stream::Stdout), carries_escapes) {
+            (true, true) => Self::Linked,
+            (true, false) => Self::Unlinked,
+            (false, _) => Self::Expanded,
+        }
+    }
+}
+
+/// Where a rendered row is going: how many columns it may occupy, and whether
+/// an OSC 8 escape survives the trip.
+///
+/// The two travel together because one fact decides both. `wt list` writes to
+/// the terminal, so it gets the full width and its escapes arrive intact. The
+/// picker hands its rows to skim, which grants the list only part of the
+/// terminal — the rest is the preview pane — and mangles OSC 8 on the way.
+#[derive(Clone, Copy, Debug)]
+pub struct Destination {
+    pub width: usize,
+    pub link_style: LinkStyle,
+}
+
+impl Destination {
+    /// Rows written straight to the terminal — the `wt list` table.
+    pub fn terminal(width: usize) -> Self {
+        Self {
+            width,
+            link_style: LinkStyle::for_destination(true),
+        }
+    }
+
+    /// Rows handed to skim — the interactive picker.
+    pub fn picker(width: usize) -> Self {
+        Self {
+            width,
+            link_style: LinkStyle::for_destination(false),
+        }
+    }
+}
+
+/// Format the dev-server URL for a cell.
+///
+/// A collapsed cell shows just the port (e.g. `:3000`), costing the port's
+/// width rather than the whole URL's. Only [`LinkStyle::Expanded`] has nowhere
+/// to put the URL, so it renders in full and stays copyable — and
+/// [`estimate_url_width`] reserves a column wide enough for that, which is why
+/// the two sit together and read the same style.
+///
+/// The statusline passes [`LinkStyle::Linked`] whatever the terminal reports.
+/// It has no column to reserve — it fits a fixed-width line by dropping its
+/// worst-priority segment, and the URL is the worst — so an expanded cell would
+/// grow past the budget and be dropped entirely, trading a port for nothing. A
+/// terminal that doesn't implement OSC 8 discards the escape and renders the
+/// same `:3000`, so emitting it unconditionally costs that reader nothing.
+pub(crate) fn format_url_cell(url: &str, link: LinkStyle) -> String {
+    match (link, parse_port_from_url(url)) {
+        (LinkStyle::Linked, Some(port)) => worktrunk::styling::hyperlink(url, &format!(":{port}")),
+        (LinkStyle::Unlinked, Some(port)) => format!(":{port}"),
+        _ => url.to_string(),
+    }
+}
+
 /// Estimate URL column width using heuristics.
 ///
-/// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
-/// Otherwise, estimates full URL width from template structure.
-fn estimate_url_width(url_template: Option<&str>, hyperlinks_supported: bool) -> usize {
+/// A cell that collapses to its port displays as `:PORT` (6 chars for 5-digit
+/// ports); an [`Expanded`](LinkStyle::Expanded) one needs the full URL width,
+/// estimated from the template structure.
+fn estimate_url_width(url_template: Option<&str>, link: LinkStyle) -> usize {
     let Some(template) = url_template else {
         return 0;
     };
 
-    // When hyperlinks are supported, URLs with ports display as ":XXXXX" (6 chars)
-    if hyperlinks_supported {
+    // A collapsed cell shows ":XXXXX" (6 chars) whenever the template has a port
+    if link != LinkStyle::Expanded {
         // Check for port patterns: template variables or static ports
         if template.contains("hash_port")
             || template.contains(":{{")
@@ -634,8 +745,8 @@ fn estimate_url_width(url_template: Option<&str>, hyperlinks_supported: bool) ->
 /// without requiring a data scan.
 fn build_estimated_widths(
     max_branch: usize,
-    skip_tasks: &HashSet<TaskKind>,
-    has_branch_worktree_mismatch: bool,
+    tasks: &HashSet<TaskKind>,
+    path_is_informative: bool,
     url_width: usize,
     max_pr_number: Option<u64>,
     custom_widths: Vec<usize>,
@@ -666,17 +777,17 @@ fn build_estimated_widths(
     // before the data arrives, so empty penalties don't apply properly.
     //
     // Exceptions that we can compute instantly from items:
-    // - path: true only if any worktree has branch_worktree_mismatch
-    // - branch_diff/ci_status: false if their required task is skipped
+    // - path: true only if a worktree is off-template or shares its branch
+    // - branch_diff/ci_status: false if their task isn't in the run plan
     let data_flags = ColumnDataFlags {
         status: true,
         working_diff: true,
         ahead_behind: true,
-        branch_diff: !skip_tasks.contains(&TaskKind::BranchDiff),
+        branch_diff: tasks.contains(&TaskKind::BranchDiff),
         upstream: true,
-        url: !skip_tasks.contains(&TaskKind::UrlStatus),
-        ci_status: !skip_tasks.contains(&TaskKind::CiStatus),
-        path: has_branch_worktree_mismatch,
+        url: tasks.contains(&TaskKind::UrlStatus),
+        ci_status: tasks.contains(&TaskKind::CiStatus),
+        path: path_is_informative,
     };
 
     // URL width estimated from template + longest branch (or fallback)
@@ -753,13 +864,17 @@ fn display_sort_key(kind: ColumnKind, selected: Option<&[ColumnKind]>) -> (usize
 /// with pre-allocated width estimates for expensive-to-compute columns.
 fn allocate_columns_with_priority(
     metadata: &LayoutMetadata,
-    skip_tasks: &HashSet<TaskKind>,
+    tasks: &HashSet<TaskKind>,
     max_path_width: usize,
     commit_width: usize,
-    terminal_width: usize,
+    destination: Destination,
     main_worktree_path: PathBuf,
     columns: ColumnSelection,
 ) -> LayoutConfig {
+    let Destination {
+        width: terminal_width,
+        link_style,
+    } = destination;
     let ColumnSelection {
         custom: custom_columns,
         selected,
@@ -780,11 +895,15 @@ fn allocate_columns_with_priority(
             Some(order) => order.contains(&ColumnKind::Custom(i as u8)),
             None => true,
         })
-        .map(|(i, column)| ColumnSpec::new(ColumnKind::Custom(i as u8), column.priority, None))
+        .map(|(i, column)| ColumnSpec::new(ColumnKind::Custom(i as u8), column.priority))
         .collect();
 
     // Build candidates with priorities.
-    // - Filter out columns whose required task is being skipped.
+    // - Filter out columns whose tasks were all left out of the run plan (a
+    //   default-set column gated off by `--full`, or a missing template/LLM).
+    //   `renders_given_run` reads the same `required_tasks()` map that chose the
+    //   plan, so a rendered column's tasks always ran and only a gated-off column
+    //   drops here.
     // - When `[list] columns` selects a subset, keep only the chosen built-ins
     //   (Gutter is structural — always kept). This filters WITHOUT renumbering
     //   base_priority, so the Summary drop loop and EMPTY_PENALTY tiers below
@@ -794,10 +913,7 @@ fn allocate_columns_with_priority(
     //   built-ins and customs in one ordered set.
     let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
         .iter()
-        .filter(|spec| {
-            spec.requires_task
-                .is_none_or(|task| !skip_tasks.contains(&task))
-        })
+        .filter(|spec| spec.kind.renders_given_run(tasks))
         .filter(|spec| match selected {
             Some(order) => spec.kind == ColumnKind::Gutter || order.contains(&spec.kind),
             None => true,
@@ -1021,6 +1137,7 @@ fn allocate_columns_with_priority(
         max_summary_len,
         hidden_column_count,
         status_position_mask: metadata.status_position_mask,
+        link_style,
     }
 }
 
@@ -1046,17 +1163,18 @@ fn allocate_columns_with_priority(
 /// - Age: 4 chars ("11mo" short format)
 /// - CI: sized from `max_pr_number` (the cached largest PR/MR number seen,
 ///   e.g. "#3035"); 5 chars ("#9999") before the first fetch populates it
-/// - Message: flexible (20-100 chars)
+/// - Message: flexible (10-100 chars)
 /// - URL: estimated from template + longest branch
 pub fn calculate_layout_with_width(
     items: &[super::model::ListItem],
-    skip_tasks: &HashSet<TaskKind>,
-    terminal_width: usize,
+    tasks: &HashSet<TaskKind>,
+    destination: Destination,
     main_worktree_path: &Path,
     url_template: Option<&str>,
     max_pr_number: Option<u64>,
     columns: ColumnSelection,
 ) -> LayoutConfig {
+    let link_style = destination.link_style;
     let custom_columns = columns.custom;
     // Calculate actual widths for things we know
     // Include branch names from both worktrees and standalone branches
@@ -1065,7 +1183,22 @@ pub fn calculate_layout_with_width(
         .filter_map(|item| item.branch.as_deref())
         .max_by_key(|b| b.width());
 
-    let max_branch = longest_branch.map(|b| b.width()).unwrap_or(0);
+    // A detached row shows its abbreviated HEAD in this column
+    // (`ListItem::display_name`), so the column has to fit a SHA as well as the
+    // branch names — measured, not assumed, because `%h` follows `core.abbrev`
+    // and stretches further still to disambiguate.
+    let detached_width = items
+        .iter()
+        .filter(|item| item.branch.is_none())
+        .map(|item| item.short_sha.width())
+        .max();
+
+    let max_branch = longest_branch
+        .map(|b| b.width())
+        .into_iter()
+        .chain(detached_width)
+        .max()
+        .unwrap_or(0);
     let max_branch = fit_header(ColumnKind::Branch.header(), max_branch);
 
     let path_data_width = items
@@ -1076,15 +1209,16 @@ pub fn calculate_layout_with_width(
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
 
-    // Check if any worktree has a branch-worktree mismatch.
-    // Path column is only useful when there's a mismatch; otherwise it's redundant with branch.
-    let has_branch_worktree_mismatch = items
+    // The Path column is redundant with Branch unless a path says something the
+    // branch name doesn't: the worktree sits off-template, or two worktrees share
+    // the branch and the path is the only thing telling their rows apart.
+    let path_is_informative = items
         .iter()
         .filter_map(|item| item.worktree_data())
-        .any(|data| data.branch_worktree_mismatch);
+        .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
 
     // Estimate URL width from template (heuristic, no expansion needed)
-    let url_width = estimate_url_width(url_template, supports_hyperlinks(Stream::Stdout));
+    let url_width = estimate_url_width(url_template, link_style);
 
     // Custom column widths are measured, not estimated: values were expanded
     // before layout. A column empty on every row stays 0 and is excluded.
@@ -1109,21 +1243,30 @@ pub fn calculate_layout_with_width(
     // Build pre-allocated width estimates (same as buffered mode)
     let metadata = build_estimated_widths(
         max_branch,
-        skip_tasks,
-        has_branch_worktree_mismatch,
+        tasks,
+        path_is_informative,
         url_width,
         max_pr_number,
         custom_widths,
     );
 
-    let commit_width = fit_header(ColumnKind::Commit.header(), COMMIT_HASH_WIDTH);
+    // Sized from the abbreviated SHAs themselves — `%h` is `core.abbrev` wide
+    // (9-10 in a repo the size of rust-lang/rust, 7 by default) and a row whose
+    // prefix is ambiguous gets more still, so a fixed budget either truncates
+    // the hash or reserves space no row uses.
+    let commit_data_width = items
+        .iter()
+        .map(|item| item.short_sha.width())
+        .max()
+        .unwrap_or(0);
+    let commit_width = fit_header(ColumnKind::Commit.header(), commit_data_width);
 
     allocate_columns_with_priority(
         &metadata,
-        skip_tasks,
+        tasks,
         max_path_width,
         commit_width,
-        terminal_width,
+        destination,
         main_worktree_path.to_path_buf(),
         columns,
     )
@@ -1132,8 +1275,8 @@ pub fn calculate_layout_with_width(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display::terminal_width;
     use worktrunk::git::LineDiff;
+    use worktrunk::styling::terminal_width;
 
     #[test]
     fn test_fit_header() {
@@ -1383,10 +1526,10 @@ mod tests {
     #[test]
     fn test_pre_allocated_width_estimates() {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
-        // Empty skip set means all tasks are computed (equivalent to --full)
-        // has_branch_worktree_mismatch=true to test the path flag is passed through
+        // Full run plan means all tasks are computed (equivalent to --full)
+        // path_is_informative=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
-        let metadata = build_estimated_widths(20, &HashSet::new(), true, 0, None, Vec::new());
+        let metadata = build_estimated_widths(20, &full_run_tasks(), true, 0, None, Vec::new());
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
@@ -1457,19 +1600,19 @@ mod tests {
     fn test_ci_column_width_from_max_pr_number() {
         // Cached largest number sizes the column: "#12345" → 6
         let metadata =
-            build_estimated_widths(20, &HashSet::new(), false, 0, Some(12345), Vec::new());
+            build_estimated_widths(20, &full_run_tasks(), false, 0, Some(12345), Vec::new());
         assert_eq!(metadata.widths.ci_status, 6);
 
         // Never below header width ("CI" → 2)
-        let metadata = build_estimated_widths(20, &HashSet::new(), false, 0, Some(1), Vec::new());
+        let metadata = build_estimated_widths(20, &full_run_tasks(), false, 0, Some(1), Vec::new());
         assert_eq!(metadata.widths.ci_status, 2);
     }
 
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
+            UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
@@ -1498,6 +1641,7 @@ mod tests {
                 remote: Some("origin".to_string()),
                 ahead: 4,
                 behind: 2,
+                ..Default::default()
             }),
             pr_status: None,
             url: None,
@@ -1508,6 +1652,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/path"),
                 detached: false,
@@ -1517,23 +1662,25 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         };
 
         let items = vec![item];
-        let skip_tasks: HashSet<TaskKind> = [TaskKind::BranchDiff, TaskKind::CiStatus]
-            .into_iter()
-            .collect();
+        let tasks = run_except(&[TaskKind::BranchDiff, TaskKind::CiStatus]);
         let main_worktree_path = PathBuf::from("/test");
         let layout = calculate_layout_with_width(
             &items,
-            &skip_tasks,
-            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+            &tasks,
+            Destination {
+                width: terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+                link_style: LinkStyle::Expanded,
+            },
             &main_worktree_path,
             None,
             None,
@@ -1589,8 +1736,8 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
+            UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
@@ -1625,6 +1772,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test"),
                 detached: false,
@@ -1634,23 +1782,25 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         };
 
         let items = vec![item];
-        let skip_tasks: HashSet<TaskKind> = [TaskKind::BranchDiff, TaskKind::CiStatus]
-            .into_iter()
-            .collect();
+        let tasks = run_except(&[TaskKind::BranchDiff, TaskKind::CiStatus]);
         let main_worktree_path = PathBuf::from("/home/user/project");
         let layout = calculate_layout_with_width(
             &items,
-            &skip_tasks,
-            terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+            &tasks,
+            Destination {
+                width: terminal_width().expect("COLUMNS=80 is set in .cargo/config.toml"),
+                link_style: LinkStyle::Expanded,
+            },
             &main_worktree_path,
             None,
             None,
@@ -1675,8 +1825,8 @@ mod tests {
 
     #[test]
     fn test_estimate_url_width_no_template() {
-        assert_eq!(estimate_url_width(None, false), 0);
-        assert_eq!(estimate_url_width(None, true), 0);
+        assert_eq!(estimate_url_width(None, LinkStyle::Expanded), 0);
+        assert_eq!(estimate_url_width(None, LinkStyle::Linked), 0);
     }
 
     #[test]
@@ -1685,10 +1835,10 @@ mod tests {
 
         // Without hyperlinks: full URL width from template expansion
         // Replaces {{ branch | hash_port }} with "12345" → "http://localhost:12345" = 22
-        assert_eq!(estimate_url_width(Some(template), false), 22);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Expanded), 22);
 
         // With hyperlinks: compact port display ":12345" = 6
-        assert_eq!(estimate_url_width(Some(template), true), 6);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 6);
     }
 
     #[test]
@@ -1698,10 +1848,10 @@ mod tests {
 
         // Without hyperlinks: full URL width from template expansion
         // Replaces {{ branch }} with "feature-xx" → "http://localhost/feature-xx" = 27
-        assert_eq!(estimate_url_width(Some(template), false), 27);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Expanded), 27);
 
         // With hyperlinks: no port pattern, so still uses template estimation
-        assert_eq!(estimate_url_width(Some(template), true), 27);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 27);
     }
 
     #[test]
@@ -1709,10 +1859,10 @@ mod tests {
         let template = "http://localhost:3000";
 
         // Without hyperlinks: template length = 21
-        assert_eq!(estimate_url_width(Some(template), false), 21);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Expanded), 21);
 
         // With hyperlinks: has static port, compact display ":3000" = 6
-        assert_eq!(estimate_url_width(Some(template), true), 6);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 6);
     }
 
     #[test]
@@ -1720,19 +1870,20 @@ mod tests {
         let template = "http://localhost:{{ port }}";
 
         // Without hyperlinks: template length (no branch/hash_port replacement)
-        assert_eq!(estimate_url_width(Some(template), false), template.len());
+        assert_eq!(
+            estimate_url_width(Some(template), LinkStyle::Expanded),
+            template.len()
+        );
 
         // With hyperlinks: has ":{{" pattern, compact display = 6
-        assert_eq!(estimate_url_width(Some(template), true), 6);
+        assert_eq!(estimate_url_width(Some(template), LinkStyle::Linked), 6);
     }
 
     // --- Flexible column (Summary/Message) allocation tests ---
 
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{
-            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
-        };
+        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
@@ -1756,6 +1907,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/wt"),
                 detached: false,
@@ -1765,22 +1917,26 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         }
     }
 
-    /// Helper: compute layout with explicit terminal width and skip_tasks.
-    fn layout_at_width(width: usize, skip_tasks: &HashSet<TaskKind>) -> LayoutConfig {
+    /// Helper: compute layout with explicit terminal width and run plan.
+    fn layout_at_width(width: usize, tasks: &HashSet<TaskKind>) -> LayoutConfig {
         let items = vec![make_test_item("feature-branch")];
         calculate_layout_with_width(
             &items,
-            skip_tasks,
-            width,
+            tasks,
+            Destination {
+                width,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1791,17 +1947,22 @@ mod tests {
         )
     }
 
-    /// Default skip_tasks for non-full mode (CI and Summary skipped; BranchDiff
-    /// runs and the `main…±` column shows by default).
-    fn non_full_skip_tasks() -> HashSet<TaskKind> {
-        [TaskKind::CiStatus, TaskKind::SummaryGenerate]
-            .into_iter()
-            .collect()
+    /// The run plan with every task except those named — the positive form the
+    /// layout consumes (a column renders iff one of its tasks is present).
+    fn run_except(absent: &[TaskKind]) -> HashSet<TaskKind> {
+        use strum::IntoEnumIterator;
+        TaskKind::iter().filter(|k| !absent.contains(k)).collect()
     }
 
-    /// Full mode skip_tasks (nothing skipped).
-    fn full_skip_tasks() -> HashSet<TaskKind> {
-        HashSet::new()
+    /// Non-full mode: CI and Summary aren't planned (BranchDiff still runs, so
+    /// the `main…±` column shows by default).
+    fn non_full_run_tasks() -> HashSet<TaskKind> {
+        run_except(&[TaskKind::CiStatus, TaskKind::SummaryGenerate])
+    }
+
+    /// Full mode: every task runs.
+    fn full_run_tasks() -> HashSet<TaskKind> {
+        run_except(&[])
     }
 
     fn find_column(layout: &LayoutConfig, kind: ColumnKind) -> Option<&ColumnLayout> {
@@ -1817,8 +1978,11 @@ mod tests {
         let selected = [ColumnKind::Time, ColumnKind::Branch, ColumnKind::Commit];
         let layout = calculate_layout_with_width(
             &items,
-            &full_skip_tasks(),
-            300,
+            &full_run_tasks(),
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1876,8 +2040,11 @@ mod tests {
         ];
         let layout = calculate_layout_with_width(
             &items,
-            &full_skip_tasks(),
-            300,
+            &full_run_tasks(),
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1919,8 +2086,11 @@ mod tests {
         }];
         let layout = calculate_layout_with_width(
             &items,
-            &full_skip_tasks(),
-            300,
+            &full_run_tasks(),
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1935,17 +2105,62 @@ mod tests {
         );
     }
 
+    /// A detached row shows its abbreviated HEAD in the Branch column, so the
+    /// column has to fit a SHA even when every branch name is shorter than one.
+    /// Sized off the names alone it would truncate the hash mid-way — and the
+    /// budget is the row's own `short_sha`, not a fixed guess at how wide `%h`
+    /// runs.
     #[test]
-    fn test_selected_columns_cannot_force_a_gated_column() {
-        // Selection narrows the candidate set; it can't force on a column gated
-        // off by skip_tasks. `ci` needs --full: with CiStatus skipped, selecting
-        // it leaves a gutter-only table (the skip_tasks filter runs first).
+    fn test_branch_column_fits_a_detached_rows_sha() {
+        let mut detached = make_test_item("main");
+        detached.branch = None;
+        let items = vec![make_test_item("main"), detached];
+
+        let layout = calculate_layout_with_width(
+            &items,
+            &non_full_run_tasks(),
+            Destination {
+                width: 200,
+                link_style: LinkStyle::Expanded,
+            },
+            Path::new("/test"),
+            None,
+            None,
+            ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+        );
+
+        let branch = find_column(&layout, ColumnKind::Branch).expect("Branch allocated");
+        assert_eq!(
+            branch.width,
+            "abc1234".len(),
+            "the Branch column fits the abbreviated HEAD a detached row renders, \
+             not just the branch names ({:?} wide)",
+            branch.width
+        );
+    }
+
+    #[test]
+    fn test_layout_renders_column_iff_task_planned() {
+        // The layout stage honors the run plan literally: a column renders iff one
+        // of its tasks is planned, whatever the selection. Policy — which tasks to
+        // plan, including forcing a listed `ci` on without `--full` — lives in the
+        // planner (`required_tasks_for_render`); here we feed the layout a plan
+        // directly to test the filter in isolation.
         let items = vec![make_test_item("feature-branch")];
         let selected = [ColumnKind::CiStatus];
-        let gated = calculate_layout_with_width(
+
+        // CiStatus absent from the plan: the column drops even though it's
+        // selected, leaving a gutter-only table.
+        let unplanned = calculate_layout_with_width(
             &items,
-            &non_full_skip_tasks(),
-            200,
+            &non_full_run_tasks(),
+            Destination {
+                width: 200,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1955,18 +2170,20 @@ mod tests {
             },
         );
         assert!(
-            find_column(&gated, ColumnKind::CiStatus).is_none(),
-            "a gated column stays hidden even when selected"
+            find_column(&unplanned, ColumnKind::CiStatus).is_none(),
+            "a column whose task wasn't planned stays hidden, even when selected"
         );
-        let kinds: Vec<ColumnKind> = gated.columns.iter().map(|c| c.kind).collect();
+        let kinds: Vec<ColumnKind> = unplanned.columns.iter().map(|c| c.kind).collect();
         assert_eq!(kinds, vec![ColumnKind::Gutter], "only the gutter survives");
 
-        // Once the gate opens (full mode, nothing skipped), the same selection
-        // renders CI.
-        let full = calculate_layout_with_width(
+        // CiStatus in the plan: the same selection renders it.
+        let planned = calculate_layout_with_width(
             &items,
-            &full_skip_tasks(),
-            200,
+            &full_run_tasks(),
+            Destination {
+                width: 200,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -1976,8 +2193,8 @@ mod tests {
             },
         );
         assert!(
-            find_column(&full, ColumnKind::CiStatus).is_some(),
-            "the selected column renders once its task is no longer skipped"
+            find_column(&planned, ColumnKind::CiStatus).is_some(),
+            "the selected column renders once its task is planned"
         );
     }
 
@@ -1990,8 +2207,11 @@ mod tests {
         let selected = [ColumnKind::Message, ColumnKind::Branch];
         let layout = calculate_layout_with_width(
             &items,
-            &full_skip_tasks(),
-            24,
+            &full_run_tasks(),
+            Destination {
+                width: 24,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2012,8 +2232,8 @@ mod tests {
 
     #[test]
     fn test_summary_absent_when_skipped() {
-        // Non-full mode: SummaryGenerate in skip_tasks → no Summary column
-        let layout = layout_at_width(200, &non_full_skip_tasks());
+        // Non-full mode: SummaryGenerate absent from the run plan → no Summary column
+        let layout = layout_at_width(200, &non_full_run_tasks());
 
         assert!(
             find_column(&layout, ColumnKind::Summary).is_none(),
@@ -2028,7 +2248,7 @@ mod tests {
 
     #[test]
     fn test_summary_present_in_full_mode() {
-        let layout = layout_at_width(200, &full_skip_tasks());
+        let layout = layout_at_width(200, &full_run_tasks());
 
         assert!(
             find_column(&layout, ColumnKind::Summary).is_some(),
@@ -2041,7 +2261,7 @@ mod tests {
     fn test_summary_expands_before_message() {
         // At a moderate width, Summary should expand toward its max (70)
         // before Message gets leftover space.
-        let layout = layout_at_width(200, &full_skip_tasks());
+        let layout = layout_at_width(200, &full_run_tasks());
 
         let summary = find_column(&layout, ColumnKind::Summary);
         let message = find_column(&layout, ColumnKind::Message);
@@ -2064,7 +2284,7 @@ mod tests {
     #[test]
     fn test_summary_capped_at_max() {
         // Very wide terminal: Summary should cap at MAX_SUMMARY (70)
-        let layout = layout_at_width(500, &full_skip_tasks());
+        let layout = layout_at_width(500, &full_run_tasks());
 
         let summary = find_column(&layout, ColumnKind::Summary).unwrap();
         assert_eq!(summary.width, 70, "Summary should cap at MAX_SUMMARY (70)");
@@ -2074,7 +2294,7 @@ mod tests {
     #[test]
     fn test_message_capped_at_max() {
         // Very wide terminal: Message should cap at MAX_MESSAGE (100)
-        let layout = layout_at_width(500, &full_skip_tasks());
+        let layout = layout_at_width(500, &full_run_tasks());
 
         let message = find_column(&layout, ColumnKind::Message).unwrap();
         assert_eq!(
@@ -2087,8 +2307,8 @@ mod tests {
     #[test]
     fn test_message_gets_more_space_when_summary_skipped() {
         // Compare Message width with and without Summary
-        let with_summary = layout_at_width(200, &full_skip_tasks());
-        let without_summary = layout_at_width(200, &non_full_skip_tasks());
+        let with_summary = layout_at_width(200, &full_run_tasks());
+        let without_summary = layout_at_width(200, &non_full_run_tasks());
 
         let msg_with = find_column(&with_summary, ColumnKind::Message)
             .unwrap()
@@ -2108,7 +2328,7 @@ mod tests {
     #[test]
     fn test_summary_display_order() {
         // Summary should appear between BranchDiff and Upstream in display order
-        let layout = layout_at_width(500, &full_skip_tasks());
+        let layout = layout_at_width(500, &full_run_tasks());
 
         let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
 
@@ -2137,7 +2357,7 @@ mod tests {
         // At wide widths where Summary >= 50, they can appear.
         let mut found_below = false;
         for width in 80..200 {
-            let l = layout_at_width(width, &full_skip_tasks());
+            let l = layout_at_width(width, &full_run_tasks());
             if let Some(s) = find_column(&l, ColumnKind::Summary)
                 && s.width < 50
             {
@@ -2162,7 +2382,7 @@ mod tests {
         assert!(found_below, "no width produced Summary < 50");
 
         // At 200, Summary is well above threshold and all columns appear.
-        let l = layout_at_width(200, &full_skip_tasks());
+        let l = layout_at_width(200, &full_run_tasks());
         assert!(find_column(&l, ColumnKind::Summary).unwrap().width >= 50);
         assert!(find_column(&l, ColumnKind::Commit).is_some());
         assert!(find_column(&l, ColumnKind::Time).is_some());
@@ -2173,7 +2393,7 @@ mod tests {
     fn test_narrow_terminal_drops_flexible_columns() {
         // At a very narrow width, neither Summary nor Message should fit
         // after the critical fixed columns are allocated.
-        let layout = layout_at_width(40, &full_skip_tasks());
+        let layout = layout_at_width(40, &full_run_tasks());
 
         // At 40 chars, only Gutter (2) + Branch (~14) can fit
         assert!(
@@ -2188,9 +2408,7 @@ mod tests {
 
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{
-            ActiveGitOperation, ItemKind, StatusSymbols, WorktreeData,
-        };
+        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
@@ -2214,6 +2432,7 @@ mod tests {
             status_symbols: StatusSymbols::default(),
             statusline: None,
             custom_values: Vec::new(),
+            seeded: Default::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from(path),
                 detached: false,
@@ -2223,11 +2442,12 @@ mod tests {
                 working_tree_status: None,
                 has_conflicts: None,
                 has_working_tree_conflicts: None,
-                git_operation: Some(ActiveGitOperation::None),
+                git_operation: Some(None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
                 branch_worktree_mismatch: false,
+                duplicate_branch: false,
             })),
         }
     }
@@ -2258,13 +2478,16 @@ mod tests {
         let main_path = Path::new("/test/worktrunk");
 
         // Full mode: all columns enabled
-        let skip = full_skip_tasks();
+        let tasks = full_run_tasks();
 
         // At very wide terminals: both Path and Summary coexist
         let layout_wide = calculate_layout_with_width(
             &items,
-            &skip,
-            300,
+            &tasks,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2287,8 +2510,11 @@ mod tests {
         // leaving Summary at ~48 and dropping Message entirely.
         let layout_170 = calculate_layout_with_width(
             &items,
-            &skip,
-            170,
+            &tasks,
+            Destination {
+                width: 170,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2312,8 +2538,8 @@ mod tests {
     #[test]
     fn test_snapshot_path_yields_to_summary() {
         use crate::commands::list::model::{
-            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ItemKind,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, StatusSymbols, UpstreamStatus,
+            WorktreeData,
         };
         use worktrunk::git::LineDiff;
 
@@ -2341,6 +2567,7 @@ mod tests {
                 remote: Some("origin".to_string()),
                 ahead: 0,
                 behind: 0,
+                ..Default::default()
             });
             super::super::model::ListItem {
                 head: "a620bcfe".to_string(),
@@ -2368,6 +2595,7 @@ mod tests {
                 status_symbols: StatusSymbols::default(),
                 statusline: None,
                 custom_values: Vec::new(),
+                seeded: Default::default(),
                 kind: ItemKind::Worktree(Box::new(WorktreeData {
                     path: PathBuf::from(path),
                     detached: false,
@@ -2377,11 +2605,12 @@ mod tests {
                     working_tree_status: None,
                     has_conflicts: None,
                     has_working_tree_conflicts: None,
-                    git_operation: Some(ActiveGitOperation::None),
+                    git_operation: Some(None),
                     is_main,
                     is_current,
                     is_previous: false,
                     branch_worktree_mismatch: false,
+                    duplicate_branch: false,
                 })),
             }
         };
@@ -2433,12 +2662,15 @@ mod tests {
             ),
         ];
         let main_path = Path::new("/test/worktrunk");
-        let skip = full_skip_tasks();
+        let tasks = full_run_tasks();
 
         let layout = calculate_layout_with_width(
             &items,
-            &skip,
-            170,
+            &tasks,
+            Destination {
+                width: 170,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2468,15 +2700,18 @@ mod tests {
         let items = vec![make_test_item(
             "feature/very-long-branch-name-that-exceeds-available-space",
         )];
-        let skip = non_full_skip_tasks();
+        let tasks = non_full_run_tasks();
         let main_path = Path::new("/test");
 
         // At 30 cols, ideal branch width (~57) can't fit, but Branch should still
         // be allocated at a reduced width rather than dropped.
         let layout = calculate_layout_with_width(
             &items,
-            &skip,
-            30,
+            &tasks,
+            Destination {
+                width: 30,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2499,8 +2734,11 @@ mod tests {
         // At 80 cols, Branch should fit comfortably
         let layout = calculate_layout_with_width(
             &items,
-            &skip,
-            80,
+            &tasks,
+            Destination {
+                width: 80,
+                link_style: LinkStyle::Expanded,
+            },
             main_path,
             None,
             None,
@@ -2518,11 +2756,11 @@ mod tests {
 
     #[test]
     fn test_summary_skipped_preserves_other_full_columns() {
-        // Even with SummaryGenerate skipped, other full-mode columns should still appear
-        let mut skip_only_summary: HashSet<TaskKind> = HashSet::new();
-        skip_only_summary.insert(TaskKind::SummaryGenerate);
+        // Even with SummaryGenerate dropped from the plan, other full-mode
+        // columns should still appear.
+        let run_without_summary = run_except(&[TaskKind::SummaryGenerate]);
 
-        let layout = layout_at_width(300, &skip_only_summary);
+        let layout = layout_at_width(300, &run_without_summary);
 
         assert!(
             find_column(&layout, ColumnKind::Summary).is_none(),
@@ -2563,8 +2801,11 @@ mod tests {
 
         let layout = calculate_layout_with_width(
             &items,
-            &non_full_skip_tasks(),
-            300,
+            &non_full_run_tasks(),
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2597,16 +2838,19 @@ mod tests {
         item.custom_values = vec![String::new()];
         let items = vec![item];
 
-        // Skip UrlStatus like collect does when no URL template is
-        // configured; otherwise the zero-width Url candidate counts as a
+        // Drop UrlStatus from the plan like collect does when no URL template
+        // is configured; otherwise the zero-width Url candidate counts as a
         // hidden column and obscures the assertion below.
-        let mut skip_tasks = non_full_skip_tasks();
-        skip_tasks.insert(TaskKind::UrlStatus);
+        let mut tasks = non_full_run_tasks();
+        tasks.remove(&TaskKind::UrlStatus);
 
         let layout = calculate_layout_with_width(
             &items,
-            &skip_tasks,
-            300,
+            &tasks,
+            Destination {
+                width: 300,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,
@@ -2631,8 +2875,11 @@ mod tests {
 
         let narrow = calculate_layout_with_width(
             &items,
-            &non_full_skip_tasks(),
-            30,
+            &non_full_run_tasks(),
+            Destination {
+                width: 30,
+                link_style: LinkStyle::Expanded,
+            },
             Path::new("/test"),
             None,
             None,

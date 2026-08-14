@@ -14,41 +14,102 @@ worktrunk/                          ← repo root = marketplace root
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
 ├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
 ├── hooks/hooks.json                ← Gemini activity hooks (call the wt.sh below)
-├── skills -> (this dir)            ← Gemini reads ${extensionPath}/skills = repo-root skills/
+├── skills/                         ← real dir; Gemini reads ${extensionPath}/skills directly
 └── plugins/worktrunk/              ← plugin root (Claude + Codex resolve source here)
-    ├── plugin.json                 ← Claude manifest (NO .claude-plugin/ wrapper —
-    │                                  the wrapper is marketplace-root-only)
+    ├── .claude-plugin/plugin.json  ← Claude manifest (metadata only — NO `hooks`
+    │                                  or `skills` keys; components load by
+    │                                  convention, see below)
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
-    ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks
-    ├── hooks/wt.sh                 ← canonical hook shim; Claude/Codex reach it via
-    │                                  $CLAUDE_PLUGIN_ROOT, Gemini via
+    ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks,
+    │                                  discovered by convention at this exact path
+    │                                  (#3417; Codex is kept off it by its inline
+    │                                  manifest, #3362)
+    ├── hooks/wt.sh                 ← canonical hook shim; Claude reaches it via
+    │                                  $CLAUDE_PLUGIN_ROOT, Codex via $PLUGIN_ROOT,
+    │                                  Gemini via
     │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
-    ├── skills -> ../../skills       ← symlink; single-sources skills across all
-    │                                  tools and the docs auto-sync
+    ├── skills/                      ← generated real-file mirror of repo-root
+    │                                  skills/ (test_docs_are_in_sync; never
+    │                                  hand-edit) — real files because Codex's
+    │                                  installer drops symlinks, see below
     ├── CLAUDE.md / README.md
-    └── (Codex ships no hooks — see Known Limitations below)
+    └── (Codex activity hooks live *inline* in .codex-plugin/plugin.json's
+        `hooks` key — see Known Limitations below)
 ```
 
 Path resolution differs by tool, all verified end-to-end against the real CLIs:
 
-- **Claude**: `.claude-plugin/marketplace.json` `source: "./plugins/worktrunk"`.
-  Claude reads `plugins/worktrunk/plugin.json` (at the plugin root, *not* a
-  `.claude-plugin/` subdir). `hooks` and `skills` paths in `plugin.json` resolve
-  from the plugin root, so `./skills/worktrunk` follows the `skills` symlink to
-  the repo-root `skills/worktrunk`. `$CLAUDE_PLUGIN_ROOT` is the plugin root.
-- **Codex**: `.agents/plugins/marketplace.json` `source` object
-  `{ "source": "local", "path": "./plugins/worktrunk" }`. Codex reads
-  `plugins/worktrunk/.codex-plugin/plugin.json`. `skills: "./skills/"` resolves
-  through the same symlink.
+- **Claude** (claude-cli 2.1.207): `.claude-plugin/marketplace.json` `source:
+  "./plugins/worktrunk"`. Claude reads
+  `plugins/worktrunk/.claude-plugin/plugin.json` — the same wrapper convention
+  as the marketplace root, and the only manifest location `claude plugin
+  validate` accepts (a bare `plugin.json` at the plugin root loads through an
+  undocumented fallback but fails validation). The manifest deliberately
+  carries no `version` field: installs pin the marketplace git SHA, so a
+  semver here would be a second version to maintain with nothing consuming
+  it — `claude plugin validate`'s missing-`version` warning is accepted.
+  Components load by **convention**, and the manifest must not name them:
+  - Hooks are discovered at `hooks/hooks.json`. The loader does not honor the
+    string-path `hooks` manifest override for plugin loads, so a renamed file
+    silently loads nothing (#3417) and a `hooks` key pointing at the
+    conventional path is dead config that can only mask a mislocated file.
+  - Skills are auto-discovered by scanning `skills/` for `<dir>/SKILL.md`; a
+    `skills` manifest array only *adds* directories to that scan, so listing
+    the defaults is redundant.
+
+  `$CLAUDE_PLUGIN_ROOT` is the plugin root.
+- **Codex** (codex-cli 0.144.1): `.agents/plugins/marketplace.json` `source`
+  object `{ "source": "local", "path": "./plugins/worktrunk" }`. Codex reads
+  `plugins/worktrunk/.codex-plugin/plugin.json`. Skills load by convention —
+  with no `skills` manifest key, Codex scans `<plugin-root>/skills/`; an
+  explicit `"skills": "./skills/"` names the same directory, so the manifest
+  carries no `skills` key. The scanned tree is the real-file mirror ("Plugin
+  skills are a generated mirror" below).
 - **Gemini**: `gemini-extension.json` at the repo root; `${extensionPath}` is
   the repo root, so `${extensionPath}/skills/` is the repo-root `skills/`
   directly and `hooks/hooks.json` (repo root) calls the canonical shim at
   `${extensionPath}/plugins/worktrunk/hooks/wt.sh`. No symlink or copy.
 
-Each Claude skill directory must be listed in `plugin.json`'s `skills` array
-(Claude has no auto-discovery — `test_plugin_layout_is_consolidated` enforces
-that every repo-root skill is listed); Codex and Gemini pick up the whole
-`skills/` dir (accepted tradeoff — see Known Limitations below).
+All three tools pick up the whole `skills/` set — Gemini reads the repo-root
+directory, Claude and Codex ship the plugin mirror — so a new repo-root skill
+ships everywhere once `test_docs_are_in_sync` regenerates the mirror, provided
+its directory contains a `SKILL.md` (`test_plugin_layout_is_consolidated`
+enforces that; a directory without one is silently ignored). Claude-only
+skills reach the other tools too (accepted tradeoff — see Known Limitations
+below).
+
+### Plugin skills are a generated mirror
+
+`plugins/worktrunk/skills/` is a real-file mirror of the authored repo-root
+`skills/`, regenerated — symlinks dereferenced, stale files deleted — by the
+`sync_plugin_skills_mirror` stage of `test_docs_are_in_sync`; never hand-edit
+it. Repo-root `skills/` stays the authored home: Gemini reads it directly and
+the docs sync writes into it.
+
+The mirror holds real files because of how the plugin ships, verified
+end-to-end against codex-cli 0.144.1 (scratch marketplaces through
+`codex plugin marketplace add` + `codex plugin add`, skill inventory read with
+`codex debug prompt-input`):
+
+- `codex plugin add` copies the plugin into
+  `$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>` with a copier
+  that handles only regular files and directories, silently skipping symlink
+  entries (`copy_dir_recursive` in `codex-rs/core-plugins/src/store.rs`), and
+  sessions load from that cache copy. A symlink anywhere in the tree — a
+  top-level `skills` link or a nested one like `reference/README.md` — ships
+  no content. No manifest value can bridge it: manifest paths must stay within
+  the plugin root (`..` and absolute paths are rejected,
+  `resolve_manifest_path` in `codex-rs/core-plugins/src/manifest.rs`).
+- Codex's convention scan (`default_skill_roots`, the empty-`skills` branch of
+  `plugin_skill_roots` in `codex-rs/core-plugins/src/loader.rs`) reads the
+  mirror like any directory.
+- Claude's installer dereferences symlinks, so a symlinked `skills/` worked
+  for Claude; the mirror serves it identically. A symlink also materializes as
+  a plain text file on Windows checkouts, which shipped no skills from a
+  Windows clone to Claude or Codex.
+
+`test_plugin_layout_is_consolidated` pins the no-symlinks invariant;
+`test_docs_are_in_sync` pins content equality with repo-root `skills/`.
 
 ## Known Limitations
 
@@ -65,12 +126,20 @@ The 💬 transitions overlap deliberately: `Notification` covers the documented 
 
 **Tracking**: [claude-code#9516](https://github.com/anthropics/claude-code/issues/9516)
 
-### Codex ships no activity hooks
+### Codex activity hooks
 
-The Claude manifest carries `hooks: "./hooks/hooks.json"`; the Codex manifest has no `hooks` key and Codex ships no hooks. Codex's `HookEventNameWire` vocabulary (codex-cli 0.130.0: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `UserPromptSubmit`) has no `Stop`/turn-end event, so a 🤖 marker set on `UserPromptSubmit` could never return to 💬 — it would stick at "working" indefinitely.
+Claude's hooks live in the standalone `hooks/hooks.json` its loader discovers by convention (see Directory Layout above); the Codex manifest carries `hooks` as an **inline object**, `{ "hooks": { … } }`, embedding a Codex-tailored hooks file directly. The inline form is deliberate:
 
-Re-add a Codex `hooks.json`, the `hooks` manifest key, the install hints in `src/commands/config/codex.rs`, and the docs (`docs/content/claude-code.md` "Activity tracking", `src/cli/config.rs` plugin list) once Codex exposes a turn-end hook event.
+- **Why inline for Codex, not a path or an absent key.** Claude and Codex share one payload dir, and Codex *also* auto-discovers `hooks/hooks.json` at the plugin root by convention (`DEFAULT_HOOKS_CONFIG_FILE`, the `None` branch of `load_plugin_hooks`) — which once surfaced Worktrunk's *Claude* events in a Codex session ([#3362](https://github.com/max-sixty/worktrunk/issues/3362)). The Codex manifest carries its own hooks **inline**, taking Codex's `Some(Inline)` branch (`resolve_manifest_hooks` in `codex-rs/core-plugins/src/manifest.rs`), which **overrides** convention discovery. The inline object is both the functional definition of the Codex-native events and the thing that keeps Codex off the shared `hooks/hooks.json`, so the two toolchains coexist on one file: Claude discovers it, Codex ignores it. (Scoping via the filename instead — `hooks/claude-hooks.json` — breaks Claude's discovery, [#3417](https://github.com/max-sixty/worktrunk/issues/3417); the inline override makes it unnecessary.)
+- **Why `$PLUGIN_ROOT`, not `$CLAUDE_PLUGIN_ROOT`.** Codex exports both to hook commands (`PLUGIN_ROOT` native, `CLAUDE_PLUGIN_ROOT` as an OOTB-compat alias — `codex-rs/hooks/src/engine/discovery.rs`). The Codex file uses the native `$PLUGIN_ROOT` so nothing Claude-branded appears in a Codex session.
+
+The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/config/src/hook_config.rs`):
+- `UserPromptSubmit` → 🤖 (working)
+- `PermissionRequest`, `Stop` → 💬 (waiting for input)
+- `SessionEnd` → clears the marker
+
+`Stop` fires at turn-end, so 🤖 returns to 💬 when a turn completes. `SessionEnd` clears the marker when the main thread ends.
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 
-Codex's `"skills": "./skills/"` and Gemini's `${extensionPath}/skills/` both resolve the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
+Codex's mirrored `skills/` and Gemini's `${extensionPath}/skills/` both carry the entire skill set, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single authored `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.

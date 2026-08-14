@@ -54,6 +54,8 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
+Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via `git worktree add --force`) fails a different test: deleting the ref would leave that worktree unable to resolve `HEAD`, which is why `git branch -d` refuses the same delete. Such a branch is retained whatever `-D` asks, and the surviving checkout is named.
+
 ## Force flags
 
 Worktrunk has two force flags for different situations:
@@ -72,6 +74,43 @@ Use `--no-delete-branch` to keep the branch regardless of merge status.
 Removal runs in the background by default — the command returns immediately. The worktree is renamed into `.git/wt/trash/` (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached `rm -rf` finishes cleanup. Cross-filesystem worktrees fall back to `git worktree remove`. Logs: `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to run in the foreground.
 
 After each `wt remove`, entries in `.git/wt/trash/` older than 24 hours are swept by a detached `rm -rf` — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
+
+## Reaping processes
+
+<span class="badge-experimental"></span>
+
+`--reap` terminates processes left running in the worktree before it is removed — a `post-start` dev server, a file watcher, a language server — freeing the ports and file handles they hold. Processes are discovered by working directory: any process whose current directory is at or under the worktree path (`SIGTERM`, then `SIGKILL` for survivors).
+
+{% terminal(cmd="wt remove --reap feature") %}
+◎ Reaping 2 processes under feature worktree
+   ┃ 51234 node
+   ┃ 51240 esbuild
+✓ Reaped 2 processes
+◎ Removing feature worktree & branch in background (same commit as main, _)
+{% end %}
+
+To avoid killing work the user did not mean to kill, two guards keep `--reap` conservative:
+
+- **Interactive processes are spared.** A process holding a controlling terminal — an interactive shell, or a terminal editor such as `vim` with unsaved buffers — is never reaped. Only detached processes remain candidates.
+- **Discovery is by working directory only.** A process that started in the worktree and later changed directory, or a daemon that reparented to `init`, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [`wt step tether`](@/step.md#wt-step-tether), which kills the whole process group when the worktree is removed.
+
+Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
+
+## JSON output
+
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal.
+
+`branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
+
+| Value | Meaning |
+|-------|---------|
+| `deleted` | The branch is gone |
+| `deferred` | Handed to the detached background process, whose result this run never sees. `--foreground` never reports it |
+| `not_attempted` | No deletion was tried: a detached worktree, a sibling checkout, or `--no-delete-branch` |
+| `retained_unmerged` | Declined: the branch was not integrated into the target |
+| `retained_checked_out` | Declined: the final topology read found a live worktree with it checked out |
+| `retained_raced` | Refused by the compare-and-swap — the branch moved between the integration check and the delete. Re-read the ref and retry |
+| `retained_failed` | The delete command itself failed |
 
 ## Hooks
 
@@ -108,6 +147,13 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
       <b><span class=c>--foreground</span></b>
           Run removal in foreground (block until complete)
+
+      <b><span class=c>--reap</span></b>
+          Kill processes started in the worktree [experimental]
+
+          Before removal, terminate processes whose working directory is under the worktree — dev
+          servers, watchers, language servers. Processes holding a controlling terminal (interactive
+          shells, terminal editors) are left alone. Unix only.
 
   <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Force worktree removal

@@ -1,12 +1,12 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, UserConfig, expand_template, format_hook_variables,
-    template_references_var, validate_template_syntax,
+    Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, VarsMode,
+    format_hook_variables, validate_template_syntax,
 };
 use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -26,12 +26,13 @@ use crate::output::{DirectivePassthrough, execute_shell_command};
 pub struct PreparedCommand {
     pub name: Option<String>,
     /// Raw template, rendered against `context` when the command runs.
-    /// Syntax is validated at preparation; rendering is deferred so `vars.*`
-    /// set by earlier pipeline steps are read fresh from git config.
+    /// Execution paths validate syntax via [`PreparedPipeline::validated`];
+    /// rendering is deferred so `vars.*` set by earlier pipeline steps are
+    /// read fresh from git config.
     pub template: String,
     /// Template variables, frozen at preparation. Serialized to JSON only at
     /// the process boundary (child stdin, background pipeline spec).
-    pub context: HashMap<String, String>,
+    pub context: TemplateContext,
     /// Name used in template expansion errors: `"user:foo"` for named hook
     /// commands, `"user pre-merge hook"` for unnamed ones, the alias name for
     /// aliases.
@@ -44,8 +45,7 @@ pub struct PreparedCommand {
 impl PreparedCommand {
     /// The JSON form of `context` piped to the child's stdin.
     pub fn context_json(&self) -> String {
-        serde_json::to_string(&self.context)
-            .expect("HashMap<String, String> serialization should never fail")
+        self.context.to_json()
     }
 }
 
@@ -64,6 +64,14 @@ impl PreparedStep {
             Self::Concurrent(cmds) => cmds,
         }
     }
+
+    /// Borrow the step's commands (Single becomes a one-element slice).
+    pub fn commands(&self) -> &[PreparedCommand] {
+        match self {
+            Self::Single(cmd) => std::slice::from_ref(cmd),
+            Self::Concurrent(cmds) => cmds,
+        }
+    }
 }
 
 /// Wraps a command failure (FailFast path) into the final error.
@@ -71,7 +79,7 @@ impl PreparedStep {
 /// Receives the failing command, the message extracted from the inner error,
 /// and the optional exit code (set when the inner error is
 /// `WorktrunkError::ChildProcessExited`). Signal-derived errors bypass this
-/// wrapper and short-circuit to `AlreadyDisplayed` — see
+/// wrapper and short-circuit to `Interrupted` — see
 /// [`handle_command_error`] for the rationale.
 ///
 /// The wrapper is invoked on the calling thread after concurrent children
@@ -106,6 +114,14 @@ impl PipelineKind {
             Self::Hook { hook_type, .. } => Some(format!("{hook_type} {}", cmd.label)),
             Self::Alias { .. } => None,
         }
+    }
+
+    /// Whether this pipeline is a hook (vs an alias). Hooks scrub inherited
+    /// git-discovery env vars from their children so a hook's `git` commands
+    /// resolve against the worktree wt targets, not an inherited `GIT_DIR`
+    /// (issue #3373).
+    fn is_hook(&self) -> bool {
+        matches!(self, Self::Hook { .. })
     }
 }
 
@@ -210,25 +226,37 @@ impl<'a> CommandContext<'a> {
     }
 }
 
-/// Build hook context as a HashMap for JSON serialization and template expansion.
+/// Resolve the template variables for one command invocation.
 ///
-/// The resulting HashMap is passed to hook commands as JSON on stdin,
-/// and used directly for template variable expansion.
+/// The sole producer of [`TemplateContext`], which owns what happens to the
+/// result: expansion, the JSON a hook child reads on stdin, the `-v` table.
 ///
-/// `referenced`, when `Some`, restricts the map to keys named in the set —
-/// vars the body doesn't reference are not computed. Aliases pass their
-/// `referenced_vars_for_config` set (extended via `alias_context_filter`)
-/// so unused git lookups (`var_commit` rev-parse, `var_default_branch` cold
-/// detection, `branch().upstream()`) are skipped, and the verbose
-/// `template variables:` table only lists vars the body actually references.
-/// Hooks pass `None` so every standard var stays available — the child
-/// receives the full context as JSON on stdin and may consume keys that
-/// don't appear in the inline `{{ }}` template (e.g. via `jq`).
+/// `scope` decides how much to resolve. [`VarScope::Referenced`] skips the git
+/// lookups behind vars the templates don't name (`var_commit` rev-parse,
+/// `var_default_branch` cold detection, `branch().upstream()`), and follows
+/// from who reads the finished context, not from what kind of command is
+/// running:
+///
+/// - **`Referenced`** when only the templates read it. A var they don't name
+///   would be computed and discarded. Aliases pass `referenced_vars_for_config`
+///   (extended via `alias_context_filter`); `wt switch --execute` passes
+///   `referenced_vars_for_templates` over its command and trailing args.
+/// - **`All`** when something reads keys the `{{ }}` templates never mention.
+///   Either the child receives the whole context as JSON on stdin and may pull
+///   keys out of it (e.g. via `jq`) — hook pipelines, `wt step for-each` — or
+///   the command's output *is* the variable listing, which filtering would
+///   narrow to what the body happens to reference: `wt step eval -v`, and the
+///   hook pipeline's own `format_hook_variables` table.
+///
+/// The template-preview paths (`render_hook_commands`, `wt config alias`) fit
+/// neither case and still pass `All`: they expand and print one line per
+/// configured command, so filtering would be correct but saves nothing an
+/// interactive display would notice.
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
-    referenced: Option<&BTreeSet<String>>,
-) -> Result<HashMap<String, String>> {
+    scope: VarScope<'_>,
+) -> Result<TemplateContext> {
     let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
         .file_name()
@@ -246,12 +274,10 @@ pub fn build_hook_context(
 
     let repo_path = to_posix_path(&repo_root.to_string_lossy());
 
-    let want = |key: &str| referenced.is_none_or(|r| r.contains(key));
-
     // Cheap vars (already in scope, no I/O) are populated unconditionally —
     // skipping them saves no work and would just turn the verbose table's
     // `(unused)` label into noise. Only the expensive blocks below
-    // (subprocesses, git config / remote lookups) honor `want`.
+    // (subprocesses, git config / remote lookups) consult `scope`.
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
     map.insert("branch".into(), ctx.branch_or_head().into());
@@ -265,10 +291,11 @@ pub fn build_hook_context(
 
     if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
         map.insert("owner".into(), parsed_remote.owner().to_string());
+        map.insert("remote_repo".into(), parsed_remote.repo().to_string());
     }
 
     // Default branch
-    if want("default_branch") {
+    if scope.wants("default_branch") {
         let _span = Span::new("var_default_branch");
         if let Some(default_branch) = ctx.repo.default_branch() {
             map.insert("default_branch".into(), default_branch);
@@ -276,15 +303,15 @@ pub fn build_hook_context(
     }
 
     // Primary worktree path (where established files live)
-    if want("primary_worktree_path") || want("main_worktree_path") {
+    if scope.wants("primary_worktree_path") || scope.wants("main_worktree_path") {
         let _span = Span::new("var_primary_worktree");
         if let Ok(Some(path)) = ctx.repo.primary_worktree() {
             let path_str = to_posix_path(&path.to_string_lossy());
-            if want("primary_worktree_path") {
+            if scope.wants("primary_worktree_path") {
                 map.insert("primary_worktree_path".into(), path_str.clone());
             }
             // Deprecated alias
-            if want("main_worktree_path") {
+            if scope.wants("main_worktree_path") {
                 map.insert("main_worktree_path".into(), path_str);
             }
         }
@@ -298,7 +325,7 @@ pub fn build_hook_context(
     // iterates over sibling worktrees, and a sibling on detached HEAD has a
     // different HEAD than the worktree `wt` runs in. Branched contexts go
     // through `rev-parse <branch>`, which is repo-wide.
-    if want("commit") || want("short_commit") {
+    if scope.wants("commit") || scope.wants("short_commit") {
         let _span = Span::new("var_commit");
         let commit = match ctx.branch {
             Some(branch) => ctx
@@ -314,30 +341,30 @@ pub fn build_hook_context(
                 .flatten(),
         };
         if let Some(commit) = commit {
-            if want("short_commit")
+            if scope.wants("short_commit")
                 && let Ok(short) = ctx.repo.short_sha(&commit)
             {
                 map.insert("short_commit".into(), short);
             }
-            if want("commit") {
+            if scope.wants("commit") {
                 map.insert("commit".into(), commit);
             }
         }
     }
 
-    if want("remote") || want("remote_url") || want("upstream") {
+    if scope.wants("remote") || scope.wants("remote_url") || scope.wants("upstream") {
         let _span = Span::new("var_remote");
         if let Ok(remote) = ctx.repo.primary_remote() {
-            if want("remote") {
+            if scope.wants("remote") {
                 map.insert("remote".into(), remote.to_string());
             }
             // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-            if want("remote_url")
+            if scope.wants("remote_url")
                 && let Some(url) = ctx.repo.remote_url(&remote)
             {
                 map.insert("remote_url".into(), url);
             }
-            if want("upstream")
+            if scope.wants("upstream")
                 && let Some(branch) = ctx.branch
                 && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
             {
@@ -360,7 +387,7 @@ pub fn build_hook_context(
         map.insert((*k).into(), (*v).into());
     }
 
-    Ok(map)
+    Ok(TemplateContext::from_vars(map))
 }
 
 /// Drain a sequence of command results, returning the first error.
@@ -384,10 +411,9 @@ pub fn wait_first_error<E>(
     first.map_or(Ok(()), Err)
 }
 
-/// Expand a shell-command template against a context map.
+/// Expand a shell-command template against a context.
 ///
-/// Builds the `&str` vars map required by `expand_template` and fixes
-/// [`ShellEscapeMode::Posix`]: every caller (foreground hooks, background
+/// Fixes [`ShellEscapeMode::Posix`]: every caller (foreground hooks, background
 /// pipelines, aliases) interpolates the result into a command line run
 /// through `Cmd::shell` (`sh`/Git Bash), which is always POSIX — unlike the
 /// `--execute` payload, this never reaches a PowerShell wrapper. Every
@@ -395,21 +421,11 @@ pub fn wait_first_error<E>(
 /// set `vars.*` via git config.
 pub fn expand_shell_template(
     template: &str,
-    context: &HashMap<String, String>,
+    context: &TemplateContext,
     repo: &Repository,
     label: &str,
 ) -> Result<String> {
-    let vars: HashMap<&str, &str> = context
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    Ok(expand_template(
-        template,
-        &vars,
-        ShellEscapeMode::Posix,
-        repo,
-        label,
-    )?)
+    Ok(context.expand(template, ShellEscapeMode::Posix, repo, label)?)
 }
 
 /// Resolve the shell string to execute for a prepared command.
@@ -420,24 +436,26 @@ fn resolve_command_str(cmd: &PreparedCommand, repo: &Repository) -> Result<Strin
     expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)
 }
 
-/// Render a template for dry-run / preview display. Mirrors execution-time
-/// semantics: a template referencing `vars.*` is shown raw after a syntax
-/// check — its values resolve from git config when the step runs, possibly
-/// written by earlier pipeline steps — while everything else renders against
-/// `context`. Expansion is side-effect-free, so previewing never perturbs the
-/// real run.
+/// Render a template for dry-run / preview display.
+///
+/// Everything renders against `context` as it would at execution time, except
+/// `{{ vars.<key> }}`, which renders back as itself: those values are read from
+/// git config when the step runs, possibly written by an earlier step, so a
+/// value resolved now could differ from the one the run uses. Expansion is
+/// side-effect-free, so previewing never perturbs the real run.
 pub fn render_template_preview(
     template: &str,
-    context: &HashMap<String, String>,
+    context: &TemplateContext,
     repo: &Repository,
     name: &str,
 ) -> Result<String> {
-    if template_references_var(template, "vars") {
-        validate_template_syntax(template, name)?;
-        Ok(template.to_string())
-    } else {
-        expand_shell_template(template, context, repo, name)
-    }
+    Ok(context.expand_with(
+        template,
+        ShellEscapeMode::Posix,
+        repo,
+        name,
+        VarsMode::Literal,
+    )?)
 }
 
 /// Short summary name: "user:name" for named commands, "user" otherwise.
@@ -522,6 +540,7 @@ fn run_concurrent_group(
         .map(|cmd| fg_step.announce.log_label(cmd))
         .collect();
 
+    let scrub_git_discovery = fg_step.announce.is_hook();
     let specs: Vec<ConcurrentCommand<'_>> = (0..cmds.len())
         .map(|i| ConcurrentCommand {
             label: labels[i],
@@ -530,6 +549,7 @@ fn run_concurrent_group(
             context_json: &context_jsons[i],
             log_label: log_labels[i].as_deref(),
             directives,
+            scrub_git_discovery,
         })
         .collect();
 
@@ -581,6 +601,7 @@ fn run_one_command(
         log_label.as_deref(),
         directives.clone(),
         fg_step.redirect_stdout_to_stderr,
+        fg_step.announce.is_hook(),
     );
 
     match result {
@@ -617,7 +638,10 @@ fn announce_command(cmd: &PreparedCommand, kind: &PipelineKind, command_str: &st
     };
     if verbosity() >= 1 {
         let vars = format_hook_variables(*hook_type, &cmd.context);
-        eprintln!("{}", info_message("template variables:"));
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{hook_type}</> template variables:"))
+        );
         eprintln!("{}", format_with_gutter(&vars, None));
     }
     eprintln!("{}", progress_message(message));
@@ -654,19 +678,19 @@ pub fn alias_error_wrapper(alias_name: String) -> ErrorWrapper {
 
 /// Handle a command execution error via the step's `ErrorWrapper`.
 ///
-/// Signal-derived child exits (SIGINT/SIGTERM) bypass the wrapper and
-/// `failure_strategy`: the error is returned as `AlreadyDisplayed` with the
-/// `128 + signal` exit code so the enclosing loop aborts. This enforces the
-/// project-wide Ctrl-C cancellation policy — see the "Signal Handling"
-/// section of the root `CLAUDE.md` for the rationale.
+/// Signal-derived child exits bypass the wrapper and `failure_strategy`:
+/// the error is returned as `Interrupted` (exiting `128 + signal`) so the
+/// enclosing loop aborts. This enforces the project-wide Ctrl-C cancellation
+/// policy — see the "Signal Handling" section of the root `CLAUDE.md` for
+/// the rationale.
 fn handle_command_error(
     err: anyhow::Error,
     cmd: &PreparedCommand,
     error_wrapper: &ErrorWrapper,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    if let Some(exit_code) = err.interrupt_exit_code() {
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
+    if let Some(signal) = err.interrupt_signal() {
+        return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
     }
 
     let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
@@ -715,47 +739,83 @@ pub fn map_config_steps(
         .collect()
 }
 
-/// Prepare hook pipeline steps for execution, preserving serial/concurrent
-/// structure. All hook preparation goes through this function (both
-/// foreground and background paths).
+/// A prepared pipeline that has not yet chosen a syntax-error policy.
+///
+/// [`prepare_steps`] returns this rather than the steps themselves so the
+/// choice is a method call the compiler demands: running hooks takes
+/// [`validated`](Self::validated), and the one caller that must not abort takes
+/// [`into_unvalidated`](Self::into_unvalidated). A new execution path can no
+/// longer skip the check by forgetting a line — the same reason `ApprovedHookPlan`
+/// makes hook approval unforgeable.
+#[must_use]
+pub struct PreparedPipeline(Vec<PreparedStep>);
+
+impl PreparedPipeline {
+    /// The steps, rejected if any template cannot parse — so a pipeline that
+    /// cannot render in full never starts.
+    ///
+    /// Semantic errors (undefined variable, filter failure) are not checked:
+    /// rendering is deferred, so they surface at the failing step.
+    pub fn validated(self) -> Result<Vec<PreparedStep>> {
+        for cmd in self.0.iter().flat_map(PreparedStep::commands) {
+            validate_template_syntax(&cmd.template, &cmd.template_name)?;
+        }
+        Ok(self.0)
+    }
+
+    /// The steps with no syntax check, for `wt hook show --expanded`: a
+    /// listing annotates a broken template in place rather than blanking the
+    /// rest of the listing.
+    pub fn into_unvalidated(self) -> Vec<PreparedStep> {
+        self.0
+    }
+}
+
+/// Prepare hook pipeline steps, preserving serial/concurrent structure. Sole
+/// producer of hook command contexts: both the paths that run hooks (foreground
+/// and background) and the `wt hook show --expanded` listing come through here,
+/// so a context key added here reaches both with no second edit.
 ///
 /// Each command freezes its context as JSON and keeps its raw template;
-/// rendering happens when the command runs. Syntax errors abort here — before
-/// the first step runs — while semantic errors (undefined variable, filter
-/// failure) surface at the failing step.
+/// rendering happens when the command runs, so semantic errors (undefined
+/// variable, filter failure) surface at the failing step. The returned
+/// [`PreparedPipeline`] makes the caller choose what an unparsable template
+/// does.
 pub fn prepare_steps(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
     hook_type: HookType,
     source: HookSource,
-) -> anyhow::Result<Vec<PreparedStep>> {
+) -> anyhow::Result<PreparedPipeline> {
     // Built once per pipeline — build_hook_context spawns git subprocesses.
-    let mut base_context = build_hook_context(ctx, extra_vars, None)?;
+    let mut base_context = build_hook_context(ctx, extra_vars, VarScope::All)?;
 
     // hook_type is always available as a template variable and in JSON context
-    base_context.insert("hook_type".into(), hook_type.to_string());
+    base_context.insert("hook_type", hook_type.to_string());
     // `{{ args }}` is always available in hook scope. Default to an empty
     // JSON sequence (rendered via ShellArgs rehydration) so templates can
     // use `{{ args }}` unconditionally. Manual `wt hook <type>` overrides
     // via extra_vars earlier in the chain; internal invocations (merge,
     // switch, etc.) leave the default in place.
-    base_context
-        .entry(worktrunk::config::ALIAS_ARGS_KEY.to_string())
-        .or_insert_with(|| "[]".to_string());
+    if base_context
+        .get(worktrunk::config::ALIAS_ARGS_KEY)
+        .is_none()
+    {
+        base_context.insert(worktrunk::config::ALIAS_ARGS_KEY, "[]");
+    }
 
-    map_config_steps(command_config, |cmd| {
+    let steps = map_config_steps(command_config, |cmd| {
         // hook_name is per-command: available as template variable and in JSON context
         let mut cmd_context = base_context.clone();
         if let Some(ref name) = cmd.name {
-            cmd_context.insert("hook_name".into(), name.clone());
+            cmd_context.insert("hook_name", name.clone());
         }
 
         let template_name = match &cmd.name {
             Some(name) => format!("{source}:{name}"),
             None => format!("{source} {hook_type} hook"),
         };
-        validate_template_syntax(&cmd.template, &template_name)?;
 
         Ok(PreparedCommand {
             name: cmd.name.clone(),
@@ -764,7 +824,8 @@ pub fn prepare_steps(
             template_name,
             label: command_summary_name(cmd.name.as_deref(), source),
         })
-    })
+    })?;
+    Ok(PreparedPipeline(steps))
 }
 
 #[cfg(test)]
@@ -776,7 +837,7 @@ mod tests {
         PreparedCommand {
             name: name.map(String::from),
             template: "echo test".to_string(),
-            context: HashMap::new(),
+            context: TemplateContext::default(),
             template_name: label.clone(),
             label,
         }
@@ -881,7 +942,10 @@ mod tests {
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
         assert!(matches!(
             wt_err,
-            WorktrunkError::AlreadyDisplayed { exit_code: 143 }
+            WorktrunkError::Interrupted {
+                signal: 15,
+                hint: None
+            }
         ));
     }
 
@@ -893,27 +957,5 @@ mod tests {
         let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_template_references_var_for_vars() {
-        // Real vars references
-        assert!(template_references_var("{{ vars.container }}", "vars"));
-        assert!(template_references_var("{{vars.container}}", "vars"));
-        assert!(template_references_var(
-            "docker run --name {{ vars.name }}",
-            "vars"
-        ));
-        assert!(template_references_var(
-            "{% if vars.key %}yes{% endif %}",
-            "vars"
-        ));
-
-        // Literal text — not a template reference
-        assert!(!template_references_var(
-            "echo hello > template_vars.txt",
-            "vars"
-        ));
-        assert!(!template_references_var("no vars references here", "vars"));
     }
 }

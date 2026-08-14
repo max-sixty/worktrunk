@@ -40,7 +40,7 @@ pub fn step_commit(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = match branch {
-        Some(ref b) => CommandEnv::for_branch(config, b)?,
+        Some(ref b) => CommandEnv::for_selector(config, b)?,
         None => CommandEnv::for_action(config)?,
     };
     let ctx = env.context(yes);
@@ -62,8 +62,6 @@ pub fn step_commit(
     options.hooks = hooks;
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
-    // Only warn about untracked if we're staging all
-    options.warn_about_untracked = stage_mode == StageMode::All;
 
     let mut announcer = HookAnnouncer::new(ctx.repo, false);
     let outcome = options.commit(&mut announcer)?;
@@ -86,12 +84,9 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
     // path. StageMode::None has nothing to stage, so we use the existing index as-is.
     let temp_index = if dry_run {
-        let add_args: Option<&[&str]> = match stage.unwrap_or(env.resolved().commit.stage()) {
-            StageMode::All => Some(&["add", "-A"]),
-            StageMode::Tracked => Some(&["add", "-u"]),
-            StageMode::None => None,
-        };
-        add_args
+        stage
+            .unwrap_or(env.resolved().commit.stage())
+            .add_args()
             .map(|args| stage_to_temp_index(&env.repo, args))
             .transpose()?
     } else {
@@ -142,8 +137,27 @@ fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<t
         .run()
         .context("Failed to stage changes into temp index")?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git {} failed: {}", add_args.join(" "), stderr.trim());
+        return Err(
+            worktrunk::git::CommandError::from_failed_output("git", add_args, &output).into(),
+        );
     }
     Ok(temp)
+}
+
+#[cfg(test)]
+mod tests {
+    use worktrunk::git::{CommandError, Repository};
+    use worktrunk::testing::TestRepo;
+
+    /// A failing `git add` into the temp index (here: an invalid pathspec)
+    /// must surface as a typed `CommandError`.
+    #[test]
+    fn stage_to_temp_index_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = super::stage_to_temp_index(&repo, &["add", "--", ":(bad"]).unwrap_err();
+        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert_eq!(cmd_err.command_string(), "git add -- :(bad");
+    }
 }

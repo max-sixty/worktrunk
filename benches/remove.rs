@@ -1,184 +1,229 @@
 // Benchmarks for `wt remove` end-to-end performance
 //
-// Measures the full remove command including output rendering and hook spawning,
-// to complement `time_to_first_output` which exits before output.
+// Measures the full remove command including output rendering and hook
+// spawning, to complement `first_output/remove` in `time_to_first_output`,
+// which exits before output.
 //
-// Benchmark variants:
-//   - remove_e2e/no_hooks       — remove with --no-hooks (no hook loading)
-//   - remove_e2e/with_hooks     — remove with hooks configured (user + project)
-//   - remove_e2e/first_output   — baseline: exits before output (same as time_to_first_output)
+// Three single-factor variants use the same project and user hook configuration:
+//   - remove_e2e/warm/no_hooks — steady-state removal with hooks bypassed
+//   - remove_e2e/cold/no_hooks — fresh-state neighbor for the cache cost
+//   - remove_e2e/warm/with_hooks — warm neighbor for the hook cost
 //
 // Run examples:
 //   cargo bench --bench remove              # All variants
 //   cargo bench --bench remove -- no_hooks  # Just no-hooks variant
 
-use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, invalidate_caches_auto, run_git, run_git_ok, setup_fake_remote};
+use std::time::{Duration, Instant};
 
-/// Create a benchmark repo at a specific path with optional hooks.
-fn create_bench_repo(base_path: &Path, with_hooks: bool) -> PathBuf {
-    let config = RepoConfig::typical(2); // main + 1 feature worktree
-    wt_perf::create_repo_at(&config, base_path);
-    setup_fake_remote(base_path);
+use criterion::{Criterion, criterion_group, criterion_main};
+use wt_perf::{
+    CacheState, FixtureRecipe, FixtureRepo, add_heterogeneous_linked_worktrees,
+    invalidate_caches_auto, invalidate_probe_caches, linked_worktree_path, run_and_check, run_git,
+    run_git_ok, setup_fake_remote, wt_command,
+};
 
-    if with_hooks {
-        // Project config with post-remove hook
-        let config_dir = base_path.join(".config");
+const BRANCH: &str = "wt-0000";
+const UNTRACKED_FILES: usize = 3;
+const BACKGROUND_TIMEOUT: Duration = Duration::from_secs(10);
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+struct RemoveFixture {
+    repo: FixtureRepo,
+    user_config: PathBuf,
+    project_marker: PathBuf,
+    user_marker: PathBuf,
+    worktree_admin_dir: PathBuf,
+}
+
+impl RemoveFixture {
+    /// Build one complete candidate outside the measured duration.
+    fn create(binary: &Path, cache: CacheState) -> Self {
+        let repo = FixtureRecipe::generated(0).create();
+        let project_marker = repo.root().join("project-post-remove.marker");
+        let user_marker = repo.root().join("user-post-switch.marker");
+
+        let config_dir = repo.path().join(".config");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
             config_dir.join("wt.toml"),
-            "[post-remove]\ndocs = \"echo post-remove-done\"\n",
+            format!(
+                "[post-remove]\nbenchmark = \"{}\"\n",
+                marker_command(&project_marker, "project")
+            ),
         )
         .unwrap();
-        run_git(base_path, &["add", "."]);
-        run_git(base_path, &["commit", "-m", "Add project config"]);
+        run_git(repo.path(), &["add", ".config/wt.toml"]);
+        run_git(repo.path(), &["commit", "-m", "Add benchmark hook"]);
+
+        add_heterogeneous_linked_worktrees(repo.path(), 1);
+        setup_fake_remote(repo.path());
+        let worktree = repo.worktree_path(BRANCH);
+        for i in 0..UNTRACKED_FILES {
+            std::fs::write(
+                worktree.join(format!("uncommitted_{i}.txt")),
+                "Uncommitted content\n",
+            )
+            .unwrap();
+        }
+        let worktree_admin_dir = linked_worktree_admin_dir(&repo.worktree_path(BRANCH));
+
+        let user_config = repo.root().join("config.toml");
+        std::fs::write(
+            &user_config,
+            format!(
+                "[post-switch]\nbenchmark = \"{}\"\n",
+                marker_command(&user_marker, "user")
+            ),
+        )
+        .unwrap();
+
+        let fixture = Self {
+            repo,
+            user_config,
+            project_marker,
+            user_marker,
+            worktree_admin_dir,
+        };
+        for i in 0..UNTRACKED_FILES {
+            assert!(
+                fixture
+                    .worktree_path()
+                    .join(format!("uncommitted_{i}.txt"))
+                    .is_file(),
+                "remove fixture untracked payload {i} is missing"
+            );
+        }
+        fixture.prewarm(binary);
+        match cache {
+            CacheState::Warm => {}
+            CacheState::Cold => invalidate_caches_auto(fixture.repo.path()),
+            CacheState::ProbeCold => invalidate_probe_caches(fixture.repo.path()),
+        }
+        fixture
     }
 
-    base_path.to_path_buf()
+    fn worktree_path(&self) -> PathBuf {
+        linked_worktree_path(self.repo.path(), BRANCH)
+    }
+
+    /// Prewarm the integration probes without consuming the unmerged candidate.
+    fn prewarm(&self, binary: &Path) {
+        let mut cmd = wt_command(binary, self.repo.path(), Some(&self.user_config));
+        cmd.args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age",
+            "0s",
+            "--format",
+            "json",
+        ]);
+        run_and_check(&mut cmd);
+    }
+
+    /// Wait for current-worktree cleanup and detached hooks to settle, then
+    /// check both the destructive result and the hook-control contract.
+    fn assert_consumed(&self, expect_hooks: bool) {
+        let worktree = self.worktree_path();
+        wait_for("remove background cleanup and hooks", || {
+            let hooks_finished =
+                !expect_hooks || (self.project_marker.is_file() && self.user_marker.is_file());
+            !worktree.exists() && hooks_finished
+        });
+
+        assert!(
+            run_git_ok(
+                self.repo.path(),
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{BRANCH}")
+                ]
+            ),
+            "measured remove deleted the retained candidate branch"
+        );
+        assert!(
+            !self.worktree_admin_dir.exists(),
+            "measured remove left the worktree registration behind"
+        );
+
+        if expect_hooks {
+            assert_eq!(
+                std::fs::read_to_string(&self.project_marker).unwrap(),
+                "project"
+            );
+            assert_eq!(std::fs::read_to_string(&self.user_marker).unwrap(), "user");
+        } else {
+            assert!(
+                !self.project_marker.exists() && !self.user_marker.exists(),
+                "--no-hooks unexpectedly produced a hook marker"
+            );
+        }
+    }
 }
 
-/// Recreate the feature worktree after it was removed.
-fn recreate_worktree(repo_path: &Path) {
-    let wt_path = repo_path.parent().unwrap().join(format!(
-        "{}.feature-wt-1",
-        repo_path.file_name().unwrap().to_str().unwrap()
-    ));
+fn marker_command(path: &Path, value: &str) -> String {
+    format!(
+        "printf {value} > {}",
+        shell_escape::unix::escape(path.to_string_lossy())
+    )
+}
 
-    // Wait briefly for background removal to finish (sleep 1 + rm -rf in detached process).
-    // Without this, the background rmdir/rm-rf races with worktree recreation.
-    std::thread::sleep(std::time::Duration::from_millis(1200));
+fn linked_worktree_admin_dir(worktree: &Path) -> PathBuf {
+    let dot_git = std::fs::read_to_string(worktree.join(".git")).unwrap();
+    let git_dir = dot_git
+        .trim()
+        .strip_prefix("gitdir: ")
+        .expect("linked worktree .git file must contain a gitdir");
+    PathBuf::from(git_dir)
+}
 
-    // Clean up any leftover directory (placeholder or staged trash)
-    let _ = std::fs::remove_dir_all(&wt_path);
-
-    // Clean up trash directory from staged removals
-    let trash_dir = repo_path.join(".git/wt/trash");
-    if trash_dir.exists() {
-        let _ = std::fs::remove_dir_all(&trash_dir);
+fn wait_for(label: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + BACKGROUND_TIMEOUT;
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out waiting for {label}");
+        std::thread::sleep(POLL_INTERVAL);
     }
+}
 
-    // Prune stale worktree metadata (best-effort)
-    let _ = run_git_ok(repo_path, &["worktree", "prune"]);
+fn bench_variant(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    expect_hooks: bool,
+    cache: CacheState,
+) {
+    let binary = &worktrunk::testing::wt_bin();
 
-    // Delete branch if it exists (may already be deleted by removal)
-    let _ = run_git_ok(repo_path, &["branch", "-D", "feature-wt-1"]);
+    group.bench_function(name, |b| {
+        b.iter_custom(|iterations| {
+            let mut measured = Duration::ZERO;
+            for _ in 0..iterations {
+                let fixture = RemoveFixture::create(binary, cache);
+                let worktree = fixture.worktree_path();
+                let mut cmd = wt_command(binary, &worktree, Some(&fixture.user_config));
+                cmd.args(["remove", "--yes", "--force"]);
+                if !expect_hooks {
+                    cmd.arg("--no-hooks");
+                }
 
-    // Recreate branch + worktree
-    run_git(
-        repo_path,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "feature-wt-1",
-            wt_path.to_str().unwrap(),
-            "HEAD",
-        ],
-    );
+                let started = Instant::now();
+                run_and_check(&mut cmd);
+                measured += started.elapsed();
+                fixture.assert_consumed(expect_hooks);
+            }
+            measured
+        });
+    });
 }
 
 fn bench_remove_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove_e2e");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    // Persistent temp dirs (kept alive for the benchmark group)
-    let temp_no_hooks = tempfile::tempdir().unwrap();
-    let temp_with_hooks = tempfile::tempdir().unwrap();
-
-    let repo_no_hooks = create_bench_repo(&temp_no_hooks.path().join("repo"), false);
-    let repo_with_hooks = create_bench_repo(&temp_with_hooks.path().join("repo"), true);
-
-    // User config with post-switch hook (written beside repo)
-    let user_config_no_hooks = temp_no_hooks.path().join("config.toml");
-    std::fs::write(&user_config_no_hooks, "").unwrap();
-
-    let user_config_with_hooks = temp_with_hooks.path().join("config.toml");
-    std::fs::write(
-        &user_config_with_hooks,
-        "[hooks.post-switch]\nzellij-tab = \"echo post-switch-done\"\n",
-    )
-    .unwrap();
-
-    let wt_name = |repo: &Path| -> PathBuf {
-        repo.parent().unwrap().join(format!(
-            "{}.feature-wt-1",
-            repo.file_name().unwrap().to_str().unwrap()
-        ))
-    };
-
-    // Baseline: first_output (exits before output rendering).
-    //
-    // Invalidates caches per iteration so the timing reflects first-invocation
-    // TTFO — `prepare_worktree_removal` writes to `.git/wt/cache/` via
-    // `compute_integration_lazy`, and reusing it across iterations would
-    // measure warm-cache cost instead. `BatchSize::PerIteration` (not
-    // `SmallInput`) so the setup actually runs before every measured iter —
-    // under `SmallInput`, criterion calls `setup` once per batch and runs
-    // the timed routines back-to-back, leaving only iter 1 cold per batch.
-    group.bench_function("first_output", |b| {
-        b.iter_batched(
-            || invalidate_caches_auto(&repo_no_hooks),
-            |_| {
-                let mut cmd = Command::new(binary);
-                cmd.args(["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"]);
-                cmd.current_dir(&repo_no_hooks);
-                isolate_subprocess_env(&mut cmd, Some(&user_config_no_hooks));
-                cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
-                let output = cmd.output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "first_output failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            },
-            criterion::BatchSize::PerIteration,
-        );
-    });
-
-    // No hooks: --no-hooks (skip hook loading), run from feature worktree
-    group.bench_function("no_hooks", |b| {
-        b.iter_batched(
-            || recreate_worktree(&repo_no_hooks),
-            |()| {
-                let wt_path = wt_name(&repo_no_hooks);
-                let mut cmd = Command::new(binary);
-                cmd.args(["remove", "--yes", "--no-hooks", "--force"]);
-                cmd.current_dir(&wt_path);
-                isolate_subprocess_env(&mut cmd, Some(&user_config_no_hooks));
-                let output = cmd.output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "no_hooks failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            },
-            criterion::BatchSize::PerIteration,
-        );
-    });
-
-    // With hooks: user post-switch + project post-remove
-    group.bench_function("with_hooks", |b| {
-        b.iter_batched(
-            || recreate_worktree(&repo_with_hooks),
-            |()| {
-                let wt_path = wt_name(&repo_with_hooks);
-                let mut cmd = Command::new(binary);
-                cmd.args(["remove", "--yes", "--force"]);
-                cmd.current_dir(&wt_path);
-                isolate_subprocess_env(&mut cmd, Some(&user_config_with_hooks));
-                let output = cmd.output().unwrap();
-                assert!(
-                    output.status.success(),
-                    "with_hooks failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            },
-            criterion::BatchSize::PerIteration,
-        );
-    });
+    bench_variant(&mut group, "warm/no_hooks", false, CacheState::Warm);
+    bench_variant(&mut group, "cold/no_hooks", false, CacheState::Cold);
+    bench_variant(&mut group, "warm/with_hooks", true, CacheState::Warm);
 
     group.finish();
 }
@@ -186,9 +231,9 @@ fn bench_remove_e2e(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(20)
-        .measurement_time(std::time::Duration::from_secs(20))
-        .warm_up_time(std::time::Duration::from_secs(3));
+        .sample_size(10)
+        .measurement_time(std::time::Duration::from_secs(3))
+        .warm_up_time(std::time::Duration::from_secs(1));
     targets = bench_remove_e2e
 }
 criterion_main!(benches);

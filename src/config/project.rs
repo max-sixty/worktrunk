@@ -94,9 +94,9 @@ pub struct ProjectCommitGenerationConfig {
 
 /// Project-level forge configuration.
 ///
-/// Names the forge explicitly, for repos where URL-based detection can't
-/// determine it (e.g., SSH host aliases, GitHub Enterprise, or self-hosted
-/// GitLab with custom domains).
+/// Names the forge explicitly, for a remote whose hostname carries no forge
+/// name for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read
+/// (a Forgejo instance at `forge.example.com`, a company git server).
 ///
 /// # Example
 ///
@@ -255,17 +255,28 @@ impl ProjectConfig {
         repo: &crate::git::Repository,
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
-        let config_path = match repo
+        let (contents, config_path) = match repo
             .project_config_path()
             .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
         {
-            Some(path) if path.exists() => path,
-            _ => return Ok(None),
+            Some(path) if path.exists() => {
+                // Load directly with toml crate to preserve insertion order
+                // (with preserve_order feature).
+                let contents = std::fs::read_to_string(&path)
+                    .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
+                (contents, path)
+            }
+            // No config resolved on disk. In a bare layout with the default
+            // branch checked out in no worktree, the parked primary worktree's
+            // files aren't the default branch's config — read the committed
+            // copy from the object store rather than silently dropping project
+            // config and every project hook (#3461). `config_path` is then a
+            // display-only revision spec, used only for diagnostics.
+            _ => match repo.default_branch_project_config_content() {
+                Some((contents, display_path)) => (contents, display_path),
+                None => return Ok(None),
+            },
         };
-
-        // Load directly with toml crate to preserve insertion order (with preserve_order feature)
-        let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree, not linked worktrees
@@ -276,7 +287,7 @@ impl ProjectConfig {
             &config_path,
             &contents,
             is_main_worktree,
-            "Project config",
+            super::ConfigFileKind::Project,
             repo_for_hints,
             true, // emit_inline_warnings
         )
@@ -290,7 +301,7 @@ impl ProjectConfig {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &contents,
                 &config_path,
-                "Project config",
+                super::ConfigFileKind::Project,
             );
         }
 
@@ -298,7 +309,8 @@ impl ProjectConfig {
         // (e.g. `pre-start`/`post-start`) still load into their canonical fields.
         let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| {
             ConfigError(format!(
-                "Project config at {} failed to parse:\n{e}",
+                "{} at {} failed to parse:\n{e}",
+                super::ConfigFileKind::Project.label(),
                 crate::path::format_path_for_display(&config_path),
             ))
         })?;

@@ -63,6 +63,19 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
         return vec![text.to_string()];
     }
 
+    // Preserve leading indentation (mirrors wrap_styled_text): wrap the
+    // content within the remaining width and re-prefix every line, so an
+    // indented line's continuations stay visually subordinate instead of
+    // rendering flush-left like a new entry.
+    let leading_spaces = text.chars().take_while(|c| *c == ' ').count();
+    if leading_spaces > 0 && max_width.saturating_sub(leading_spaces) >= 10 {
+        let indent = " ".repeat(leading_spaces);
+        return wrap_text_at_width(&text[leading_spaces..], max_width - leading_spaces)
+            .into_iter()
+            .map(|line| format!("{indent}{line}"))
+            .collect();
+    }
+
     let mut lines = Vec::new();
     let mut current_line = String::new();
     let mut current_width = 0;

@@ -22,8 +22,8 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`      | Operation / worktree attribute        |
-//! | 4 | `MAIN_STATE`        | `^ ✗ _ – ⊂ ↕ ↑ ↓`    | Relationship to the default branch    |
+//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
+//! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
 //!
@@ -55,12 +55,15 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ⤴ ⤵ ⚑ ⊟ ⊞ /`, priority
-//! `✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /`. The operation family (`✘⤴⤵`) comes from live
-//! task data; the attribute family (`⚑⊟⊞/`) is metadata, always known.
+//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⚑ /`, priority
+//! `✘ > ↻ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘↻`) comes from live
+//! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
+//! `⚑` covers both irregular-mapping states — a duplicated branch outranks
+//! an off-template path, and the JSON `worktree.state` names which.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
-//! (`locked`, `prunable`, `branch_worktree_mismatch`, `ItemKind::Branch`).
+//! (`locked`, `prunable`, `duplicate_branch`, `branch_worktree_mismatch`,
+//! `ItemKind::Branch`).
 //!
 //! **Rule — short-circuit on priority:** a higher-priority signal, once known
 //! to be positive, resolves the gate immediately without waiting for
@@ -68,14 +71,14 @@
 //! row of the priority table is the answer:
 //!
 //! 1. `has_conflicts == Some(true)` → `✘`.
-//! 2. `has_conflicts == Some(false)` and `git_operation == Some(Rebase)` → `⤴`.
-//! 3. `has_conflicts == Some(false)` and `git_operation == Some(Merge)` → `⤵`.
-//! 4. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
-//!    metadata says mismatched → `⚑`.
-//! 5. …continuing down through `⊟`, `⊞`, `/`, nothing.
+//! 2. `has_conflicts == Some(false)` and `git_operation == Some(Some(_))` →
+//!    `↻`, whichever operation it is.
+//! 3. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
+//!    metadata says prunable → `⊟`.
+//! 4. …continuing down through `⊞`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
-//! out `✘/⤴/⤵`, so the position renders `·` even if metadata would otherwise
+//! out `✘/↻`, so the position renders `·` even if metadata would otherwise
 //! produce `⊟` or `⊞`.
 //!
 //! **Exception — items with no working tree:** branches and prunable
@@ -85,20 +88,20 @@
 //!
 //! # Gate 3: Main state (position 4)
 //!
-//! **Renders:** at most one of `^ ✗ _ – ⊂ ↕ ↑ ↓`. Priority:
-//! `IsMain > Orphan > WouldConflict > Empty(_) > SameCommitDirty(–) >
-//! Integrated(⊂) > Diverged(↕) > Ahead(↑) > Behind(↓) > None`.
+//! **Renders:** at most one of `^ _ ⊂ ✗ – ↕ ↑ ↓`. Priority:
+//! `IsMain > Orphan > Empty(_) > Integrated(⊂) > WouldConflict(✗) >
+//! SameCommitDirty(–) > Diverged(↕) > Ahead(↑) > Behind(↓) > None`.
 //!
 //! **Inputs:**
 //! - `is_main` (metadata)
 //! - `is_orphan` (from `AheadBehind`)
-//! - `has_merge_tree_conflicts` (from `MergeTreeConflicts`)
-//! - `has_working_tree_conflicts` (from `WorkingTreeConflicts`)
 //! - Integration signals: `is_ancestor`, `committed_trees_match`,
 //!   `has_file_changes`, `would_merge_add`, `is_patch_id_match`
+//! - `has_merge_tree_conflicts` (from `MergeTreeConflicts`)
+//! - `has_working_tree_conflicts` (from `WorkingTreeConflicts`)
 //! - `counts` (from `AheadBehind`)
 //! - `working_tree_diff` + `working_tree_status` (used for `is_clean`, which
-//!   distinguishes `Empty(_)` from `SameCommitDirty(–)`)
+//!   distinguishes `Empty(_)` from `SameCommitDirty(–)` and gates `✗`)
 //!
 //! **Rule — short-circuit on priority (same pattern as gate 2):** render as
 //! soon as the priority-winning signal can be identified.
@@ -106,16 +109,19 @@
 //! 1. `is_main == true` (metadata) → `^`. Always immediate for the main
 //!    worktree, regardless of any other field.
 //! 2. `is_orphan == Some(true)` → orphan display.
-//! 3. `has_working_tree_conflicts == Some(Some(true))` (dirty-tree probe
-//!    is authoritative when present) or `has_merge_tree_conflicts == Some(true)`
-//!    → `✗`. When the dirty-tree probe says `Some(Some(false))` it rules
-//!    out tier 3 even if the HEAD probe was skipped (see
-//!    [`tier_would_conflict`](super::state::tier_would_conflict)).
-//! 4. Distinguish Empty / SameCommitDirty / Integrated — requires `counts`,
-//!    `is_clean` (from `working_tree_diff` + `working_tree_status` for
-//!    worktrees; trivially clean for branches), and the integration signals.
-//!    Render as soon as all signals needed to pick a row have landed.
-//! 5. Otherwise fall through to `↕/↑/↓/None` from `counts`.
+//! 3. Integration (`⊂`/`_`): once `is_clean` is known, the integration
+//!    signals can fire `Empty(_)` (same commit, clean) or `Integrated(⊂)`
+//!    (content already in the default branch). This is fire-or-continue —
+//!    a not-yet-integrated branch falls through without waiting, so the gate
+//!    can still upgrade an `↑` to `⊂` on a later pass.
+//! 4. `✗` (WouldConflict): `has_working_tree_conflicts == Some(Some(true))`
+//!    (dirty-tree probe is authoritative) or `has_merge_tree_conflicts ==
+//!    Some(true)` → `✗`, but only once the integration verdict is final and
+//!    negative (`integration_resolved`). While integration is still pending,
+//!    a detected conflict holds at `·` rather than flashing `✗` for a branch
+//!    that may settle to `⊂`. See
+//!    [`tier_would_conflict`](super::state::tier_would_conflict).
+//! 5. Otherwise fall through to `–/↕/↑/↓/None` from `counts` + `is_clean`.
 //!
 //! **Exception — unborn items (`HEAD == NULL_OID`):** all commit-dependent
 //! tasks are skipped at spawn time. Their fields are seeded with "no commits"
@@ -183,9 +189,11 @@
 //!
 //! 1. Each position's last-known state is displayed: resolved positions show
 //!    their symbol; unresolved positions show `·`.
-//! 2. The diagnostic footer already lists which tasks did not finish per
-//!    item — this continues unchanged and gives the user the mapping from
-//!    "`·` in position X" back to "`TaskKind::Foo` timed out."
+//! 2. The `·` is the whole signal — budget truncation is deliberate, so it
+//!    goes unreported, and nothing maps a `·` in position X back to the
+//!    `TaskKind` that didn't finish. (A task whose own git command times out
+//!    is a separate path: it reaches the summary footer as one of "N tasks
+//!    timed out", a count that likewise doesn't name the task.)
 //! 3. JSON output omits fields that correspond to unresolved gates
 //!    (`working_tree`, `main_state`, `operation_state`, `upstream_divergence`,
 //!    etc.) so machine consumers can distinguish "loading / timeout" from
@@ -259,8 +267,8 @@ impl PositionMask {
     pub(crate) const STAGED: usize = 0; // + (staged changes)
     pub(crate) const MODIFIED: usize = 1; // ! (modified files)
     pub(crate) const UNTRACKED: usize = 2; // ? (untracked files)
-    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘⤴⤵/⚑⊟⊞
-    pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^✗_⊂↕↑↓
+    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊟⊞
+    pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^_⊂✗↕↑↓
     pub(crate) const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
     pub(crate) const USER_MARKER: usize = 6;
 
@@ -271,8 +279,8 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > branch_worktree_mismatch > prunable > locked > branch)
-            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > orphan > would_conflict > empty > same_commit > integrated > diverged > ahead > behind)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > duplicate_branch > branch_worktree_mismatch > branch)
+            1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],
@@ -348,7 +356,7 @@ impl WorkingTreeStatus {
 /// Symbols are categorized to enable vertical alignment in table output.
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
-/// - Worktree state: ✘, ⤴, ⤵, /, ⚑, ⊟, ⊞ (operations + location)
+/// - Worktree state: ✘, ↻, /, ⚑, ⊟, ⊞ (operations + location)
 /// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
 /// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
@@ -356,22 +364,23 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /
+/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
-/// - ⤴: Rebase in progress
-/// - ⤵: Merge in progress
-/// - ⚑: Branch-worktree mismatch
+/// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
+/// - ⚑: Irregular branch ⇔ worktree mapping — the branch is checked out in
+///   more than one worktree, or the path is off-template (informational, dim
+///   yellow)
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
-/// Priority: ^ > ✗ > _ > – > ⊂ > ↕ > ↑ > ↓
+/// Priority: ^ > _ > ⊂ > ✗ > – > ↕ > ↑ > ↓
 /// - ^: This IS the main worktree
-/// - ✗: Would conflict if merged to default branch
 /// - _: Same commit as default branch, clean working tree (removable)
-/// - –: Same commit as default branch, uncommitted changes (NOT removable)
 /// - ⊂: Content integrated (removable)
+/// - ✗: Would conflict if merged to default branch, and NOT already integrated
+/// - –: Same commit as default branch, uncommitted changes (NOT removable)
 /// - ↕: Diverged from default branch
 /// - ↑: Ahead of default branch
 /// - ↓: Behind default branch
@@ -387,13 +396,13 @@ impl WorkingTreeStatus {
 #[derive(Debug, Clone, Default)]
 pub struct StatusSymbols {
     /// Gate 3 output (position 4). `None` = loading; `Some(MainState::None)`
-    /// = resolved to nothing. Priority: IsMain (^) > Orphan > WouldConflict
-    /// (✗) > Empty (_) > SameCommit (–) > Integrated (⊂) > Diverged (↕) >
-    /// Ahead (↑) > Behind (↓).
+    /// = resolved to nothing. Priority: IsMain (^) > Orphan (∅) > Empty (_) >
+    /// Integrated (⊂) > WouldConflict (✗) > SameCommit (–) > Diverged (↕) >
+    /// Ahead (↑) > Behind (↓). (Canonical order: see `MainState` in `state.rs`.)
     pub(crate) main_state: Option<MainState>,
 
     /// Gate 2 output — operation family (position 3). `None` = loading (we
-    /// can't rule out `✘⤴⤵`); `Some(OperationState::None)` = resolved to
+    /// can't rule out `✘↻`); `Some(OperationState::None)` = resolved to
     /// nothing (fall through to `worktree_state`).
     pub(crate) operation_state: Option<OperationState>,
 
@@ -542,7 +551,7 @@ impl StatusSymbols {
             None => SlotState::Loading,
         };
 
-        // Gate 2 — worktree state (position 3). Operation family (`✘⤴⤵`)
+        // Gate 2 — worktree state (position 3). Operation family (`✘↻`)
         // takes priority over metadata family (`⚑⊟⊞/`). The gate is
         // `Loading` iff `operation_state` is still `None` — even when
         // `worktree_state` metadata would yield `⊟`, we cannot safely show
@@ -560,10 +569,10 @@ impl StatusSymbols {
                 Some(WorktreeState::Branch) => {
                     SlotState::Visible(cformat!("<dim>{}</>", WorktreeState::Branch))
                 }
-                Some(WorktreeState::BranchWorktreeMismatch) => SlotState::Visible(cformat!(
-                    "<red>{}</>",
-                    WorktreeState::BranchWorktreeMismatch
-                )),
+                Some(
+                    state
+                    @ (WorktreeState::BranchWorktreeMismatch | WorktreeState::DuplicateBranch),
+                ) => SlotState::Visible(cformat!("<dim,yellow>{state}</>")),
                 Some(other) => SlotState::Visible(cformat!("<yellow>{}</>", other)),
             },
         };
@@ -610,6 +619,7 @@ pub(crate) enum SlotState {
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
+    use worktrunk::git::InProgressOperation;
 
     use super::*;
 
@@ -701,7 +711,7 @@ mod tests {
         assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
-            operation_state: Some(OperationState::Rebase),
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
             ..Default::default()
         };
         assert!(!is_empty(&symbols));

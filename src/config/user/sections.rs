@@ -29,6 +29,23 @@ pub enum StageMode {
     None,
 }
 
+impl StageMode {
+    /// The `git` invocation this mode stages with, or `None` when it stages nothing.
+    ///
+    /// One home for the mapping, so a new variant can't be handled at one call
+    /// site and forgotten at the other: staging the real index
+    /// ([`WorkingTree::stage`](crate::git::WorkingTree::stage)) and mirroring the
+    /// mode into a throwaway index for `wt step commit --dry-run` both read it
+    /// from here.
+    pub fn add_args(self) -> Option<&'static [&'static str]> {
+        match self {
+            StageMode::All => Some(&["add", "-A"]),
+            StageMode::Tracked => Some(&["add", "-u"]),
+            StageMode::None => None,
+        }
+    }
+}
+
 /// Configuration for commit message generation
 ///
 /// The command is a shell string executed via `sh -c`. Environment variables
@@ -178,12 +195,11 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,
 
-    /// Per-task timeout in milliseconds.
-    /// Kills individual git commands that exceed this duration. Applies to both
-    /// `wt list` and the `wt switch` picker. Set to 0 to explicitly disable
-    /// (useful to override a global setting). Disabled when --full is used.
-    #[serde(rename = "task-timeout-ms", skip_serializing_if = "Option::is_none")]
-    pub task_timeout_ms: Option<u64>,
+    /// JSON output schema for `wt list --format=json` (1 or 2).
+    /// Schema 2 wraps items in an envelope of per-item facts (see the
+    /// `wt list` JSON docs). Unset emits schema 1 with a warning.
+    #[serde(rename = "json-schema", skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<u8>,
 
     /// Wall-clock budget for the entire collect phase in milliseconds.
     /// Tasks that complete within the budget contribute data; tasks still
@@ -242,14 +258,6 @@ impl ListConfig {
         self.summary.unwrap_or(false)
     }
 
-    /// Per-task command timeout (default: None — no per-command timeout).
-    /// Returns `None` when disabled (task_timeout_ms = 0 or unset).
-    pub fn task_timeout(&self) -> Option<std::time::Duration> {
-        self.task_timeout_ms
-            .filter(|&ms| ms > 0)
-            .map(std::time::Duration::from_millis)
-    }
-
     /// Wall-clock budget for the collect phase (default: None — no budget).
     /// Returns `None` when disabled (timeout_ms = 0 or unset).
     pub fn timeout(&self) -> Option<std::time::Duration> {
@@ -285,7 +293,7 @@ impl Merge for ListConfig {
             branches: other.branches.or(self.branches),
             remotes: other.remotes.or(self.remotes),
             summary: other.summary.or(self.summary),
-            task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
+            json_schema: other.json_schema.or(self.json_schema),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
             columns,
             custom_columns,
@@ -543,6 +551,11 @@ impl Merge for StepConfig {
 /// These are user preferences (not checked into git) that override
 /// the corresponding global settings when set.
 ///
+/// The key is a project identifier (`host/owner/repo`) or a `*` pattern
+/// covering a set of them, so one entry can carry settings for every
+/// repository on a host. Every matching entry applies, least- to
+/// most-specific; the `project_match` module states the rules.
+///
 /// # TOML Format
 /// ```toml
 /// [projects."github.com/user/repo"]
@@ -556,6 +569,10 @@ impl Merge for StepConfig {
 ///
 /// [projects."github.com/user/repo".merge]
 /// squash = false
+///
+/// # Every repository on a self-hosted forge whose name carries no brand
+/// [projects."git.company.example/*"]
+/// forge.platform = "gitlab"
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct UserProjectOverrides {
@@ -596,6 +613,15 @@ pub struct UserProjectOverrides {
 
     #[serde(default, skip_serializing_if = "is_default")]
     pub step: StepConfig,
+
+    /// Forge platform and API hostname for the matched repositories.
+    ///
+    /// Same shape as the repository's own `[forge]` block, which wins field by
+    /// field where both are set. Both fields describe the host rather than the
+    /// repository, so a `*` pattern keyed to a hostname is the usual way to
+    /// write them.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub forge: crate::config::ProjectForgeConfig,
 
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aliases: BTreeMap<String, CommandConfig>,

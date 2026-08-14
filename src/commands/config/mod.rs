@@ -15,7 +15,7 @@ mod update;
 
 // Re-export public functions
 pub use alias::{handle_alias_dry_run, handle_alias_show};
-pub use approvals::{add_approvals, clear_approvals};
+pub use approvals::{add_approvals, clear_approvals, list_approvals};
 pub use codex::{handle_codex_install, handle_codex_uninstall};
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
@@ -30,6 +30,23 @@ pub use state::{
     handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub use update::handle_config_update;
+
+/// Run a plugin-CLI command (`claude` / `codex`), surfacing a non-zero exit
+/// as a typed [`worktrunk::git::CommandError`].
+fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let output = worktrunk::shell_exec::Cmd::new(program)
+        .args(args.iter().copied())
+        .run()
+        .with_context(|| format!("Failed to run {program} CLI"))?;
+    if !output.status.success() {
+        return Err(
+            worktrunk::git::CommandError::from_failed_output(program, args, &output).into(),
+        );
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -150,7 +167,7 @@ mod tests {
             @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
 
         // forge in user config should suggest project config
-        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n"), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n"), @r#"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored); to set it from user config, add it under [projects."<id>"][39m"#);
     }
 
     #[test]
@@ -162,10 +179,10 @@ mod tests {
         // `template-append`) so the offending key surfaces nested.
         assert_snapshot!(
             warn_unknown_keys::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n"),
-            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects.\"<id>\"] in user config[39m");
         assert_snapshot!(
             warn_unknown_keys::<ProjectConfig>("[commit.generation]\ncommand = \"llm\"\n"),
-            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects.\"<id>\"] in user config[39m");
 
         // The one project-valid key in the section is unaffected.
         assert!(

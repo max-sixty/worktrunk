@@ -624,7 +624,7 @@ fn test_copy_ignored_no_default_branch_worktree(mut repo: TestRepo) {
 /// Test copy-ignored in a bare repository setup
 ///
 /// This test reproduces GitHub issue #598: `wt step copy-ignored` fails in bare repo
-/// with error "git ls-files failed: fatal: this operation must be run in a work tree"
+/// with git's "fatal: this operation must be run in a work tree"
 #[test]
 fn test_copy_ignored_bare_repo() {
     use crate::common::{BareRepoTest, TestRepoBase, setup_temp_snapshot_settings, wt_command};

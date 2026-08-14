@@ -20,7 +20,6 @@ info:
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     TERM: alacritty
@@ -35,6 +34,7 @@ info:
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -107,7 +107,7 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             fi
         fi
 
-        rm -f "$cd_file" "$exec_file"
+        command rm -f "$cd_file" "$exec_file"
         return "$exit_code"
     }
 
@@ -118,7 +118,10 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             # Use `command` to bypass the shell function and call the binary directly.
             # Without this, `wt` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
+            # WORKTRUNK_COMPLETE_NAME emits the registration under the name bound
+            # below; clap would otherwise name everything after its own command
+            # name and the call below would hit an undefined function (#3816).
+            eval "$(WORKTRUNK_COMPLETE_NAME="wt" COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
         fi
         _clap_dynamic_completer_wt "$@"
     }

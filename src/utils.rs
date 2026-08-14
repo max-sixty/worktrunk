@@ -1,6 +1,8 @@
 //! General utilities.
 
 use std::borrow::Cow;
+use std::io::{self, Write};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Replace C0/C1 control characters — other than tab and newline — with a
@@ -38,6 +40,16 @@ pub fn escape_controls(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Format a Unix timestamp as ISO 8601 UTC (e.g., "2025-01-01T00:00:00Z"),
+/// or `None` when the timestamp is out of chrono's representable range.
+///
+/// The one ISO 8601 formatter wt has — diagnostics, logs, and schema-2
+/// `wt list --format=json` all derive from it.
+pub fn format_timestamp_iso8601_opt(timestamp: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
 /// Format a Unix timestamp as ISO 8601 string (e.g., "2025-01-01T00:00:00Z").
 ///
 /// Used for human-readable timestamps in diagnostic reports and logs.
@@ -45,12 +57,9 @@ pub fn escape_controls(s: &str) -> Cow<'_, str> {
 /// If the timestamp is out of range for chrono's date handling, returns an
 /// explicit placeholder string rather than a misleading value.
 pub fn format_timestamp_iso8601(timestamp: u64) -> String {
-    let Ok(timestamp) = i64::try_from(timestamp) else {
-        return format!("invalid-timestamp({timestamp})");
-    };
-
-    chrono::DateTime::from_timestamp(timestamp, 0)
-        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+    i64::try_from(timestamp)
+        .ok()
+        .and_then(format_timestamp_iso8601_opt)
         .unwrap_or_else(|| format!("invalid-timestamp({timestamp})"))
 }
 
@@ -86,9 +95,114 @@ pub fn epoch_now() -> u64 {
         })
 }
 
+/// Replace `path`'s contents in one step: write a sibling temp file, sync it,
+/// then rename it over the target.
+///
+/// `fs::write` truncates in place, so a crash, a full disk, or a lost power
+/// cable between the truncate and the write leaves the file empty or
+/// half-written. Every file that reaches this function is one a torn write
+/// breaks — rc files and shell wrappers the user's shell sources at startup,
+/// `config.toml`, `approvals.toml`, another tool's `settings.json` — so it ends
+/// up either entirely the old version or entirely the new one. Regenerable
+/// content keeps the plain write ([`crate::cache::write_json`], the `-vv`
+/// diagnostic report): a torn write there costs a recompute, not the user's
+/// data.
+///
+/// Three details a bare `NamedTempFile::new()` + `persist()` gets wrong:
+///
+/// - **Symlinks.** Dotfile managers (Mackup, chezmoi, stow) symlink `~/.zshrc`
+///   or `~/.config/worktrunk` into a repo or a synced folder. `fs::write`
+///   follows the link and updates the real file; a rename would replace the
+///   link itself with a regular file and silently detach the user's setup. The
+///   target is resolved first, so the rename lands on the real file and the
+///   link survives. A dangling link has nothing to resolve to, so it is
+///   replaced by a regular file rather than followed to the missing path it
+///   names.
+/// - **Same directory.** A temp file elsewhere (`/tmp`) means `persist` crosses
+///   a filesystem boundary, where it degrades to a copy — no longer atomic, and
+///   an outright failure on some setups. The temp file is created beside the
+///   resolved target.
+/// - **Mode.** A fresh temp file is `0600`. An existing target's mode is copied
+///   onto the temp file before the rename, so permissions survive the
+///   replacement. A file that doesn't exist yet keeps the `0600`, narrower than
+///   the `0644` a truncating write leaves under a default umask; every file
+///   written here is read by its own owner. Windows has no equivalent to carry.
+///
+/// The target becomes a new inode, so ownership resets to the running user (a
+/// root-run rewrite of someone else's file hands it to root) and any hardlink
+/// to it keeps the old contents. The `atomic-write-file` crate carries owner
+/// and mode across, but replaces a symlink instead of writing through it,
+/// leaving the canonicalize step here either way; `atomicwrites` does neither.
+///
+/// The temp file needs a writable parent directory, which a truncating write
+/// did not, so a read-only directory holding a writable file now fails with the
+/// file left as it was — the trade Data Safety asks for.
+pub fn write_atomically(path: &Path, content: &str) -> io::Result<()> {
+    let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // A bare filename's parent is `Some("")`, which no directory call accepts.
+    let dir = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let mut temp = tempfile::Builder::new()
+        .prefix(".wt-tmp.")
+        .suffix(".tmp")
+        .tempfile_in(dir)?;
+    temp.write_all(content.as_bytes())?;
+    temp.flush()?;
+
+    // Before the sync, so the mode lands on disk with the contents.
+    #[cfg(unix)]
+    if let Ok(metadata) = std::fs::metadata(&target) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode();
+        temp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))?;
+    }
+
+    temp.as_file().sync_all()?;
+    temp.persist(&target).map_err(|e| e.error)?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_write_atomically_creates_then_replaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        write_atomically(&path, "first\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\n");
+
+        write_atomically(&path, "second\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second\n");
+
+        // The rename leaves no temp file behind.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// A file with no target to copy a mode from keeps the temp file's `0600`,
+    /// narrower than the `0644` a truncating write leaves under a default
+    /// umask.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomically_creates_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.toml");
+        write_atomically(&path, "x\n").unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 
     #[test]
     fn test_epoch_now_returns_reasonable_timestamp() {

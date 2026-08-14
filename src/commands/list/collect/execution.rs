@@ -13,7 +13,7 @@
 //! gate's required fields on `ListItem` / `WorktreeData` as they become
 //! `Some`. Tasks that *will* run are written by the drain as their results
 //! arrive. Tasks that will *not* run (stale branches skip expensive tasks,
-//! unborn branches skip commit-dependent tasks, `--skip-tasks` filters,
+//! unborn branches skip commit-dependent tasks, the column plan excludes them,
 //! branches with no worktree have no worktree-only tasks) have their fields
 //! seeded here via [`seed_skipped_task_defaults`] with conservative defaults
 //! — otherwise the fields would stay `None` forever and their gate would
@@ -24,9 +24,7 @@ use std::sync::Arc;
 use crossbeam_channel as chan;
 use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
 
-use super::super::model::{
-    ActiveGitOperation, ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
@@ -154,18 +152,23 @@ impl ExpectedResults {
 ///
 /// `refresh_status_symbols` keeps gates at `None` while their inputs are
 /// unloaded, which renders as the `·` placeholder. For tasks that will
-/// *never* run (stale branch, user `--skip-tasks`, unborn item missing
+/// *never* run (stale branch, a task no rendered column needs, unborn item missing
 /// commit-dependent tasks, prunable worktree), seeding a conservative
 /// default up front lets the gate resolve normally instead of showing `·`
 /// forever.
 ///
-/// **Not seeded by this function:** `item.counts`. The ahead/behind counts
-/// are the only field that leaks directly into JSON output (`JsonMain` at
-/// `json_output.rs:~305`), so seeding them with `(0, 0)` would falsely
-/// claim "in sync" in `wt list --format=json` output. Callers that need to
-/// resolve gate 3 (main_state) for items without counts should instead
-/// pre-seed `status_symbols.main_state` directly — see
-/// [`seed_unborn_main_state`].
+/// **Not seeded by this function:** `item.counts`. Seeding the ahead/behind
+/// counts with `(0, 0)` would falsely claim "in sync" in JSON output
+/// (`JsonMain` / `JsonDefaultBranch`). Callers that need to resolve gate 3
+/// (main_state) for items without counts should instead pre-seed
+/// `status_symbols.main_state` directly — see [`seed_unborn_main_state`].
+///
+/// **Seeds are recorded on [`ListItem::seeded`]**: several seeded fields DO
+/// reach schema-2 JSON (`orphan`, `upstream`, `merge_conflicts`, the
+/// integration signals), where a conservative default would read as a
+/// determined fact. `json_v2` consults the flags and emits null
+/// (undetermined) for seeded families; the table keeps rendering the
+/// conservative value.
 ///
 /// Non-status-feeding tasks (`BranchDiff`, `CiStatus`, `UrlStatus`,
 /// `SummaryGenerate`) are rendered by their own columns with their own
@@ -181,37 +184,43 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
         | TaskKind::SummaryGenerate => {}
 
         TaskKind::AheadBehind => {
-            // Seed `is_orphan` (safe — not in JSON) but NOT `counts`
-            // (leaks to `JsonMain`). Gate 3 callers that need counts-less
-            // resolution use `seed_unborn_main_state` to pre-seed
+            // Seed `is_orphan` but NOT `counts` (leaks to JSON as a false
+            // "in sync"). Gate 3 callers that need counts-less resolution
+            // use `seed_unborn_main_state` to pre-seed
             // `status_symbols.main_state` directly.
             item.is_orphan = Some(false);
+            item.seeded.orphan = true;
         }
         TaskKind::Upstream => {
-            // Safe to seed: `UpstreamStatus::default()` has
-            // `remote: None`, so `active()` returns `None` and
-            // `upstream_to_json` elides the `remote` JSON key. No leak.
+            // `UpstreamStatus::default()` has `remote: None`, so `active()`
+            // returns `None` and the upstream renders as "no upstream".
             item.upstream = Some(UpstreamStatus::default());
+            item.seeded.upstream = true;
         }
         TaskKind::CommittedTreesMatch => {
             // Conservative: don't claim integrated if we haven't checked.
             item.committed_trees_match = Some(false);
+            item.seeded.integration = true;
         }
         TaskKind::HasFileChanges => {
             // Conservative: assume unique changes exist.
             item.has_file_changes = Some(true);
+            item.seeded.integration = true;
         }
         TaskKind::WouldMergeAdd => {
             // Conservative: assume the merge would add changes.
             item.would_merge_add = Some(true);
             item.is_patch_id_match = Some(false);
+            item.seeded.integration = true;
         }
         TaskKind::IsAncestor => {
             // Conservative: don't claim merged if we haven't checked.
             item.is_ancestor = Some(false);
+            item.seeded.integration = true;
         }
         TaskKind::MergeTreeConflicts => {
             item.has_merge_tree_conflicts = Some(false);
+            item.seeded.merge_conflicts = true;
         }
         TaskKind::UserMarker => {
             item.user_marker = Some(None);
@@ -234,7 +243,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
         }
         TaskKind::GitOperation => {
             if let ItemKind::Worktree(data) = &mut item.kind {
-                data.git_operation = Some(ActiveGitOperation::None);
+                data.git_operation = Some(None);
             }
         }
     }
@@ -328,9 +337,9 @@ pub fn work_items_for_worktree(
         return vec![];
     }
 
-    let skip = &options.skip_tasks;
+    let run = &options.tasks;
 
-    let include_url = !skip.contains(&TaskKind::UrlStatus);
+    let include_url = run.contains(&TaskKind::UrlStatus);
 
     // Expand URL template for this item (only if URL status is enabled).
     let item_url = if include_url {
@@ -400,9 +409,7 @@ pub fn work_items_for_worktree(
         TaskKind::WouldMergeAdd,
         TaskKind::SummaryGenerate,
     ] {
-        let will_skip = skip.contains(&kind)
-            || (!has_commits && COMMIT_TASKS.contains(&kind))
-            || (kind == TaskKind::SummaryGenerate && options.llm_command.is_none());
+        let will_skip = !run.contains(&kind) || (!has_commits && COMMIT_TASKS.contains(&kind));
         if will_skip {
             seed_skipped_task_defaults(item, kind);
             continue;
@@ -423,8 +430,10 @@ pub fn work_items_for_worktree(
     }
 
     // URL status health check task (if we have a URL). Only this single
-    // work item is queued per item — `item.url` was set directly above, so
-    // no placeholder send is needed.
+    // work item is queued per item — the immediate `UrlStatus` placeholder
+    // was already sent through the drain channel above (never written to
+    // `item.url` directly; see the module docstring), so this task needs no
+    // additional placeholder send.
     if include_url && ctx.item_url.is_some() {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         items.push(WorkItem {
@@ -469,7 +478,7 @@ pub fn work_items_for_branch(
         is_remote,
     } = branch;
 
-    let skip = &options.skip_tasks;
+    let run = &options.tasks;
 
     let branch_ref = if is_remote {
         BranchRef::remote_branch(branch_name, commit_sha)
@@ -505,9 +514,7 @@ pub fn work_items_for_branch(
         TaskKind::WouldMergeAdd,
         TaskKind::SummaryGenerate,
     ] {
-        let will_skip = skip.contains(&kind)
-            || (kind == TaskKind::SummaryGenerate && options.llm_command.is_none());
-        if will_skip {
+        if !run.contains(&kind) {
             seed_skipped_task_defaults(item, kind);
             continue;
         }
@@ -544,7 +551,82 @@ pub fn work_items_for_branch(
 mod tests {
     use super::*;
     use crate::commands::list::collect::build_worktree_item;
-    use std::collections::HashSet;
+
+    /// Every seed arm must point the negative direction: `json_v2` trusts a
+    /// positive `check_integration` match even when sibling signals were
+    /// seeded, which is only sound while no seed can fabricate a match.
+    #[test]
+    fn test_seeds_never_fabricate_integration() {
+        use strum::IntoEnumIterator;
+        use worktrunk::git::{IntegrationSignals, check_integration};
+
+        for kind in TaskKind::iter() {
+            let mut item = ListItem::new_branch("a".repeat(40), "feature".to_string());
+            seed_skipped_task_defaults(&mut item, kind);
+            let signals = IntegrationSignals {
+                is_same_commit: item.counts.map(|c| c.ahead == 0 && c.behind == 0),
+                is_ancestor: item.is_ancestor,
+                has_added_changes: item.has_file_changes,
+                trees_match: item.committed_trees_match,
+                would_merge_add: item.would_merge_add,
+                is_patch_id_match: item.is_patch_id_match,
+            };
+            assert!(
+                check_integration(&signals).is_none(),
+                "{kind:?} seed must not fabricate an integration match"
+            );
+        }
+    }
+
+    /// Producer → consumer: seeding marks the fact families, and schema-2
+    /// JSON reports them as null (undetermined) rather than presenting the
+    /// conservative defaults as determined facts.
+    #[test]
+    fn test_seeded_families_serialize_as_null() {
+        use strum::IntoEnumIterator;
+
+        use crate::commands::list::json_v2::JsonItemV2;
+        use crate::commands::list::model::{AheadBehind, Collected};
+
+        // Seed every skippable task on one item — the drain-timeout worst
+        // case — then load counts (never seeded) so the integration signals
+        // are all `Some`: without the flags this would read as determined
+        // not-integrated.
+        let mut item = ListItem::new_branch("a".repeat(40), "feature".to_string());
+        for kind in TaskKind::iter() {
+            seed_skipped_task_defaults(&mut item, kind);
+        }
+        item.counts = Some(AheadBehind {
+            ahead: 1,
+            behind: 0,
+        });
+
+        let mut all_vars = std::collections::HashMap::new();
+        let json = serde_json::to_value(JsonItemV2::from_list_item(
+            &item,
+            &mut all_vars,
+            Some("main"),
+            Collected::default(),
+            None,
+            &[],
+        ))
+        .unwrap();
+
+        let db = &json["default_branch"];
+        assert!(db["orphan"].is_null(), "seeded orphan must be null");
+        assert!(
+            db["merge_conflicts"].is_null(),
+            "seeded merge_conflicts must be null"
+        );
+        assert!(
+            db.get("integration").is_some_and(|v| v.is_null()),
+            "seeded integration must be null"
+        );
+        assert!(
+            json.get("upstream").is_some_and(|v| v.is_null()),
+            "seeded upstream must be null"
+        );
+    }
 
     #[test]
     fn test_skip_url_status_suppresses_placeholder_and_task() {
@@ -560,11 +642,17 @@ mod tests {
             prunable: None,
         };
 
-        let skip_tasks: HashSet<TaskKind> = [TaskKind::UrlStatus].into_iter().collect();
+        // The `url` column isn't rendered (gate off), so UrlStatus isn't planned
+        // — even though a template is configured.
+        let gates = crate::commands::list::columns::ColumnGates {
+            show_full: true,
+            summary_enabled: true,
+            has_llm_command: true,
+            has_url_template: false,
+        };
         let options = CollectOptions {
-            skip_tasks,
             url_template: Some("http://localhost/{{ branch }}".to_string()),
-            ..Default::default()
+            ..CollectOptions::for_columns(crate::commands::list::columns::all_columns(), &gates)
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -588,33 +676,10 @@ mod tests {
         assert!(items.iter().all(|w| w.ctx.item_url.is_none()));
     }
 
-    #[test]
-    fn test_no_llm_command_skips_summary_generate() {
-        let test = worktrunk::testing::TestRepo::new();
-        let repo = Repository::at(test.path()).expect("repo");
-        let wt = WorktreeInfo {
-            path: test.path().to_path_buf(),
-            head: "deadbeef".to_string(),
-            branch: Some("main".to_string()),
-            bare: false,
-            detached: false,
-            locked: None,
-            prunable: None,
-        };
-
-        // No llm_command, no skip_tasks — SummaryGenerate should still be skipped
-        let options = CollectOptions::default();
-
-        let expected_results = Arc::new(ExpectedResults::default());
-        let (tx, _rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
-        let mut item = build_worktree_item(&wt, true, false, false);
-
-        let items =
-            work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx, &mut item);
-
-        assert!(
-            !items.iter().any(|w| w.kind == TaskKind::SummaryGenerate),
-            "SummaryGenerate should be skipped when llm_command is None"
-        );
-    }
+    // No spawn-level test for "no LLM → no Summary": the column plan is the
+    // single authority, and `test_required_tasks_for_render` pins that the gate
+    // drops SummaryGenerate when no LLM is configured. The spawn loop's "skip
+    // what isn't planned" rule is covered by the UrlStatus test above. If a
+    // caller plans Summary without a command anyway, `SummaryGenerateTask`
+    // returns a clean error rather than misbehaving (tasks.rs).
 }

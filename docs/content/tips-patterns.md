@@ -66,10 +66,10 @@ The URL column in `wt list` shows each worktree's dev server:
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>
-@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>
-+ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>
+@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee083</span>
++ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee083</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden</span>
 {% end %}
@@ -225,7 +225,7 @@ Structured output for dashboards, statuslines, and scripts. See [`wt list`](@/li
 
 ## Reuse `default-branch`
 
-Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-config-state-default-branch), for instance, means scripts work on any repo — no need to hardcode `main` or `master`:
+Default branch [detection](@/config.md#wt-config-state-default-branch) means scripts work on any repo — no need to hardcode `main` or `master`:
 
 {{ terminal(cmd="git rebase $(wt config state default-branch)") }}
 
@@ -394,8 +394,6 @@ clean-derived = """
     done
 """
 ```
-
-This precisely targets only the DerivedData for the removed worktree, leaving caches for other worktrees and the main repository intact.
 
 ## Subdomain routing with Caddy
 <!-- Hand-tested 2026-03-07 -->

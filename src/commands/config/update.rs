@@ -10,13 +10,13 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
+    ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
     copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    eprintln, format_bash_with_gutter, hint_message, info_message, success_message,
-    suggest_command_in_dir,
+    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, println,
+    success_message, suggest_command_in_dir,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -65,7 +65,7 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
                 }
                 println!(
                     "# {} ({})",
-                    candidate.info.label,
+                    candidate.info.label(),
                     candidate.config_path.display()
                 );
             }
@@ -111,11 +111,11 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
             );
         }
 
-        std::fs::write(&candidate.config_path, &candidate.migrated)
-            .with_context(|| format!("Failed to update {}", candidate.info.label))?;
+        worktrunk::utils::write_atomically(&candidate.config_path, &candidate.migrated)
+            .with_context(|| format!("Failed to update {}", candidate.info.label()))?;
         eprintln!(
             "{}",
-            success_message(format!("Updated {}", candidate.info.label.to_lowercase()))
+            success_message(format!("Updated {}", candidate.info.label().to_lowercase()))
         );
     }
 
@@ -159,7 +159,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         &config_path,
         &original,
         true, // warn_and_migrate — user config always actionable
-        "User config",
+        ConfigFileKind::User,
         None,  // no repo context for user config
         false, // emit_inline_warnings — we render the diff ourselves
     )?;
@@ -168,7 +168,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    let migrated = compute_migrated_content(&original);
+    let migrated = compute_migrated_content(&original, ConfigFileKind::User);
     Ok(Some(UpdateCandidate {
         config_path,
         original,
@@ -183,9 +183,9 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Err(_) => return Ok(None),
     };
 
-    let config_path = match repo.project_config_path() {
-        Ok(Some(path)) => path,
-        _ => return Ok(None),
+    let config_path = match repo.project_config_path()? {
+        Some(path) => path,
+        None => return Ok(None),
     };
     if !config_path.exists() {
         return Ok(None);
@@ -200,7 +200,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         &config_path,
         &original,
         !is_linked, // only actionable from main worktree
-        "Project config",
+        ConfigFileKind::Project,
         Some(&repo),
         false,
     )?;
@@ -216,7 +216,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     }
 
-    let migrated = compute_migrated_content(&original);
+    let migrated = compute_migrated_content(&original, ConfigFileKind::Project);
     Ok(Some(UpdateCandidate {
         config_path,
         original,

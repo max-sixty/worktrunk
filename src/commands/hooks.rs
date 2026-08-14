@@ -126,7 +126,7 @@ pub(crate) fn prepare_and_check(
             continue;
         }
 
-        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
+        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?.validated()?;
         for step in steps {
             if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
                 result.push(SourcedStep {
@@ -461,11 +461,11 @@ fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: Hoo
             continue;
         }
         // Pipelines carry non-empty steps by construction — `steps[0]` is safe.
-        let cmd = match &pipeline.steps[0].step {
-            PreparedStep::Single(cmd) => cmd,
-            PreparedStep::Concurrent(cmds) => &cmds[0],
-        };
-        eprintln!("{}", info_message("template variables:"));
+        let cmd = &pipeline.steps[0].step.commands()[0];
+        eprintln!(
+            "{}",
+            info_message(cformat!("<bold>{hook_type}</> template variables:"))
+        );
         eprintln!(
             "{}",
             format_with_gutter(&format_hook_variables(hook_type, &cmd.context), None)
@@ -487,10 +487,7 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
     // step).
     let steps = &pipeline.steps;
     let source = steps[0].source;
-    let first_cmd = match &steps[0].step {
-        PreparedStep::Single(cmd) => cmd,
-        PreparedStep::Concurrent(cmds) => &cmds[0],
-    };
+    let first_cmd = &steps[0].step.commands()[0];
     let mut context = first_cmd.context.clone();
     context.remove("hook_name");
 

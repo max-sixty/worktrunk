@@ -9,6 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -25,6 +26,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -48,6 +50,15 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
+
+[1m[32mAutomation:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout after the promote completes. The mismatch warning still appears on stderr in JSON mode (safety signal).[0m
+          
+          [default: text]
+          [possible values: text, json]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m

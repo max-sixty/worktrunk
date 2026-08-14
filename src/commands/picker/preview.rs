@@ -19,12 +19,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 ///
 /// A mode whose content is structurally absent for the current row is rendered
 /// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):
-/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled, the
-/// working-tree/branch-diff/upstream/summary tabs on a `--prs` row (no local
-/// worktree), and the PR-backed tabs 6 (pr) and 7 (comments) when the row's
-/// branch has no PR. The PR-backed tabs are available together, by the same
-/// rule, on every row — `--prs` only decides whether a PR row is listed, not how
-/// these tabs behave.
+/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled or
+/// the branch has nothing to summarize, the working-tree/branch-diff/upstream/
+/// summary tabs on a `--prs` row (no local worktree), and the PR-backed tabs 6
+/// (pr) and 7 (comments) when the row's branch has no PR. The PR-backed tabs are
+/// available together, by the same rule, on every row — `--prs` only decides
+/// whether a PR row is listed, not how these tabs behave.
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column
@@ -65,7 +65,25 @@ impl PreviewMode {
     pub(super) fn prev(self) -> Self {
         Self::from_u8(if self as u8 <= 1 { 7 } else { self as u8 - 1 })
     }
+
+    /// Whether this tab is in [`LOCAL_GIT_MODES`].
+    pub(super) fn is_local_git(self) -> bool {
+        LOCAL_GIT_MODES.contains(&self)
+    }
 }
+
+/// The four tabs computed from local git alone — the one canonical set both
+/// preview producers consume: the orchestrator precomputes exactly these
+/// (plus summaries), and the demand worker serves them on a cache miss (see
+/// `PreviewDemand`), so the two can't drift. Summary is excluded (an LLM
+/// call on tab navigation would be a surprise cost); Pr and Comments
+/// render/fetch through their own paths.
+pub(super) const LOCAL_GIT_MODES: [PreviewMode; 4] = [
+    PreviewMode::WorkingTree,
+    PreviewMode::Log,
+    PreviewMode::BranchDiff,
+    PreviewMode::UpstreamDiff,
+];
 
 /// Typical terminal character aspect ratio (width/height).
 ///

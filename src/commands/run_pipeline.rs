@@ -23,11 +23,13 @@
 //! **Serial steps** run one at a time. If a step exits non-zero, the
 //! pipeline aborts — later steps don't run.
 //!
-//! **Concurrent groups** spawn all children at once, then wait for every
-//! child before proceeding. If any child fails, the group is reported as
-//! failed, but all children are allowed to finish. Template expansion for
-//! concurrent commands happens sequentially before any child is spawned
-//! (expansion may read git config, so order matters for `vars.*`).
+//! **Concurrent groups** spawn each child as soon as its own template is
+//! expanded, then wait for every child before proceeding. If any child fails,
+//! the group is reported as failed, but all children are allowed to finish.
+//! Expansion runs in a single sequential loop in command order — each command
+//! is expanded immediately before its own child is spawned (expansion may read
+//! git config, so order matters for `vars.*`), so a later command's expansion
+//! can run after an earlier command's child has already started.
 //!
 //! **Stdin**: every child receives the spec's context as JSON on stdin,
 //! matching the foreground hook convention. Commands that don't read stdin
@@ -53,7 +55,6 @@
 //! since the expanded string is passed to a shell for interpretation.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
 use std::path::Path;
@@ -61,8 +62,9 @@ use std::process::{Child, ExitStatus, Stdio};
 
 use anyhow::Context;
 
+use worktrunk::config::TemplateContext;
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::shell_exec::ShellConfig;
+use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
@@ -106,8 +108,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 let log_file = create_command_log(&spec, &log_name)?;
                 let step_ctx = step_context(&spec.context, name.as_deref());
                 let expanded = expand_shell_template(template, &step_ctx, &repo, template_name)?;
-                let step_json = serde_json::to_string(&*step_ctx)
-                    .context("failed to serialize step context")?;
+                let step_json = step_ctx.to_json();
                 let (mut child, mut trace) =
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
                 let status = wait_resolving(&mut child, &mut trace, &expanded)?;
@@ -129,14 +130,11 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 ///
 /// The shared pipeline context has `hook_name` stripped (it varies per step).
 /// Returns a `Cow` so unnamed steps borrow the base context without cloning.
-fn step_context<'a>(
-    base: &'a HashMap<String, String>,
-    name: Option<&str>,
-) -> Cow<'a, HashMap<String, String>> {
+fn step_context<'a>(base: &'a TemplateContext, name: Option<&str>) -> Cow<'a, TemplateContext> {
     match name {
         Some(n) => {
             let mut ctx = base.clone();
-            ctx.insert("hook_name".into(), n.into());
+            ctx.insert("hook_name", n);
             Cow::Owned(ctx)
         }
         None => Cow::Borrowed(base),
@@ -160,16 +158,21 @@ fn spawn_shell_command(
         .try_clone()
         .context("failed to clone log file handle")?;
     // Start the trace just before spawning; the caller resolves it once the
-    // child is waited on (see `wait_resolving`).
-    let mut trace = CommandTrace::new(None, expanded);
-    let mut child = match shell
-        .command(expanded)
+    // child is waited on (see `wait_resolving`). The step is fed its own
+    // `context_json` on stdin, so mark it stdin-reading — the same command
+    // across worktrees isn't a duplicate (different per-worktree input).
+    let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
+    let mut command = shell.command(expanded);
+    command
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err))
-        .spawn()
-    {
+        .stderr(Stdio::from(log_err));
+    // Background hooks, like foreground ones, discover their repo from the
+    // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
+    // runner only ever executes hook pipelines, so the scrub is unconditional.
+    scrub_git_discovery_env_vars(&mut command);
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
@@ -239,8 +242,7 @@ fn run_concurrent_group(
             let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
             let expanded =
                 expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
-            let cmd_json =
-                serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
+            let cmd_json = cmd_ctx.to_json();
             let (mut child, mut trace) =
                 spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
             *cmd_index += 1;
@@ -305,7 +307,7 @@ fn create_command_log(spec: &PipelineSpec, name: &str) -> anyhow::Result<fs::Fil
 /// Signal-killed children surface as `WorktrunkError::ChildProcessExited`
 /// with `signal: Some(sig)` and `code: 128 + sig`, matching the foreground
 /// convention established by `shell_exec`. That lets `exit_code()` and
-/// `interrupt_exit_code()` work consistently and the `wt hook run-pipeline`
+/// `interrupt_signal()` work consistently and the `wt hook run-pipeline`
 /// process exits 130 on SIGINT and 143 on SIGTERM — the expectation the
 /// "Signal Handling" section of the project `CLAUDE.md` sets for every
 /// command loop.
@@ -397,9 +399,9 @@ mod tests {
             assert_eq!(code, expected_code, "exit code for {sig}");
             assert_eq!(message, expected_msg, "message for {sig}");
             assert_eq!(
-                err.interrupt_exit_code(),
-                Some(expected_code),
-                "interrupt_exit_code for {sig}",
+                err.interrupt_signal(),
+                Some(sig),
+                "interrupt_signal for {sig}"
             );
         }
     }
@@ -414,6 +416,6 @@ mod tests {
         assert_eq!(code, 2);
         assert_eq!(message, "command failed with exit code 2: my-step");
         // Non-signal errors must NOT trip the interrupt abort path.
-        assert_eq!(err.interrupt_exit_code(), None);
+        assert_eq!(err.interrupt_signal(), None);
     }
 }

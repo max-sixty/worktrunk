@@ -9,7 +9,7 @@
   "entrypoints": [
     {
       "path": "src/commands/worktree/switch.rs",
-      "symbol": "handle_switch",
+      "symbol": "handle_switch_command",
       "route": null,
       "command": "wt switch"
     }

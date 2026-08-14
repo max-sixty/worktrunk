@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
+    BareRepoTest, TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
     setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
     temp_home, wt_command,
 };
@@ -45,9 +45,7 @@ server = "npm run dev"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -73,9 +71,7 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -117,9 +113,7 @@ command = "company-llm-tool"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -540,9 +534,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -569,9 +561,7 @@ fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -608,40 +598,6 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     assert!(
         stderr.contains("has unknown field"),
         "Expected unknown field warning from system config load, got: {stderr}"
-    );
-}
-
-/// System config should use the same deprecation warning gate as user config.
-#[rstest]
-fn test_system_config_deprecation_warning_during_load(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
-    fs::write(
-        &system_config_path,
-        r#"[select]
-pager = "delta --paging=never"
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = repo.wt_command();
-    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
-    cmd.arg("list").current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "Command should succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("System config") && stderr.contains("[select]"),
-        "Expected deprecation warning from system config load, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("[switch.picker]"),
-        "Expected replacement section in warning, got: {stderr}"
     );
 }
 
@@ -736,9 +692,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Force compinit warning for deterministic tests across environments
         cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
@@ -765,9 +719,7 @@ fn test_config_show_skipped_with_installed_binary(mut repo: TestRepo, temp_home:
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -808,9 +760,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -851,9 +801,7 @@ fn test_config_show_fish_with_completions(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -887,9 +835,7 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -924,9 +870,7 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -962,9 +906,7 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1001,9 +943,7 @@ eval "$(wt.exe config shell init bash)"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1052,9 +992,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1190,9 +1128,7 @@ fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1217,9 +1153,7 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1289,9 +1223,7 @@ fn test_config_show_suggests_user_config_for_commit_generation(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1317,9 +1249,7 @@ fn test_config_show_suggests_project_config_for_ci(mut repo: TestRepo, temp_home
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1343,9 +1273,7 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1374,9 +1302,7 @@ fn test_config_show_invalid_project_toml(mut repo: TestRepo, temp_home: TempDir)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1402,9 +1328,7 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1439,9 +1363,7 @@ command = "nonexistent-llm-command-12345 -m test-model"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Inject current version for deterministic version check output
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
@@ -1472,9 +1394,7 @@ fn test_config_show_full_update_available(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Inject a higher version to trigger update-available message
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "99.0.0");
         cmd.arg("config")
@@ -1503,9 +1423,7 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         // Simulate a fetch failure
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", "error");
         cmd.arg("config")
@@ -1545,9 +1463,7 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.arg("config")
             .arg("show")
@@ -1557,6 +1473,56 @@ fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
         set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `wt config show --full` against an Azure DevOps remote reports the `az` CLI
+/// row plus the `azure-devops` extension, which the whole `az repos` command
+/// group ships in: without it CI status stays blank however well `az` is
+/// authenticated, and only the user can install it.
+#[rstest]
+#[case::missing("[]", "config_show_full_azure_extension_missing")]
+#[case::installed(
+    r#"[{"name": "azure-devops", "version": "1.0.0"}]"#,
+    "config_show_full_azure_extension_installed"
+)]
+fn test_config_show_full_azure_remote(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] extensions_json: &str,
+    #[case] snapshot_name: &str,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_az_with_extensions(extensions_json);
+
+    // The fixture already has an `origin`; point it at an Azure DevOps host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(snapshot_name, cmd);
     });
 }
 
@@ -1585,9 +1551,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1621,9 +1585,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1654,42 +1616,7 @@ fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir)
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
-fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home: TempDir) {
-    // Setup mock gh/glab for deterministic BINARIES output
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    // Create fake global config
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    // Create project config file with only whitespace
-    let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).unwrap();
-    fs::write(config_dir.join("wt.toml"), "   \n\t\n  ").unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1709,9 +1636,7 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1746,9 +1671,7 @@ alias wt="git worktree"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1788,9 +1711,7 @@ export WT_BIN="/c/Program Files/wt.exe"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1842,9 +1763,7 @@ alias wt="git worktree"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -1930,35 +1849,27 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     });
 }
 
-/// When a migration file has already been written, subsequent `wt list` runs should:
-/// 1. Still show a brief deprecation warning
-/// 2. NOT write or overwrite the migration file (skip write since hint is set)
-///
-/// The file remains available for the user. If they want a fresh one, `wt config show` regenerates.
+/// Loading deprecated project config warns but leaves the config untouched.
+/// Materializing migrations is `wt config update`'s job.
 #[rstest]
 fn test_wt_list_never_writes_migration_file(repo: TestRepo, temp_home: TempDir) {
-    // Write project config with deprecated variables
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
-    let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+    let original = r#"pre-start = "echo {{ main_worktree }}"
 "#;
-    fs::write(&project_config_path, original).unwrap();
+    repo.write_project_config(original);
 
-    // `wt list` should emit a deprecation warning but never write a .new file
-    // or modify the config. Materializing migrations is `wt config update`'s job.
-    for _ in 0..2 {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "wt list should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "wt list should succeed: {stderr}");
+    assert!(
+        stderr.contains("Project config")
+            && stderr.contains("main_worktree")
+            && stderr.contains("is deprecated"),
+        "Expected the project-config template deprecation warning, got: {stderr}"
+    );
     assert!(
         !project_config_path.with_extension("toml.new").exists(),
         "wt list must not write a .new migration file"
@@ -1970,133 +1881,63 @@ fn test_wt_list_never_writes_migration_file(repo: TestRepo, temp_home: TempDir) 
     );
 }
 
-/// Fixing a deprecated config and later introducing a new one still shows a
-/// warning on the new deprecation — no stale state persists across process
-/// runs now that `.new` files are gone, so this just exercises the plain
-/// per-process warning path.
+/// A linked worktree loads its own project hooks, but suppresses project-config
+/// deprecation warnings because the migration is only actionable from the main
+/// worktree.
 #[rstest]
-fn test_fixing_deprecated_config_then_reintroducing_still_warns(
-    repo: TestRepo,
+fn test_deprecated_project_config_silent_in_linked_worktree(
+    mut repo: TestRepo,
     temp_home: TempDir,
 ) {
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
+    let linked_path = repo.add_worktree("feature");
+    let config_path = linked_path.join(".config").join("wt.toml");
+    let original = r#"pre-start = "echo linked-project-hook {{ main_worktree }}"
+"#;
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, original).unwrap();
 
-    fs::write(
-        &project_config_path,
-        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
-"#,
-    )
-    .unwrap();
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        assert!(cmd.output().unwrap().status.success());
-    }
-
-    fs::write(
-        &project_config_path,
-        r#"pre-start = "ln -sf {{ repo }}/node_modules"
-"#,
-    )
-    .unwrap();
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("deprecated"),
-            "No deprecation warning for clean config"
-        );
-    }
-
-    fs::write(
-        &project_config_path,
-        r#"pre-start = "cd {{ worktree }} && npm install"
-"#,
-    )
-    .unwrap();
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("is deprecated"),
-            "New deprecation should show warning, got: {stderr}"
-        );
-    }
-
+    // `hook show` loads and renders project config without globally
+    // suppressing warnings; only ProjectConfig's linked-worktree gate makes
+    // the deprecation silent.
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "show", "pre-start", "--format=json"])
+        .current_dir(&linked_path)
+        .env("NO_COLOR", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !project_config_path.with_extension("toml.new").exists(),
-        "wt list must never write a .new file"
+        output.status.success(),
+        "wt hook show from linked worktree should succeed: {stderr}"
     );
-}
 
-/// Deprecation warnings should only appear in the main worktree where the migration
-/// file can be applied. Running from a feature worktree should skip the warning entirely.
-#[rstest]
-fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, temp_home: TempDir) {
-    // Create a feature worktree first (before adding project config)
-    {
-        let mut cmd = repo.wt_command();
-        cmd.args(["switch", "--create", "feature"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "Creating feature worktree should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    // Get the feature worktree path
-    let feature_path = repo.root_path().parent().unwrap().join(format!(
-        "{}.feature",
-        repo.root_path().file_name().unwrap().to_string_lossy()
-    ));
-
-    // Write project config with deprecated variables IN THE FEATURE WORKTREE
-    // (project config is loaded from the current worktree root, not the main worktree)
-    let feature_config_dir = feature_path.join(".config");
-    fs::create_dir_all(&feature_config_dir).unwrap();
-    fs::write(
-        feature_config_dir.join("wt.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    // Run wt list from the feature worktree - should NOT show deprecation warning
-    // because warn_and_migrate is false for non-main worktrees
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(&feature_path);
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "wt list from feature worktree should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("deprecated template variables"),
-            "Deprecation warning should NOT appear in feature worktree, got: {stderr}"
-        );
-        assert!(
-            !stderr.contains("Wrote migrated"),
-            "Migration file should NOT be written from feature worktree, got: {stderr}"
-        );
-    }
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("hook show should emit valid JSON");
+    let project_hook = hooks
+        .as_array()
+        .expect("hook show should emit an array")
+        .iter()
+        .find(|hook| hook["source"] == "project" && hook["type"] == "pre-start")
+        .expect("linked-worktree project hook should be listed");
+    assert_eq!(
+        project_hook["template"],
+        "echo linked-project-hook {{ main_worktree }}"
+    );
+    assert!(
+        !(stderr.contains("Project config")
+            && stderr.contains("main_worktree")
+            && stderr.contains("deprecated")),
+        "Project-config deprecation warning should be silent in a linked worktree, got: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        original,
+        "loading linked-worktree project config must not modify it"
+    );
+    assert!(
+        !config_path.with_extension("toml.new").exists(),
+        "loading linked-worktree project config must not write a .new migration file"
+    );
 }
 
 /// `wt list` emits a user-config deprecation warning but never writes a
@@ -2155,22 +1996,21 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
-        // Set WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active
+        // Set the cd directive file to simulate shell integration being active.
         cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
 
         assert_cmd_snapshot!(cmd);
     });
 }
 
-/// When shell integration is active at runtime (WORKTRUNK_DIRECTIVE_FILE set) but the
-/// init line is NOT in the scanned config file (e.g., sourced from another file), config
-/// show should report "Configured ... (not found in ...)" instead of "Not configured".
+/// When shell integration is active at runtime (`WORKTRUNK_DIRECTIVE_CD_FILE` set) but
+/// the init line is NOT in the scanned config file (e.g., sourced from another file),
+/// config show should report "Configured ... (not found in ...)" instead of
+/// "Not configured".
 /// Regression test for https://github.com/max-sixty/worktrunk/issues/1306
 #[rstest]
 fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp_home: TempDir) {
@@ -2192,9 +2032,7 @@ fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2226,9 +2064,7 @@ fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2256,9 +2092,7 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2288,9 +2122,7 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2318,9 +2150,7 @@ fn test_config_show_codex_available(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2351,9 +2181,7 @@ fn test_config_show_opencode_available_plugin_not_installed(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2382,9 +2210,7 @@ fn test_config_show_opencode_plugin_installed(mut repo: TestRepo, temp_home: Tem
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2421,9 +2247,7 @@ fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2454,9 +2278,7 @@ fn test_config_show_gemini_available_extension_not_installed(
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2487,9 +2309,7 @@ fn test_config_show_gemini_extension_invalid_manifest(mut repo: TestRepo, temp_h
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2518,9 +2338,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2550,9 +2368,7 @@ fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDi
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2828,9 +2644,7 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
     // Collapse triple newlines that may result from stripping adjacent lines
     settings.add_filter(r"\n\n\n", "\n\n");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -2846,6 +2660,65 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// The process-tree shell wins over $SHELL in the diagnostics: with zsh as
+/// the detected ancestor and bash as the login shell, config show surfaces
+/// "Detected shell: zsh (process tree)" next to $SHELL, and the verify hint
+/// targets zsh.
+#[rstest]
+fn test_config_show_detected_shell_via_process_tree(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // .zshrc has integration for the shell the process tree detects
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        // Login shell differs from the process-tree ancestor. The override
+        // must come after configure_wt_cmd, which pins it to "".
+        cmd.env("SHELL", "/bin/bash");
+        cmd.env("WORKTRUNK_TEST_PARENT_SHELL", "zsh");
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Without the test override, the real process-tree walk runs. Its result
+/// depends on the environment (dev shell, CI runner), so this asserts only
+/// that the walk completes and config show still renders — exercising the
+/// production walk end-to-end rather than the override shortcut.
+#[rstest]
+fn test_config_show_runs_real_ancestry_walk(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let mut cmd = repo.wt_command();
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env_remove("WORKTRUNK_TEST_PARENT_SHELL");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config show should succeed with the real walk: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Shell integration"),
+        "shell section should render: {stdout}"
+    );
 }
 
 /// Test that deprecated [commit-generation] section shows warning and creates migration file
@@ -2961,9 +2834,7 @@ pre-start = "ln -sf {{ repo_root }}/node_modules"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3014,9 +2885,7 @@ fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
     // Run wt config show from the linked worktree
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(&feature_path);
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3049,9 +2918,7 @@ command = "llm -m gpt-4"
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
@@ -3163,30 +3030,6 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     assert!(!updated.contains("main_worktree"));
 }
 
-/// `wt config update` with a clean project config (no deprecations) treats
-/// the repo as nothing-to-do — covers the project-config path through
-/// `check_and_migrate` when it returns `info == None`.
-#[rstest]
-fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
-    repo.write_project_config(
-        r#"pre-start = "echo ready"
-"#,
-    );
-    repo.commit("Add clean project config");
-
-    let output = repo
-        .wt_command()
-        .args(["config", "update"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No deprecated settings found"),
-        "Expected no-op message, got: {stderr}"
-    );
-}
-
 /// `wt config update` from a linked worktree declines to mutate project
 /// config and instead points at the main worktree. Covers the `is_linked`
 /// branch in `check_project_config`.
@@ -3265,6 +3108,9 @@ fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -3325,10 +3171,13 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
 /// `wt config update` with no deprecated settings reports nothing to do
 #[rstest]
 fn test_config_update_no_deprecations(repo: TestRepo) {
-    // Write a clean config with no deprecated patterns
+    // Clean config: no deprecated patterns, json-schema explicitly set
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
 "#,
     )
     .unwrap();
@@ -3342,15 +3191,14 @@ fn test_config_update_no_deprecations(repo: TestRepo) {
     });
 }
 
-/// `wt config update --yes` applies template variable migration
+/// `wt config update` writes `[list] json-schema = 2` when the key is unset,
+/// adopting the upcoming default, and a second run has nothing left to do —
+/// the pending-default loop closes.
 #[rstest]
-fn test_config_update_applies_template_var_migration(repo: TestRepo) {
-    let config_path = repo.test_config_path();
+fn test_config_update_adopts_json_schema(repo: TestRepo) {
     fs::write(
-        config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
-"#,
+        repo.test_config_path(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
     )
     .unwrap();
 
@@ -3362,25 +3210,45 @@ pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
         assert_cmd_snapshot!(cmd);
     });
 
-    // Config file should now contain the updated variables
-    let updated = fs::read_to_string(config_path).unwrap();
-    assert!(
-        updated.contains("{{ repo }}"),
-        "Should replace main_worktree with repo"
-    );
-    assert!(
-        updated.contains("{{ repo_path }}"),
-        "Should replace repo_root with repo_path"
-    );
-    assert!(
-        updated.contains("{{ worktree_path }}"),
-        "Should replace worktree with worktree_path"
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 2\n"
     );
 
-    // Migration .new file should be gone (renamed over original)
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
     assert!(
-        !config_path.with_extension("toml.new").exists(),
-        ".new file should be consumed by the update"
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "second run should have nothing to update"
+    );
+}
+
+/// A system config that sets `[list] json-schema` makes the resolved value
+/// explicit, so `wt config update` must not write the user file — a user-file
+/// value would override the deliberate system-level choice.
+#[rstest]
+fn test_config_update_json_schema_adopt_defers_to_system_config(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "[list]\njson-schema = 1\n").unwrap();
+
+    // A user config with an unrelated deprecation: update applies that
+    // rewrite but must not insert json-schema alongside it.
+    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"]);
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "[merge]\nff = false\n",
+        "the no-ff rewrite applies; the json-schema write must not"
     );
 }
 
@@ -3431,169 +3299,39 @@ Combine {{ commits | length }} commits:
     );
 }
 
-/// `wt config show` displays deprecation details for `[select]` → `[switch.picker]`.
-/// Uses user config so the warning label reads "User config".
+/// A relative `--config` resolves against `-C`, the way git resolves the path
+/// options in its own command line.
+///
+/// Run from outside the repo, so the process cwd and the `-C` directory
+/// disagree: the file is only reachable from the latter.
 #[rstest]
-fn test_config_show_displays_select_section_deprecation(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
+fn test_explicit_config_path_honors_directory_flag(repo: TestRepo) {
     fs::write(
-        &config_path,
-        r#"[select]
-pager = "delta --paging=never"
-"#,
+        repo.root_path().join("side-config.toml"),
+        "[list]\nfull = true\n",
     )
     .unwrap();
+    let outside = repo.root_path().parent().unwrap().to_path_buf();
+    let root = repo.root_path().to_string_lossy().to_string();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args([
+        "-C",
+        &root,
+        "--config",
+        "side-config.toml",
+        "config",
+        "show",
+    ])
+    .current_dir(&outside);
+    let output = cmd.output().unwrap();
 
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config show` displays deprecation details for `[merge] no-ff` → `ff` (inverted).
-#[rstest]
-fn test_config_show_displays_no_ff_deprecation(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(
-        &config_path,
-        r#"[merge]
-no-ff = true
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config show` displays deprecation details for `[switch] no-cd` → `cd` (inverted).
-#[rstest]
-fn test_config_show_displays_no_cd_deprecation(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(
-        &config_path,
-        r#"[switch]
-no-cd = true
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config update --yes` applies commit-generation section rename
-#[rstest]
-fn test_config_update_applies_commit_generation_migration(repo: TestRepo) {
-    let config_path = repo.test_config_path();
-    fs::write(
-        config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[commit-generation]
-command = "llm"
-args = ["-m", "haiku"]
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "update", "--yes"]);
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Config file should have the renamed section and merged args
-    let updated = fs::read_to_string(config_path).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        updated.contains("[commit.generation]"),
-        "Should rename section"
+        stdout.contains("full = true"),
+        "config show should report the config named relative to -C:\n{stdout}"
     );
-    assert!(
-        updated.contains("command = \"llm -m haiku\""),
-        "Should merge args into command"
-    );
-    assert!(
-        !updated.contains("[commit-generation]"),
-        "Old section name should be gone"
-    );
-    assert!(!updated.contains("args ="), "Args field should be removed");
-}
-
-/// `wt config update --yes` handles approved-commands migration
-#[rstest]
-fn test_config_update_applies_approved_commands_migration(repo: TestRepo) {
-    let config_path = repo.test_config_path();
-    fs::write(
-        config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."github.com/user/repo"]
-approved-commands = ["npm install", "npm test"]
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "update", "--yes"]);
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Config should no longer have approved-commands
-    let updated = fs::read_to_string(config_path).unwrap();
-    assert!(
-        !updated.contains("approved-commands"),
-        "approved-commands should be removed from config"
-    );
-
-    // Approvals should be in approvals.toml
-    let approvals_file = config_path.with_file_name("approvals.toml");
-    assert!(approvals_file.exists(), "approvals.toml should exist");
-    let approvals = fs::read_to_string(&approvals_file).unwrap();
-    assert!(approvals.contains("npm install"));
-    assert!(approvals.contains("npm test"));
 }
 
 /// Test that explicitly specified --config path that doesn't exist shows a warning
@@ -3622,9 +3360,7 @@ fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3646,9 +3382,7 @@ fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_hom
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3665,9 +3399,7 @@ fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3698,9 +3430,7 @@ fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3717,9 +3447,7 @@ fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3737,9 +3465,7 @@ fn test_plugins_codex_install(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3769,9 +3495,7 @@ fn test_plugins_codex_uninstall(mut repo: TestRepo, temp_home: TempDir) {
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3787,9 +3511,7 @@ fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempD
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -3821,10 +3543,20 @@ fn test_codex_plugin_metadata_is_valid_json() {
     .unwrap();
 
     assert_eq!(plugin["name"], "worktrunk");
-    assert_eq!(plugin["skills"], "./skills/");
+    // No `skills` key: Codex scans <plugin-root>/skills/ by convention when
+    // the manifest omits it, and an explicit "./skills/" names the same
+    // directory (verified against codex-cli 0.144.1). The scanned tree is the
+    // real-file mirror of repo-root skills/ — `codex plugin add` copies the
+    // plugin into its cache with a copier that drops symlink entries, which
+    // is why the mirror exists. See CLAUDE.md → "Plugin skills are a
+    // generated mirror".
+    assert!(
+        plugin.get("skills").is_none(),
+        "the Codex manifest must not carry a `skills` key — Codex scans skills/ by convention"
+    );
     // Metadata must not drift back toward the Claude plugin: the Codex plugin
-    // ships only the configuration skill, and its URLs are the canonical site
-    // (not the `/claude-code/` doc slug).
+    // is scoped to configuration guidance (no activity-tracking claims), and
+    // its URLs are the canonical site (not the `/claude-code/` doc slug).
     for key in ["description", "homepage"] {
         let val = plugin[key].as_str().unwrap();
         assert!(
@@ -3847,14 +3579,59 @@ fn test_codex_plugin_metadata_is_valid_json() {
             .contains("claude-code"),
         "plugin.json interface.websiteURL must point at the canonical site"
     );
-    // The Codex plugin ships no activity-marker hooks: Codex's
-    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
-    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
-    // session. Keep the Codex manifest free of a `hooks` key, and its wrapper
-    // dir manifest-only, until Codex adds a turn-end hook event — see CLAUDE.md
-    // → "Plugin Layout". (plugins/worktrunk/hooks/ exists post-consolidation,
-    // but it is the *Claude* plugin's — Codex's manifest never references it.)
-    assert_eq!(plugin.get("hooks"), None);
+    // The Codex plugin ships activity-marker hooks *inline* in its manifest
+    // (`hooks` object, not a path). This is the functional definition of its
+    // Codex-native events, and it also overrides Codex's convention discovery
+    // (an absent `hooks` key makes Codex auto-discover a `hooks/hooks.json` at
+    // the plugin root). The Claude hooks file sits at that same conventional
+    // `hooks/hooks.json` (Claude's loader discovers it there — #3417), but the
+    // inline Codex override means Codex never loads it, so the #3362 collision
+    // (Codex surfacing the *Claude* file's events) stays closed. `Stop`
+    // returns 🤖 to 💬 at turn end, and `SessionEnd` clears the marker when
+    // the main thread ends. See CLAUDE.md → "Plugin Layout".
+    let codex_hooks = plugin
+        .get("hooks")
+        .and_then(|h| h.get("hooks"))
+        .expect("Codex manifest must carry an inline `hooks` object");
+    // Exactly the Codex-native events — no Claude-only `Notification`,
+    // `WorktreeCreate`, or `WorktreeRemove`.
+    let mut events = codex_hooks
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    events.sort_unstable();
+    assert_eq!(
+        events,
+        [
+            "PermissionRequest",
+            "SessionEnd",
+            "Stop",
+            "UserPromptSubmit"
+        ]
+    );
+    let session_end = &codex_hooks["SessionEnd"][0]["hooks"][0];
+    assert_eq!(
+        session_end["command"],
+        r#"bash "$PLUGIN_ROOT/hooks/wt.sh" config state marker clear || true"#
+    );
+    assert_eq!(session_end["timeout"], 3);
+    // Commands use Codex's native `$PLUGIN_ROOT`, never the Claude-branded
+    // `$CLAUDE_PLUGIN_ROOT` compat alias — nothing Claude-branded in a Codex
+    // session (#3362).
+    let hooks_json = serde_json::to_string(codex_hooks).unwrap();
+    assert!(
+        hooks_json.contains("$PLUGIN_ROOT/hooks/wt.sh"),
+        "Codex hook commands must call the shim via $PLUGIN_ROOT"
+    );
+    assert!(
+        !hooks_json.contains("CLAUDE_PLUGIN_ROOT"),
+        "Codex hooks must not reference the Claude-branded $CLAUDE_PLUGIN_ROOT alias"
+    );
+    // Hooks are inline, so the wrapper dir still holds only plugin.json — no
+    // separate hooks file, and the inline override keeps Codex off the shared
+    // Claude `hooks/hooks.json`.
     assert!(
         !project_root
             .join("plugins/worktrunk/.codex-plugin/hooks")
@@ -3881,21 +3658,28 @@ fn test_codex_plugin_metadata_is_valid_json() {
 /// third loader-mandated repo-root pointer (`gemini-extension.json` +
 /// `hooks/hooks.json` — Gemini hard-probes `${extensionPath}/{hooks,skills}/`
 /// at the extension root with no path indirection). Verified end-to-end
-/// against the real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the
-/// plugin root with NO `.claude-plugin/` wrapper (`source:
-/// "./plugins/worktrunk"` + `<subdir>/.claude-plugin/` fails "Plugin not
-/// found"); Gemini (gemini-cli 0.42) resolves the extension at the repo root,
-/// so `${extensionPath}/skills/` is the real single-sourced repo-root
-/// `skills/` and its hooks call the canonical
+/// against the real CLIs: Claude (claude-cli 2.1.207) reads the manifest at
+/// `<plugin-root>/.claude-plugin/plugin.json` — the only location `claude
+/// plugin validate` accepts — and discovers components by convention: hooks
+/// at `hooks/hooks.json`, skills by scanning `skills/*/SKILL.md`. A
+/// marketplace install of exactly this shape loads the skills and fires the
+/// hooks with no component keys in the manifest. Codex (codex-cli 0.144.1)
+/// also scans `skills/` by convention when the manifest omits the key, but
+/// its installer's cache copy drops symlink entries — which is why the
+/// plugin's `skills/` is a real-file mirror of the repo-root `skills/`,
+/// generated by `test_docs_are_in_sync` (see plugins/worktrunk/CLAUDE.md
+/// → "Plugin skills are a generated mirror"). Gemini
+/// (gemini-cli 0.42) resolves the extension at the repo root, so
+/// `${extensionPath}/skills/` is the real single-sourced repo-root `skills/`
+/// and its hooks call the canonical
 /// `${extensionPath}/plugins/worktrunk/hooks/wt.sh` — no symlink, no bundled
 /// copy, and `gemini extensions install owner/repo` works natively.
 ///
 /// Duplicated strings can't be `include!`d into JSON, so this test is the
 /// drift guard: the Claude marketplace/manifest descriptions stay
 /// byte-identical, every product description shares the canonical opening
-/// sentence, and every repo-root skill is listed in the Claude manifest
-/// (Claude has no skill auto-discovery — an unlisted skill is silently
-/// dropped).
+/// sentence, and the Claude manifest carries no component-path keys
+/// (conventions are the single loading mechanism).
 #[test]
 fn test_plugin_layout_is_consolidated() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -3911,13 +3695,48 @@ fn test_plugin_layout_is_consolidated() {
     let claude_mkt = json(".claude-plugin/marketplace.json");
     assert_eq!(claude_mkt["plugins"][0]["source"], "./plugins/worktrunk");
 
-    // Claude manifest at the plugin root (no wrapper); hooks relative to it.
-    let claude = json("plugins/worktrunk/plugin.json");
-    assert_eq!(claude["hooks"], "./hooks/hooks.json");
+    // Claude manifest in the plugin's own `.claude-plugin/` wrapper — the
+    // only manifest location `claude plugin validate` accepts (a bare
+    // plugin.json at the plugin root loads through an undocumented runtime
+    // fallback but fails validation).
+    let claude = json("plugins/worktrunk/.claude-plugin/plugin.json");
+    assert!(
+        !root.join("plugins/worktrunk/plugin.json").exists(),
+        "the Claude manifest lives at .claude-plugin/plugin.json; a root-level \
+         plugin.json rides an undocumented fallback and fails `claude plugin validate`"
+    );
+    // The manifest carries metadata only; hooks and skills load by convention.
+    // The override keys are worse than redundant: the string-path `hooks`
+    // override is not honored for plugin loads (#3417), so a `hooks` key can
+    // only mask a mislocated file, and a `skills` array re-adds directories
+    // the default `skills/` scan already picks up.
+    assert!(
+        claude.get("hooks").is_none() && claude.get("skills").is_none(),
+        "the Claude manifest must not carry `hooks`/`skills` keys — components \
+         load by convention (hooks/hooks.json; skills/*/SKILL.md)"
+    );
     assert!(
         root.join("plugins/worktrunk/hooks/hooks.json").exists()
             && root.join("plugins/worktrunk/hooks/wt.sh").exists(),
         "Claude hooks must live at the plugin root's hooks/"
+    );
+    // The Claude hooks file must sit at the conventional hooks/hooks.json.
+    // Claude Code discovers plugin hooks by that convention path and does NOT
+    // honor plugin.json's string-path `hooks` override for plugin loads, so a
+    // Claude-scoped name (hooks/claude-hooks.json) silently stops the hooks
+    // from loading — /hooks shows nothing and the 🤖/💬 markers never update
+    // (#3417). Sitting at the conventional path does NOT resurface the #3362
+    // Codex collision: the Codex manifest defines its hooks inline (verified
+    // above), taking Codex's Some(Inline) branch, which overrides convention
+    // discovery — so Codex never loads this file even though it is now at the
+    // discoverable path. Structural scoping via the filename is what broke
+    // Claude; the inline Codex manifest is what actually keeps Codex clean.
+    assert!(
+        !root
+            .join("plugins/worktrunk/hooks/claude-hooks.json")
+            .exists(),
+        "the Claude hooks file must sit at the conventional hooks/hooks.json that Claude \
+         Code's loader discovers, not a Claude-scoped name the string-path override can't rescue (#3417)"
     );
     assert!(
         !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
@@ -3928,7 +3747,8 @@ fn test_plugin_layout_is_consolidated() {
     // the Claude manifest — they must stay byte-identical.
     assert_eq!(
         claude_mkt["plugins"][0]["description"], claude["description"],
-        ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
+        ".claude-plugin/marketplace.json and plugins/worktrunk/.claude-plugin/plugin.json \
+         descriptions drifted"
     );
 
     // Gemini extension: manifest + hooks are loader-mandated repo-root
@@ -3970,23 +3790,47 @@ fn test_plugin_layout_is_consolidated() {
         "no bundled Gemini wt.sh — hooks reference the canonical worktrunk shim"
     );
 
-    // Claude has no skill auto-discovery, so every repo-root skill dir MUST be
-    // listed explicitly in plugin.json — otherwise a new skill is silently
-    // invisible to Claude while Codex/Gemini (whole-dir) pick it up.
-    let listed: std::collections::BTreeSet<&str> = claude["skills"]
-        .as_array()
-        .expect("plugin.json `skills` must be an array")
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
+    // Claude and Codex auto-discover skills by scanning the plugin root's
+    // skills/ for <dir>/SKILL.md. That tree is a real-file mirror of the
+    // authored repo-root skills/, generated by test_docs_are_in_sync
+    // (sync_plugin_skills_mirror): Codex's plugin installer copies the plugin
+    // root with a copier that silently skips symlink entries, so a symlink
+    // anywhere in the tree — the old top-level `skills -> ../../skills` or a
+    // nested reference link — ships no content to Codex installs, and a
+    // symlink also materializes as a plain text file on Windows checkouts.
+    // Claude's installer dereferences symlinks, so real files serve it
+    // equally. The invariant here is structural: regular files all the way
+    // down.
+    let plugin_skills = root.join("plugins/worktrunk/skills");
+    assert!(
+        plugin_skills.is_dir() && !plugin_skills.is_symlink(),
+        "plugins/worktrunk/skills must be a real directory (mirror of repo-root skills/); \
+         Codex's installer drops symlinks"
+    );
+    let mut dirs = vec![plugin_skills];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            assert!(
+                !entry.path().is_symlink(),
+                "{} is a symlink — the plugin skills mirror must hold only regular files \
+                 (Codex's installer silently drops symlinks)",
+                entry.path().display()
+            );
+            if entry.file_type().unwrap().is_dir() {
+                dirs.push(entry.path());
+            }
+        }
+    }
+    // Every repo-root skill dir carries a SKILL.md, since the convention scan
+    // silently ignores a directory without one.
     for entry in fs::read_dir(root.join("skills")).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_dir() {
-            let listed_form = format!("./skills/{}", entry.file_name().to_string_lossy());
             assert!(
-                listed.contains(listed_form.as_str()),
-                "repo-root skill {listed_form} is not in plugins/worktrunk/plugin.json \
-                 `skills` (Claude has no auto-discovery — add it or it is silently dropped)"
+                entry.path().join("SKILL.md").exists(),
+                "skills/{} has no SKILL.md — Claude's convention scan silently ignores it",
+                entry.file_name().to_string_lossy()
             );
         }
     }
@@ -4038,6 +3882,44 @@ fn test_plugin_layout_is_consolidated() {
          hooks.json:\n{hooks}"
     );
 
+    // The WorktreeRemove hook must resolve against the worktree path Claude
+    // Code hands it, not the session's project dir. The `claude agents` view
+    // spans every repo with a background session and is often launched from a
+    // parent directory that merely contains them, so `CLAUDE_PROJECT_DIR` names
+    // the wrong repo or none at all, `wt remove <path>` dies with `fatal: not a
+    // git repository`, and the session row is left undeletable (#3754, after
+    // the #3489 anchor proved insufficient). `-C "$p"` is layout-independent: a
+    // linked worktree carries a `.git` file pointing at its owning repository.
+    assert!(
+        worktree_remove_cmd.contains("-C \"$p\"")
+            && !worktree_remove_cmd.contains("CLAUDE_PROJECT_DIR"),
+        "WorktreeRemove hook must resolve via -C \"$p\" (the worktree path Claude Code \
+         handed it), never CLAUDE_PROJECT_DIR — the agents view is multi-repo, so no \
+         single project dir is correct for every session (#3754). \
+         command:\n{worktree_remove_cmd}"
+    );
+
+    // The WorktreeCreate hook pipes `wt … --format=json | jq -er .path`. Without
+    // `set -o pipefail` the pipeline's exit status is jq's, and `jq -er .path`
+    // on the empty stdout of a failed `wt` exits 0 on jq 1.6 — so a `wt` failure
+    // (e.g. an existing-branch collision after the branch/worktree were already
+    // created) is swallowed and Claude Code reports the misleading "hook
+    // succeeded but returned no worktree path" instead of wt's real error
+    // (#3545). pipefail makes the pipeline surface wt's nonzero exit regardless
+    // of jq version. The wrapper must be `bash -c` (dash rejects `set -o
+    // pipefail` fatally; some login shells are fish, which has no shell options)
+    // — see skills/wt-switch-create/rationale.md, "The hooks.json pipefail wrapper".
+    let worktree_create_cmd = hooks_json["hooks"]["WorktreeCreate"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeCreate hook must define a command");
+    assert!(
+        worktree_create_cmd.contains("set -o pipefail"),
+        "WorktreeCreate hook pipes `wt … | jq -er .path`; without `set -o pipefail` a \
+         failed wt with empty stdout is swallowed (jq 1.6 exits 0 on empty input) and \
+         Claude Code reports \"hook succeeded but returned no worktree path\" instead \
+         of wt's real error (#3545). command:\n{worktree_create_cmd}"
+    );
+
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says
     // "extension"), but every manifest shares the canonical opening sentence.
@@ -4045,7 +3927,10 @@ fn test_plugin_layout_is_consolidated() {
         "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
     let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
     for (label, val) in [
-        ("plugins/worktrunk/plugin.json", &claude["description"]),
+        (
+            "plugins/worktrunk/.claude-plugin/plugin.json",
+            &claude["description"],
+        ),
         (
             ".claude-plugin/marketplace.json",
             &claude_mkt["plugins"][0]["description"],
@@ -4118,6 +4003,132 @@ fn test_claude_hook_commands_parse_in_all_shells() {
     }
 }
 
+/// Claude Code fires `WorktreeRemove` with the path it recorded at creation, and
+/// that path can outlive the worktree in more than one way. #3493 covered the
+/// recorded path being gone. The third state is a path that *exists* but holds
+/// no worktree — a skeleton directory left by an interrupted create or remove:
+/// no `.git`, invisible to both `git worktree list` and `wt list`, and never
+/// cleaned up by prune. An existence guard let it through to `wt remove <path>`,
+/// which resolves a path naming no worktree as a branch name and exits 1 (`No
+/// branch named …` in-tree, `fatal: not a git repository` outside the repo).
+/// Claude Code reads that as a failed removal and keeps the session row, so the
+/// finished background session can never be deleted with Ctrl+X (#3753).
+///
+/// The guard therefore tests for git's marker rather than for the directory:
+/// every linked worktree carries a `.git` file, and a dirty / locked / unmerged
+/// one still does, so genuine failures keep surfacing loudly (#2939). All three
+/// directions are pinned below — a skeleton is a no-op, a clean worktree is
+/// still removed, a dirty one still fails — so neither a blanket `exit 0` nor a
+/// swallowed `wt remove` failure can satisfy this test. It runs the real command
+/// out of `hooks.json`, which parses its stdin with `jq`.
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+#[rstest]
+fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) {
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::{Output, Stdio};
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let command = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("WorktreeRemove hook must define a command")
+        .to_owned();
+
+    // Branched from `main` at HEAD, so its removal is the unremarkable case:
+    // clean worktree, merged branch, both go. Created before `run_hook` below
+    // takes its shared borrow of `repo`.
+    let live = repo.add_worktree("hook-live");
+
+    // Fire the hook exactly as Claude Code does: the recorded path on stdin, the
+    // plugin root in the environment. No `CLAUDE_PROJECT_DIR` — the hook
+    // resolves the repository from the worktree path via `-C "$p"` and must
+    // never consult a project dir (#3754), so setting one here would be dead
+    // setup.
+    let run_hook = |worktree_path: &Path| -> Output {
+        let mut cmd = std::process::Command::new("bash");
+        repo.configure_wt_cmd(&mut cmd);
+        let mut child = cmd
+            .args(["-c", &command])
+            .env("WORKTRUNK_BIN", crate::common::wt_bin())
+            .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
+            .current_dir(repo.root_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn bash");
+        let payload = serde_json::json!({ "worktree_path": worktree_path.to_str().unwrap() });
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let describe = |output: &Output| {
+        format!(
+            "got {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    };
+
+    // A skeleton directory: exists, holds no worktree, has no `.git`. Both
+    // shapes the issue reports — nested inside the repository, where git
+    // discovery walks up and answers for the *parent* (which is why
+    // `rev-parse --is-inside-work-tree` is not a usable test), and outside it,
+    // where git has nothing to walk up to.
+    for skeleton in [
+        repo.root_path().join(".claude/worktrees/ghost"),
+        repo.home_path().join("outside/ghost"),
+    ] {
+        fs::create_dir_all(skeleton.join("apps")).unwrap();
+        let output = run_hook(&skeleton);
+        assert!(
+            output.status.success(),
+            "hook must be a no-op for a path holding no worktree ({}); {}",
+            skeleton.display(),
+            describe(&output)
+        );
+        assert!(
+            skeleton.exists(),
+            "hook must leave a directory it doesn't own in place: {}",
+            skeleton.display()
+        );
+    }
+
+    // Leniency is scoped to "no worktree lives here", so a dirty worktree —
+    // which has a `.git` like any other — must still fail loudly rather than be
+    // swallowed alongside the skeletons.
+    assert!(live.join(".git").exists(), "a linked worktree has a .git");
+    fs::write(live.join("file.txt"), "uncommitted\n").unwrap();
+    let output = run_hook(&live);
+    assert!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("uncommitted changes"),
+        "hook must still refuse a dirty worktree, and for that reason; {}",
+        describe(&output)
+    );
+    assert!(live.exists(), "a refused removal must leave the worktree");
+
+    // And the same worktree, once clean, is still removed — so a blanket
+    // `exit 0` can't satisfy this test either.
+    repo.run_git_in(&live, &["checkout", "--", "file.txt"]);
+    let output = run_hook(&live);
+    assert!(
+        output.status.success(),
+        "hook must remove a live worktree; {}",
+        describe(&output)
+    );
+    assert!(!live.exists(), "the hook must remove a real worktree");
+}
+
 // ==================== Plugin Install-Statusline Tests ====================
 
 #[rstest]
@@ -4156,6 +4167,38 @@ fn test_plugins_claude_install_statusline_already_configured(repo: TestRepo, tem
         set_temp_home_env(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A foreign statusline that happens to spell `wt ` is still foreign, so
+/// install proceeds instead of reporting the statusline as already configured.
+#[rstest]
+fn test_plugins_claude_install_statusline_foreign_command(repo: TestRepo, temp_home: TempDir) {
+    let claude_dir = temp_home.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("settings.json"),
+        r#"{"statusLine":{"type":"command","command":"newt status --short"}}"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
     });
 }
 
@@ -4351,9 +4394,7 @@ fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: Temp
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4383,9 +4424,7 @@ fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: 
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "install", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4402,9 +4441,7 @@ fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: Te
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
+        let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -4433,7 +4470,7 @@ mod plugin_prompt_pty {
         // Add mock binary PATH if configured
         if let Some(mock_bin) = repo.mock_bin_path() {
             vars.push((
-                "MOCK_CONFIG_DIR".to_string(),
+                "WORKTRUNK_TEST_MOCK_CONFIG_DIR".to_string(),
                 mock_bin.display().to_string(),
             ));
 
@@ -4845,4 +4882,166 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
         "missing override path should resolve to no project config, got: {}",
         json["project"]["config"]
     );
+
+    // An empty override likewise means no project config — it must not fall
+    // back to the repo's own file or resolve to the worktree root directory.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "empty override should resolve to no project config, got: {}",
+        json["project"]["config"]
+    );
+}
+
+/// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` resolves against the worktree
+/// root — the same anchor as the default `.config/wt.toml` — so the override
+/// behaves identically from any subdirectory instead of silently depending on
+/// the process cwd, and each worktree anchors to its own root.
+#[rstest]
+fn test_project_config_path_env_var_relative(mut repo: TestRepo, temp_home: TempDir) {
+    fs::write(
+        repo.root_path().join("custom-wt.toml"),
+        "pre-start = \"custom-hook\"\n",
+    )
+    .unwrap();
+    let subdir = repo.root_path().join("sub");
+    fs::create_dir_all(&subdir).unwrap();
+
+    // A linked worktree carries its own config file at the same relative
+    // location; running there must load that file, not the main worktree's.
+    let linked = repo.add_worktree("linked-anchor");
+    fs::write(
+        linked.join("custom-wt.toml"),
+        "pre-start = \"linked-hook\"\n",
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            repo.root_path().to_path_buf(),
+            repo.root_path().to_path_buf(),
+            "custom-hook",
+        ),
+        (subdir, repo.root_path().to_path_buf(), "custom-hook"),
+        (linked.clone(), linked, "linked-hook"),
+    ];
+    for (cwd, expected_root, expected_hook) in &cases {
+        let mut cmd = repo.wt_command();
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
+        cmd.args(["config", "show", "--format=json"])
+            .current_dir(cwd);
+
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+        assert_eq!(
+            json["project"]["path"].as_str().unwrap(),
+            expected_root.join("custom-wt.toml").to_str().unwrap(),
+            "relative override should anchor to the worktree root from {cwd:?}"
+        );
+        assert_eq!(
+            json["project"]["config"]["pre-start"], *expected_hook,
+            "relative override should load the root-anchored config from {cwd:?}, got: {}",
+            json["project"]
+        );
+    }
+}
+
+/// A relative `WORKTRUNK_PROJECT_CONFIG_PATH` with no worktree root to anchor
+/// it (bare repo, no linked worktrees) errors instead of silently resolving
+/// against the process cwd.
+#[test]
+fn test_project_config_path_env_var_relative_no_worktree_errors() {
+    let test = BareRepoTest::new();
+
+    let mut cmd = test.wt_command();
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "custom-wt.toml");
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a relative override without a worktree root should fail; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("WORKTRUNK_PROJECT_CONFIG_PATH is relative"),
+        "error should name the env var and the problem; stderr:\n{stderr}"
+    );
+
+    // Without the override, the same repo has no project config location at
+    // all; `wt config update` skips the project config rather than erroring,
+    // and `wt config show` reports the absence rather than claiming to be
+    // outside a git repository.
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config update should skip a missing project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mut cmd = test.wt_command();
+    cmd.args(["config", "show"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "config show should succeed with no project config location; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("No project config"),
+        "config show should report the missing project config location; stdout:\n{stdout}"
+    );
+}
+
+/// On Windows, an override that is neither fully absolute nor relative — a
+/// drive-relative (`C:cfg`) or rooted-but-driveless (`\cfg`) value — errors
+/// instead of silently resolving against the process drive or cwd.
+#[cfg(windows)]
+#[rstest]
+fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
+    for value in [r"C:cfg\wt.toml", r"\cfg\wt.toml"] {
+        let mut cmd = repo.wt_command();
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", value);
+        cmd.args(["config", "show", "--format=json"]);
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "override {value} should be rejected; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("neither fully absolute nor relative"),
+            "error should explain the rejected form for {value}; stderr:\n{stderr}"
+        );
+    }
 }

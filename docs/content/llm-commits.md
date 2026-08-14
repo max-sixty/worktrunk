@@ -27,13 +27,13 @@ Any command that reads a prompt from stdin and outputs a commit message works. A
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
 
-`--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. `--safe-mode` keeps the run hermetic — no hooks, plugins, MCP, skills, or CLAUDE.md — while leaving authentication working normally, so setups that authenticate via `apiKeyHelper` (not just OAuth or `ANTHROPIC_API_KEY`) still get a key. `--setting-sources='user'` scopes settings to your user config so a project `.claude/settings.json` can't override auth. The remaining flags disable tools, system prompt, and thinking for fast text-only output. `--safe-mode` requires Claude Code ≥ 2.1.169. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
+`--no-session-persistence` prevents the commit conversation from polluting `claude --continue`. `--safe-mode` keeps the run hermetic — no hooks, plugins, MCP, skills, or CLAUDE.md — while leaving authentication working normally, so setups that authenticate via `apiKeyHelper` (not just OAuth or `ANTHROPIC_API_KEY`) still get a key. `--setting-sources='user'` scopes settings to your user config so a project `.claude/settings.json` can't override auth. The remaining flags disable tools, system prompt, and thinking for fast text-only output. `--safe-mode` requires Claude Code ≥ 2.1.169. See [Claude Code docs](https://code.claude.com/docs/en/setup) for installation.
 
 ### Codex
 
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.4-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-5.6-luna -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 Uses the fast mini model with low reasoning effort and an empty system prompt for faster output. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).

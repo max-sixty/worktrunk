@@ -1,10 +1,13 @@
 use std::path::Path;
 
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
+
+use crate::output::print_json;
 
 use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
@@ -13,7 +16,6 @@ use super::context::CommandEnv;
 use super::flag_pair;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder, execute_planned_hook};
 use super::hooks::HookAnnouncer;
-use super::repository_ext::RepositoryCliExt;
 use super::template_vars::TemplateVars;
 use super::worktree::{
     FinishAfterMergeArgs, MergeOperations, PushKind, finish_after_merge, handle_no_ff_merge,
@@ -116,7 +118,7 @@ fn approve_merge_plan(
 
     // Every feature-worktree hook shares one anchor: the feature worktree's
     // canonical root, the exact path `finish_after_merge` records as
-    // `RemoveResult::worktree_path` and `handle_merge` passes as the
+    // `RemovalPlan::worktree_path` and `handle_merge` passes as the
     // `pre-merge` executor anchor, so every plan lookup is an exact match.
     // `pre-commit`/`post-commit` run via the unchanged `execute_hook` path and
     // are listed only so the single prompt is complete; their anchor is never
@@ -167,6 +169,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     let config = &env.config;
+    // Cache current worktree for multiple queries
+    let current_wt = repo.current_worktree();
+    // Ahead of the branch check: mid-rebase and mid-bisect both detach HEAD, so
+    // an unguarded merge blames the detached HEAD and points at `git switch`,
+    // which abandons the operation instead of finishing it.
+    repo.ensure_no_operation_in_progress("merge")?;
+    // Merge stages on the user's behalf through the commit and squash steps, so
+    // it takes their index gate here: in its own name, and ahead of the
+    // approval prompts rather than partway through the flow.
+    current_wt.ensure_no_unmerged_paths("merge")?;
     // Merge requires being on a branch (can't merge from detached HEAD)
     let current_branch = env.require_branch("merge")?.to_string();
 
@@ -182,9 +194,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         verify,
     } = flags.resolve(&resolved.merge);
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
-
-    // Cache current worktree for multiple queries
-    let current_wt = repo.current_worktree();
 
     // Validate --no-commit: requires clean working tree
     if !commit {
@@ -205,8 +214,53 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Get and validate target branch (must be a branch since we're updating it)
     let target_branch = repo.require_target_branch(target)?;
+
+    // #3519: when the branch is based past the local target into the target's
+    // upstream, the rewrite steps measure against the upstream (see
+    // `span_upstream`) and the final fast-forward carries the local target
+    // through the upstream commits by their real SHAs. That fast-forward exists
+    // only while the local target is strictly behind its upstream; a target
+    // that has *diverged* — its own commits AND behind — can never fast-forward
+    // to this branch, so refuse up front with the real reason rather than
+    // failing late in the push step. Local-only check — no fetch.
+    if let Some(upstream) = repo.span_upstream(&target_branch)? {
+        let target_sha = repo
+            .run_command(&[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("refs/heads/{target_branch}"),
+            ])?
+            .trim()
+            .to_string();
+        let upstream_sha = repo
+            .run_command(&["rev-parse", "--verify", "--end-of-options", &upstream])?
+            .trim()
+            .to_string();
+        if repo.is_ancestor_by_sha(&target_sha, &upstream_sha)? {
+            let carried = repo.count_commits(&target_branch, &upstream)?;
+            let (commit_text, pronoun) = if carried == 1 {
+                ("commit", "it")
+            } else {
+                ("commits", "them")
+            };
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "Local <bold>{target_branch}</> is {carried} {commit_text} behind <bold>{upstream}</>; the merge fast-forwards through {pronoun}"
+                ))
+            );
+        } else {
+            return Err(worktrunk::git::GitError::MergeTargetDivergedFromUpstream {
+                target_branch: target_branch.clone(),
+                upstream,
+            }
+            .into());
+        }
+    }
+
     // Worktree for target is optional: if present we use it for safety checks and as destination.
-    let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+    let target_worktree_path = repo.usable_worktree_for_branch(&target_branch)?;
     // Where `post-merge` / `post-remove` / `post-switch` run: the target
     // branch's worktree if it exists, else the primary worktree. Mirrors
     // `finish_after_merge`'s destination resolution. (Config is resolved from
@@ -229,7 +283,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // (by-then-rebased / merged) on-disk config is structurally impossible.
     let project_id = repo.project_identifier()?;
     // One anchor for every feature-worktree hook: the canonical root, the same
-    // value `finish_after_merge` records as `RemoveResult::worktree_path`.
+    // value `finish_after_merge` records as `RemovalPlan::worktree_path`.
     let feature_root = current_wt.root()?;
     let plan = approve_merge_plan(
         repo,
@@ -295,7 +349,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.target_branch = Some(&target_branch);
             options.hooks = commit_hooks;
             options.stage_mode = stage_mode;
-            options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
             options.guidance = guidance.clone();
 
@@ -333,11 +386,22 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             super::step::RebaseResult::Rebased { .. }
         )
     } else {
-        // --no-rebase: verify already rebased, fail if not
-        if !repo.is_rebased_onto(&target_branch)? {
+        // --no-rebase preserves the graph produced by the commit/squash stages
+        // above. Merge commits in that graph are valid as long as the target
+        // can fast-forward to the final tip.
+        let target_ref = format!("refs/heads/{target_branch}");
+        let target_sha = repo
+            .run_command(&["rev-parse", "--verify", "--end-of-options", &target_ref])?
+            .trim()
+            .to_string();
+        let source_sha = repo
+            .run_command(&["rev-parse", "--verify", "HEAD"])?
+            .trim()
+            .to_string();
+        if !repo.is_ancestor_by_sha(&target_sha, &source_sha)? {
             return Err(worktrunk::git::GitError::NotRebased { target_branch }.into());
         }
-        false // Already rebased, no rebase occurred
+        false // Rebase skipped; the graph produced by earlier stages remains
     };
 
     // Run pre-merge checks unless --no-hooks was specified
@@ -367,10 +431,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     });
     if !ff {
         // Create a merge commit on the target branch via commit-tree + update-ref
-        let _ = handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
+        handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        let _ = handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
+        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
     let removed = finish_after_merge(
@@ -400,7 +464,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             "rebased": rebased,
             "removed": removed,
         });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        print_json(&output)?;
     }
 
     Ok(())

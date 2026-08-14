@@ -24,20 +24,21 @@
 //!
 //! For now, we keep `for-each` under `step` as a pragmatic choice.
 
-use std::collections::HashMap;
-use std::io::{Write as _, stderr};
+use std::io::Write as _;
 use std::process::Stdio;
 
 use color_print::cformat;
-use worktrunk::config::{UserConfig, expand_template};
+use worktrunk::config::{UserConfig, VarScope};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
 use worktrunk::shell_exec::{Cmd, ShellEscapeMode};
 use worktrunk::styling::{
-    eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
+    eprint, eprintln, error_message, format_with_gutter, progress_message, stderr, success_message,
+    warning_message,
 };
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::worktree_display_name;
+use crate::output::print_json;
 
 /// Run a command in each worktree sequentially.
 ///
@@ -59,9 +60,9 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 
     let mut failed: Vec<String> = Vec::new();
     let mut json_results: Vec<serde_json::Value> = Vec::new();
-    // Set when a child dies from a signal (Ctrl-C / SIGTERM). We abort the
-    // loop and propagate an equivalent exit code rather than visiting the
-    // remaining worktrees — the user asked for the work to stop.
+    // The signal a child died from (Ctrl-C / SIGTERM), if any. We abort the
+    // loop and propagate `Interrupted` rather than visiting the remaining
+    // worktrees — the user asked for the work to stop.
     let mut interrupted: Option<i32> = None;
     let total = worktrees.len();
 
@@ -75,31 +76,19 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
-        let context_map = build_hook_context(&ctx, &[], None)?;
+        let context_map = build_hook_context(&ctx, &[], VarScope::All)?;
 
         // Expand each argv element through the template engine without
         // shell-escaping — values are interpolated directly into the argv
         // element a program receives, not through `sh -c`.
-        let vars: HashMap<&str, &str> = context_map
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
         let expanded: Vec<String> = args
             .iter()
             .map(|arg| {
-                expand_template(
-                    arg,
-                    &vars,
-                    ShellEscapeMode::Literal,
-                    &repo,
-                    "for-each argument",
-                )
+                context_map.expand(arg, ShellEscapeMode::Literal, &repo, "for-each argument")
             })
             .collect::<Result<_, _>>()?;
 
-        // Build JSON context for stdin
-        let context_json = serde_json::to_string(&context_map)
-            .expect("HashMap<String, String> serialization should never fail");
+        let context_json = context_map.to_json();
 
         match run_argv(&wt.path, expanded, &context_json) {
             Ok(()) => {
@@ -113,7 +102,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let signal_exit = err.interrupt_exit_code();
+                let signal_exit = err.interrupt_signal();
                 // Two error strings: a styled block for stderr (preserves
                 // hints from typed diagnostics) and a plain string for
                 // JSON (consumers shouldn't see ANSI codes or symbols).
@@ -153,17 +142,17 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                         "error": json_detail,
                     }));
                 }
-                if let Some(code) = signal_exit {
-                    interrupted = Some(code);
+                if let Some(signal) = signal_exit {
+                    interrupted = Some(signal);
                     break;
                 }
             }
         }
     }
 
-    if let Some(exit_code) = interrupted {
+    if let Some(signal) = interrupted {
         if json_mode {
-            println!("{}", serde_json::to_string_pretty(&json_results)?);
+            print_json(&json_results)?;
         } else {
             eprintln!();
             eprintln!(
@@ -171,11 +160,11 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 warning_message("Interrupted — skipped remaining worktrees")
             );
         }
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
+        return Err(WorktrunkError::Interrupted { signal, hint: None }.into());
     }
 
     if json_mode {
-        println!("{}", serde_json::to_string_pretty(&json_results)?);
+        print_json(&json_results)?;
         if failed.is_empty() {
             return Ok(());
         } else {
@@ -218,6 +207,10 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 /// program is exec'd directly without `sh -c` interposition. Directive env
 /// vars are scrubbed by `Cmd` for every spawn, so child commands run in
 /// other worktrees can't perturb the parent shell's CD/exec state.
+/// Git-discovery vars are scrubbed too: for-each relocates the user's
+/// command into each worktree, so its `git` calls must discover that
+/// worktree from the cwd, not resolve an inherited `GIT_DIR` pinned to
+/// wherever `wt` was invoked (see `scrub_git_discovery_env_vars`).
 ///
 /// Child stdout is merged onto stderr so it interleaves cleanly with
 /// for-each's decorated per-worktree headers and footers; the structured
@@ -228,6 +221,12 @@ fn run_argv(
     argv: Vec<String>,
     stdin_json: &str,
 ) -> anyhow::Result<()> {
+    // Reset ANSI codes on stderr so our color doesn't bleed into the child's
+    // output, the same three lines `execute_shell_command` runs before its own
+    // spawn. Both `eprint!` and `stderr` are anstream's: the flushes have to
+    // name the stream the reset was written to, and on a redirected stderr
+    // anstream drops the reset rather than writing a literal `ESC[0m` into the
+    // file.
     stderr().flush()?;
     eprint!("{}", anstyle::Reset);
     stderr().flush().ok();
@@ -240,6 +239,7 @@ fn run_argv(
     Cmd::new(program)
         .args(iter)
         .current_dir(working_dir)
+        .scrub_git_discovery_env()
         .stdout(Stdio::from(std::io::stderr()))
         .forward_signals()
         .stdin_bytes(stdin_json.as_bytes().to_vec())

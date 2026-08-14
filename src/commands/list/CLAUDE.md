@@ -22,6 +22,9 @@ docstring for the exact command list and first-run behavior.
 The skeleton shows:
 - Branch names (known from worktree list)
 - Paths (known from worktree list)
+- Abbreviated commit hashes (git's `%h`, from the commit-details batch the
+  skeleton already waits on for sort order — see `collect/mod.rs`). This is
+  also a detached row's Branch cell, which has no branch name to show
 - Placeholder gutter symbols (`·`)
 - Loading indicators for computed columns
 
@@ -58,4 +61,10 @@ Measures pure skeleton latency. Target: <60ms.
 - `collect/` — orchestrates collection, manages pre/post-skeleton phases, task definitions and execution (see `collect/mod.rs` module docstring for phase details)
 - `render.rs` — row formatting, skeleton rows, cell rendering
 - `layout.rs` — column width calculation
-- `progressive_table.rs` — terminal rendering with in-place updates
+- `progressive_table.rs` — terminal rendering with in-place updates; reserves
+  blank rows below the table so the shell prompt printed after exit renders
+  into pre-scrolled rows instead of jerking the settled table up. It writes to
+  a raw stdout rather than an anstream stream, since a strip would eat its
+  cursor-control CSI, so it applies the color decision to content itself —
+  every row, header, and footer through `prepare`; the module docstring covers
+  the split

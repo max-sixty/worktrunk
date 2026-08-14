@@ -16,12 +16,41 @@ use askama::Template;
 // Re-export public types and functions
 pub use detection::{
     BypassAlias, DetectedLine, FileDetectionResult, is_shell_integration_line,
-    is_shell_integration_line_for_uninstall, scan_for_detection_details,
+    is_shell_integration_line_for_uninstall_any_cmd, scan_for_detection_details,
 };
-pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
+pub use paths::{
+    completion_path, config_paths, home_dir_required, legacy_fish_conf_d_path,
+    line_based_config_paths, nushell_autoload_candidates,
+};
 pub use utils::{
-    current_shell, current_shell_name, detect_zsh_compinit, extract_filename_from_path,
+    AncestorShell, ZshStartupScope, ancestor_shell, current_shell, current_shell_name,
+    extract_filename_from_path, probe_zsh_compdef,
 };
+
+/// Validate a command name before embedding it in shell syntax or shell-owned paths.
+pub fn validate_shell_command_name(cmd: &str) -> Result<(), String> {
+    if cmd.is_empty() {
+        return Err("Invalid shell integration command name: command name cannot be empty".into());
+    }
+
+    if cmd.starts_with('-') {
+        return Err(
+            "Invalid shell integration command name: command name cannot start with '-'".into(),
+        );
+    }
+
+    if !cmd
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(
+            "Invalid shell integration command name: use only ASCII letters, numbers, '.', '_', and '-'"
+                .into(),
+        );
+    }
+
+    Ok(())
+}
 
 /// Supported shells
 ///
@@ -144,6 +173,9 @@ impl Shell {
     /// The `cmd` parameter specifies the command name (e.g., `wt` or `git-wt`).
     /// All shells use a conditional wrapper to avoid errors when the command doesn't exist.
     ///
+    /// `cmd` must already be validated by [`validate_shell_command_name`]; command
+    /// entry points (`handle_init`, `handle_configure_shell`) validate at the edge.
+    ///
     /// Note: The generated line does not include `--cmd` because `binary_name()` already
     /// detects the command name from argv\[0\] at runtime.
     pub fn config_line(&self, cmd: &str) -> String {
@@ -179,7 +211,8 @@ impl Shell {
     /// Check if this shell has integration configured.
     ///
     /// Used for accurate warning messages that need to know about the user's
-    /// current shell specifically (e.g., "shell requires restart" vs "not installed").
+    /// current shell specifically (e.g., "installed but not active" vs "not
+    /// installed").
     pub fn is_shell_configured(&self, cmd: &str) -> Result<bool, std::io::Error> {
         let config_paths = self.config_paths(cmd)?;
 
@@ -221,6 +254,8 @@ pub struct ShellInit {
 }
 
 impl ShellInit {
+    /// `cmd` must already be validated by [`validate_shell_command_name`]; command
+    /// entry points (`handle_init`, `handle_configure_shell`) validate at the edge.
     pub fn with_prefix(shell: Shell, cmd: String) -> Self {
         Self { shell, cmd }
     }
@@ -232,11 +267,15 @@ impl ShellInit {
                 let template = BashTemplate {
                     shell_name: self.shell.to_string(),
                     cmd: &self.cmd,
+                    cmd_ident: clap_completer_ident(&self.cmd),
                 };
                 template.render()
             }
             Shell::Zsh => {
-                let template = ZshTemplate { cmd: &self.cmd };
+                let template = ZshTemplate {
+                    cmd: &self.cmd,
+                    cmd_ident: clap_completer_ident(&self.cmd),
+                };
                 template.render()
             }
             Shell::Fish => {
@@ -265,12 +304,30 @@ impl ShellInit {
     }
 }
 
+/// Suffix of the completer function clap names its registration script after.
+///
+/// clap builds it as `<prefix><command name with '-' replaced by '_'>`
+/// (`_clap_complete_git_wt`, `_clap_dynamic_completer_git_wt`), so the lazy
+/// loader in the bash and zsh templates has to apply the same escaping to guard
+/// on and call the function the registration actually defines. The registration
+/// is emitted under this command name via `WORKTRUNK_COMPLETE_NAME`, which the
+/// templates set on the eval — see `registration_name` in `src/completion.rs`.
+///
+/// This is the one place the rule is encoded: `make_zsh_autoload_safe` in
+/// `src/commands/init.rs` rewrites the same function name in clap's zsh
+/// registration and calls here for it, so a change to clap's escaping is one
+/// edit rather than two sites that can drift apart silently.
+pub fn clap_completer_ident(cmd: &str) -> String {
+    cmd.replace('-', "_")
+}
+
 /// Bash shell template
 #[derive(Template)]
 #[template(path = "bash.sh", escape = "none")]
 struct BashTemplate<'a> {
     shell_name: String,
     cmd: &'a str,
+    cmd_ident: String,
 }
 
 /// Zsh shell template
@@ -278,6 +335,7 @@ struct BashTemplate<'a> {
 #[template(path = "zsh.zsh", escape = "none")]
 struct ZshTemplate<'a> {
     cmd: &'a str,
+    cmd_ident: String,
 }
 
 /// Fish shell template (full function for `wt config shell init fish`)
@@ -560,6 +618,28 @@ mod tests {
     fn test_shell_init_with_custom_prefix() {
         let init = ShellInit::with_prefix(Shell::Bash, "custom".to_string());
         insta::assert_snapshot!(init.generate().expect("Should generate with custom prefix"));
+    }
+
+    #[rstest]
+    #[case("wt")]
+    #[case("git-wt")]
+    #[case("my.app_1")]
+    fn test_validate_shell_command_name_accepts_safe_names(#[case] cmd: &str) {
+        assert!(validate_shell_command_name(cmd).is_ok());
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("-wt")]
+    #[case("wt; touch")]
+    #[case("wt touch")]
+    #[case("wt/touch")]
+    #[case("wt\\touch")]
+    #[case("wt\ntouch")]
+    #[case("wt'touch")]
+    #[case("wüt")]
+    fn test_validate_shell_command_name_rejects_shell_syntax(#[case] cmd: &str) {
+        assert!(validate_shell_command_name(cmd).is_err());
     }
 
     /// Verify that `config_line()` generates lines that

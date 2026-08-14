@@ -299,14 +299,27 @@ impl ProcessSignaller for NixSignaller {
 /// Enumerate running `git fsmonitor--daemon` processes and resolve each one's
 /// IPC socket via `lsof`.
 ///
-/// `pgrep -f 'git fsmonitor--daemon'` lists candidate PIDs; `lsof` resolves
-/// each PID's Unix socket. Both run through [`crate::shell_exec::Cmd`] with a
-/// short timeout. Any failure (tool missing, non-zero exit, unparsable
-/// output) is treated as "no daemons" — the sweep is best-effort.
+/// `pgrep -f 'git fsmonitor--daemon'` lists candidate PIDs; a single `lsof`
+/// call resolves all of their Unix sockets at once. Both run through
+/// [`crate::shell_exec::Cmd`] with a short timeout. Any failure (tool missing,
+/// unparsable output) is treated as "no daemons" — the sweep is best-effort.
+///
+/// # Why one batched `lsof`
+///
+/// `lsof -p` accepts a comma-separated PID list and emits `-F` records grouped
+/// under a `p<pid>` line per process, so N daemons cost one process spawn
+/// instead of N. This matters because the candidate set is MACHINE-wide, not
+/// repo-scoped: a machine with many worktrees accumulates a daemon per repo
+/// ever touched (100+ is routine), and every `wt remove` paid one spawn each.
+/// The cost was superlinear in practice, not merely linear — a fork storm
+/// makes macOS `syspolicyd`/`XProtect` assess each new image under contention,
+/// which inflates per-spawn cost for every other spawn on the box, sweeps
+/// included. Idle, a spawn is ~2 ms; under a storm of them, ~50 ms.
 #[cfg(unix)]
 fn enumerate_daemons() -> Vec<DaemonProcess> {
     use crate::shell_exec::Cmd;
 
+    let _span = crate::trace::Span::new("enumerate-fsmonitor-daemons");
     let timeout = std::time::Duration::from_secs(5);
 
     let Ok(output) = Cmd::new("pgrep")
@@ -324,22 +337,77 @@ fn enumerate_daemons() -> Vec<DaemonProcess> {
         .lines()
         .filter_map(|l| l.trim().parse::<u32>().ok())
         .collect();
+    if pids.is_empty() {
+        return Vec::new();
+    }
+    // The candidate count scales with the MACHINE-wide daemon population, not
+    // this repo — surface it so a slow sweep is explainable from the trace.
+    tracing::debug!(
+        count = pids.len(),
+        "fsmonitor sweep: resolving sockets for {} daemon(s) via one lsof",
+        pids.len()
+    );
 
-    pids.into_iter()
-        .filter_map(|pid| {
-            let out = Cmd::new("lsof")
-                .args(["-a", "-p", &pid.to_string(), "-U", "-F", "n"])
-                .timeout(timeout)
-                .run()
-                .ok()?;
-            // lsof exits non-zero when a PID vanished mid-scan; skip it
-            // (a gone process is not an orphan we need to reap).
-            if !out.status.success() {
-                return None;
+    let pid_list = pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let Ok(out) = Cmd::new("lsof")
+        .args(["-a", "-p", &pid_list, "-U", "-F", "pn"])
+        .timeout(timeout)
+        .run()
+    else {
+        return Vec::new();
+    };
+    // Deliberately NOT gated on exit status. `lsof` exits non-zero when ANY
+    // requested PID has vanished mid-scan, while still printing full records
+    // for every PID that survived. Treating that as failure would drop the
+    // whole sweep whenever one daemon happened to exit — the common case on a
+    // busy machine. Vanished PIDs simply emit no record and are never
+    // classified, which is the same outcome the per-PID path produced.
+    daemons_from_batched_lsof(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Split batched `lsof -F pn` output into per-PID records and classify each
+/// via [`daemon_from_lsof_stdout`].
+///
+/// `lsof -F` streams field-prefixed lines; a `p<pid>` line opens a process
+/// record and every line up to the next `p` line belongs to it. Splitting on
+/// that boundary hands each PID exactly the output the per-PID `lsof` call
+/// used to produce, so classification — and with it the whole data-safety
+/// contract in the module docs — is unchanged.
+///
+/// A PID that produced no record (it exited between `pgrep` and `lsof`) is
+/// absent from the result rather than classified as an orphan. That direction
+/// matters: inventing a socket-less entry for a missing PID would make it look
+/// like orphan class 1 and get an unrelated, possibly recycled PID signalled.
+#[cfg(unix)]
+fn daemons_from_batched_lsof(stdout: &str) -> Vec<DaemonProcess> {
+    let mut daemons = Vec::new();
+    let mut open: Option<(u32, String)> = None;
+
+    for line in stdout.lines() {
+        if let Some(pid_field) = line.strip_prefix('p') {
+            if let Some((pid, record)) = open.take() {
+                daemons.extend(daemon_from_lsof_stdout(pid, &record));
             }
-            daemon_from_lsof_stdout(pid, &String::from_utf8_lossy(&out.stdout))
-        })
-        .collect()
+            // An unparsable `p` line leaves no record open, so its lines are
+            // discarded rather than misattributed to the previous PID.
+            open = pid_field
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .map(|pid| (pid, String::new()));
+        } else if let Some((_, record)) = open.as_mut() {
+            record.push_str(line);
+            record.push('\n');
+        }
+    }
+    if let Some((pid, record)) = open {
+        daemons.extend(daemon_from_lsof_stdout(pid, &record));
+    }
+    daemons
 }
 
 /// Classify the lsof output for one PID into an [`Option<DaemonProcess>`].
@@ -474,6 +542,68 @@ mod tests {
     fn no_fsmonitor_socket_yields_none() {
         let lsof = "p999\nf3\nn->0xdead\nf4\nn->0xbeef\n";
         assert_eq!(parse_lsof_socket_path(lsof), None);
+    }
+
+    /// Verbatim `lsof -a -p <pids> -U -F pn` output shape (macOS 26, lsof
+    /// 4.99.5): each process opens with `p<pid>`, then `f`/`n` pairs. Covers
+    /// all three classifications in one batch — a resolved socket, a bare
+    /// name (orphan class 1), and a `pgrep` false positive holding no
+    /// fsmonitor socket at all.
+    #[cfg(unix)]
+    #[test]
+    fn batched_lsof_splits_records_per_pid() {
+        let batched = concat!(
+            "p2337\n",
+            "f15\n",
+            "n->0xf3491abb08452a68\n",
+            "f18\n",
+            "n/Users/me/repo/.git/fsmonitor--daemon.ipc\n",
+            "p2497\n",
+            "f24\n",
+            "nfsmonitor--daemon.ipc\n",
+            "p3068\n",
+            "f3\n",
+            "n->0xdeadbeef\n",
+        );
+        let daemons = daemons_from_batched_lsof(batched);
+        assert_eq!(
+            daemons,
+            vec![
+                DaemonProcess {
+                    pid: 2337,
+                    socket: Some(PathBuf::from("/Users/me/repo/.git/fsmonitor--daemon.ipc")),
+                },
+                // Bare name → unresolvable socket, orphan class 1.
+                DaemonProcess {
+                    pid: 2497,
+                    socket: None,
+                },
+                // pid 3068 holds no fsmonitor socket → not a daemon, dropped
+                // rather than misclassified as class 1.
+            ],
+            "each p-record must classify exactly as the per-PID call did"
+        );
+    }
+
+    /// A PID that exits between `pgrep` and `lsof` emits no record at all.
+    /// It must be absent from the result — never synthesized as a
+    /// socket-less entry, which would read as orphan class 1 and signal a
+    /// PID that no longer belongs to the daemon we enumerated.
+    #[cfg(unix)]
+    #[test]
+    fn batched_lsof_omits_pids_that_produced_no_record() {
+        let batched = "p2337\nf18\nn/Users/me/repo/.git/fsmonitor--daemon.ipc\n";
+        let daemons = daemons_from_batched_lsof(batched);
+        assert_eq!(daemons.len(), 1);
+        assert_eq!(daemons[0].pid, 2337);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn batched_lsof_handles_empty_output() {
+        // Every requested PID vanished: lsof exits non-zero with no stdout.
+        // The sweep must find nothing rather than panic or invent orphans.
+        assert!(daemons_from_batched_lsof("").is_empty());
     }
 
     #[cfg(unix)]

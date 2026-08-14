@@ -14,87 +14,52 @@
 //   cargo bench --bench time_to_first_output -- switch  # Just switch
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::path::Path;
-use std::process::Command;
-use worktrunk::testing::isolate_subprocess_env;
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, setup_fake_remote};
+use wt_perf::{
+    CacheState, FixtureRecipe, bench_wt, run_and_check, standard_benchmark_profile, wt_command,
+};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
+    let binary = &worktrunk::testing::wt_bin();
 
-    let config = RepoConfig::typical(4);
-    let temp = create_repo(&config);
-    let repo_path = temp.path().join("repo");
-    setup_fake_remote(&repo_path);
+    let fixture = FixtureRecipe::generated(3).create();
 
     let make_cmd = |args: &[&str]| {
-        let mut cmd = Command::new(binary);
-        cmd.args(args).current_dir(&repo_path);
-        isolate_subprocess_env(&mut cmd, None);
+        let mut cmd = wt_command(binary, fixture.path(), None);
+        cmd.args(args);
         cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
         cmd
     };
 
     // remove: exits after validation, before approval/output.
     //
-    // `prepare_worktree_removal` calls `compute_integration_lazy`, which
-    // populates `.git/wt/cache/{is-ancestor,has-added-changes,merge-add-probe}`
-    // on the first invocation. Without invalidation between iterations, iter 1
-    // is cold and iter 2+ read from cache — the reported timing would be warm
-    // cache, which doesn't reflect the first-invocation TTFO a user sees.
-    // Invalidate via `iter_batched` so every iteration starts cold; use
-    // `BatchSize::PerIteration` (not `SmallInput`) so setup runs immediately
-    // before every measured iter — under `SmallInput`, criterion would run
-    // setup once per batch and time the routines back-to-back, leaving only
-    // iter 1 actually cold per batch.
+    // Cold matters here: `prepare_worktree_removal` calls
+    // `compute_integration_lazy`, which populates
+    // `.git/wt/cache/{is-ancestor,has-added-changes,merge-add-probe}` on the
+    // first invocation. Without per-iteration invalidation the reported
+    // timing would be warm cache, not the first-invocation TTFO a user sees.
     group.bench_function("remove", |b| {
-        b.iter_batched(
-            || invalidate_caches_auto(&repo_path),
-            |_| {
-                let output =
-                    make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
-                        .output()
-                        .unwrap();
-                assert!(
-                    output.status.success(),
-                    "Benchmark command failed:\nstderr: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            },
-            criterion::BatchSize::PerIteration,
-        );
+        bench_wt(b, fixture.path(), CacheState::Cold, || {
+            make_cmd(&["remove", "--yes", "--no-hooks", "--force", "wt-0000"])
+        });
     });
 
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
-        b.iter(|| {
-            let output = make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "Benchmark command failed:\nstderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+        bench_wt(b, fixture.path(), CacheState::Warm, || {
+            make_cmd(&["switch", "--yes", "--no-hooks", "wt-0000"])
         });
     });
 
     // list: stdout is piped here, so first output is the first buffered table
     // line after collection/render preparation, not the progressive skeleton.
+    let output = run_and_check(&mut make_cmd(&["list"]));
+    assert!(
+        !output.stdout.is_empty(),
+        "WORKTRUNK_FIRST_OUTPUT should emit the first stdout line"
+    );
     group.bench_function("list", |b| {
-        b.iter(|| {
-            let output = make_cmd(&["list"]).output().unwrap();
-            assert!(
-                output.status.success(),
-                "Benchmark command failed:\nstderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                !output.stdout.is_empty(),
-                "WORKTRUNK_FIRST_OUTPUT should emit the first stdout line"
-            );
-        });
+        b.iter(|| run_and_check(&mut make_cmd(&["list"])));
     });
 
     group.finish();
@@ -102,10 +67,7 @@ fn bench_first_output(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default()
-        .sample_size(30)
-        .measurement_time(std::time::Duration::from_secs(15))
-        .warm_up_time(std::time::Duration::from_secs(3));
+    config = standard_benchmark_profile();
     targets = bench_first_output
 }
 criterion_main!(benches);

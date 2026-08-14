@@ -1204,6 +1204,50 @@ fn test_foreground_pipeline_undefined_var_runs_earlier_steps(repo: TestRepo) {
     );
 }
 
+/// The other half of that contract: a *syntax* error anywhere in the pipeline
+/// aborts before step 1. Preparation parses every template
+/// (`PreparedPipeline::validated`), so a pipeline that can't render in full never
+/// starts — where a semantic error, rendered per step, lets earlier steps run.
+///
+/// Driven through `wt merge`'s pre-commit hooks rather than `wt hook
+/// pre-commit`, because the `wt hook` CLI parses every template up front to
+/// route shorthand arguments (`referenced_vars_union`) and would catch the
+/// error before preparation, leaving the preparation-time guard untested.
+#[rstest]
+fn test_foreground_pipeline_syntax_error_aborts_before_first_step(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("uncommitted.txt"), "uncommitted content").unwrap();
+
+    repo.write_test_config(
+        r#"pre-commit = [
+    { first = "echo FIRST_RAN > syntax_first_marker.txt" },
+    { broken = "echo {{ bad..syntax }}" },
+]
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "an unparsable template should fail the merge"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("syntax error"),
+        "error should name the syntax failure, got: {stderr}"
+    );
+    assert!(
+        !feature_wt.join("syntax_first_marker.txt").exists(),
+        "step 1 must not run when a later step's template can't parse: {stderr}"
+    );
+}
+
 /// When removing the current worktree (cd back to main), both post-remove and
 /// post-switch hooks fire. They should appear on a single combined announcement line.
 #[rstest]
@@ -2967,6 +3011,34 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
     );
 }
 
+/// A symbolic switch argument (`@`, `-`, `^`) is resolved to its concrete branch
+/// name before the pre-switch hook runs, so `{{ branch }}` carries the resolved
+/// destination — not the literal token. Here `@` resolves to the current branch.
+#[rstest]
+fn test_user_pre_switch_branch_var_resolves_symbolic(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo '{{ branch }}' > pre_switch_symbolic.txt"
+"#,
+    );
+
+    // `@` resolves to the current branch (main), not the literal "@".
+    snapshot_switch("user_pre_switch_branch_symbolic", &repo, &["@"]);
+
+    let marker_file = repo.root_path().join("pre_switch_symbolic.txt");
+    assert!(
+        marker_file.exists(),
+        "Pre-switch hook should have created marker"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "main",
+        "symbolic '@' should resolve to the concrete branch 'main', got: '{}'",
+        contents.trim(),
+    );
+}
+
 /// When removing the current worktree, post-switch hooks should fire
 /// because the user is implicitly switched back to the primary worktree.
 /// Regression test for https://github.com/max-sixty/worktrunk/issues/1450
@@ -3893,8 +3965,115 @@ lint = "cargo clippy"
         assert_cmd_snapshot!("docs_hook_pre_merge", {
             let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "--yes"], None);
             cmd.env("PATH", &new_path);
-            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir_str);
             cmd
         });
     });
+}
+
+// ============================================================================
+// Git-discovery env scrubbing (issue #3373)
+// ============================================================================
+//
+// wt forwards inherited `GIT_*` discovery vars (GIT_DIR, GIT_WORK_TREE, …)
+// into the commands it spawns. For wt's own internal git plumbing that is
+// intentional (#1914), but a *user hook* is meant to operate on the worktree
+// wt sets as its cwd — so a hook that shells out to `git` must discover the
+// repo from that cwd, not from a `GIT_DIR`/`GIT_WORK_TREE` wt happened to
+// inherit (e.g. wt run as a `!wt` git alias, or nested under another tool's
+// git hook). The concrete harm: with both `GIT_DIR` and `GIT_WORK_TREE`
+// present, a hook that runs `git init` (common in test-harness fixtures)
+// writes `core.worktree` into the inherited repo's config, silently
+// redirecting every later plain git command in that repo.
+//
+// These tests set a git-discovery context that is *consistent* with the repo
+// wt operates on (GIT_DIR = repo's gitdir, GIT_WORK_TREE = repo root), so wt
+// itself runs normally, then assert the spawned hook does not see the vars.
+// The hook records `$GIT_DIR`/`$GIT_WORK_TREE` — empty once scrubbed — as
+// `[<git_dir>][<work_tree>]`; a fully-scrubbed environment yields `[][]`.
+
+/// Hook body recording the `GIT_DIR`/`GIT_WORK_TREE` it sees to `marker`.
+/// Unset vars expand to empty, so a scrubbed environment writes `[][]`.
+fn record_git_env_cmd(marker: &str) -> String {
+    format!(r#"printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > {marker}"#)
+}
+
+/// Assert a `record_git_env_cmd` marker shows both discovery vars scrubbed.
+fn assert_git_env_scrubbed(marker: &std::path::Path) {
+    let seen = fs::read_to_string(marker).unwrap();
+    assert_eq!(
+        seen, "[][]",
+        "hook inherited git-discovery vars ([GIT_DIR][GIT_WORK_TREE]): {seen}"
+    );
+}
+
+/// Run `wt hook <args>` with an inherited (but repo-consistent) git-discovery
+/// context, matching what a `!wt` git alias leaves in the environment.
+fn run_hook_with_inherited_git_env(repo: &TestRepo, args: &[&str]) -> std::process::Output {
+    repo.wt_command()
+        .args(args)
+        .env("GIT_DIR", repo.root_path().join(".git"))
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap()
+}
+
+#[rstest]
+fn test_foreground_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
+    repo.write_test_config(&format!(
+        "[pre-merge]\nrecord = \"{}\"\n",
+        record_git_env_cmd("env_seen.txt")
+    ));
+
+    let output = run_hook_with_inherited_git_env(&repo, &["hook", "pre-merge", "--yes"]);
+    assert!(
+        output.status.success(),
+        "pre-merge hook run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("env_seen.txt");
+    assert!(marker.exists(), "foreground hook did not run");
+    assert_git_env_scrubbed(&marker);
+}
+
+#[rstest]
+fn test_background_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
+    repo.write_test_config(&format!(
+        "[post-merge]\nrecord = \"{}\"\n",
+        record_git_env_cmd("env_seen.txt")
+    ));
+
+    let output = run_hook_with_inherited_git_env(&repo, &["hook", "post-merge", "--yes"]);
+    assert!(
+        output.status.success(),
+        "post-merge hook dispatch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // post-* hooks run detached; poll for the marker before reading it.
+    let marker = repo.root_path().join("env_seen.txt");
+    wait_for_file_content(&marker);
+    assert_git_env_scrubbed(&marker);
+}
+
+#[rstest]
+fn test_concurrent_hook_does_not_inherit_git_discovery_vars(repo: TestRepo) {
+    // A multi-command hook table runs as a concurrent group (foreground for a
+    // pre-* hook), exercising the separate concurrent spawn path.
+    repo.write_test_config(&format!(
+        "[pre-merge]\nrecord = \"{}\"\nnoop = \"true\"\n",
+        record_git_env_cmd("env_seen.txt")
+    ));
+
+    let output = run_hook_with_inherited_git_env(&repo, &["hook", "pre-merge", "--yes"]);
+    assert!(
+        output.status.success(),
+        "concurrent pre-merge hook run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("env_seen.txt");
+    assert!(marker.exists(), "concurrent hook did not run");
+    assert_git_env_scrubbed(&marker);
 }

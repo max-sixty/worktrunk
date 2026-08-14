@@ -19,7 +19,6 @@ info:
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     TERM: alacritty
@@ -34,6 +33,7 @@ info:
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -283,3 +283,5 @@ exit_code: 0
 ]
 
 ----- stderr -----
+[33m▲[39m [33mJSON output is schema 1; a future release switches the default to schema 2[39m
+[2m↳[22m [2mTo keep this format set [4m[list] json-schema = 1[24m; to adopt the new schema, set [4mjson-schema = 2[24m[22m

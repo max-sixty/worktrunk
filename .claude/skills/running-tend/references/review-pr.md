@@ -6,8 +6,8 @@ Worktrunk's worst failure is silently destroying a user's work, and the deletion
 surface is where it leaks in. A change that touches it is not an agent's to
 merge: a force-flag bypass can read as harmless and still discard committed work.
 
-Flag a PR when its diff **introduces** any of these, or **edits a file that
-already contains** one:
+Flag a PR when its diff adds one of these, widens what an existing one can
+delete, or edits a file that contains one:
 
 - `wt remove`, especially `-D` / `--force-delete` or `-f` / `--force`
 - `git branch -D` / `-d`, `git worktree remove --force`
@@ -16,10 +16,19 @@ already contains** one:
 - shipped automation that runs the above: `plugins/*/hooks/hooks.json`,
   `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy
 
-Both directions matter. A PR that adds a call is obvious. A PR that edits a file
-already holding one is the subtle case: a change near the force-delete path in
-`src/git/remove.rs` can alter its behavior without the destructive line
-appearing in the diff.
+The hold is for what a user can't get back: a worktree, a repository, a branch,
+uncommitted work, or a file worktrunk writes on their behalf (its own config and
+state, an rc file, another tool's settings). A deletion reaches none of that when
+everything under its target can be regenerated, or when it is confined to a
+throwaway CI or development environment. The test is the contents rather than the
+directory's age: `wt step promote` creates its staging directory and removes it
+inside one operation, and in between the directory holds the user's only copy of
+both worktrees' ignored files.
+
+Hold on what the diff can reach, not co-location. In source, a change near the
+force-delete path holds even when the destructive line isn't in the diff. In
+structured config with independent entries, hold only when the diff touches the
+destructive entry itself.
 
 On a match:
 

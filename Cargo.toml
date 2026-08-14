@@ -1,7 +1,8 @@
 [workspace]
-members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
-# Include mock-stub and wt-perf so `cargo test` builds their binaries
-default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
+members = ["tests/helpers/wt-perf"]
+# Include the helper package so a workspace `cargo test` runs its in-package
+# CLI tests (which build its binary).
+default-members = [".", "tests/helpers/wt-perf"]
 
 # cargo-affected input→test rules. cargo-affected selects tests by Rust-line
 # coverage overlap, so a file a test reads at *runtime* (never recorded in
@@ -48,9 +49,9 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.62.0"
+version = "0.73.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.96"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 homepage = "https://worktrunk.dev"
@@ -64,8 +65,10 @@ allow-branch = ["*"]
 consolidate-commits = true
 
 [package.metadata.cargo-udeps.ignore]
-# Used only on Windows (#[cfg(windows)] in src/shell_exec.rs)
-normal = ["which"]
+# `which` is used only on Windows (#[cfg(windows)] in src/shell_exec.rs).
+# `petname-macros` is not referenced in code — its exact pin keeps the proc
+# macro version aligned with `petname` (see the dependency comment below).
+normal = ["which", "petname-macros"]
 
 [features]
 # Disabled: Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
@@ -92,13 +95,16 @@ cli = [
     "dep:tracing-log",
     "dep:tracing-subscriber",
 ]
-syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
-# Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
+syntax-highlighting = ["dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
+# Enable shell/PTY integration tests (needs bash, zsh, fish, nu, pwsh, and jq on PATH)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
-# These tests can cause nextest to suspend due to terminal foreground pgrp issues.
-# When enabled, run with NEXTEST_NO_INPUT_HANDLER=1 to avoid suspension.
-# See CLAUDE.md "Nextest Terminal Suspension" section for details.
 shell-integration-tests = []
+# Enable benchmarks whose fixture is too large for hosted CI: the
+# large-repository prune fixture (multi-gigabyte linked worktrees, cached under
+# target/wt-perf/bench-repos). The daily benchmarks workflow runs plain `cargo bench`
+# and must never build it; opt in locally with
+# `cargo bench --bench prune --features large-repository-benches`.
+large-repository-benches = []
 # Install git-wt binary so `git wt` works as a git subcommand
 git-wt = []
 
@@ -135,6 +141,13 @@ test = false
 name = "integration"
 path = "tests/integration.rs"
 required-features = ["cli", "syntax-highlighting"]
+
+# Deliberately a second binary rather than another module under `integration`:
+# it latches process-wide cancellation state, which would take out any test
+# running beside it in the same process. See the file's module docs.
+[[test]]
+name = "cancel_background"
+path = "tests/cancel_background.rs"
 
 [dependencies]
 anyhow = "1.0.102"
@@ -187,11 +200,10 @@ synoptic = "2"
 terminal_size = "0.4.3"
 toml = { version = "1.0", features = ["preserve_order"] }
 toml_edit = { version = "0.25", features = ["serde"] }
-# tree-sitter and tree-sitter-highlight should use matching versions.
-# tree-sitter-bash may lag behind (0.25.x works with tree-sitter 0.26.x).
+# tree-sitter-bash may lag behind tree-sitter-highlight (0.25.x works with
+# tree-sitter-highlight 0.26.x).
 # These are optional dependencies controlled by the "syntax-highlighting" feature.
 # To build without C compilation requirements, use: cargo install worktrunk --no-default-features --features cli
-tree-sitter = { version = "0.26", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-highlight = { version = "0.26", optional = true }
 unicode-width = "0.2.1"
@@ -209,7 +221,7 @@ which = "8.0.2"
 # Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
-termimad = { version = "0.34.1", optional = true }
+termimad = { version = "0.35.1", optional = true }
 urlencoding = "2.1"
 regex = "1.12.3"
 ignore = "0.4"
@@ -232,7 +244,11 @@ sha2 = "0.11"
 # breaking-change rollout (see `test_codename_outputs_are_stable` and
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
-petname = { version = "=3.0.0", default-features = false, features = ["default-words"] }
+petname = { version = "=3.1.0", default-features = false, features = ["default-words"] }
+# PINNED EXACT to match `petname`: its caret dependency otherwise permits a
+# different proc-macro version, but the generated code and runtime re-exports
+# require an exact match. Keep both pins in lockstep.
+petname-macros = "=3.1.0"
 
 tempfile = "3.27"
 wait-timeout = "0.2"
@@ -256,7 +272,14 @@ wait-timeout = "0.2"
 # API, and earlier 4.x compile against an incompatible ratatui (`-Z
 # minimal-versions` otherwise resolves skim 4.6 against ratatui 0.30.1 and fails
 # to build).
-skim = { version = "4.8", optional = true, default-features = false, features = ["frizbee"] }
+# skim 5.3.1 (bumped in #3526) regressed the picker on the legacy Windows
+# console — every picker PTY test failed with "Keyboard progressive enhancement
+# not implemented for the legacy Windows API", reddening the Windows test job,
+# so the pin held at the last-Windows-green 5.1.0. 5.5.0 guards that path ("Do
+# not panic on push/pop keyboard enhancement flags failure") and is
+# Windows-green again. Kept as an exact pin; it can relax to a range now that
+# the keyboard-enhancement path no longer regresses the legacy console.
+skim = { version = "=5.6.1", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
 # Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`
@@ -301,6 +324,7 @@ vt100 = "0.16.2"
 ansi-to-html = "0.2.3"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
+jsonschema = { version = "0.49", default-features = false }
 
 [[bench]]
 name = "alias"
@@ -315,15 +339,15 @@ name = "list"
 harness = false
 
 [[bench]]
-name = "cow_copy"
-harness = false
-
-[[bench]]
 name = "time_to_first_output"
 harness = false
 
 [[bench]]
 name = "remove"
+harness = false
+
+[[bench]]
+name = "prune"
 harness = false
 
 [[bench]]

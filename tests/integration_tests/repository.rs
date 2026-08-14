@@ -1,8 +1,9 @@
 //! Tests for git repository methods to improve code coverage.
 
 use std::fs;
+use std::path::Path;
 
-use worktrunk::git::{RefType, Repository};
+use worktrunk::git::{InProgressOperation, RefType, Repository};
 
 use crate::common::{BareRepoTest, TestRepo};
 
@@ -43,116 +44,135 @@ fn test_is_bare_returns_true_for_bare_repo() {
 }
 
 // =============================================================================
-// worktree_state() tests - simulate various git operation states
+// operation_in_progress() tests - simulate various git operation states
 // =============================================================================
 
-#[test]
-fn test_worktree_state_normal() {
+/// Build a repo, let `setup` plant state files under its git dir, and report
+/// what `operation_in_progress` makes of them.
+fn operation_after(setup: impl FnOnce(&Path)) -> Option<InProgressOperation> {
     let repo = TestRepo::new();
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Normal state - no special files
-    let state = repository.worktree_state().unwrap();
-    assert!(state.is_none());
+    setup(&repo.root_path().join(".git"));
+    repository.operation_in_progress().unwrap()
 }
 
-#[test]
-fn test_worktree_state_merging() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate merge state by creating MERGE_HEAD
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("MERGE_HEAD"), "abc123\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("MERGING".to_string()));
+/// Plant the todo list a multi-commit `git cherry-pick`/`git revert` leaves
+/// behind while instructions are still queued.
+fn write_sequencer_todo(git_dir: &Path, todo: &str) {
+    let sequencer = git_dir.join("sequencer");
+    fs::create_dir_all(&sequencer).unwrap();
+    fs::write(sequencer.join("todo"), todo).unwrap();
 }
 
+/// `operation_in_progress` reads each in-progress operation off the state files
+/// git writes under the git dir. Both rebase backends report as a rebase:
+/// `rebase-merge` (interactive/merge) and `rebase-apply` (am backend, shared
+/// with `git am`).
 #[test]
-fn test_worktree_state_rebasing_with_progress() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+fn test_operation_in_progress_detects_each_operation() {
+    assert_eq!(operation_after(|_| {}), None, "clean worktree");
 
-    // Simulate rebase state with progress
-    let git_dir = repo.root_path().join(".git");
-    let rebase_dir = git_dir.join("rebase-merge");
-    fs::create_dir_all(&rebase_dir).unwrap();
-    fs::write(rebase_dir.join("msgnum"), "2\n").unwrap();
-    fs::write(rebase_dir.join("end"), "5\n").unwrap();
+    assert_eq!(
+        operation_after(|d| fs::write(d.join("MERGE_HEAD"), "abc123\n").unwrap()),
+        Some(InProgressOperation::Merge),
+        "merge",
+    );
+    assert_eq!(
+        operation_after(|d| fs::create_dir_all(d.join("rebase-merge")).unwrap()),
+        Some(InProgressOperation::Rebase),
+        "rebase, merge backend",
+    );
+    assert_eq!(
+        operation_after(|d| fs::create_dir_all(d.join("rebase-apply")).unwrap()),
+        Some(InProgressOperation::Rebase),
+        "rebase, am backend",
+    );
+    assert_eq!(
+        operation_after(|d| fs::write(d.join("CHERRY_PICK_HEAD"), "def456\n").unwrap()),
+        Some(InProgressOperation::CherryPick),
+        "cherry-pick",
+    );
+    assert_eq!(
+        operation_after(|d| fs::write(d.join("REVERT_HEAD"), "789abc\n").unwrap()),
+        Some(InProgressOperation::Revert),
+        "revert",
+    );
+    assert_eq!(
+        operation_after(|d| fs::write(d.join("BISECT_LOG"), "# bisect log\n").unwrap()),
+        Some(InProgressOperation::Bisect),
+        "bisect",
+    );
 
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REBASING 2/5".to_string()));
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "pick abc123 first\npick def456 second\n")),
+        Some(InProgressOperation::CherryPick),
+        "queued cherry-pick",
+    );
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "revert abc123 first\n")),
+        Some(InProgressOperation::Revert),
+        "queued revert",
+    );
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "")),
+        None,
+        "drained sequencer",
+    );
+    // `label` belongs to a rebase todo, which lives under `rebase-merge` and is
+    // detected there; an unrecognized instruction is not a sequence to report.
+    assert_eq!(
+        operation_after(|d| write_sequencer_todo(d, "label onto\n")),
+        None,
+        "todo that isn't a pick or revert sequence",
+    );
 }
 
+/// Resolving a stopped cherry-pick with `git commit` instead of `git cherry-pick
+/// --continue` clears `CHERRY_PICK_HEAD` while the rest of the sequence stays
+/// queued. `git status` still calls that a cherry-pick in progress, and so must
+/// this: the `_HEAD` files alone report an idle worktree with picks pending.
 #[test]
-fn test_worktree_state_rebasing_apply() {
-    let repo = TestRepo::new();
+fn test_operation_in_progress_reads_the_queued_sequencer() {
+    let repo = TestRepo::with_initial_commit();
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let root = repo.root_path().to_path_buf();
 
-    // Simulate rebase-apply state (git am or git rebase without -m)
-    let git_dir = repo.root_path().join(".git");
-    let rebase_dir = git_dir.join("rebase-apply");
-    fs::create_dir_all(&rebase_dir).unwrap();
-    fs::write(rebase_dir.join("msgnum"), "3\n").unwrap();
-    fs::write(rebase_dir.join("end"), "7\n").unwrap();
+    repo.run_git(&["switch", "-c", "side"]);
+    repo.commit_in_worktree(&root, "conflict.txt", "side one\n", "Side edit");
+    repo.commit_in_worktree(&root, "conflict.txt", "side two\n", "Side edit again");
+    repo.run_git(&["switch", "main"]);
+    repo.commit_in_worktree(&root, "conflict.txt", "main\n", "Main edit");
 
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REBASING 3/7".to_string()));
-}
+    // Two picks, so instructions remain queued once the first one stops.
+    let picked = repo
+        .git_command()
+        .args(["cherry-pick", "side~1", "side"])
+        .run()
+        .unwrap();
+    assert!(!picked.status.success(), "the first pick must conflict");
+    assert_eq!(
+        repository.operation_in_progress().unwrap(),
+        Some(InProgressOperation::CherryPick),
+        "stopped pick",
+    );
 
-#[test]
-fn test_worktree_state_rebasing_no_progress() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    fs::write(root.join("conflict.txt"), "resolved\n").unwrap();
+    repo.run_git(&["add", "conflict.txt"]);
+    repo.run_git(&["commit", "--no-edit"]);
 
-    // Simulate rebase state without progress files
-    let git_dir = repo.root_path().join(".git");
-    let rebase_dir = git_dir.join("rebase-merge");
-    fs::create_dir_all(&rebase_dir).unwrap();
-    // No msgnum/end files - just the directory
+    assert!(
+        !root.join(".git").join("CHERRY_PICK_HEAD").exists(),
+        "committing by hand is what clears the state file",
+    );
+    assert_eq!(
+        repository.operation_in_progress().unwrap(),
+        Some(InProgressOperation::CherryPick),
+        "the remaining picks are still queued",
+    );
 
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REBASING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_cherry_picking() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate cherry-pick state
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("CHERRY_PICK_HEAD"), "def456\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("CHERRY-PICKING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_reverting() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate revert state
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("REVERT_HEAD"), "789abc\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("REVERTING".to_string()));
-}
-
-#[test]
-fn test_worktree_state_bisecting() {
-    let repo = TestRepo::new();
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-
-    // Simulate bisect state
-    let git_dir = repo.root_path().join(".git");
-    fs::write(git_dir.join("BISECT_LOG"), "# bisect log\n").unwrap();
-
-    let state = repository.worktree_state().unwrap();
-    assert_eq!(state, Some("BISECTING".to_string()));
+    // `git cherry-pick --quit` is how the queue is abandoned; state clears with it.
+    repo.run_git(&["cherry-pick", "--quit"]);
+    assert_eq!(repository.operation_in_progress().unwrap(), None);
 }
 
 // =============================================================================
@@ -272,6 +292,25 @@ fn test_project_identifier_ssh_colon() {
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
     assert_eq!(id, "github.com/user/repo");
+}
+
+#[test]
+fn test_project_identifier_scp_custom_user() {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.setup_remote("main");
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "org-14957082@github.com:openai/codex.git",
+        ])
+        .run()
+        .unwrap();
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let id = repository.project_identifier().unwrap();
+    assert_eq!(id, "github.com/openai/codex");
 }
 
 #[test]
@@ -611,6 +650,17 @@ fn test_detect_ref_type() {
     ]);
     let r = Repository::at(gitlab.root_path().to_path_buf()).unwrap();
     assert_eq!(r.detect_ref_type(), Some(RefType::Mr));
+
+    // Other known PR forges use the same canonical mapping.
+    for url in [
+        "https://gitea.example.com/owner/repo.git",
+        "https://dev.azure.com/org/project/_git/repo",
+    ] {
+        let repo = TestRepo::new();
+        repo.run_git(&["remote", "add", "origin", url]);
+        let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+        assert_eq!(r.detect_ref_type(), Some(RefType::Pr), "{url}");
+    }
 
     // Unknown host → None
     let other = TestRepo::new();

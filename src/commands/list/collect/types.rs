@@ -5,12 +5,10 @@
 //! - `TaskError` and `ErrorCause` - error handling for failed tasks
 //! - `DrainOutcome` and `MissingResult` - timeout diagnostic info
 
-use worktrunk::git::LineDiff;
+use worktrunk::git::{InProgressOperation, LineDiff};
 
 use super::super::ci_status::PrStatus;
-use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus};
 
 /// Task results sent as each git operation completes.
 /// These enable progressive rendering - update UI as data arrives.
@@ -26,7 +24,7 @@ use super::super::model::{
 #[strum_discriminants(
     name(TaskKind),
     vis(pub),
-    derive(Hash, Ord, PartialOrd, strum::IntoStaticStr),
+    derive(Hash, Ord, PartialOrd, strum::IntoStaticStr, strum::EnumIter),
     strum(serialize_all = "kebab-case")
 )]
 pub(crate) enum TaskResult {
@@ -85,10 +83,10 @@ pub(crate) enum TaskResult {
         /// Some(false) = dirty working tree would not conflict
         has_working_tree_conflicts: Option<bool>,
     },
-    /// Git operation in progress (rebase/merge)
+    /// Git operation in progress, `None` when there is none
     GitOperation {
         item_idx: usize,
-        git_operation: ActiveGitOperation,
+        git_operation: Option<InProgressOperation>,
     },
     /// User-defined status from git config
     UserMarker {
@@ -152,6 +150,30 @@ impl TaskKind {
             self,
             TaskKind::CiStatus | TaskKind::UrlStatus | TaskKind::SummaryGenerate
         )
+    }
+
+    /// Human-readable task name for user-facing messages (failure warnings,
+    /// stall footers, timeout diagnostics). The strum kebab-case form
+    /// (`IntoStaticStr`) is developer vocabulary for tracing and `-vv`
+    /// diagnostics; this form names what the task computes for the table.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            TaskKind::AheadBehind => "ahead/behind counts",
+            TaskKind::CommittedTreesMatch => "trees-match check",
+            TaskKind::HasFileChanges => "file-changes check",
+            TaskKind::WouldMergeAdd => "merge-simulation check",
+            TaskKind::IsAncestor => "ancestor check",
+            TaskKind::BranchDiff => "branch diff",
+            TaskKind::WorkingTreeDiff => "working-tree diff",
+            TaskKind::MergeTreeConflicts => "merge-conflict check",
+            TaskKind::WorkingTreeConflicts => "working-tree conflict check",
+            TaskKind::GitOperation => "operation-state check",
+            TaskKind::UserMarker => "user-marker lookup",
+            TaskKind::Upstream => "upstream status",
+            TaskKind::CiStatus => "CI status",
+            TaskKind::UrlStatus => "URL check",
+            TaskKind::SummaryGenerate => "summary generation",
+        }
     }
 }
 
@@ -237,5 +259,20 @@ mod tests {
     fn test_task_error_timeout_is_timeout() {
         let error = TaskError::new(0, TaskKind::AheadBehind, "timed out", ErrorCause::Timeout);
         assert!(error.is_timeout());
+    }
+
+    /// Duplicate display names would make two different task failures
+    /// indistinguishable in the `wt list` failure warning.
+    #[test]
+    fn test_task_kind_display_names_unique_and_nonempty() {
+        use strum::IntoEnumIterator;
+        let names: Vec<&str> = TaskKind::iter().map(TaskKind::display_name).collect();
+        assert!(names.iter().all(|name| !name.is_empty()));
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "duplicate display names: {names:?}"
+        );
     }
 }

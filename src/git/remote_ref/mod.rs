@@ -22,6 +22,39 @@
 //! # }
 //! ```
 //!
+//! # Error Messages
+//!
+//! When a forge CLI reports a failure, the message the user sees is the CLI's
+//! own, in a gutter under one line of our context — see `cli_api_error` below.
+//! `gh` and `glab` both render an API failure as the API's own message plus the
+//! status (`gh: Not Found (HTTP 404)`, `glab: 401 Unauthorized (HTTP 401)`);
+//! `az` writes its own prose, which names the remedy where there is one. Either
+//! way that line stays accurate across locale, CLI version, and API rewording in
+//! a way our paraphrase of it would not.
+//!
+//! A provider writes a message of its own only where the CLI structurally cannot
+//! report the condition:
+//!
+//! - **GitHub's 404** answers about an owner/repo that is *our* choice — from
+//!   `gh repo set-default` or from a remote — so it often means the choice was
+//!   wrong rather than that the PR is missing. `gh` reports the miss; only we
+//!   know what we asked for and where the question came from.
+//! - **Azure DevOps' missing extension** is a precondition, not a guess: the
+//!   whole `az repos` command group ships in the `azure-devops` extension, and
+//!   `az extension list` answers for it. `az` itself never names it.
+//!
+//! Everything else forwards. Reading more nicely than the CLI does not qualify:
+//! "GitLab CLI not authenticated" restated `glab: 401 Unauthorized (HTTP 401)`
+//! with the status dropped, and cost a `starts_with("401")` test against prose
+//! to select it.
+//!
+//! Where a provider still classifies, it keys on structure and falls through to
+//! forwarding when the structure isn't there: `gh` puts a `status` field in its
+//! error body, while `glab` puts the status only inside the message text, so
+//! there is nothing there to key on. Gitea is the one provider whose response
+//! *shape* is the error channel at all, because `tea api` copies the body to
+//! stdout and exits 0 whatever the status — see [`gitea`].
+//!
 //! # Platform-Specific Notes
 //!
 //! ## GitHub
@@ -38,7 +71,7 @@
 //!
 //! Uses `tea api repos/{owner}/{repo}/pulls/<number>`. Unlike `gh`, `tea`'s
 //! `{owner}`/`{repo}` template expansion depends on local repo context, so the
-//! provider resolves owner/repo from the primary remote URL and passes a
+//! provider resolves owner/repo from a matching Gitea remote and passes a
 //! pre-expanded path.
 //!
 //! ## Azure DevOps
@@ -65,24 +98,24 @@ use std::process::Output;
 
 use anyhow::{Context, bail};
 
+use crate::git::ci_platform::{host_is_within, normalized_hostname};
 use crate::git::error::GitError;
-use crate::git::{GitRepoInfo, GitRepoProvider, RefType, Repository};
+use crate::git::url::authority_host;
+use crate::git::{ForgeKind, GitRepoInfo, GitRepoProvider, RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
-/// Each platform (GitHub, GitLab, Azure DevOps) implements this trait to
+/// Each platform (GitHub, Gitea, GitLab, Azure DevOps) implements this trait to
 /// provide unified access to PR/MR metadata and ref paths.
 pub trait RemoteRefProvider {
-    /// The reference type this provider handles.
-    fn ref_type(&self) -> RefType;
+    /// The forge whose API and ref namespace this provider implements.
+    fn forge_kind(&self) -> ForgeKind;
 
-    /// Short, stable identifier for the platform — `"github"`, `"gitlab"`, or
-    /// `"azure-devops"`. Useful for diagnostic logging and for tests that need
-    /// to verify which provider was selected (the other trait methods don't
-    /// distinguish GitHub from Azure DevOps — both use `RefType::Pr` and
-    /// `pull/{N}/head`).
-    fn platform_label(&self) -> &'static str;
+    /// The reference type this provider handles.
+    fn ref_type(&self) -> RefType {
+        self.forge_kind().ref_type()
+    }
 
     /// Fetch ref information from the platform API.
     ///
@@ -129,6 +162,11 @@ pub(super) fn run_cli_api(request: CliApiRequest<'_>) -> anyhow::Result<Output> 
     }
 }
 
+/// The CLI's own account of the failure: stderr when it wrote any, else stdout.
+///
+/// `gh` and `glab` write a formatted line to stderr (`gh: Not Found (HTTP 404)`)
+/// and the raw API body to stdout, so preferring stderr picks the human form
+/// over the JSON. The stdout fallback covers a CLI that writes only a body.
 pub(super) fn cli_api_error_details(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.trim().is_empty() {
@@ -138,6 +176,15 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
     }
 }
 
+/// Wrap a failed forge-CLI invocation, rendering `message` above the CLI's own
+/// output in a gutter.
+///
+/// Every provider's failure path ends here, and forwarding is the default:
+/// `message` names the request we made ("gh api failed for PR #123") and the
+/// gutter carries the CLI's verdict on it. A provider with something of its own
+/// to say — the cases in the module docs — passes it as `message` rather than
+/// bailing, so its words are added to the CLI's rather than substituted for
+/// them.
 pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
     GitError::CliApiError {
         ref_type,
@@ -154,8 +201,8 @@ pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<Strin
     html_url
         .strip_prefix("https://")
         .or_else(|| html_url.strip_prefix("http://"))
-        .and_then(|s| s.split('/').next())
-        .filter(|h| !h.is_empty())
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .and_then(authority_host)
         .map(String::from)
         .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
 }
@@ -398,15 +445,20 @@ pub fn repo_info_from_ref_url_with_provider(
     if repo_segments.len() < 3 {
         return None;
     }
-    let url = format!("{}://{}", parts.scheme, repo_segments.join("/"));
-    let host = repo_segments[0].to_string();
+    let host = authority_host(repo_segments[0])?.to_string();
+    let url = format!(
+        "{}://{}/{}",
+        parts.scheme,
+        host,
+        repo_segments[1..].join("/")
+    );
     let marker = parts.segments[parts.marker_index];
-    let provider_override = GitRepoProvider::from_platform(provider_override);
+    let provider_override = provider_override.and_then(|value| value.parse::<ForgeKind>().ok());
 
     let provider = match marker {
         "pull" => {
-            if provider_override == Some(GitRepoProvider::GitHub)
-                || host.to_ascii_lowercase().contains("github")
+            if provider_override == Some(ForgeKind::GitHub)
+                || ForgeKind::from_host(&host) == Some(ForgeKind::GitHub)
             {
                 GitRepoProvider::GitHub
             } else {
@@ -416,9 +468,8 @@ pub fn repo_info_from_ref_url_with_provider(
         "pulls" => GitRepoProvider::Gitea,
         "merge_requests" => GitRepoProvider::GitLab,
         "pullrequest" => {
-            if provider_override == Some(GitRepoProvider::AzureDevOps)
-                || host.to_ascii_lowercase().contains("dev.azure.com")
-                || host.to_ascii_lowercase().contains("visualstudio.com")
+            if provider_override == Some(ForgeKind::AzureDevOps)
+                || ForgeKind::from_host(&host) == Some(ForgeKind::AzureDevOps)
             {
                 GitRepoProvider::AzureDevOps
             } else {
@@ -429,7 +480,7 @@ pub fn repo_info_from_ref_url_with_provider(
     };
 
     if provider == GitRepoProvider::AzureDevOps {
-        let allow_generic_host = provider_override == Some(GitRepoProvider::AzureDevOps);
+        let allow_generic_host = provider_override == Some(ForgeKind::AzureDevOps);
         if let Some((owner, project, name)) =
             azure_repo_segments(&host, &repo_segments[1..], allow_generic_host)
         {
@@ -475,16 +526,8 @@ fn azure_repo_segments(
     segments: &[&str],
     allow_generic_host: bool,
 ) -> Option<(String, String, String)> {
-    let host_lower = host.to_ascii_lowercase();
-    if host_lower == "dev.azure.com" {
-        if segments.len() >= 4 && segments.get(2) == Some(&"_git") {
-            return Some((
-                segments[0].to_string(),
-                segments[1].to_string(),
-                segments[3].to_string(),
-            ));
-        }
-    } else if host_lower == "ssh.dev.azure.com" {
+    let host_lower = normalized_hostname(host);
+    if host_lower == "ssh.dev.azure.com" {
         if segments.len() >= 4 && segments.first() == Some(&"v3") {
             return Some((
                 segments[1].to_string(),
@@ -492,7 +535,15 @@ fn azure_repo_segments(
                 segments[3].to_string(),
             ));
         }
-    } else if host_lower.ends_with(".visualstudio.com") {
+    } else if host_is_within(&host_lower, "dev.azure.com") {
+        if segments.len() >= 4 && segments.get(2) == Some(&"_git") {
+            return Some((
+                segments[0].to_string(),
+                segments[1].to_string(),
+                segments[3].to_string(),
+            ));
+        }
+    } else if host_is_within(&host_lower, "visualstudio.com") {
         if segments.len() >= 3 && segments.get(1) == Some(&"_git") {
             let organization = host.split('.').next()?.to_string();
             return Some((
@@ -514,6 +565,21 @@ fn azure_repo_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_url_host_uses_the_network_host_after_userinfo() {
+        assert_eq!(
+            extract_host_from_html_url("https://github.com@attacker.example/owner/repo/pull/1")
+                .unwrap(),
+            "attacker.example"
+        );
+        assert_eq!(
+            extract_host_from_html_url("http://user:token@github.com:8443/owner/repo/pull/1")
+                .unwrap(),
+            "github.com:8443"
+        );
+        assert!(extract_host_from_html_url("https://github.com@/owner/repo/pull/1").is_err());
+    }
 
     #[test]
     fn test_ref_paths() {
@@ -769,6 +835,52 @@ mod tests {
         assert_eq!(info.owner, "owner");
         assert_eq!(info.name, "repo");
         assert_eq!(info.project, None);
+    }
+
+    #[test]
+    fn repo_info_from_ref_url_respects_host_boundaries_and_ports() {
+        let github = repo_info_from_ref_url("https://github.com:8443/owner/repo/pull/1")
+            .expect("GitHub PR URL");
+        assert_eq!(github.provider, GitRepoProvider::GitHub);
+
+        let azure = repo_info_from_ref_url(
+            "https://dev.azure.com:8443/org/project/_git/repo/pullrequest/9",
+        )
+        .expect("Azure DevOps PR URL");
+        assert_eq!(azure.provider, GitRepoProvider::AzureDevOps);
+        assert_eq!(azure.owner, "org");
+        assert_eq!(azure.project.as_deref(), Some("project"));
+
+        let azure_with_forge_label = repo_info_from_ref_url(
+            "https://github.dev.azure.com/org/project/_git/repo/pullrequest/9",
+        )
+        .expect("Azure DevOps PR URL");
+        assert_eq!(
+            azure_with_forge_label.provider,
+            GitRepoProvider::AzureDevOps
+        );
+
+        let hostile_userinfo =
+            repo_info_from_ref_url("https://github.com@attacker.example/owner/repo/pull/1")
+                .expect("ref URL is structurally valid");
+        assert_eq!(hostile_userinfo.provider, GitRepoProvider::Unknown);
+        assert_eq!(hostile_userinfo.host, "attacker.example");
+        assert_eq!(hostile_userinfo.url, "https://attacker.example/owner/repo");
+
+        // A brand anywhere in the host classifies here too.
+        let branded = repo_info_from_ref_url("https://github-mirror.example/owner/repo/pull/1")
+            .expect("ref URL is structurally valid");
+        assert_eq!(branded.provider, GitRepoProvider::GitHub);
+
+        // The Azure service domains stay bounded by suffix, and a host outside
+        // them carries no brand to fall back on.
+        for input in [
+            "https://dev.azure.com.attacker.example/org/project/_git/repo/pullrequest/9",
+            "https://evil-visualstudio.com/org/project/_git/repo/pullrequest/9",
+        ] {
+            let info = repo_info_from_ref_url(input).expect("ref URL is structurally valid");
+            assert_eq!(info.provider, GitRepoProvider::Unknown, "{input}");
+        }
     }
 
     #[test]

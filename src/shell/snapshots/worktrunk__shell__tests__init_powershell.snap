@@ -34,7 +34,7 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
         try {
             # Run wt with split directive env vars
-            # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping (legacy compat)
+            # WORKTRUNK_SHELL selects PowerShell escaping for the EXEC directive payload
             $env:WORKTRUNK_DIRECTIVE_CD_FILE = $cdFile
             $env:WORKTRUNK_DIRECTIVE_EXEC_FILE = $execFile
             $env:WORKTRUNK_SHELL = "powershell"
@@ -77,13 +77,21 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
             Remove-Item $execFile -ErrorAction SilentlyContinue
         }
 
-        # Propagate exit code so $? and $LASTEXITCODE are consistent for scripts/CI
+        # Propagate the exit code so scripts/CI can read $LASTEXITCODE.
+        # Do NOT `return $exitCode`: in a PowerShell function `return <value>`
+        # writes the value to the output (success) stream, so it would append a
+        # stray exit-code line (e.g. `0`) after the real command output — that
+        # corrupts captures like `$out = wt list --format json`. Setting
+        # $global:LASTEXITCODE is what propagates the failure; the Write-Error
+        # below surfaces a visible error record. Note: because this is a simple
+        # function, Write-Error does NOT set the caller's $?, so don't rely on
+        # $? reflecting a wt failure.
         $global:LASTEXITCODE = $exitCode
         if ($exitCode -ne 0) {
-            # Write error to set $? = $false without throwing
+            # Surface a visible error record without throwing (does not set the
+            # caller's $? from a simple function; $LASTEXITCODE carries the code)
             Write-Error "wt exited with code $exitCode" -ErrorAction SilentlyContinue
         }
-        return $exitCode
     }
 
     # Tab completion - generate clap's completer script and eval it
@@ -95,6 +103,10 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         $wtBinForComplete = (Get-Command wt -CommandType Application | Select-Object -First 1).Source
     }
     $env:COMPLETE = "powershell"
+    # Register under the name this integration binds. clap names its
+    # Register-ArgumentCompleter target after its own command name, so without
+    # this the --cmd name is never registered and nothing completes (#3816).
+    $env:WORKTRUNK_COMPLETE_NAME = "wt"
     try {
         # Capture output first, then pipe - avoids "Cannot run a document in the middle of a pipeline"
         # error that can occur in some PowerShell configurations/terminals
@@ -108,5 +120,6 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
     }
     finally {
         Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue
+        Remove-Item Env:\WORKTRUNK_COMPLETE_NAME -ErrorAction SilentlyContinue
     }
 }

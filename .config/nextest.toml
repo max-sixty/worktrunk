@@ -1,19 +1,14 @@
-# IMPORTANT: Tests that spawn interactive shells (zsh -ic, bash -ic) cause
-# nextest's InputHandler to receive SIGTTOU when restoring terminal settings,
-# suspending the test process. See https://github.com/nextest-rs/nextest/issues/2878
-#
-# Solution: Run with NEXTEST_NO_INPUT_HANDLER=1 or use the pre-merge hook which
-# sets this automatically:
-#
-#   NEXTEST_NO_INPUT_HANDLER=1 cargo nextest run --features shell-integration-tests
-#
-# Or use `cargo test` which doesn't have this issue:
-#
-#   cargo test --test integration --features shell-integration-tests
+# Older nextest suspends (SIGTTOU) when a test spawns an interactive shell
+# (zsh -ic, bash -ic), as the shell-integration-tests feature does; fixed in
+# 0.9.118 (https://github.com/nextest-rs/nextest/issues/2878).
+nextest-version = "0.9.118"
 
-# Enable setup-scripts (still experimental in nextest) so the build-bins script
-# below can run before any test starts.
-experimental = ["setup-scripts"]
+# Nothing in this file may change what a test observes — no `[env]`, no setup
+# scripts. `cargo test`, `cargo llvm-cov`, `cargo bench` and the Nix derivation
+# run this same suite and would silently disagree. Environment belongs in the
+# hermetic latch (`shell_exec::enable_hermetic_test_env`) and
+# `.cargo/config.toml`, behavior in the fixture. See
+# tests/CLAUDE.md → One Result Per Test, Whatever Runs It.
 
 [profile.default]
 slow-timeout = { period = "180s", terminate-after = 1 }
@@ -22,46 +17,3 @@ success-output = "never"
 
 [profile.default.junit]
 path = "junit.xml"
-
-# Build the helper binaries (`mock-stub`, `wt-perf`) before any test runs.
-#
-# These live in separate workspace packages so cargo-dist doesn't ship them
-# (see tests/helpers/mock-stub/Cargo.toml for the rationale). The
-# `default-members` setting builds them under unfiltered `cargo nextest run`,
-# but a target filter like `--test integration` overrides default-members and
-# the helpers are skipped — so tests that spawn them fail.
-#
-# Under `cargo llvm-cov nextest`, nextest doesn't propagate the outer
-# --target-dir as a CARGO_TARGET_DIR env var, so a plain `cargo build` would
-# write to target/ rather than target/llvm-cov-target/ and the test binary
-# would still find no helpers. Derive the right target-dir from
-# LLVM_PROFILE_FILE (cargo-llvm-cov sets it to a path inside its target dir)
-# and pass it through with --target-dir. Worktrunk already requires bash for
-# shell-integration tests on every platform, so bash here is fine.
-#
-# TODO: collapse this whole layer once cargo-dist supports per-binary
-# exclusion. The chain — separate `tests/helpers/{mock-stub,wt-perf}`
-# packages, the dummy `tests/builds.rs` trick that makes `default-members`
-# build them, this setup-script, and `workspace_bin()` in src/testing/mod.rs
-# — exists only because cargo-dist (≤ 0.30.x at time of writing) ships every
-# `[[bin]]` in the main crate and offers no per-binary opt-out. PR #127
-# (commit d21925692) documented the failure modes: `required-features` on
-# `[[bin]]` still trips cargo-dist's "bin not found", and
-# `[package.metadata.dist] dist = false` excludes the entire package, not
-# individual binaries. When cargo-dist gains per-binary exclusion (or we
-# move off cargo-dist), pull mock-stub and wt-perf back into the worktrunk
-# crate as `[[bin]]` targets, use `CARGO_BIN_EXE_<name>`, and delete this
-# script along with `workspace_bin()` and the helper packages.
-[scripts.setup.build-bins]
-command = [
-    "bash",
-    "-c",
-    'if [ -n "${LLVM_PROFILE_FILE:-}" ]; then cargo build --bin mock-stub --bin wt-perf --target-dir "$(dirname "$LLVM_PROFILE_FILE")"; else cargo build --bin mock-stub --bin wt-perf; fi',
-]
-
-[[profile.default.scripts]]
-# Only the `integration` test binary calls `workspace_bin()` (via MockConfig
-# and analyze_trace.rs), so don't pay the helper-build cost on `--lib`,
-# `--bin wt`, doctest, or bench runs.
-filter = "binary(integration)"
-setup = "build-bins"

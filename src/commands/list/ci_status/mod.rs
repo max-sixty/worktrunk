@@ -14,6 +14,7 @@ mod platform;
 
 use std::process::Output;
 
+use super::layout::LinkStyle;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -83,8 +84,10 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::{CachedCiStatus, MaxPrNumber};
-// Only the `--prs` picker consumes this re-export.
-pub(crate) use github::GitHubPrInfo;
+// Only the `--prs` picker consumes these re-exports: `GitHubPrInfo` to parse the
+// `gh pr list` payload, `GitHubComment` to parse `gh pr view --json comments`
+// into the shared comment shape (the worktree CI call reuses the same type).
+pub(crate) use github::{GitHubComment, GitHubPrInfo};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -118,7 +121,7 @@ pub(crate) fn non_interactive_cmd(program: &str) -> Cmd {
 /// Check if a CLI tool is available
 ///
 /// On Windows, CreateProcessW (via Cmd) searches PATH for .exe files.
-/// We provide .exe mocks in tests via mock-stub, so this works consistently.
+/// Tests provide `.exe` mocks via `testing::mock_commands`, so this works consistently.
 pub(crate) fn tool_available(tool: &str, args: &[&str]) -> bool {
     Cmd::new(tool)
         .args(args.iter().copied())
@@ -362,7 +365,7 @@ pub enum ReviewState {
 }
 
 /// CI status from PR/MR or branch workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrStatus {
     pub ci_status: CiStatus,
     /// Source of the CI status (PR/MR or branch workflow)
@@ -411,6 +414,23 @@ pub struct PrStatus {
     /// for cache entries written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment_count: Option<u32>,
+    /// PR `updatedAt` (GitHub) — the forge's "last modified" timestamp, an
+    /// RFC-3339 string. Rides the same `gh pr list` / `gh pr view` call as
+    /// `title` / `body`, and keys the picker's on-disk `comments` cache
+    /// (`picker::preview_cache::comments_key`): a GitHub PR's `updatedAt` bumps
+    /// on comment add, edit, review, and review-comment, so a stable value means
+    /// the thread is unchanged and a later `wt switch` can skip the per-row
+    /// `gh pr view --json comments` fetch. Comment *deletion* is the one event
+    /// GitHub doesn't reflect here, so a deleted comment can linger in the cache
+    /// until the next bump — an accepted best-effort gap for a read-only preview.
+    ///
+    /// `None` for GitLab MRs — their `updated_at` is throttled to once per minute
+    /// for note activity (so it misses a quick reply) *and* never moves on note
+    /// deletion, so it can't key a comments cache; the MR comments tab stays
+    /// uncached. Also `None` for branch workflows (no PR) and for cache entries
+    /// written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 impl CiStatus {
@@ -479,23 +499,18 @@ impl PrStatus {
         }
     }
 
-    /// Wrap `text` in this status's style, optionally as an OSC 8 hyperlink
-    /// to the PR/pipeline URL.
-    fn styled(&self, text: &str, include_link: bool) -> String {
-        if let (true, Some(url)) = (include_link, &self.url) {
-            let style = self.style().underline();
-            format!(
-                "{}{}{}{}{}",
-                style,
-                osc8::Hyperlink::new(url),
-                text,
-                osc8::Hyperlink::END,
-                style.render_reset()
-            )
-        } else {
-            let style = self.style();
-            format!("{style}{text}{style:#}")
-        }
+    /// Wrap `text` in this status's style, as an OSC 8 hyperlink to the
+    /// PR/pipeline URL when the render carries links.
+    ///
+    /// The status color goes outside the link, which supplies its own
+    /// underline and closes it without disturbing that color.
+    fn styled(&self, text: &str, link: LinkStyle) -> String {
+        let style = self.style();
+        let body = match (link, &self.url) {
+            (LinkStyle::Linked, Some(url)) => worktrunk::styling::hyperlink(url, text),
+            _ => text.to_string(),
+        };
+        format!("{style}{body}{style:#}")
     }
 
     /// Format CI status for a cell `max_width` columns wide.
@@ -509,14 +524,15 @@ impl PrStatus {
     /// known: Error and Conflicts share the warning color, so a yellow
     /// `#3035` would be indistinguishable from a conflicted PR.
     ///
-    /// When `include_link` is false, the cell is colored but not clickable
-    /// (for environments without OSC 8 hyperlinks, e.g. Claude Code).
-    pub fn format_cell(&self, max_width: usize, include_link: bool) -> String {
+    /// Under any style but [`LinkStyle::Linked`] the cell is colored but not
+    /// clickable, and carries no underline to suggest otherwise — the `wt list`
+    /// table on a terminal without OSC 8, and every picker row.
+    pub fn format_cell(&self, max_width: usize, link: LinkStyle) -> String {
         match self.number {
             Some(r) if !matches!(self.ci_status, CiStatus::Error) && r.width() <= max_width => {
-                self.styled(&r.to_string(), include_link)
+                self.styled(&r.to_string(), link)
             }
-            _ => self.styled(self.indicator(), include_link),
+            _ => self.styled(self.indicator(), link),
         }
     }
 
@@ -534,6 +550,7 @@ impl PrStatus {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         }
     }
 
@@ -756,6 +773,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         assert_eq!(pr_passed.indicator(), "#");
 
@@ -771,6 +789,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         assert_eq!(branch_running.indicator(), "#");
 
@@ -786,6 +805,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         assert_eq!(error_status.indicator(), "⚠");
     }
@@ -806,21 +826,28 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
 
-        // Number fits → PR reference, hyperlinked when supported
-        assert_snapshot!(pr.format_cell(4, false), @"[32m#123[0m");
-        assert_snapshot!(pr.format_cell(4, true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[0m");
+        // Number fits → PR reference, underlined and linked only where the
+        // render carries links. A reference has no URL to fall back on, so
+        // `Expanded` reads the same as `Unlinked`.
+        assert_eq!(
+            pr.format_cell(4, LinkStyle::Expanded),
+            pr.format_cell(4, LinkStyle::Unlinked)
+        );
+        assert_snapshot!(pr.format_cell(4, LinkStyle::Unlinked), @"[32m#123[0m");
+        assert_snapshot!(pr.format_cell(4, LinkStyle::Linked), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#123]8;;\[24m[0m");
         // Number wider than the column → bare # indicator, still hyperlinked
-        assert_snapshot!(pr.format_cell(3, false), @"[32m#[0m");
-        assert_snapshot!(pr.format_cell(3, true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\#]8;;\[0m");
+        assert_snapshot!(pr.format_cell(3, LinkStyle::Unlinked), @"[32m#[0m");
+        assert_snapshot!(pr.format_cell(3, LinkStyle::Linked), @r"[32m[4m]8;;https://github.com/owner/repo/pull/123\#]8;;\[24m[0m");
 
         // No number (branch workflow or pre-number cache entry) → bare # indicator
         let branch = PrStatus {
             number: None,
             ..pr.clone()
         };
-        assert_snapshot!(branch.format_cell(10, false), @"[32m#[0m");
+        assert_snapshot!(branch.format_cell(10, LinkStyle::Unlinked), @"[32m#[0m");
 
         // Error renders ⚠ even when the number fits: Error and Conflicts
         // share yellow, so a yellow "#123" would read as a conflicted PR
@@ -828,14 +855,33 @@ mod tests {
             ci_status: CiStatus::Error,
             ..pr.clone()
         };
-        assert_snapshot!(error.format_cell(usize::MAX, false), @"[33m⚠[0m");
+        assert_snapshot!(error.format_cell(usize::MAX, LinkStyle::Unlinked), @"[33m⚠[0m");
+
+        // A PR or MR without CI still keeps its forge reference
+        let no_ci_pr = PrStatus {
+            ci_status: CiStatus::NoCI,
+            ..pr.clone()
+        };
+        assert_snapshot!(
+            no_ci_pr.format_cell(usize::MAX, LinkStyle::Unlinked),
+            @"[90m#123[0m"
+        );
+        let no_ci_mr = PrStatus {
+            ci_status: CiStatus::NoCI,
+            number: Some(PrRef::mr(7)),
+            ..pr.clone()
+        };
+        assert_snapshot!(
+            no_ci_mr.format_cell(usize::MAX, LinkStyle::Unlinked),
+            @"[90m!7[0m"
+        );
 
         // GitLab sigil
         let mr = PrStatus {
             number: Some(PrRef::mr(7)),
             ..pr
         };
-        assert_snapshot!(mr.format_cell(usize::MAX, false), @"[32m!7[0m");
+        assert_snapshot!(mr.format_cell(usize::MAX, LinkStyle::Unlinked), @"[32m!7[0m");
     }
 
     #[test]
@@ -903,12 +949,13 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
         let green = "\u{1b}[32m";
         let dim = "\u{1b}[2m";
 
         // Fresh verdict: green, not dimmed.
-        let fresh = passed(false, false).format_cell(3, false);
+        let fresh = passed(false, false).format_cell(3, LinkStyle::Unlinked);
         assert!(
             fresh.contains(green) && !fresh.contains(dim),
             "fresh: green, no dim: {fresh:?}"
@@ -916,7 +963,7 @@ mod tests {
 
         // SHA-mismatch stale keeps its verdict color, dimmed — `wt list` flags a
         // failing/passing pushed commit even when local HEAD has moved on.
-        let stale = passed(true, false).format_cell(3, false);
+        let stale = passed(true, false).format_cell(3, LinkStyle::Unlinked);
         assert!(
             stale.contains(green) && stale.contains(dim),
             "stale: green + dim: {stale:?}"
@@ -924,7 +971,7 @@ mod tests {
 
         // Cache-prime placeholder: dimmed and neutral — the number shows, but no
         // green/red is asserted until the live fetch lands.
-        let priming = passed(false, true).format_cell(3, false);
+        let priming = passed(false, true).format_cell(3, LinkStyle::Unlinked);
         assert!(
             priming.contains(dim) && !priming.contains(green),
             "priming: dim, neutral: {priming:?}"
@@ -945,6 +992,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
 
         // Changes-requested outranks running and passed — waiting can't clear it
@@ -1034,7 +1082,8 @@ mod tests {
         let status = retriable_pr_error(&out).expect("retriable should yield Some");
         assert_eq!(status.ci_status, CiStatus::Error);
 
-        // Retriable from stdout (the `tea` shape).
+        // Retriable from stdout — a tool that copies the server's error body
+        // through rather than writing its own message to stderr.
         let out = fake_output("", r#"{"message":"rate limit exceeded"}"#);
         assert!(retriable_pr_error(&out).is_some());
 
@@ -1060,6 +1109,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         }
     }
 

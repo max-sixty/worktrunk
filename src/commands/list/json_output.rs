@@ -214,7 +214,8 @@ pub struct JsonRemote {
 /// Worktree-specific state
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonWorktree {
-    /// Worktree state: "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
+    /// Worktree state: "branch_worktree_mismatch", "duplicate_branch",
+    /// "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
 
@@ -388,22 +389,13 @@ impl JsonItem {
         let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
-        let vars = item
-            .branch
-            .as_deref()
-            .and_then(|b| all_vars.remove(b))
-            .unwrap_or_default();
+        let vars = super::json_v2::take_vars(item.branch.as_deref(), all_vars);
 
         // Summary: flatten Option<Option<String>> → Option<String>
         let summary = item.summary.as_ref().and_then(|s| s.clone());
 
         // Rendered custom column values, keyed by header; empty cells omitted
-        let columns = custom_columns
-            .iter()
-            .zip(&item.custom_values)
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(column, value)| (column.name.clone(), value.clone()))
-            .collect();
+        let columns = super::json_v2::columns_map(custom_columns, &item.custom_values);
 
         JsonItem {
             branch: item.branch.clone(),
@@ -464,6 +456,7 @@ fn worktree_state_to_json(
         Some(WorktreeState::BranchWorktreeMismatch) => {
             return (Some("branch_worktree_mismatch"), None);
         }
+        Some(WorktreeState::DuplicateBranch) => return (Some("duplicate_branch"), None),
         Some(WorktreeState::Prunable) => return (Some("prunable"), data.prunable.clone()),
         Some(WorktreeState::Locked) => return (Some("locked"), data.locked.clone()),
     }
@@ -484,13 +477,11 @@ fn worktree_state_to_json(
 impl JsonCi {
     /// Build a `JsonCi` from a [`PrStatus`], deriving the target-repo metadata
     /// from the PR/MR URL. `provider_override` is the configured
-    /// `[forge].platform` (see [`Repository::forge_platform_override`]); it lets
+    /// `[forge].platform` (see [`Repository::configured_forge_platform`]); it lets
     /// a self-hosted instance whose host can't be auto-detected still report the
     /// right provider.
     pub(crate) fn from_pr_status(pr: &PrStatus, provider_override: Option<&str>) -> Self {
-        let repo = pr.url.as_deref().and_then(|url| {
-            worktrunk::git::remote_ref::repo_info_from_ref_url_with_provider(url, provider_override)
-        });
+        let repo = super::json_v2::pr_target_repo(pr.url.as_deref(), provider_override);
         Self {
             status: pr.ci_status.into(),
             source: pr.source,
@@ -516,7 +507,9 @@ impl JsonCi {
 /// simply absent from the output string, not replaced by a placeholder.
 /// This matches the per-symbol atomic model: machine consumers see only the
 /// symbols that have been computed so far.
-fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
+///
+/// Shared with `json_v2` (the `display.symbols` field).
+pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
     let mut result = String::new();
 
     // Working tree symbols (gate 1)
@@ -524,7 +517,7 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
         result.push_str(&wt.to_symbols());
     }
 
-    // Main state (gate 3) — merged column: ^✗_⊂↕↑↓
+    // Main state (gate 3) — merged column: ^_⊂✗↕↑↓
     if let Some(ms) = symbols.main_state {
         let s = ms.to_string();
         if !s.is_empty() {
@@ -540,7 +533,7 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
         }
     }
 
-    // Worktree state (gate 2) — operations (✘⤴⤵) take priority over
+    // Worktree state (gate 2) — operations (✘↻) take priority over
     // location (/⚑⊟⊞). Gate 2 is "operation_state is Some"; the metadata
     // worktree_state is filled synchronously and always Some by the time
     // the operation family is known.
@@ -579,7 +572,7 @@ pub fn to_json_items(
 ) -> Vec<JsonItem> {
     let mut all_vars = repo.all_vars_from_snapshot().unwrap_or_default();
     let repo_metadata = repo.repo_info();
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
     items
         .iter()
         .map(|item| {
@@ -598,12 +591,13 @@ pub fn to_json_items(
 mod tests {
     use insta::assert_snapshot;
     use worktrunk::git::GitRepoProvider;
+    use worktrunk::git::InProgressOperation;
 
     use super::*;
     use crate::commands::list::ci_status::{CiStatus, PrRef};
     use crate::commands::list::model::{
-        ActiveGitOperation, Divergence, MainState, OperationState, StatusSymbols,
-        WorkingTreeStatus, WorktreeData, WorktreeState,
+        Divergence, MainState, OperationState, StatusSymbols, WorkingTreeStatus, WorktreeData,
+        WorktreeState,
     };
 
     // ============================================================================
@@ -647,6 +641,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             },
             None,
         );
@@ -689,6 +684,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             },
             None,
         );
@@ -721,6 +717,7 @@ mod tests {
                     body: None,
                     author: None,
                     comment_count: None,
+                    updated_at: None,
                 },
                 None,
             );
@@ -745,6 +742,7 @@ mod tests {
             body: None,
             author: None,
             comment_count: None,
+            updated_at: None,
         };
 
         let without = JsonCi::from_pr_status(&pr, None);
@@ -770,6 +768,7 @@ mod tests {
             remote: Some("origin".to_string()),
             ahead: 3,
             behind: 2,
+            ..Default::default()
         };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
@@ -787,6 +786,7 @@ mod tests {
             remote: None,
             ahead: 0,
             behind: 0,
+            ..Default::default()
         };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
@@ -799,6 +799,7 @@ mod tests {
             remote: Some("origin".to_string()),
             ahead: 1,
             behind: 0,
+            ..Default::default()
         };
         let branch = None;
         let json = upstream_to_json(&upstream, &branch);
@@ -824,8 +825,9 @@ mod tests {
             working_tree_status: None,
             has_conflicts: None,
             has_working_tree_conflicts: None,
-            git_operation: Some(ActiveGitOperation::None),
+            git_operation: Some(None),
             branch_worktree_mismatch: false,
+            duplicate_branch: false,
         }
     }
 
@@ -941,14 +943,14 @@ mod tests {
 
         // Operation state takes priority over worktree state
         let operation = format_raw_symbols(&StatusSymbols {
-            operation_state: Some(OperationState::Rebase),
+            operation_state: Some(OperationState::InProgress(InProgressOperation::Rebase)),
             ..Default::default()
         });
-        assert_snapshot!(operation, @"⤴");
+        assert_snapshot!(operation, @"↻");
 
         // Worktree metadata renders only once the operation-family gate
         // has resolved to "no operation" — otherwise we can't rule out
-        // ✘⤴⤵ taking priority. Callers that want just the metadata
+        // ✘↻ taking priority. Callers that want just the metadata
         // symbol must set both `operation_state` and `worktree_state`.
         let worktree = format_raw_symbols(&StatusSymbols {
             operation_state: Some(OperationState::None),

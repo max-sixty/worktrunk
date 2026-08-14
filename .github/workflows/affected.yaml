@@ -1,0 +1,274 @@
+name: affected
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Grouped per-ref on main, which samples: a merge train cancels the queued run
+# and only the newest one collects. That's the intended cadence — a DB a few
+# commits old still anchors a correct superset (see the cache strategy below),
+# and collecting per-commit would mean three ~2h matrices per merge. Sampling
+# is also why these jobs sit in their own workflow: `collect` holds a group for
+# ~2h, so anything sharing it gets sampled too, whether or not that suits it.
+# PR runs supersede their own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Both jobs restore the rust-cache that `test` saves, and Swatinem/rust-cache
+  # hashes CARGO*/RUST* into the key, so these must match ci.yaml exactly
+  # (.github/CLAUDE.md → Build environment).
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  # cargo-affected: runs only the tests whose recorded coverage overlaps the
+  # diff. Advisory at this stage — `test (linux/macos/windows)` still runs the
+  # full suite. The signal is the runtime delta on the exact-match path and
+  # whether selection misses any failures the full suite catches.
+  #
+  # Both jobs run as the same linux/macos/windows matrix as `test`. The
+  # fingerprint embeds `rustc -vV` (host triple), so a DB collected on one OS
+  # cache-misses on the others — each OS's `affected-tests` leg pairs with a
+  # `collect-affected` DB from the same OS via the `runner.os` cache key.
+  #
+  # TODO(affected-only PRs): the fast pre-merge gates are already split into the
+  # `fast-checks` job, so `test (linux/macos/windows)` is now purely the full
+  # nextest suite — the long-pole, and a drop-in shape for the affected legs.
+  # Once `affected tests (*)` has a track record of catching every failure the
+  # full suite catches on all three OSes, flip: make the affected legs required
+  # and delete `ci`'s PR `test` job — its full-matrix coverage already runs as
+  # `full-tests` in the `nightly` workflow. `fast-checks` stays required and
+  # unchanged. Confidence bar: a sustained stretch of PRs where the advisory
+  # legs and the required full matrix agree — no failure the full suite caught
+  # that affected selection missed.
+  #
+  # Until then the full `test` matrix stays required and runs on every PR,
+  # unchanged. Do NOT reach affected-only by making the required `test (*)`
+  # checks skip=pass on PRs — relaxing the merge gate is a deliberate
+  # branch-protection change owned by the repo admin (see `.github/CLAUDE.md`),
+  # not a silent workflow skip.
+  #
+  # The full suite must keep running after the flip, because cargo-affected
+  # misses non-Rust inputs (`include_str!`, templates, SQL), build-time inputs
+  # not in its fingerprint (build.rs, rust-toolchain.toml, .cargo/config.toml),
+  # and proc-macro source edits. Its home is the `full-tests` matrix in the
+  # `nightly` workflow (nightly cron, the `nightly` label, and before a
+  # release) — NOT push-to-main: a failure there means affected under-selected,
+  # and that must not redden main. Nightly failures are non-blocking and
+  # Tend-fixable. The Linux `--unreferenced reject` orphan check, intrinsically
+  # full-suite, rides `full-tests` too.
+  #
+  # Cache strategy:
+  # - `collect-affected` (push to main) saves `target/affected/coverage.db`
+  #   to actions/cache keyed on the main commit sha. We cache only the DB,
+  #   not the parent dir — cargo-affected drops its profraw staging dir
+  #   at the end of every successful collect, but caching the path
+  #   explicitly keeps the contract obvious and ~10 GB of profile bundles
+  #   from leaking into the cache if that cleanup ever regresses.
+  # - `collect-affected` also restores the most recent prior main DB before
+  #   collecting, so the new DB accumulates rows for up to FINGERPRINT_KEEP
+  #   (=10) recent main-tip env_fingerprints (LRU-evicted in `Db::gc`).
+  #   PRs whose manifests match any of those fingerprints get exact-match
+  #   selection instead of the all-or-nothing single-fingerprint cache.
+  #   Don't "simplify" by removing the restore — it's load-bearing.
+  # - `affected-tests` (PRs) restores the cache. Primary key is the
+  #   PR/main merge-base — when collect ran on that exact commit, we get a
+  #   tight diff (`PR changes only`) and the smallest possible selection.
+  # - Restore-keys fall back to the most recent main DB. Its `collect_sha`
+  #   is typically a sibling of the PR's HEAD, not a strict ancestor.
+  #   cargo-affected uses any sha still in the repo as a diff anchor, so
+  #   the fallback drives normal selection — over-includes tests touched
+  #   by main commits between the merge-base and collect_sha (correct
+  #   superset), but never widens to "run everything" unless the cache is
+  #   missing entirely.
+  # - Cache keys include `runner.os` (fingerprint embeds `rustc -vV`) and a
+  #   manual `db-v{N}` marker. Bump the marker if cargo-affected ships an
+  #   on-disk schema change; the cache is otherwise version-agnostic.
+  # - Both jobs pin the same cargo-affected version. A drift between the two
+  #   meets `migrate_legacy_tables`, which resets the coverage tables rather
+  #   than erroring, so the DB rebuilds from empty and selection degrades
+  #   while the advisory job stays green. Bump both together.
+  collect-affected:
+    name: collect affected coverage (${{ matrix.name }})
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+      with:
+        # `cargo affected run` later diffs PR HEAD against the sha that was
+        # HEAD when collect ran. That sha must be reachable.
+        fetch-depth: 0
+
+    - uses: ./.github/actions/test-setup
+      with:
+        # Restore-only: collect builds coverage-instrumented artifacts (it adds
+        # llvm-tools below), which must not overwrite the shared cache that
+        # `test` saves for everyone else.
+        save-cache: "false"
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
+    - name: Install cargo-affected
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-affected
+        version: "=0.4.0"
+
+    - name: Install llvm-tools
+      run: rustup component add llvm-tools
+
+    - name: 💾 Restore prior coverage DB
+      uses: actions/cache/restore@v6
+      with:
+        path: target/affected/coverage.db
+        # Primary key matches the current sha (no-op on first push of this
+        # commit; on re-runs of the same sha, lets us skip rebuilding from
+        # scratch).
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
+        # Fall back to any prior main DB. cargo-affected preserves rows for
+        # up to FINGERPRINT_KEEP (=10) distinct fingerprints in one DB,
+        # evicting LRU on each collect. By feeding a prior DB into the new
+        # collect, we accumulate fingerprint snapshots across main commits —
+        # PRs whose manifests match any of the last ~10 main fingerprints
+        # get exact-match selection, instead of the all-or-nothing
+        # single-fingerprint cache.
+        restore-keys: |
+          cargo-affected-db-v1-${{ runner.os }}-
+
+    - name: 📊 Collect coverage data
+      run: cargo affected collect -- --features shell-integration-tests
+
+    - name: 💾 Save coverage DB
+      uses: actions/cache/save@v6
+      with:
+        # Only the SQLite DB. `target/affected/profraw-<PID>/` holds raw
+        # profile bundles (~5 GB on this repo) that aren't needed past the
+        # current collect — caching them blows past the 10 GB repo cache
+        # cap and forces eviction of every prior cache.
+        path: target/affected/coverage.db
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
+
+  affected-tests:
+    name: affected tests (${{ matrix.name }}, advisory)
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
+    # Advisory while we calibrate selection accuracy against the full suite.
+    # The full matrix (`test (linux/macos/windows)`) is still required for
+    # merge.
+    continue-on-error: true
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v7
+      with:
+        # Need the cached `collect_sha` reachable from HEAD for the diff;
+        # see collect-affected above.
+        fetch-depth: 0
+
+    - name: Compute merge-base for cache key
+      id: mb
+      shell: bash
+      env:
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      run: |
+        git fetch --no-tags --depth=200 origin main
+        sha=$(git merge-base origin/main "$PR_HEAD")
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "merge-base with origin/main: $sha"
+
+    - uses: ./.github/actions/test-setup
+      with:
+        # PR-only job: restore `test`'s shared main cache, never save. This is
+        # the job that most needs the shared key — a per-job cache would have
+        # no main baseline (it never runs on main) and cold-build every PR.
+        save-cache: "false"
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
+    # Restore AFTER test-setup so we land on top of rust-cache's tar
+    # extraction. rust-cache's restore step calls `cleanTargetDir` on a
+    # partial cache hit (`full match: false`), which deletes file children
+    # of `target/affected/` — including a `coverage.db` we'd just dropped
+    # there. Order: rust-cache populates `target/` first; we then drop the
+    # DB on top, where nothing else touches it.
+    - name: 💾 Restore coverage DB
+      uses: actions/cache/restore@v6
+      with:
+        path: target/affected/coverage.db
+        # Exact match: collect ran on the PR's merge-base → tight diff.
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ steps.mb.outputs.sha }}
+        # Fallback: most recent main DB. cargo-affected runs all tests when
+        # the cached `collect_sha` is missing from the repo (rebased and
+        # pruned, beyond a shallow clone boundary). Sibling shas — including
+        # PR-vs-main-tip — drive normal selection.
+        restore-keys: |
+          cargo-affected-db-v1-${{ runner.os }}-
+
+    - name: Install cargo-affected
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-affected
+        version: "=0.4.0"
+
+    - name: 🎯 Run affected tests
+      env:
+        # An empty affected selection is a valid outcome — a diff can touch
+        # nothing with recorded coverage. nextest's default exits 4 ("no
+        # tests to run"), which fails this advisory job spuriously. Windows
+        # hits this every run: the `#[cfg_attr(windows, ignore)]` tests never
+        # execute during `collect` (nextest skips ignored tests), so they get
+        # no coverage rows and cargo-affected keeps re-flagging them as `new`
+        # and selecting them — then `nextest run` skips them as ignored too,
+        # so zero run. `warn` exits 0 and leaves the breadcrumb in the log.
+        NEXTEST_NO_TESTS: warn
+      run: cargo affected run --report-json target/affected/report.json -- --features shell-integration-tests
+
+    # Report writes BEFORE nextest runs, so it survives test failures —
+    # uploading on `!cancelled()` makes it the most useful diagnostic
+    # when tests fail (cache state, fingerprint divergence, selection
+    # reasons). Schema documented at:
+    # https://github.com/max-sixty/cargo-affected/blob/main/docs/report-json.md
+    - name: 📊 Upload cargo-affected report
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: cargo-affected-report-${{ matrix.name }}
+        path: target/affected/report.json

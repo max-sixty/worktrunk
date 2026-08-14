@@ -33,7 +33,12 @@ repos:
     hooks:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
+      #
+      # Manual stage only: link health depends on external sites (429s,
+      # bot-blocking, link rot), so it runs as the `link-check` job in the
+      # nightly workflow, not on every commit/PR.
       - id: lychee-system
+        stages: [manual]
         files: '\.(md|txt)$'
         args:
           - --config=.config/lychee.toml
@@ -84,6 +89,5 @@ repos:
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
-  # Network access also isn't supported, so skip lychee-system.
-  skip: [fmt, clippy, lychee-system, cargo-lock]
+  skip: [fmt, clippy, cargo-lock]
   autoupdate_commit_msg: "chore: pre-commit autoupdate"

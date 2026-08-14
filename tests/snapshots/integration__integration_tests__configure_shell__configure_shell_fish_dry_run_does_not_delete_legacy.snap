@@ -10,8 +10,10 @@ info:
     - "--dry-run"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -21,7 +23,6 @@ info:
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
-    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     SHELL: /bin/fish
@@ -37,8 +38,10 @@ info:
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -51,5 +54,7 @@ exit_code: 0
 [2m○[22m Will add completions for [1mfish[0m @ [1m~/.config/fish/completions/wt.fish[0m
 [107m [0m [2m# worktrunk completions for fish[0m
 [107m [0m [2m[0m[2m[34mcomplete[0m[2m [0m[2m[36m--keep-order[0m[2m [0m[2m[36m--exclusive[0m[2m [0m[2m[36m--command[0m[2m wt [0m[2m[36m--arguments[0m[2m [0m[2m[32m"(test -n /"/$WORKTRUNK_BIN/"; or set -l WORKTRUNK_BIN (type -P wt 2>/dev/null); and COMPLETE=fish /$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"[0m
+
+[2m○[22m Will remove [1m~/.config/fish/conf.d/wt.fish[0m (deprecated; now using [1m~/.config/fish/functions/wt.fish[0m)
 
 ----- stderr -----

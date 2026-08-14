@@ -1,8 +1,8 @@
 //! Progressive-rendering glue between `collect::collect` and the skim picker.
 //!
-//! Each event funnels into three places: skim's item stream (`tx`, alive
-//! while updates may arrive so the picker stays non-idle), each item's
-//! shared `rendered` mutex (in-place redraws), and `shared_items` used by
+//! Each event funnels into three places: skim's item stream (`tx`, consumed
+//! by the skeleton batch — the handler's only send), each item's shared
+//! `rendered` mutex (in-place redraws), and `shared_items` used by
 //! `PickerCollector` for alt-x.
 //!
 //! # Why updates poke a render
@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use color_print::cformat;
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
+use worktrunk::styling::{HINT_SYMBOL, StyledLine};
 
 use super::super::list::ci_status::PrStatus;
 
@@ -52,24 +52,29 @@ use super::super::list::ci_status::PrStatus;
 const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
-    HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent, LocalContentSlot,
-    MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl, ShortcutTable,
-    worktree_output_token,
+    HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
+    LocalContentSlot, MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl,
+    ShortcutTable, pr_presence, pr_status_pane_eq, worktree_output_token,
 };
 use super::preview::PreviewMode;
-use super::preview_orchestrator::PreviewOrchestrator;
+use super::preview_notify::PrStatusDelta;
+use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
 /// Handler owned by the background collect thread. Implements the
 /// `PickerProgressHandler` trait that `collect` drives.
-///
-/// The `tx` clone lives as long as this handler is referenced — dropping the
-/// handler (when the collect thread exits) drops the last sender, which signals
-/// EOF to skim's reader. That's the explicit contract: once background work is
-/// done, the picker can go idle.
 pub(super) struct PickerHandler {
-    pub(super) tx: SkimItemSender,
+    /// skim's item channel, consumed by `on_skeleton`'s single send. Sending
+    /// the skeleton batch takes the sender out and drops it, so the channel
+    /// closes as soon as the last live sender (the `--prs` thread's clone, if
+    /// any) finishes — not when the handler itself drops. Row updates after the
+    /// skeleton are in-place (`rendered` mutexes + `request_render`), never
+    /// resent, so nothing needs the channel past that send, and holding it open
+    /// is expensive: skim's reader polls an open-but-empty channel with kanal's
+    /// `recv_timeout`, whose wait yields instead of parking — a full core spun
+    /// for as long as collect still grinds (a slow CI fetch, an LLM summary).
+    pub(super) tx: Mutex<Option<SkimItemSender>>,
     /// skim's event sender, published by the picker once `Skim::init_tui` has
     /// run. `None` until then — early skeleton sends drive the first paint via
     /// the item channel, so a missed poke before the TUI exists is harmless.
@@ -111,16 +116,21 @@ pub(super) struct PickerHandler {
     pub(super) local_content_slots: OnceLock<Box<[LocalContentSlot]>>,
     pub(super) preview_cache: PreviewCache,
     /// Fresh `Repository` for this spawn, used for the mutation-sensitive
-    /// `on_skeleton` reads (`list_worktrees`, `local_branches`). The
-    /// `orchestrator` carries its own startup-cloned repo shared across every
-    /// spawn — reading worktrees/branches through that re-probes a
-    /// `RepoCache.worktrees`/`local_branches` `OnceCell` primed at startup and
-    /// never invalidated, so after an in-picker removal it would yield the stale
-    /// pre-removal set. `spawn` rebuilds this repo per pass (same `spawn_repo`
-    /// the collect/prs threads use); read inventories through it, not through
-    /// `orchestrator.repo()`.
+    /// `on_skeleton` reads (`list_worktrees`, `local_branches`) — a
+    /// `RepoCache` is a set of `OnceCell`s that are never invalidated, so
+    /// these reads must go through a repo rebuilt after any in-picker
+    /// removal, or they'd yield the stale pre-removal inventory. `spawn`
+    /// rebuilds this repo per pass: the same `spawn_repo` the collect/prs
+    /// threads use and `PreviewOrchestrator::refresh` rebinds for preview
+    /// compute; this field is the handler's direct handle to it.
     pub(super) repo: Repository,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
+    /// This spawn's producer token (see [`SpawnGeneration`]): every
+    /// precompute spawn, comments fetch, and skim row this handler starts
+    /// carries it, so a refresh that supersedes this spawn also supersedes
+    /// everything it still has in flight — including this handler's own
+    /// `on_collect_complete` firing after the refresh.
+    pub(super) spawn_gen: SpawnGeneration,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
     /// Filled into the Summary preview cache for every item when summaries
@@ -148,6 +158,10 @@ pub(super) struct PickerHandler {
     /// flight, so the header shows a "loading…" marker. The `--prs` thread
     /// clears it when the fetch resolves. `None` on non-`--prs` pickers.
     pub(super) prs_loading: Option<Arc<AtomicBool>>,
+    /// Shared picker-lifetime with the header and [`AltXRemover`](super::AltXRemover):
+    /// a declined `alt-x` sets a transient "couldn't remove this row" message
+    /// here, shown in place of the column labels for a beat (see [`HeaderFlash`]).
+    pub(super) header_flash: Arc<HeaderFlash>,
 }
 
 impl PickerHandler {
@@ -190,10 +204,31 @@ impl PickerHandler {
         branch_name: &str,
         pr_status: &Option<Option<PrStatus>>,
     ) {
+        // A superseded handler (its collect thread draining past an `alt-r`)
+        // must not act at all: its corrected-number path below *removes* the
+        // shared `(branch, Comments)` entry — possibly the one the live spawn
+        // just fetched — and its replacement fetch would then drop at `fill`
+        // on the stale token, stranding the tab on its loading placeholder
+        // (nothing else refills Comments; the live handler's dedup slot
+        // already records the number). Gate the removal with the fetch.
+        if !self.spawn_gen.is_current() {
+            return;
+        }
         let Some(Some(status)) = pr_status else {
             return;
         };
         let Some(pr_ref) = status.number else { return };
+        // Skip the expired-cache prime: `populate_from_cache` carries an
+        // unbounded-stale `updated_at` on a `is_priming` placeholder, and since
+        // the fetch is deduped by PR number, keying off it here would lock the
+        // comments cache to a wrong signature for the whole session (a stale
+        // disk hit, or a mis-keyed write) — the live `CiStatus` fetch
+        // (`is_priming: false`, within-TTL/fresh `updated_at`) re-runs this and
+        // spawns with the right key. A valid (within-TTL) prime is not priming,
+        // so it still warms the tab at skeleton.
+        if status.is_priming {
+            return;
+        }
         let Some(slots) = self.comments_fetched.get() else {
             return;
         };
@@ -211,8 +246,10 @@ impl PickerHandler {
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
+            &self.spawn_gen,
             branch_name.to_string(),
             number as u32,
+            status.updated_at.clone(),
             self.preview_dims.0,
         );
     }
@@ -249,15 +286,16 @@ impl PickerProgressHandler for PickerHandler {
     ) {
         debug_assert_eq!(items.len(), rendered.len());
 
-        // Hand the `--prs` thread the column geometry plus the branches already
-        // shown, so it aligns PR rows *and* skips PRs already represented by a
-        // worktree/branch row (see `prs::Skeleton`). Built before the row loop
-        // consumes `items`, and set before any other handoff so the `--prs`
-        // thread's wait sees both.
-        self.grid_slot.set(super::prs::Skeleton {
-            grid,
-            shown_branches: collect_shown_branches(&items),
-        });
+        // The branches already shown, so the `--prs` thread can skip PRs already
+        // represented by a worktree/branch row (see `prs::Skeleton`). Computed here,
+        // before the row loop consumes `items` — but the handoff that *wakes* the
+        // `--prs` thread (`grid_slot.set`, with this set plus the column geometry) is
+        // deferred until after the skeleton batch is sent (below). Setting it here
+        // instead let the `--prs` thread race the skeleton: with an instant forge
+        // call its rows could reach skim's channel first and a PR row would take the
+        // reserved header slot (`header_lines(1)`), displacing the real header. The
+        // grid is width-stable, so the brief extra wait costs nothing.
+        let shown_branches = collect_shown_branches(&items);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
@@ -308,20 +346,22 @@ impl PickerProgressHandler for PickerHandler {
             .and_then(|wt| wt.path.parent().map(Path::to_path_buf));
 
         // Header row — non-selectable via `header_lines(1)` on the options.
-        // In `--prs` mode it shows a dim "loading open PRs…" line (in place of
+        // In `--prs` mode it shows a dim "↳ Loading open PRs…" line (in place of
         // the column labels) until the forge call's rows land — wording mirrors
-        // the empty-list "No open PRs found".
+        // the empty-list "No open PRs found", styled as a hint (the dim `↳` sits
+        // in the pointer gutter, the text aligned with the row content at col 2).
         let loading = self.prs_loading.as_ref().map(|pending| {
-            let noun = super::prs::forge_noun(self.orchestrator.repo());
+            let noun = super::prs::forge_noun(&self.repo);
             HeaderLoading {
                 pending: Arc::clone(pending),
-                marker_ansi: cformat!("  <dim>loading open {noun}…</>"),
+                marker_ansi: cformat!("{HINT_SYMBOL} <dim>Loading open {noun}…</>"),
             }
         });
         skim_items.push(Arc::new(HeaderSkimItem {
             display_text: header.plain_text(),
             display_text_with_ansi: header.render(),
             loading,
+            flash: Arc::clone(&self.header_flash),
         }) as Arc<dyn SkimItem>);
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
@@ -358,15 +398,17 @@ impl PickerProgressHandler for PickerHandler {
             // filters those (see
             // `folded_pr_reference_filters_under_skims_default_engine`).
             let gutter = item.kind.gutter_glyph();
-            let mut search_base = branch_name.clone();
+            // `display_name`, not `branch_name`: a detached row shows its
+            // abbreviated HEAD in the Branch column, so that's what the user
+            // reads and types. `branch_name`'s `"(detached)"` matches nothing
+            // on screen, and collapses every detached row onto one token.
+            let mut search_base = item.display_name().to_string();
             if !path_str.is_empty() {
                 search_base.push(' ');
                 search_base.push_str(&path_str);
             }
 
-            // Strip OSC 8 hyperlinks — skim's pipeline mangles them into
-            // garbage like `^[8;;…`. Colors (SGR codes) are preserved.
-            let rendered_arc = Arc::new(Mutex::new(strip_osc8_hyperlinks(&rendered_line)));
+            let rendered_arc = Arc::new(Mutex::new(rendered_line));
             slots.push(Arc::clone(&rendered_arc));
 
             let item_arc = Arc::new(item);
@@ -429,6 +471,9 @@ impl PickerProgressHandler for PickerHandler {
                 pr_status: pr_status_arc,
                 notifier: Arc::clone(self.orchestrator.notifier()),
                 local: Some(LocalCheckout {
+                    item: Arc::clone(&item_arc),
+                    demand: Arc::clone(self.orchestrator.demand()),
+                    spawn_gen: self.spawn_gen.clone(),
                     has_upstream,
                     summaries_enabled,
                     local_content: local_content_arc,
@@ -446,16 +491,46 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self
             .local_content_slots
             .set(local_content_slots.into_boxed_slice());
-        *self.shared_items.lock().unwrap() = skim_items.clone();
-        *self.shortcut_table.lock().unwrap() = shortcut_map;
+        // The session-shared list and shortcut table take only the live
+        // spawn's rows: a superseded skeleton landing late (its collect
+        // thread scheduled after a rapid second `alt-r`'s spawn already
+        // published) would otherwise overwrite them with pre-refresh rows,
+        // and a later `alt-x` resync or `alt-y`/`alt-o` would act on those.
+        // Checked inside each lock so the check pairs with the live spawn's
+        // own overwrite — its generation bump precedes its publish.
+        {
+            let mut list = self.shared_items.lock().unwrap();
+            if self.spawn_gen.is_current() {
+                *list = skim_items.clone();
+            }
+        }
+        {
+            let mut table = self.shortcut_table.lock().unwrap();
+            if self.spawn_gen.is_current() {
+                *table = shortcut_map;
+            }
+        }
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
         // batch. This append wakes skim's reader (`items_available`) and drives
         // the first paint. Later field updates happen in place through each
         // item's shared `rendered` mutex and are *not* resent — they surface via
         // `request_render` (see module docstring), since skim won't repaint a
-        // silent in-place mutation on its own.
-        let _ = self.tx.send(skim_items);
+        // silent in-place mutation on its own. Sending consumes the sender
+        // (see the `tx` field doc): this is the handler's only send, and
+        // releasing it here lets skim's reader stop polling the channel while
+        // collect's remaining tasks grind on.
+        if let Some(tx) = self.tx.lock().unwrap().take() {
+            let _ = tx.send(skim_items);
+        }
+
+        // Skeleton is in skim's channel; now wake the `--prs` thread (see the
+        // `shown_branches` note above). Its rows append after the skeleton, so a PR
+        // row can never land in the reserved header slot.
+        self.grid_slot.set(super::prs::Skeleton {
+            grid,
+            shown_branches,
+        });
 
         // Tier 1: warm the user's landing row (all modes) and every
         // other row's default tab. Tier 2 (secondary modes + summaries
@@ -464,6 +539,7 @@ impl PickerProgressHandler for PickerHandler {
         // of row tasks in `COLLECT_POOL`'s injector while workers are still
         // grinding through the row work.
         self.orchestrator.spawn_initial_precompute(
+            &self.spawn_gen,
             &list_items,
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -476,8 +552,12 @@ impl PickerProgressHandler for PickerHandler {
         }
         // Static Summary hint is a synchronous in-memory insert, no
         // contention concern. Pre-fill every row at skeleton time so the
-        // Summary tab is usable for any selection immediately.
+        // Summary tab is usable for any selection immediately. Gated like
+        // the shared publish above: the seeding bypasses `fill` (static
+        // content, documented exception), so a superseded skeleton would
+        // otherwise write its stale rows' keys into the refreshed cache.
         if self.llm_command.is_none()
+            && self.spawn_gen.is_current()
             && let Some(hint) = self.summary_hint.as_deref()
         {
             self.orchestrator.seed_summary_hints(&list_items, hint);
@@ -489,15 +569,31 @@ impl PickerProgressHandler for PickerHandler {
         if let Some(slots) = self.rendered_slots.get()
             && let Some(slot) = slots.get(idx)
         {
-            *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
+            *slot.lock().unwrap() = rendered;
         }
-        // Mirror the row's current CI status into its live slot so the `pr`
-        // tab reflects the fetch as it lands. Cheap clone; `pr_status` is
-        // `None` until the CiStatus task reports, then `Some(..)`.
+        // Mirror the row's current CI status into its live slot so the `pr` /
+        // `comments` tabs reflect the fetch as it lands. Track change at the
+        // granularity each tab's body reads (see `PrStatusDelta`): `pane_changed`
+        // (any field the `pr` pane draws, ignoring the `is_priming` dim hint it
+        // doesn't) gates the slot write, the `pr` cache eviction, and the `pr`
+        // tab re-render; `presence_changed` (Loading/NoPr/HasPr) gates only the
+        // `comments` re-render. An unchanged-pane update touches nothing — a
+        // re-render would just reset the preview scroll.
+        let mut delta = PrStatusDelta {
+            pane_changed: false,
+            presence_changed: false,
+        };
         if let Some(slots) = self.pr_status_slots.get()
             && let Some(slot) = slots.get(idx)
         {
-            *slot.lock().unwrap() = item.pr_status.clone();
+            let mut slot = slot.lock().unwrap();
+            delta.pane_changed = !pr_status_pane_eq(&slot, &item.pr_status);
+            delta.presence_changed = pr_presence(&slot) != pr_presence(&item.pr_status);
+            if delta.pane_changed {
+                *slot = item.pr_status.clone();
+            }
+        }
+        if delta.pane_changed {
             // Drop the memoized `pr` pane for this row so the next `preview()`
             // re-renders from the status just mirrored — see
             // `PickerRow::render_pr_pane_cached`.
@@ -519,30 +615,38 @@ impl PickerProgressHandler for PickerHandler {
         self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
         // `request_render` sends `Event::Render`, which repaints the *list* row
         // (its CI/status cells just changed) but does NOT re-run the preview.
-        // The slots just mirrored — `pr_status` (the `pr` / `comments` panes) and
-        // `local_content` (the diff tabs' dim state) — feed the preview, so if
-        // this is the selected row also poke a `RunPreview` to re-render it:
-        // that's what flips its `pr` tab from "Fetching PR status…" to the
-        // resolved PR without a keystroke. Scoped to the selected row, so
-        // off-screen updates don't thrash the preview (see `PreviewNotifier`).
-        self.orchestrator
-            .notifier()
-            .notify_row_changed(item.branch_name());
+        // When the `pr` pane changed, poke a `RunPreview` so the selected row's
+        // `pr` / `comments` tab flips from "Fetching PR status…" to the resolved
+        // PR without a keystroke. The notifier scopes the poke to the selected
+        // row and to the visible tab's own change signal, so neither an
+        // off-screen update nor a CI fetch landing while the user scrolls a diff
+        // (or an unchanged `comments` thread) thrashes the preview — each would
+        // reset its scroll (see `PreviewNotifier`). The `local_content` mirror
+        // above feeds only the diff tabs' tab-bar dim, which refreshes on the
+        // next selection change or tab switch rather than re-running here.
+        if delta.pane_changed {
+            self.orchestrator
+                .notifier()
+                .notify_pr_status_changed(item.branch_name(), delta);
+        }
         self.request_render(false);
     }
 
-    fn on_reveal(&self, rendered: Vec<String>) {
+    fn repaint_rows(&self, rendered: Vec<String>) {
         let Some(slots) = self.rendered_slots.get() else {
             return;
         };
         for (slot, line) in slots.iter().zip(rendered) {
-            *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
+            *slot.lock().unwrap() = line;
         }
         self.request_render(false);
     }
 
     fn stash_warning(&self, line: String) {
-        self.stashed_warnings.lock().unwrap().push(line);
+        let mut warnings = self.stashed_warnings.lock().unwrap();
+        if !warnings.contains(&line) {
+            warnings.push(line);
+        }
     }
 
     fn provide_layout(&self, layout: &crate::commands::list::layout::LayoutConfig) {
@@ -563,6 +667,7 @@ impl PickerProgressHandler for PickerHandler {
             return;
         }
         self.orchestrator.spawn_deferred_precompute(
+            &self.spawn_gen,
             &items[1..],
             self.preview_dims,
             self.llm_command.as_deref(),
@@ -590,8 +695,9 @@ mod tests {
         render_tx: Arc<OnceLock<tokio::sync::mpsc::Sender<Event>>>,
     ) -> PickerHandler {
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
+        let spawn_gen = orchestrator.generation();
         PickerHandler {
-            tx,
+            tx: Mutex::new(Some(tx)),
             render_tx,
             last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::new(Mutex::new(Vec::new())),
@@ -603,6 +709,7 @@ mod tests {
             preview_cache,
             repo,
             orchestrator,
+            spawn_gen,
             preview_dims: (80, 24),
             llm_command: None,
             summary_hint: Some("disabled".to_string()),
@@ -611,6 +718,7 @@ mod tests {
             grid_slot: Arc::new(super::super::prs::GridSlot::new()),
             layout_slot: Arc::new(Mutex::new(None)),
             prs_loading: None,
+            header_flash: Arc::new(HeaderFlash::default()),
         }
     }
 
@@ -763,11 +871,39 @@ mod tests {
             "row 0 diff-content untouched"
         );
 
-        // on_reveal rewrites every slot — slot writes are idempotent
+        // repaint_rows rewrites every slot — slot writes are idempotent
         // through `Mutex<String>`, so unconditional updates are safe.
-        handler.on_reveal(vec!["rev-one".into(), "rev-two".into()]);
+        handler.repaint_rows(vec!["rev-one".into(), "rev-two".into()]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
         assert_eq!(*slots[1].lock().unwrap(), "rev-two");
+    }
+
+    /// The skeleton send consumes the handler's sender (see the `tx` field
+    /// doc): with no `--prs` clone in play, the channel closes at the skeleton
+    /// batch even though the handler — and the collect thread driving it —
+    /// lives on. Held open instead, skim's reader would spin a full core on the
+    /// empty channel (kanal's `recv_timeout` yields rather than parking) for as
+    /// long as collect's slower tasks (a CI fetch, an LLM summary) keep running.
+    #[test]
+    fn skeleton_send_consumes_sender_and_closes_channel() {
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "one".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+
+        let received = rx.recv().expect("skeleton batch");
+        assert_eq!(received.len(), 2, "expected header + 1 item");
+        assert!(
+            rx.recv().is_err(),
+            "channel should be closed after the skeleton send"
+        );
+        assert!(
+            handler.tx.lock().unwrap().is_none(),
+            "the sender should be consumed, not merely unused"
+        );
     }
 
     /// `on_update` mirrors a row's live CI status into the preview-feeding slots,
@@ -775,13 +911,15 @@ mod tests {
     /// re-renders from the new status without a keystroke. This is the loop the
     /// orchestrator-fill path can't close — `on_update` isn't a cache fill, so it
     /// can't ride `PreviewOrchestrator::fill`'s notify; the poke is wired
-    /// separately here. Scoped to the selected row: an update for a row the
-    /// cursor isn't on repaints the list (`Event::Render`) but must not re-run
-    /// the visible preview. Fast producer-site guard for that wiring; the
-    /// end-to-end path is also covered by the PTY test
-    /// `test_switch_picker_pr_tab_auto_resolves_from_fetching`.
+    /// separately here. It re-runs only when the *visible* tab's body would
+    /// differ: an update for a row the cursor isn't on, while a diff tab shows,
+    /// for an unchanged status, or for an `is_priming`-only flip (which the
+    /// `pr` / `comments` panes don't draw) repaints the list (`Event::Render`)
+    /// but must not re-run the preview — a re-run resets its scroll.
     #[test]
-    fn on_update_pokes_run_preview_for_the_selected_row() {
+    fn on_update_pokes_run_preview_only_when_the_visible_pane_changes() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
         let (handler, _test, rx) = make_handler();
         // Publish skim's event sender (shared with the orchestrator's notifier,
         // as in production) so both the list redraw and the preview re-run land
@@ -797,9 +935,31 @@ mod tests {
         );
         let _ = rx.recv(); // drain the skeleton batch
 
-        // A live-status change for the row: CI reported "no PR".
-        let mut updated = ListItem::new_branch("aaa".into(), "feature".into());
-        updated.pr_status = Some(None);
+        // A worktree row carrying PR #7, with `is_priming` and `ci_status`
+        // controllable so the test can vary just one field at a time.
+        let row = |is_priming: bool, ci_status: CiStatus| {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(Some(PrStatus {
+                ci_status,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming,
+                url: None,
+                number: Some(PrRef::pr(7)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: None,
+            }));
+            item
+        };
+        let no_pr = || {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(None);
+            item
+        };
 
         let run_previews = |rx: &mut tokio::sync::mpsc::Receiver<Event>| {
             let mut n = 0;
@@ -810,28 +970,95 @@ mod tests {
             }
             n
         };
+        // Arm the awaited `(row, mode)` — but first let every background fill
+        // still in flight land, while `awaiting` is a key none of them match.
+        // `on_skeleton` spawns a `LOCAL_GIT_MODES` precompute for this row,
+        // which ends at `PreviewOrchestrator::fill` → `notify_filled` and pokes
+        // the same unlabelled `Event::RunPreview` this oracle counts. (The
+        // `comments` fetch is the other producer in production; on this
+        // no-forge `TestRepo` it fills synchronously through `fill_external`,
+        // so it is never in flight here.) Left in flight, a fill for the one
+        // precompute key a later step also awaits (`WorkingTree`) pokes
+        // legitimately but lands after that step's drain — charged to the *next*
+        // step, which is the flake in #3725. Quiescing before each
+        // `note_awaiting` keeps every counted poke attributable to the
+        // `on_update` under test.
+        let await_tab = |mode| {
+            handler.orchestrator.wait_for_idle();
+            handler
+                .orchestrator
+                .notifier()
+                .note_awaiting("feature", mode)
+        };
 
-        // Cursor is on `feature`'s `pr` tab (still loading) → its CI update
-        // re-runs the preview.
-        handler
-            .orchestrator
-            .notifier()
-            .note_awaiting("feature", PreviewMode::Pr);
-        handler.on_update(0, "r".into(), &updated);
+        // Cursor on `feature`'s `pr` tab (still loading). The CI fetch lands as a
+        // cache-prime placeholder → the pane resolves, so it re-runs.
+        await_tab(PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &row(true, CiStatus::Passed));
         assert!(
             run_previews(&mut render_rx) >= 1,
-            "the selected row's CI update re-runs its preview"
+            "the selected row's first CI report re-runs its pr tab"
         );
 
-        // Cursor is on a different row → `feature`'s update must not re-run the
-        // preview the cursor is showing (no thrash). `request_render`'s throttle
-        // may swallow the `Event::Render` too, but the `RunPreview` poke is
-        // unthrottled, so its absence is the meaningful signal.
+        // The live fetch overwrites the prime, clearing only `is_priming`. The
+        // pr pane never draws that hint, so the body is byte-identical — it must
+        // NOT re-run and reset the scroll of the PR body the user is reading.
+        await_tab(PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "an is_priming-only flip leaves the pr pane unchanged — no scroll reset"
+        );
+
+        // A real field the pane shows (the CI badge) changes → re-run.
+        await_tab(PreviewMode::Pr);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Failed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            1,
+            "a changed CI badge re-runs the pr tab"
+        );
+
+        // Cursor on the `comments` tab: a pr-field change that keeps the PR
+        // present (#7, badge flips back) leaves the branch-keyed thread
+        // unchanged, so it must NOT re-run a scrolled thread.
+        await_tab(PreviewMode::Comments);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "a pane-only change must not reset a scrolled comments thread"
+        );
+
+        // A presence change (#7 → no PR) flips the comments body, so it re-runs.
+        await_tab(PreviewMode::Comments);
+        handler.on_update(0, "r".into(), &no_pr());
+        assert_eq!(
+            run_previews(&mut render_rx),
+            1,
+            "a presence change re-runs the comments tab"
+        );
+
+        // Cursor on a diff tab: a real status change (a PR surfaces again) feeds
+        // the tab bar's dim but not the diff body, so it must NOT re-run.
+        await_tab(PreviewMode::WorkingTree);
+        handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
+        assert_eq!(
+            run_previews(&mut render_rx),
+            0,
+            "a CI update while a diff tab is showing must not reset its scroll"
+        );
+
+        // Cursor on a different row → `feature`'s update must not re-run the
+        // preview the cursor is showing. `request_render`'s throttle may swallow
+        // the `Event::Render` too, but the `RunPreview` poke is unthrottled, so
+        // its absence is the meaningful signal.
         handler
             .orchestrator
             .notifier()
             .note_awaiting("other", PreviewMode::Pr);
-        handler.on_update(0, "r".into(), &updated);
+        handler.on_update(0, "r".into(), &no_pr());
         assert_eq!(
             run_previews(&mut render_rx),
             0,
@@ -873,6 +1100,7 @@ mod tests {
                 body: None,
                 author: None,
                 comment_count: None,
+                updated_at: None,
             }));
             item
         };
@@ -919,6 +1147,63 @@ mod tests {
         assert!(
             handler.preview_cache.contains_key(&key),
             "the re-fetch repopulated the comments cache for #42"
+        );
+    }
+
+    /// An expired-cache prime (`is_priming: true`) carries an unbounded-stale
+    /// `updated_at`; spawning the comments fetch off it would lock the disk cache
+    /// to a wrong signature for the whole session. The prime is skipped, so the
+    /// comments cache stays empty until the live (`is_priming: false`) fetch
+    /// lands and spawns with a fresh timestamp.
+    #[test]
+    fn comments_skip_priming_prime_until_live() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let (handler, _test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("aaa".into(), "feature".into())],
+            vec!["s".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+
+        let status = |is_priming: bool, updated_at: &str| {
+            let mut item = ListItem::new_branch("aaa".into(), "feature".into());
+            item.pr_status = Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming,
+                url: None,
+                number: Some(PrRef::pr(7)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: Some(updated_at.to_string()),
+            }));
+            item
+        };
+        let key = ("feature".to_string(), PreviewMode::Comments);
+
+        // Expired prime → skipped: no comments fetch, cache stays empty. (The
+        // prime also must not consume the dedup slot, or the live update below
+        // would short-circuit.)
+        handler.on_update(0, "r".into(), &status(true, "2020-01-01T00:00:00Z"));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            !handler.preview_cache.contains_key(&key),
+            "an is_priming prime must not spawn the comments fetch"
+        );
+
+        // Live fetch (not priming) with a fresh timestamp → spawns and caches.
+        handler.on_update(0, "r".into(), &status(false, "2026-06-28T00:00:00Z"));
+        handler.orchestrator.wait_for_idle();
+        assert!(
+            handler.preview_cache.contains_key(&key),
+            "the live fetch spawns the comments fetch with a fresh signature"
         );
     }
 
@@ -1045,6 +1330,7 @@ mod tests {
             body: None,
             author: Some("alice".into()),
             comment_count: None,
+            updated_at: None,
         }));
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
@@ -1102,6 +1388,7 @@ mod tests {
             body: None,
             author: Some("bob".into()),
             comment_count: None,
+            updated_at: None,
         }));
         handler.on_update(0, "rendered".into(), &updated);
 
@@ -1293,13 +1580,14 @@ mod tests {
         assert!(!matches("!7", gitlab), "!7 inverse-excludes its own MR row");
     }
 
-    /// `stash_warning` accumulates lines in arrival order so the picker can
-    /// drain them in one shot after skim releases the terminal.
+    /// `stash_warning` accumulates distinct lines in arrival order so refreshes
+    /// and concurrent producers cannot repeat a diagnostic after skim exits.
     #[test]
     fn stash_warning_preserves_order() {
         let (handler, _test, _rx) = make_handler();
         handler.stash_warning("first".into());
         handler.stash_warning("second".into());
+        handler.stash_warning("first".into());
         handler.stash_warning("third".into());
         let stash = handler.stashed_warnings.lock().unwrap();
         assert_eq!(stash.as_slice(), &["first", "second", "third"]);
@@ -1331,11 +1619,14 @@ mod tests {
 
         // Static Summary hint primed for every item at skeleton time.
         for branch in ["alpha", "beta", "gamma"] {
-            assert!(
-                handler
-                    .preview_cache
-                    .contains_key(&(branch.into(), PreviewMode::Summary)),
-                "Summary hint should be filled for {branch} at skeleton time"
+            let key = (branch.to_string(), PreviewMode::Summary);
+            let hint = handler.preview_cache.get(&key).unwrap_or_else(|| {
+                panic!("Summary hint should be filled for {branch} at skeleton time")
+            });
+            assert_eq!(
+                hint.value(),
+                "disabled",
+                "Summary cache should contain the selected hint for {branch}"
             );
         }
 
@@ -1442,6 +1733,104 @@ mod tests {
             handler.preview_cache.iter().count(),
             before,
             "on_collect_complete must not spawn additional work for a single-item skeleton"
+        );
+    }
+
+    /// A handler superseded by a refresh must not publish its skeleton into
+    /// the session-shared row list / shortcut table, nor seed summary hints:
+    /// a rapid second `alt-r` can schedule the new spawn's skeleton before a
+    /// slow prior spawn's, and the stale skeleton landing second would
+    /// otherwise overwrite the live rows (feeding a later `alt-x` resync and
+    /// the `alt-y`/`alt-o` lookups) and write stale-row hint keys into the
+    /// refreshed cache.
+    #[test]
+    fn superseded_skeleton_leaves_shared_state_alone() {
+        let (handler, test, rx) = make_handler();
+        handler.orchestrator.refresh(test.repo.clone());
+
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "stale".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        handler.orchestrator.wait_for_idle();
+
+        // The rows still stream to this spawn's (dead) skim channel...
+        let received = rx.recv().expect("skeleton batch");
+        assert_eq!(received.len(), 2, "header + row still sent");
+        // ...but nothing session-shared takes them.
+        assert!(
+            handler.shared_items.lock().unwrap().is_empty(),
+            "superseded skeleton must not overwrite the shared row list"
+        );
+        assert!(
+            handler.shortcut_table.lock().unwrap().is_empty(),
+            "superseded skeleton must not overwrite the shortcut table"
+        );
+        assert!(
+            handler.preview_cache.is_empty(),
+            "superseded skeleton must not seed hints into the refreshed cache"
+        );
+    }
+
+    /// A superseded handler's `maybe_spawn_comments` is fully inert. Its
+    /// corrected-number path would otherwise evict the live spawn's
+    /// `(branch, Comments)` entry from the shared cache while its own refetch
+    /// drops at `fill` on the stale token — stranding the tab on its loading
+    /// placeholder, since the live handler's dedup slot already records the
+    /// number and nothing else refills Comments.
+    #[test]
+    fn superseded_handler_does_not_evict_live_comments() {
+        use crate::commands::list::ci_status::{CiSource, CiStatus, PrRef, PrStatus};
+
+        let status = |n: u64| {
+            Some(Some(PrStatus {
+                ci_status: CiStatus::Passed,
+                source: CiSource::PullRequest,
+                is_stale: false,
+                is_priming: false,
+                url: None,
+                number: Some(PrRef::pr(n)),
+                review_state: None,
+                title: None,
+                body: None,
+                author: None,
+                comment_count: None,
+                updated_at: None,
+            }))
+        };
+
+        let (handler, test, rx) = make_handler();
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "b".into())],
+            vec!["skel".into()],
+            header("hdr"),
+            grid(),
+        );
+        let _ = rx.recv();
+        // Record PR #5 in this handler's dedup slot (the fetch resolves
+        // synchronously to the "unsupported forge" pane — the test repo has
+        // no forge remote — only the recorded number matters here).
+        handler.maybe_spawn_comments(0, "b", &status(5));
+
+        // A refresh supersedes this handler; the live spawn fetches the thread.
+        handler.orchestrator.refresh(test.repo.clone());
+        let key = ("b".to_string(), PreviewMode::Comments);
+        handler.orchestrator.fill_external(
+            &handler.orchestrator.generation(),
+            key.clone(),
+            "live thread".to_string(),
+        );
+
+        // The stale handler observing a corrected number must not touch the
+        // live spawn's entry.
+        handler.maybe_spawn_comments(0, "b", &status(6));
+        handler.orchestrator.wait_for_idle();
+        assert_eq!(
+            handler.preview_cache.get(&key).map(|v| v.clone()),
+            Some("live thread".to_string()),
+            "a superseded handler must not evict the live spawn's Comments entry"
         );
     }
 }

@@ -8,6 +8,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -24,6 +32,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -51,6 +60,11 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
       [1m[36m--foreground[0m
           Run removal in foreground (block until complete)
+
+      [1m[36m--reap[0m
+          Kill processes started in the worktree [experimental][0m
+          
+          Before removal, terminate processes whose working directory is under the worktree — dev servers, watchers, language servers. Processes holding a controlling terminal (interactive shells, terminal editors) are left alone. Unix only.[0m
 
   [1m[36m-f[0m, [1m[36m--force[0m
           Force worktree removal[0m
@@ -131,6 +145,8 @@ The 'same commit' check uses the local default branch; for other checks, 'target
 
 Branches matching these conditions and with empty working trees are dimmed in [2mwt list[0m as safe to delete.
 
+Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via [2mgit worktree add --force[0m) fails a different test: deleting the ref would leave that worktree unable to resolve [2mHEAD[0m, which is why [2mgit branch -d[0m refuses the same delete. Such a branch is retained whatever [2m-D[0m asks, and the surviving checkout is named.
+
 [1m[32mForce flags[0m
 
 Worktrunk has two force flags for different situations:
@@ -151,6 +167,40 @@ Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 Removal runs in the background by default — the command returns immediately. The worktree is renamed into [2m.git/wt/trash/[0m (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached [2mrm -rf[0m finishes cleanup. Cross-filesystem worktrees fall back to [2mgit worktree remove[0m. Logs: [2m.git/wt/logs/{branch}/internal/remove.log[0m. Use [2m--foreground[0m to run in the foreground.
 
 After each [2mwt remove[0m, entries in [2m.git/wt/trash/[0m older than 24 hours are swept by a detached [2mrm -rf[0m — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
+
+[1m[32mReaping processes [experimental][0m
+
+[2m--reap[0m terminates processes left running in the worktree before it is removed — a [2mpost-start[0m dev server, a file watcher, a language server — freeing the ports and file handles they hold. Processes are discovered by working directory: any process whose current directory is at or under the worktree path ([2mSIGTERM[0m, then [2mSIGKILL[0m for survivors).
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove [0m[2m[36m--reap[0m[2m feature[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Reaping 2 processes under feature worktree[0m
+[107m [0m [2m   [0m[2m[34m┃[0m[2m 51234 node[0m
+[107m [0m [2m   [0m[2m[34m┃[0m[2m 51240 esbuild[0m
+[107m [0m [2m[0m[2m[34m✓[0m[2m Reaped 2 processes[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Removing feature worktree & [0m[2m[34mbranch[0m[2m in background ([0m[2m[34msame[0m[2m commit as main, _)[0m
+
+To avoid killing work the user did not mean to kill, two guards keep [2m--reap[0m conservative:
+
+- [1mInteractive processes are spared.[0m A process holding a controlling terminal — an interactive shell, or a terminal editor such as [2mvim[0m with unsaved buffers — is never reaped. Only detached processes remain candidates.
+- [1mDiscovery is by working directory only.[0m A process that started in the worktree and later changed directory, or a daemon that reparented to [2minit[0m, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [2mwt step tether[0m, which kills the whole process group when the worktree is removed.
+
+Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the [2m--force[0m flag. Unix only; on Windows [2m--reap[0m is rejected.
+
+[1m[32mJSON output[0m
+
+[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal.
+
+[2mbranch_outcome[0m names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
+
+        Value                                                                  Meaning                                                           
+ ──────────────────── ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mdeleted[0m              The branch is gone                                                                                                         
+ [2mdeferred[0m             Handed to the detached background process, whose result this run never sees. [2m--foreground[0m never reports it                 
+ [2mnot_attempted[0m        No deletion was tried: a detached worktree, a sibling checkout, or [2m--no-delete-branch[0m                                      
+ [2mretained_unmerged[0m    Declined: the branch was not integrated into the target                                                                    
+ [2mretained_checked_out[0m Declined: the final topology read found a live worktree with it checked out                                                
+ [2mretained_raced[0m       Refused by the compare-and-swap — the branch moved between the integration check and the delete. Re-read the ref and retry 
+ [2mretained_failed[0m      The delete command itself failed                                                                                           
 
 [1m[32mHooks[0m
 

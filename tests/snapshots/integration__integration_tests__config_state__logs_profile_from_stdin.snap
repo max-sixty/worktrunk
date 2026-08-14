@@ -11,6 +11,11 @@ expression: "String::from_utf8_lossy(&output.stdout)"
   git config      2   7.00ms   4.00ms   3.50ms
   git diff        1   5.00ms   5.00ms   5.00ms
 
+[36mBY CONTEXT[39m
+  context  count    total
+  main         4  24.00ms
+  feature      1   8.00ms
+
 [36mSLOWEST CALLS[39m
   12.00ms  git status --porcelain [main]
    8.00ms  git status --porcelain [feature]

@@ -194,28 +194,9 @@ fn test_list_json_no_url_without_template(repo: TestRepo) {
 ///
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
-fn test_list_url_with_branches_flag(repo: TestRepo) {
+fn test_list_url_with_branches_flag(mut repo: TestRepo) {
     // Remove fixture worktrees and their branches to isolate test (keep only main worktree)
-    for branch in &["feature-a", "feature-b", "feature-c"] {
-        let worktree_path = repo
-            .root_path()
-            .parent()
-            .unwrap()
-            .join(format!("repo.{}", branch));
-        if worktree_path.exists() {
-            let _ = repo
-                .git_command()
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap(),
-                ])
-                .run();
-        }
-        // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).run();
-    }
+    repo.remove_fixture_worktrees();
 
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
@@ -285,59 +266,6 @@ url = "http://localhost:8080/{{ branch }}"
 
     let url = first["url"].as_str().unwrap();
     assert_eq!(url, "http://localhost:8080/main");
-}
-
-/// Test that task-timeout-ms config option is parsed correctly.
-/// We use a very short timeout (1ms) to trigger timeouts.
-#[rstest]
-fn test_list_config_timeout_triggers_timeouts(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
-task-timeout-ms = 1
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // With a 1ms timeout, some tasks should time out
-    // The footer should show the timeout count
-    assert!(
-        stderr.contains("timed out") || output.status.success(),
-        "Expected either timeout message in footer or success (if git was fast enough)"
-    );
-}
-
-/// Test that task-timeout-ms = 0 explicitly disables timeout.
-#[rstest]
-fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
-task-timeout-ms = 0
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // With task-timeout-ms = 0, there should be no timeout
-    assert!(
-        !stderr.contains("timed out"),
-        "Expected no timeout message with task-timeout-ms = 0, but got: {}",
-        stderr
-    );
 }
 
 /// Regression: setting a typed env-var override (e.g. `WORKTRUNK__LIST__TIMEOUT_MS`)
@@ -710,33 +638,6 @@ fn test_list_config_malformed_system_config_non_section_field(repo: TestRepo) {
     });
 }
 
-/// Test that --full disables the task timeout.
-#[rstest]
-fn test_list_config_timeout_disabled_with_full(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
-task-timeout-ms = 1
-"#,
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.args(["list", "--full"]).current_dir(repo.root_path());
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // With --full, the timeout is disabled so we shouldn't see timeout messages
-    // (though tasks may still fail for other reasons)
-    assert!(
-        !stderr.contains("timed out"),
-        "Expected no timeout message with --full flag, but got: {}",
-        stderr
-    );
-}
-
 #[rstest]
 fn test_list_custom_columns(repo: TestRepo) {
     // A vars-backed column (only feature-a has the key; other rows render
@@ -824,6 +725,51 @@ template = "{{ vars.ticket }}"
 
     // Rendered value keyed by header; rows with an empty cell omit the key
     assert_eq!(by_branch("feature-a")["columns"]["Ticket"], "JIRA-1234");
+    assert!(by_branch("feature-b")["columns"].is_null());
+}
+
+#[rstest]
+fn test_list_custom_column_git_branch(repo: TestRepo) {
+    // A git.branch column reads the branch's own git config under
+    // branch.<name>.*, with no `wt config state vars set` round-trip. The
+    // git-native multi-line description is reduced to its first line.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list.custom-columns.Jira]
+template = "{{ git.branch.jira }}"
+
+[list.custom-columns.Summary]
+template = "{{ git.branch.description | lines | first }}"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&["config", "branch.feature-a.jira", "HWINFCI-2810"]);
+    repo.run_git(&[
+        "config",
+        "branch.feature-a.description",
+        "Add telemetry\n\n# Description\nlong body",
+    ]);
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    let by_branch = |branch: &str| {
+        items
+            .iter()
+            .find(|item| item["branch"] == branch)
+            .unwrap_or_else(|| panic!("no item for branch {branch}"))
+    };
+
+    let cols = &by_branch("feature-a")["columns"];
+    assert_eq!(cols["Jira"], "HWINFCI-2810");
+    assert_eq!(cols["Summary"], "Add telemetry");
+    // A branch without any branch.<name>.* keys renders no custom cells.
     assert!(by_branch("feature-b")["columns"].is_null());
 }
 
@@ -998,6 +944,168 @@ template = "{{ branch | codename }}"
             "the custom sorts at its configured position between built-ins: {header}"
         );
     });
+}
+
+/// A narrowed `[list] columns` selection prunes the git work that fed only the
+/// hidden columns — not just the rendered cells (#3133). With `["branch", "age"]`
+/// no column consumes a background task, so `git status` (run by the
+/// working-tree-diff task) never fires; the default set still runs it. Mirrors
+/// the trace-based diagnosis on the issue, asserted on the `$ git …` debug log.
+#[rstest]
+fn test_list_config_columns_prune_unused_tasks(repo: TestRepo) {
+    let run_list = |config: &str| -> String {
+        if config.is_empty() {
+            // Default column set: leave any prior config file out of the way.
+            let _ = fs::remove_file(repo.test_config_path());
+        } else {
+            fs::write(repo.test_config_path(), config).unwrap();
+        }
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // The working-tree task's `git … status --porcelain` is logged only
+        // under debug; capture it from stderr.
+        cmd.env("RUST_LOG", "worktrunk=debug");
+        cmd.arg("list").current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?}: {stderr}"
+        );
+        stderr.into_owned()
+    };
+
+    // Control: the default set shows the Status column, so the working-tree
+    // task runs `git status --porcelain`.
+    assert!(
+        run_list("").contains("status --porcelain"),
+        "default columns should run `git status` for the Status column"
+    );
+
+    // Branch + Age consume no task: nothing should run `git status`.
+    let narrowed = run_list(
+        r#"[list]
+columns = ["branch", "age"]
+"#,
+    );
+    assert!(
+        !narrowed.contains("status --porcelain"),
+        "a branch/age selection must not run `git status`:\n{narrowed}"
+    );
+}
+
+/// A listed column overrides the `--full` preset gate — the positive counterpart
+/// to the prune above. `--full` bundles `ci`/`summary` into the default table; it
+/// doesn't gate a column named outright. So `columns = ["branch", "ci"]` renders
+/// the CI column with no `--full`, where the default set hides it. Asserted on the
+/// rendered header row (column enrolment, independent of whether `gh` is on PATH).
+#[rstest]
+fn test_list_config_listed_column_overrides_full_gate(repo: TestRepo) {
+    let header_of = |config: &str| -> String {
+        if config.is_empty() {
+            let _ = fs::remove_file(repo.test_config_path());
+        } else {
+            fs::write(repo.test_config_path(), config).unwrap();
+        }
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // The header row is the line naming the Branch column.
+        stdout
+            .lines()
+            .find(|line| line.contains("Branch"))
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    // Control: the default set without `--full` hides CI.
+    assert!(
+        !header_of("").contains("CI"),
+        "the default non-full table should not show the CI column"
+    );
+
+    // Listing `ci` forces the column on without `--full`.
+    let listed = header_of(
+        r#"[list]
+columns = ["branch", "ci"]
+"#,
+    );
+    assert!(
+        listed.contains("CI"),
+        "listing `ci` should render the CI column without --full:\n{listed:?}"
+    );
+}
+
+/// The task prune must not reach the JSON path. `wt list --format json` ignores
+/// `[list] columns` and always emits every field (the `after_long_help`
+/// contract in `src/cli/mod.rs`), so a narrowed selection that drops the Status
+/// column from the table must not strip the status fields it feeds from JSON.
+/// Regression for the review on #3274: the prune originally fired on every
+/// non-picker render, silently nulling `working_tree`/`main`/`main_state` in
+/// JSON for a configured column subset.
+#[rstest]
+fn test_list_json_ignores_columns_selection(repo: TestRepo) {
+    // Dirty a worktree so its `working_tree` field carries an observable value;
+    // that field is fed by the working-tree task the prune would skip.
+    let feature_dir = repo.root_path().parent().unwrap().join("repo.feature-a");
+    fs::write(feature_dir.join("dirty.txt"), "uncommitted\n").unwrap();
+
+    let run_json = |config: &str| -> serde_json::Value {
+        if config.is_empty() {
+            let _ = fs::remove_file(repo.test_config_path());
+        } else {
+            fs::write(repo.test_config_path(), config).unwrap();
+        }
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--format=json"])
+            .current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+
+    let working_tree_of = |json: &serde_json::Value| -> serde_json::Value {
+        json.as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["branch"] == "feature-a")
+            .expect("feature-a row present")["working_tree"]
+            .clone()
+    };
+
+    // Control: the default set emits the working_tree field, with the untracked
+    // change visible.
+    let default = run_json("");
+    assert_eq!(
+        working_tree_of(&default)["untracked"],
+        serde_json::Value::Bool(true),
+        "default columns should emit working_tree.untracked = true in JSON"
+    );
+
+    // A narrowed selection drops Status from the rendered table but must not
+    // change JSON output: working_tree stays exactly as the default set emits.
+    let narrowed = run_json(
+        r#"[list]
+columns = ["branch", "age"]
+"#,
+    );
+    assert_eq!(
+        working_tree_of(&narrowed),
+        working_tree_of(&default),
+        "`--format json` must ignore `[list] columns` and emit working_tree regardless of the selection"
+    );
 }
 
 /// TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The

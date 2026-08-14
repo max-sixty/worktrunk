@@ -7,10 +7,11 @@ When debugging TUI commands like `wt switch` (interactive picker), use the `tmux
 ### 1. Create Test Environment
 
 ```bash
-cargo run -p wt-perf -- setup picker-test
+cargo run -p wt-perf -- setup generated 5 2 0 --path target/wt-picker-test
 ```
 
-This creates a reproducible test repo at `/tmp/wt-perf-picker-test/`.
+This creates a varied repository with linked worktrees and branch-only rows for
+the picker.
 
 ### 2. Test Interactively
 
@@ -21,7 +22,7 @@ Load the `tmux-cli` skill, then use the `tmux-cli` tool. Install if needed: `uv 
 ```bash
 # Launch shell in test repo
 pane=$(tmux-cli launch "zsh")
-tmux-cli send "cd /tmp/wt-perf-picker-test" --pane=$pane
+tmux-cli send "cd target/wt-picker-test" --pane=$pane
 tmux-cli wait_idle --pane=$pane
 
 # Run with debug logging
@@ -43,7 +44,7 @@ MCP terminals use pseudo-TTY, not real terminals. If tests pass in MCP but users
 ```typescript
 // Create terminal and navigate to test repo
 mcp__node-terminal__terminal_create({ sessionId: "test" })
-mcp__node-terminal__terminal_write({ sessionId: "test", input: "cd /tmp/wt-perf-picker-test" })
+mcp__node-terminal__terminal_write({ sessionId: "test", input: "cd target/wt-picker-test" })
 mcp__node-terminal__terminal_send_key({ sessionId: "test", key: "enter" })
 
 // Run with debug logging
@@ -82,7 +83,13 @@ wt --source -C /path/to/repo switch
 1. Add the subcommand to the `Cli` enum in `src/cli/mod.rs`.
 2. Implement it in `src/commands/` (e.g. `src/commands/mycommand.rs`).
 3. Add an `after_long_help` attribute — it is the source of truth for `docs/content/{command}.md`.
-4. Run `cargo test --test integration test_docs_are_in_sync`. Editing help text also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept -- --test integration "test_help"` (or run the pre-merge hook, which does both).
+4. Run `cargo test --test integration test_docs_are_in_sync`. Editing help text also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept --test integration -- test_help` (or run the pre-merge hook, which does both).
+
+All stdout goes through anstream: `worktrunk::styling::println` for anything a person reads, and `crate::output::print_json` for a `--format=json` answer — every surface but `wt switch --format=json`, which emits its single result as one compact line. anstream's macros drop a `BrokenPipe` write error where std's panic, so `wt … | head -3` never exits 101.
+
+Color resolves in exactly one place, anstream's `AutoStream::choice`: the process-global `ColorChoice` first, then the tty check with `NO_COLOR` / `CLICOLOR_FORCE`. A command whose stdout is a renderer's payload says so once at the top of its `run` with `ColorChoice::Always.write_global()`, then prints normally — the statusline, which a shell prompt or Claude Code captures and re-renders, and `--help-page`, whose escapes the docs pipeline turns into HTML spans (`--plain` writes `Never`, for portable markdown). Neither consumer is ever a tty, so without the global their escapes would be stripped every time.
+
+`wt list`'s progressive table applies that choice itself rather than writing through an anstream stream, because a strip would eat its cursor-control CSI along with the color; it reads the resolved choice from `AutoStream::choice`, so the single resolution point still holds. The test suite forces `CLICOLOR_FORCE=1`, so `test_color_follows_the_consumer` in `tests/integration_tests/output_system_guard.rs` pins the unforced behavior.
 
 ## Branch Argument Conventions
 

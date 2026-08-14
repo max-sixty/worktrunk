@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use dashmap::mapref::entry::Entry;
 
+use crate::path::canonicalize_with_parents;
 use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
@@ -22,6 +23,78 @@ fn has_initialized_submodules_from_status(status: &str) -> bool {
         Some('-') | None => false,
         Some(_) => true,
     })
+}
+
+/// A git operation a worktree is partway through, detected from the state files
+/// git writes under its git dir (`MERGE_HEAD`, `rebase-merge/`, `BISECT_LOG`, …).
+///
+/// Produced by [`WorkingTree::operation_in_progress`]. Detection only: it
+/// reports what git left on disk and deliberately maps nothing to a remedy.
+/// `git status` already names the operation and the way out of it, in git's own
+/// words and git's own translations, including states worktrunk has no variant
+/// for, so a table here would only be a second copy to keep current with git.
+///
+/// Structured rather than a display string so [`Rebase`](Self::Rebase) can be
+/// recognized without matching on user-visible text. The `strum` name is the
+/// `wt list --format=json` value for the operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum InProgressOperation {
+    Merge,
+    /// Rebase, from either backend. `git am` shares the am backend's
+    /// `rebase-apply` directory and lands here too, which costs nothing: the
+    /// only caller that cares is classifying a rebase worktrunk itself just
+    /// started, and this gate stops that from happening during an am session.
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
+/// The operation a queued sequencer belongs to, or `None` when nothing is
+/// queued.
+///
+/// `git cherry-pick`/`git revert` over several commits keep the remaining
+/// instructions in `sequencer/todo`, one `<command> <sha> <subject>` line each,
+/// and delete the directory once the sequence finishes or is aborted. Reading
+/// the first line mirrors git's own `sequencer_get_last_command`, which is how
+/// `git status` reports a sequence whose stopped pick was committed by hand.
+///
+/// Only cherry-pick and revert write this file — a rebase has its own todo
+/// under `rebase-merge/` — so an unrecognized first word means the file isn't a
+/// sequence worktrunk should read, and it reports nothing rather than guessing.
+fn sequencer_operation(git_dir: &Path) -> Option<InProgressOperation> {
+    let todo = std::fs::read_to_string(git_dir.join("sequencer").join("todo")).ok()?;
+    match todo.split_whitespace().next()? {
+        "pick" => Some(InProgressOperation::CherryPick),
+        "revert" => Some(InProgressOperation::Revert),
+        _ => None,
+    }
+}
+
+/// The working tree a `<common>/worktrees/<id>` registration records, read from
+/// its `gitdir` file.
+///
+/// The file holds the path of that working tree's `.git`, absolute or relative to
+/// the registration directory — git writes the relative form under
+/// `worktree.useRelativePaths` and resolves either, so both are ordinary. Its
+/// parent is the working tree, which is the half of git's `validate_worktree`
+/// that reads from the registration side.
+///
+/// Resolved through [`canonicalize_with_parents`], which normalizes the `..`
+/// chain a relative entry leaves behind even though the directory it names may
+/// no longer exist — the case the caller is usually asking about, and the path it
+/// then shows the user. Normalizing rewrites spellings only, so it cannot make
+/// two directories compare equal.
+fn registration_worktree_path(registration: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(registration.join("gitdir")).ok()?;
+    let recorded = PathBuf::from(content.trim());
+    let absolute = if recorded.is_relative() {
+        registration.join(recorded)
+    } else {
+        recorded
+    };
+    absolute.parent().map(canonicalize_with_parents)
 }
 
 /// Typed snapshot returned by [`WorkingTree::prewarm_info`].
@@ -135,10 +208,13 @@ impl<'a> WorkingTree<'a> {
     /// Use this when you need to check exit codes directly (e.g., for commands
     /// where non-zero exit is not an error condition).
     pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
-        Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(&self.path)
-            .context(path_to_logging_context(&self.path))
+        self.repo
+            .with_object_store_env(
+                Cmd::new("git")
+                    .args(args.iter().copied())
+                    .current_dir(&self.path)
+                    .context(path_to_logging_context(&self.path)),
+            )
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
@@ -398,16 +474,137 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
-    /// Check if a rebase is in progress.
-    pub fn is_rebasing(&self) -> anyhow::Result<bool> {
+    /// The git operation this worktree is partway through, if any.
+    ///
+    /// Reads the state files git writes under the worktree's git dir, in the
+    /// order [`git status`](https://git-scm.com/docs/git-status) consults them,
+    /// so the answer tracks what git itself calls "in progress".
+    pub fn operation_in_progress(&self) -> anyhow::Result<Option<InProgressOperation>> {
         let git_dir = self.git_dir()?;
-        Ok(git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists())
+
+        if git_dir.join("MERGE_HEAD").exists() {
+            return Ok(Some(InProgressOperation::Merge));
+        }
+
+        // `rebase-merge` (interactive/merge backend) and `rebase-apply` (am
+        // backend, also used by `git am`) are mutually exclusive; either one
+        // means commits are mid-replay.
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            return Ok(Some(InProgressOperation::Rebase));
+        }
+
+        if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            return Ok(Some(InProgressOperation::CherryPick));
+        }
+
+        if git_dir.join("REVERT_HEAD").exists() {
+            return Ok(Some(InProgressOperation::Revert));
+        }
+
+        // The two `_HEAD` files above exist only while a single pick is
+        // stopped: resolving one with `git commit` instead of `--continue`
+        // removes it and leaves the rest of the sequence queued, which git
+        // still reports as in progress.
+        if let Some(operation) = sequencer_operation(&git_dir) {
+            return Ok(Some(operation));
+        }
+
+        if git_dir.join("BISECT_LOG").exists() {
+            return Ok(Some(InProgressOperation::Bisect));
+        }
+
+        Ok(None)
     }
 
-    /// Check if a merge is in progress.
-    pub fn is_merging(&self) -> anyhow::Result<bool> {
-        let git_dir = self.git_dir()?;
-        Ok(git_dir.join("MERGE_HEAD").exists())
+    /// Paths the index still records as unmerged.
+    ///
+    /// A conflict git could not resolve leaves the path at stages 1–3 of the
+    /// index, which is what makes `git commit` refuse. Reading the index
+    /// rather than the state files answers a different question from
+    /// [`operation_in_progress`](Self::operation_in_progress): a conflicted
+    /// `git stash pop` leaves unmerged paths behind with no operation open at
+    /// all.
+    pub fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
+        let output = self
+            .run_command(&["diff", "--name-only", "--diff-filter=U", "-z"])
+            .context("Failed to list unmerged paths")?;
+        Ok(output
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Fail when the index still holds unresolved conflicts.
+    ///
+    /// A precondition for the commands that stage on the user's behalf
+    /// (`wt step commit`, `wt step squash`, `wt merge`,
+    /// `wt step relocate --commit`). `git add -A` collapses
+    /// an unmerged path's three stages into one entry, so it resolves the
+    /// conflict as far as the index is concerned while the file on disk still
+    /// holds `<<<<<<<` markers — and it takes git's own refusal to commit
+    /// with it. Asking before staging is what keeps the markers out of a
+    /// commit.
+    ///
+    /// `action` names the command the user typed. An entry point knows only
+    /// that, and often not yet whether it will commit at all —
+    /// `wt merge --no-commit` resolves its flags after this gate — so it
+    /// refuses in the name of the operation it was asked for.
+    ///
+    /// Every one of those gates refuses *early* — ahead of hooks, approval
+    /// prompts, and the LLM call, none of which is worth running for a commit
+    /// that cannot happen. The staging itself is guarded by
+    /// [`stage`](Self::stage), which runs the same check with nothing between
+    /// it and the `git add`.
+    pub fn ensure_no_unmerged_paths(&self, action: &str) -> anyhow::Result<()> {
+        let files = self.unmerged_paths()?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        Err(crate::git::GitError::UnmergedPaths {
+            action: action.to_string(),
+            files,
+        }
+        .into())
+    }
+
+    /// Stage the working tree on the user's behalf, refusing an unmerged index.
+    ///
+    /// **The only path to `git add` against a worktree's real index** — the
+    /// other `git add` calls all write a throwaway index via
+    /// [`temp_index`](Self::temp_index), which commits nothing. Staging
+    /// for the user is what turns an unresolved conflict into a commit full of
+    /// `<<<<<<<` markers (see
+    /// [`ensure_no_unmerged_paths`](Self::ensure_no_unmerged_paths)), so the
+    /// check and the `git add` live in one call rather than as a convention
+    /// every caller re-applies. A command that stages through here cannot
+    /// forget the gate, and cannot order it after the staging that destroys
+    /// the evidence — `git add` collapses the index stages, so a check run
+    /// afterwards passes vacuously.
+    ///
+    /// This is *in addition to* the callers' early refusals, not a replacement
+    /// for them: the two guard different windows. `wt step commit` gates
+    /// before its `pre-commit` hooks so a doomed commit runs no project
+    /// commands — and those hooks are arbitrary project code, free to leave
+    /// unmerged paths behind after that gate has passed.
+    ///
+    /// The refusal names the commit rather than taking an `action` from the
+    /// caller, because the commit is the only thing this gate guards — staging
+    /// on the user's behalf happens for no other reason. So
+    /// `wt merge --no-squash` reports `Cannot commit` even though the user
+    /// typed `merge`: that is the step actually blocked, and by then the flags
+    /// have resolved and the commit is certain.
+    ///
+    /// [`StageMode::None`] stages nothing but is still gated: the caller is
+    /// about to commit whatever the index already holds.
+    ///
+    /// [`StageMode::None`]: crate::config::StageMode::None
+    pub fn stage(&self, mode: crate::config::StageMode) -> anyhow::Result<()> {
+        self.ensure_no_unmerged_paths("commit")?;
+        if let Some(args) = mode.add_args() {
+            self.run_command(args).context("Failed to stage changes")?;
+        }
+        Ok(())
     }
 
     /// Check if this is a linked worktree (vs the main worktree).
@@ -424,6 +621,76 @@ impl<'a> WorkingTree<'a> {
         let git_dir = self.git_dir()?;
         let common_dir = self.repo.git_common_dir();
         Ok(git_dir != common_dir)
+    }
+
+    /// Refuse when the directory at this worktree's path does not hold this
+    /// worktree.
+    ///
+    /// Git makes this check itself before `git worktree remove` and refuses
+    /// with `validation failed … does not point back to
+    /// '.git/worktrees/<id>'`, `--force` included. Worktrunk's removal fast
+    /// path renames the directory into trash rather than asking git to (see
+    /// [`stage_worktree_removal`](crate::git::remove::stage_worktree_removal)),
+    /// so git's validation never runs and the guarantee has to be made here.
+    /// Removing the wrong directory is unrecoverable, whether it holds a full
+    /// clone that came to sit at a stale registration's path (uncommitted work
+    /// and, for a repo never pushed, the only copy of its objects) or a sibling
+    /// worktree of this repository, moved onto the path after this one was
+    /// deleted.
+    ///
+    /// So the test is git's own: the directory's `.git` must name *this
+    /// registration*, and that registration's `gitdir` file must name this
+    /// directory back (`registration_worktree_path`). Repository-level
+    /// ownership is the weaker half: a sibling worktree's git dir sits under
+    /// `<common>/worktrees/` too, so asking only which repository the occupant
+    /// answers to accepts one moved onto this path. The main worktree is the
+    /// same test where there is no registration to point back at: its git dir
+    /// *is* the common dir, and that equality is the whole of it.
+    ///
+    /// Resolution reads the `.git` entry in this directory on every call
+    /// (`Repository::git_dir_at`) instead of going through the `GIT_DIRS`-cached
+    /// [`git_dir`](Self::git_dir), which would answer from whenever an earlier
+    /// caller asked. That is what makes the second call worth making: removal
+    /// gates at planning and again at the rename, with the approval prompt and
+    /// the `pre-remove` hook running in between.
+    ///
+    /// Deliberately not a `prunable` check — git leaves the registration alone
+    /// precisely because the occupant's own `.git` resolves, so
+    /// [`Repository::usable_worktree_for_branch`] sees nothing wrong here. The
+    /// two cover different halves of "the directory no longer holds this
+    /// worktree": prunable is the half git notices, this is the half it does
+    /// not.
+    pub fn ensure_holds_this_worktree(&self) -> anyhow::Result<()> {
+        let common_dir = self.repo.git_common_dir();
+        // A git dir that can't be resolved at all is the strongest form of "not
+        // this worktree": nothing there answers for it. Treating that as a
+        // refusal keeps the failure closed.
+        let git_dir = Repository::git_dir_at(&self.path);
+        if git_dir.as_deref() == Some(common_dir) {
+            return Ok(());
+        }
+
+        // Where the occupant's own registration says it lives. `None` when there
+        // is no registration of ours to ask — the occupant answers to a
+        // different repository, or its registration here has lost its `gitdir`
+        // file.
+        let registrations = common_dir.join("worktrees");
+        let occupant_registered_at = git_dir
+            .filter(|git_dir| git_dir.parent() == Some(registrations.as_path()))
+            .as_deref()
+            .and_then(registration_worktree_path);
+        if occupant_registered_at
+            .as_deref()
+            .is_some_and(|recorded| crate::path::paths_match(recorded, &self.path))
+        {
+            return Ok(());
+        }
+
+        Err(GitError::WorktreePathNotOurs {
+            path: self.path.clone(),
+            occupant_registered_at,
+        }
+        .into())
     }
 
     /// Ensure this worktree is clean (no uncommitted changes).
@@ -518,14 +785,12 @@ impl<'a> WorkingTree<'a> {
             "--".to_string(),
         ];
         args.extend(paths);
-        let command = args.join(" ");
         let output = idx
-            .git(args)
+            .git(&args)
             .run()
             .context("Failed to compute untracked diff stats")?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git {} failed: {}", command, stderr.trim());
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
         }
 
         let mut stats = LineDiff::default();
@@ -569,6 +834,9 @@ impl<'a> WorkingTree<'a> {
             temp,
             worktree_root,
             log_ctx,
+            object_store_environment: self.repo.object_store_environment().map(
+                |(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()),
+            ),
         })
     }
 
@@ -677,6 +945,10 @@ pub struct TempIndex {
     temp: tempfile::TempPath,
     worktree_root: PathBuf,
     log_ctx: String,
+    /// Copied from the [`Repository`] so a redirected `wt list` writes the temp
+    /// index's `write-tree` objects into the temporary store. `None` on the
+    /// normal persistent path. See [`Repository::redirect_objects_if_read_only`].
+    object_store_environment: Option<(PathBuf, std::ffi::OsString)>,
 }
 
 impl TempIndex {
@@ -695,11 +967,17 @@ impl TempIndex {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        Cmd::new("git")
+        let command = Cmd::new("git")
             .args(args)
             .current_dir(&self.worktree_root)
             .context(self.log_ctx.clone())
-            .env("GIT_INDEX_FILE", self.path())
+            .env("GIT_INDEX_FILE", self.path());
+        match &self.object_store_environment {
+            Some((directory, alternates)) => command
+                .env("GIT_OBJECT_DIRECTORY", directory)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates),
+            None => command,
+        }
     }
 }
 
@@ -933,11 +1211,30 @@ mod tests {
     }
 
     #[test]
+    fn untracked_diff_stats_unborn_head_is_command_error() {
+        // With an unborn HEAD the untracked files stage fine into the temp
+        // index, but `git diff --cached --numstat HEAD` cannot resolve HEAD —
+        // the failure must surface as a typed `CommandError`.
+        let test = TestRepo::new();
+        std::fs::write(test.root_path().join("new.txt"), "hello\n").unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo.current_worktree().untracked_diff_stats().unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(
+            cmd_err
+                .command_string()
+                .starts_with("git diff --cached --numstat HEAD")
+        );
+    }
+
+    #[test]
     fn temp_index_tolerates_missing_real_index() {
         // A worktree whose `<gitdir>/index` file is absent must not error
         // when callers ask for a temp index — git itself treats a missing
         // index as empty, and the WorkingTreeConflictsTask used to surface
-        // this as a misleading `working-tree-conflicts (Failed to copy
+        // this as a misleading `working-tree conflict check (Failed to copy
         // index file)` footer.
         let test = TestRepo::with_initial_commit();
         std::fs::write(test.root_path().join("tracked.txt"), "hello\n").unwrap();

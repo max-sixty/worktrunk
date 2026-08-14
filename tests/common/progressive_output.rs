@@ -192,6 +192,9 @@ pub struct ProgressiveOutput {
     pub exit_code: i32,
     /// Total execution time
     pub total_duration: Duration,
+    /// Cursor position (row, col) after all output drained — where the shell
+    /// prompt would print
+    pub final_cursor: (u16, u16),
 }
 
 impl ProgressiveOutput {
@@ -521,28 +524,20 @@ pub fn capture_progressive_output(
         .unwrap_or_else(|_| panic!("Failed to wait for 'wt {}' to exit", subcommand));
     let exit_code = exit_status.exit_code() as i32;
     let total_duration = start_time.elapsed();
+    let final_cursor = parser.screen().cursor_position();
 
     ProgressiveOutput {
         stages: snapshots,
         exit_code,
         total_duration,
+        final_cursor,
     }
 }
 
 /// Configure PTY command with test environment variables
 fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
-    // Clear environment
-    cmd.env_clear();
-
-    // Basic environment
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    );
+    // Isolated environment (env_clear, HOME, PATH, determinism baselines, coverage)
+    super::configure_pty_command(cmd);
 
     // Test environment (from TestRepo::test_env_vars)
     for (key, value) in repo.test_env_vars() {
@@ -553,20 +548,6 @@ fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
     // loading indicator see it on every render — otherwise fast runs finish
     // before the deferred tick fires and dots never appear.
     cmd.env("WORKTRUNK_PLACEHOLDER_REVEAL_MS", "0");
-
-    // Pass through LLVM coverage profiling environment for subprocess coverage collection.
-    // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
-    // their coverage data; otherwise, point it at a temp-dir default so an
-    // instrumented child can't write `default_*.profraw` into the repo root.
-    cmd.env(
-        "LLVM_PROFILE_FILE",
-        worktrunk::testing::default_llvm_profile_file(),
-    );
-    for key in worktrunk::testing::COVERAGE_ENV_VARS {
-        if let Ok(val) = std::env::var(key) {
-            cmd.env(key, val);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -616,6 +597,7 @@ mod tests {
             stages,
             exit_code: 0,
             total_duration: Duration::from_millis(150),
+            final_cursor: (0, 0),
         };
 
         // Test samples
@@ -656,6 +638,7 @@ mod tests {
             stages,
             exit_code: 0,
             total_duration: Duration::from_millis(150),
+            final_cursor: (0, 0),
         };
 
         // Should verify successfully

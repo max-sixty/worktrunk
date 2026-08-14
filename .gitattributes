@@ -15,3 +15,11 @@ docs/static/.well-known/agent-skills/index.json linguist-generated=true
 # Shell templates are embedded into the binary at compile time (askama); a
 # CRLF checkout would leak \r into the shell code Windows-built binaries emit.
 templates/* text eol=lf
+# A fixture's object store and index are git's own binary formats, but git only
+# calls a file binary when it finds a NUL in the first 8000 bytes, and a small
+# enough zlib object may have none. Those diff as text, so `git diff` writes raw
+# deflate into its output and any tool that decodes that output as a string
+# fails on it — which is how `cargo affected` came to abort before running a
+# test. The rest of `_git/` (HEAD, config, refs) is text worth reading.
+tests/fixtures/*/_git/objects/** binary
+tests/fixtures/*/_git/index binary

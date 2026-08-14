@@ -127,8 +127,8 @@ $ wt config shell uninstall --yes
 
 ## Version tolerance
 
-Detects various forms of the integration pattern regardless of:
-- Command prefix (wt, worktree, etc.)
+Uninstall removes every worktrunk-managed integration it finds, regardless of:
+- Binary name it was installed under (`wt`, `git-wt`, …)
 - Minor syntax variations between versions"#
     )]
     Uninstall {
@@ -230,9 +230,32 @@ This leaves any already-installed Worktrunk plugin unchanged."#
     Uninstall,
 }
 
-// Ordering: action + inverse adjacent (add, clear).
+// Ordering: read first (list), then action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
+    /// List project commands and their approval status
+    #[command(
+        after_long_help = r#"Shows every command the project config declares — hooks, aliases, and commit-message guidance — grouped into APPROVED and UNAPPROVED sections. Approvals recorded for commands no longer in the project config (edited or removed since approval) are listed separately.
+
+Reading is all it does: no prompt, no write. `--format=json` emits the same four distinctions as a structured payload — see [Reading approval state](@/config.md#reading-approval-state).
+
+## Examples
+
+```console
+$ wt config approvals list
+```
+
+Check whether an unattended run would stop for approval:
+```console
+$ wt config approvals list --format=json | jq -r .state
+```"#
+    )]
+    List {
+        /// Output format
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
+    },
+
     /// Store approvals in approvals.toml
     #[command(
         after_long_help = r#"Prompts for approval of all project commands and saves them to approvals.toml.
@@ -251,12 +274,17 @@ including previously approved ones."#
         after_long_help = r#"Removes saved approvals, requiring re-approval on next command run.
 
 By default, clears approvals for the current project. Use `--global` to clear
-all approvals across all projects."#
+all approvals across all projects, or `--stale` to clear only approvals for
+commands no longer in the project config (edited or removed since approval)."#
     )]
     Clear {
         /// Clear global approvals
         #[arg(short, long)]
         global: bool,
+
+        /// Clear only stale approvals
+        #[arg(long, conflicts_with = "global")]
+        stale: bool,
     },
 }
 
@@ -288,7 +316,7 @@ $ wt config plugins claude install-statusline
 
     /// Codex plugin
     #[command(
-        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths. Activity markers in `wt list` are Claude Code only: Codex exposes no turn-end hook event, so the Codex plugin omits them until it does.
+        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in `wt list` while a Codex session runs and clear the marker when it ends.
 
 ## Examples
 
@@ -400,7 +428,7 @@ $ wt config alias show deploy
 
     /// Preview an alias invocation with template expansion
     #[command(
-        after_long_help = r#"Runs the same parser used at invocation time, applies template expansion (including `{{ args }}` and any `--KEY=VALUE` assignments), and prints the resulting command without executing it. Templates referencing `vars.*` are shown unexpanded — those values resolve from git config at execution time, after earlier steps have had a chance to set them.
+        after_long_help = r#"Runs the same parser used at invocation time, applies template expansion (including `{{ args }}` and any `--KEY=VALUE` assignments), and prints the resulting command without executing it. Each `{{ vars.<key> }}` renders as itself while everything around it expands — those values resolve from git config at execution time, after earlier steps have had a chance to set them.
 
 Arguments after `--` are forwarded verbatim as if typed after `wt <name>`.
 
@@ -496,11 +524,13 @@ This tests:
     /// Update deprecated config settings
     #[command(
         after_long_help = r#"Updates deprecated settings in user and project config files
-to their current equivalents. Shows a diff and asks for confirmation.
+to their current equivalents, and adopts defaults that a future release
+switches — currently `[list] json-schema = 2` — so the switch happens as a
+reviewed config edit rather than at upgrade. Shows a diff and asks for
+confirmation.
 
-Migrations are computed in memory on demand — worktrunk no longer writes
-`.new` files as a side effect of loading config. Use `--print` to see the
-migrated TOML without touching any file.
+Migrations are computed in memory on demand; nothing is written outside this
+command. Use `--print` to see the migrated TOML without touching any file.
 
 ## Examples
 
@@ -531,6 +561,11 @@ $ wt config update --print
 
 ## Examples
 
+List commands and their approval status for current project:
+```console
+$ wt config approvals list
+```
+
 Pre-approve all hook and alias commands for current project:
 ```console
 $ wt config approvals add
@@ -541,14 +576,43 @@ Clear approvals for current project:
 $ wt config approvals clear
 ```
 
+Clear only approvals for commands no longer in the project config:
+```console
+$ wt config approvals clear --stale
+```
+
 Clear global approvals:
 ```console
 $ wt config approvals clear --global
 ```
 
+Check whether an unattended run would stop for approval:
+```console
+$ wt config approvals list --format=json | jq -r .state
+```
+
 ## How approvals work
 
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI."#
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+
+## Reading approval state
+
+`wt config approvals list` reads the state without prompting or writing it, so an orchestrator can find out whether a non-interactive run will stop for approval before scheduling one. `--format=json` emits:
+
+```json
+{
+  "state": "approval_required",
+  "commands": [
+    {"phase": "post-start", "name": "dev", "template": "npm run dev", "approved": false},
+    {"phase": "pre-merge", "template": "cargo test", "approved": true}
+  ],
+  "stale": ["some removed command"]
+}
+```
+
+`state` is `no_commands` (the project declares none), `approval_required` (at least one is unapproved), or `approved`. `name` is absent for an unnamed command and for the commit-template fragment.
+
+`stale` is separate rather than a fourth `state`, because it co-occurs with all three: these are approvals recorded earlier whose command has since been edited or removed from the project config. They are what `--yes` would silently re-approve, so an orchestrator preserving the approval model reads them before choosing that flag."#
     )]
     Approvals {
         #[command(subcommand)]
@@ -778,10 +842,12 @@ Worktrunk detects the default branch automatically:
 
 1. **Worktrunk cache** — Checks `git config worktrunk.default-branch`
 2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
-3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
-4. **Local inference** — If no remote, infers from local branches
+3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s, abandoned after 10s
+4. **Local inference** — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access.
+Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD; `set` adopts the new branch and `clear` re-detects.
+
+An abandoned remote query is the one case that isn't cached: the branch it inferred locally answers that command, but a value guessed while the remote was unreachable would otherwise become permanent, so the next command queries again.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
@@ -854,10 +920,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
+| `trace.jsonl` | Running with `-vv` |
 | `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `wt config state logs profile` summarizes one into a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log` and a rendered performance profile; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
+`trace.log` is the human-readable trace at `-vv` — each command's start (`$ …`) and completion (`✓`/`✗ … 12.3ms`), in-process spans, milestones, and bounded subprocess previews. `trace.jsonl` is the same event stream as one JSON object per line, for machines (`jq`, chrome://tracing); `wt config state logs profile` reads it to summarize a performance report (where time went, parallelism, redundant commands). `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that leads with that same performance profile and inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All four are overwritten on each `-vv` run.
 
 ## Location
 
@@ -939,26 +1006,7 @@ $ wt config state hints clear NAME   # re-show specific hint
         hide = true,
         after_long_help = r#"**Deprecated** — the CI status cache is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
-Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
-
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
-
-Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
-
-Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
-
-## Status values
-
-| Status | Meaning |
-|--------|---------|
-| `passed` | All checks passed |
-| `running` | Checks in progress |
-| `failed` | Checks failed |
-| `conflicts` | PR has merge conflicts |
-| `no-ci` | No checks configured |
-| `error` | Fetch error (rate limit, network, auth) |
-
-See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
+Status values, display symbols, and fetch behavior: [`wt list` CI status](@/list.md#ci-status).
 
 Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
     )]
@@ -1301,13 +1349,11 @@ $ wt config state logs --format=json | jq '.hook_output[] | select(.branch | sta
     )]
     Get,
 
-    /// Performance profile from a trace log
+    /// Performance profile from a trace
     #[command(
-        after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the `[wt-trace]` records captured to `trace.log` by a `-vv` run.
+        after_long_help = r#"Summarize where a single `wt` invocation spent its time, reading the records captured to `trace.jsonl` by a `-vv` run.
 
-Reads `.git/wt/logs/trace.log` by default, or a log file given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
-
-For an interactive timeline or a Perfetto trace, use the `wt-perf` helper (`cargo run -p wt-perf -- timeline`); both share the same trace parser.
+Reads `.git/wt/logs/trace.jsonl` by default, or a trace given as an argument (e.g. a CI artifact, or `-` for stdin). The report answers three questions: where time goes (subprocess time by command type and by worktree, plus the slowest individual jobs), how parallel the run was (concurrency factor and peak concurrency), and where work was wasted (commands re-run with the same context). For a `wt list` capture it also shows derived latencies (time to skeleton, time to first result) and a timeline of collect milestones; the skeleton/first-result markers need a terminal (TTY) capture. `--format=json` emits the same data for scripting.
 
 ## Examples
 
@@ -1319,8 +1365,8 @@ $ wt config state logs profile
 
 Profile a trace from elsewhere (e.g. a CI artifact), by path or on stdin:
 ```console
-$ wt config state logs profile ci-run.log
-$ wt config state logs profile - < ci-run.log
+$ wt config state logs profile ci-run.jsonl
+$ wt config state logs profile - < ci-run.jsonl
 ```
 
 JSON for scripting:
@@ -1329,7 +1375,7 @@ $ wt config state logs profile --format=json | jq '.by_type[0]'
 ```"#
     )]
     Profile {
-        /// Trace log to read (defaults to `.git/wt/logs/trace.log`; `-` for stdin)
+        /// Trace to read (defaults to `.git/wt/logs/trace.jsonl`; `-` for stdin)
         file: Option<std::path::PathBuf>,
     },
 

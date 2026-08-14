@@ -136,11 +136,115 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
     assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
 }
 
+/// `-C` selects the worktree, not the process cwd.
+///
+/// Every other test here sets the child's cwd, which reaches the worktree by a
+/// different route: `-C` sets wt's discovery path without chdir'ing, so a
+/// statusline built from `std::env::current_dir()` would describe the cwd's
+/// worktree (`main`) and pass those tests while ignoring the flag.
+#[rstest]
+fn test_statusline_directory_flag(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // cwd is the main worktree; only `-C` points at `feature`
+    let output = run_statusline_from_dir(
+        &repo,
+        &["-C", feature_path.to_str().unwrap()],
+        None,
+        repo.root_path(),
+    );
+    assert_snapshot!(output, @"[0m feature  [2m_[22m");
+}
+
+/// With no stdin JSON, claude-code mode falls back to the same worktree the
+/// table format uses, so it honours `-C` too. A directory on stdin still wins:
+/// it names the session's directory rather than the one wt was pointed at.
+#[rstest]
+fn test_statusline_claude_code_directory_flag(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = run_statusline_from_dir(
+        &repo,
+        &["--format=claude-code", "-C", feature_path.to_str().unwrap()],
+        None,
+        repo.root_path(),
+    );
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[0m [PATH].feature  [2m_[22m");
+    });
+
+    // stdin's directory outranks `-C`
+    let json = format!(
+        r#"{{"workspace": {{"current_dir": "{}"}}}}"#,
+        escape_path_for_json(repo.root_path())
+    );
+    let output = run_statusline_from_dir(
+        &repo,
+        &["--format=claude-code", "-C", feature_path.to_str().unwrap()],
+        Some(&json),
+        repo.root_path(),
+    );
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @"[0m [PATH]  main  [2m^[22m[2m|[22m");
+    });
+}
+
+/// A stdin directory in a *different* repository than the one wt discovered.
+///
+/// The worktree comes from stdin while `list_worktrees` comes from the
+/// discovered repo, so the stdin directory matches none of them and only its
+/// branch can be reported. That split is the known limit of taking the
+/// directory from stdin: everything repo-wide still comes from wt's own
+/// discovery path.
+#[rstest]
+fn test_statusline_claude_code_foreign_repo_on_stdin(repo: TestRepo) {
+    let foreign = repo.root_path().join("foreign");
+    std::fs::create_dir(&foreign).unwrap();
+    repo.git_command()
+        .args(["init", "--initial-branch=elsewhere"])
+        .current_dir(&foreign)
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "init", "--allow-empty"])
+        .current_dir(&foreign)
+        .run()
+        .unwrap();
+
+    let json = format!(
+        r#"{{"workspace": {{"current_dir": "{}"}}}}"#,
+        escape_path_for_json(&foreign)
+    );
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    let mut settings = claude_code_snapshot_settings();
+    // A nested directory renders home-relative, which the platform-specific
+    // `[PATH]` filters don't reach; the branch is this test's subject.
+    settings.add_filter(r"[^ ]*foreign", "[FOREIGN]");
+    settings.bind(|| {
+        assert_snapshot!(output, @"[0m [FOREIGN]  elsewhere");
+    });
+}
+
+#[rstest]
+fn test_statusline_json_directory_flag(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // cwd is the main worktree; only `-C` points at `feature`
+    let output = run_statusline_from_dir(
+        &repo,
+        &["--format=json", "-C", feature_path.to_str().unwrap()],
+        None,
+        repo.root_path(),
+    );
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+    let items = parsed.as_array().expect("should be an array");
+    assert_eq!(items.len(), 1, "should describe just the -C worktree");
+    assert_eq!(items[0]["branch"], "feature");
+}
+
 #[rstest]
 fn test_statusline_does_not_run_repo_wide_ahead_behind_scan(repo: TestRepo) {
-    for i in 0..12 {
-        repo.run_git(&["branch", &format!("unused-{i}")]);
-    }
+    repo.create_branches(&(0..12).map(|i| format!("unused-{i}")).collect::<Vec<_>>());
 
     let output = repo
         .wt_command()
@@ -376,17 +480,39 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Verify statusline shows the detached marker, not the prior branch name.
+    // Verify the statusline names a detached worktree the way its `wt list`
+    // row does — by the abbreviated HEAD — and not by the prior branch name.
+    // The SHA also tells two detached worktrees apart, which one shared
+    // "(detached)" label cannot.
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    // In detached state we render "(detached)" in place of a branch name.
+    // Ask git for the abbreviation instead of slicing a fixed width: the
+    // statusline prints git's own `%h`, so the length follows `core.abbrev` and
+    // stretches further still when a prefix is ambiguous.
+    let head = repo.git_output(&["rev-parse", "--short", "HEAD"]);
+    let short_head = head.trim();
     assert!(
-        output.contains("(detached)"),
-        "statusline should show '(detached)' for detached HEAD, got: {output}"
+        output.contains(short_head),
+        "statusline should show the abbreviated HEAD ({short_head}) for detached HEAD, got: {output}"
     );
     assert!(
         !output.contains("feature"),
         "statusline should not show the prior branch name, got: {output}"
     );
+}
+
+/// With no default branch to compare against, the statusline is the branch
+/// name alone — every other segment describes a relation to that branch.
+///
+/// Two branches, neither named main/master/develop/trunk, and no remote:
+/// nothing is left for `default_branch()` to infer from.
+#[rstest]
+fn test_statusline_without_default_branch() {
+    let repo = TestRepo::with_initial_commit();
+    repo.run_git(&["branch", "-m", "main", "alpha"]);
+    repo.run_git(&["branch", "beta"]);
+
+    let output = run_statusline(&repo, &[], None);
+    assert_snapshot!(output, @"[0m alpha");
 }
 
 // --- URL Display Tests ---
@@ -402,7 +528,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  http://main.localhost:3000");
+    assert_snapshot!(output, @r"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m[4m]8;;http://main.localhost:3000\:3000]8;;\[24m[22m");
 }
 
 #[rstest]
@@ -423,7 +549,28 @@ url = "http://{{ branch }}.localhost:3000"
 
     // Run statusline from feature worktree
     let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
-    assert_snapshot!(output, @"[0m feature  [2m_[22m  http://feature.localhost:3000");
+    assert_snapshot!(output, @r"[0m feature  [2m_[22m  [2m[4m]8;;http://feature.localhost:3000\:3000]8;;\[24m[22m");
+}
+
+/// The URL segment lands after the CI reference and before the model in Claude
+/// Code mode, where the directory and model segments share the line with it.
+#[rstest]
+fn test_statusline_claude_code_url_placement(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[list]
+url = "http://{{ branch }}.localhost:3000"
+"#,
+    );
+
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(
+        r#"{{"model": {{"display_name": "Opus"}}, "workspace": {{"current_dir": "{escaped_path}"}}}}"#
+    );
+
+    let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!(output, @r"[0m [PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  [2m[4m]8;;http://main.localhost:3000\:3000]8;;\[24m[22m  Opus");
+    });
 }
 
 // --- JSON Format Tests ---
@@ -460,6 +607,72 @@ fn test_statusline_json_basic(repo: TestRepo) {
         item["commit"]["timestamp"].as_i64().unwrap() > 0,
         "commit.timestamp should be populated from git log"
     );
+}
+
+/// `[list] json-schema = 2` switches the statusline JSON to the envelope,
+/// with the same single-item contract as the schema-1 array. An unset key
+/// stays silent here — the statusline surface suppresses warnings.
+#[rstest]
+fn test_statusline_json_schema_2(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    let output = run_statusline(&repo, &["--format=json"], None);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+
+    assert_eq!(parsed["schema"], 2);
+    assert_eq!(
+        parsed["collected"],
+        serde_json::json!({"ci": true, "summary": false}),
+        "statusline collects with full gates, no summaries"
+    );
+    let items = parsed["items"].as_array().expect("envelope items");
+    assert_eq!(items.len(), 1, "one item: the current worktree");
+
+    let item = &items[0];
+    assert_eq!(item["branch"], "main");
+    assert!(item["worktree"]["current"].as_bool().unwrap());
+    assert!(item["worktree"]["main"].as_bool().unwrap());
+    assert!(
+        item.get("default_branch").is_none(),
+        "the default branch row carries no relation to itself"
+    );
+    assert!(item["head"]["sha"].is_string());
+    assert!(
+        item["display"]["statusline"].is_string(),
+        "pre-rendered statusline lives under display"
+    );
+}
+
+/// Outside a worktree the JSON surface emits an empty result in the
+/// selected schema, and the schema-2 empty envelope skips default-branch
+/// detection (no `default_branch` key — nothing to relate to).
+#[rstest]
+fn test_statusline_json_outside_worktree(repo: TestRepo) {
+    let git_dir = repo.root_path().join(".git");
+
+    let output = run_statusline_from_dir(&repo, &["--format=json"], None, &git_dir);
+    assert_eq!(output.trim(), "[]", "schema 1 empty result is a bare array");
+
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let output = run_statusline_from_dir(&repo, &["--format=json"], None, &git_dir);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+    assert_eq!(parsed["schema"], 2);
+    assert_eq!(parsed["items"], serde_json::json!([]));
+    assert!(
+        parsed["repo"].get("default_branch").is_none(),
+        "item-less path must not attempt default-branch detection"
+    );
+}
+
+/// An invalid `[list] json-schema` degrades to schema 1 silently here —
+/// the statusline surface suppresses warnings, so a config typo must not
+/// corrupt the prompt.
+#[rstest]
+fn test_statusline_json_invalid_schema_degrades_silently(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 7\n");
+    let output = run_statusline(&repo, &["--format=json"], None);
+    let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
+    assert!(parsed.is_array(), "degrades to the schema 1 array");
 }
 
 #[rstest]
@@ -893,4 +1106,30 @@ fn test_statusline_rate_limit_drops_at_narrow_width(repo: TestRepo) {
     claude_code_snapshot_settings().bind(|| {
         assert_snapshot!("rate_limit_drops_at_narrow_width", out);
     });
+}
+
+#[rstest]
+fn test_statusline_zero_columns_renders_untruncated(repo: TestRepo) {
+    // Regression: `COLUMNS=0` is an absurd width. It must be treated as "no
+    // detectable width" and fall through to the untruncated render — not
+    // collapse the content budget to zero (after the statusline subtracts its
+    // UI margin) and drop every segment. Compare against a wide terminal,
+    // which also renders untruncated: the two must be identical and non-empty.
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    let zero = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, Some(0));
+    let wide = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, Some(500));
+    assert!(
+        !zero.trim().is_empty(),
+        "COLUMNS=0 must not collapse the statusline to empty"
+    );
+    assert_eq!(
+        zero, wide,
+        "COLUMNS=0 should render untruncated, identical to a wide terminal"
+    );
 }

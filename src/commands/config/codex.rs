@@ -1,8 +1,7 @@
 //! Codex plugin marketplace management.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use color_print::cformat;
-use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, hint_message, progress_message, success_message};
 
 use super::show::is_codex_available;
@@ -29,26 +28,26 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     }
 
     eprintln!("{}", progress_message("Adding Codex plugin marketplace..."));
-    let output = Cmd::new("codex")
-        .args(["plugin", "marketplace", "add", MARKETPLACE_SOURCE])
-        .run()
-        .context("Failed to run codex CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("codex plugin marketplace add failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli(
+        "codex",
+        &["plugin", "marketplace", "add", MARKETPLACE_SOURCE],
+    )?;
 
     eprintln!("{}", success_message("Codex marketplace configured"));
     eprintln!(
         "{}",
         hint_message("Next, run /plugins in Codex and install Worktrunk from the marketplace")
     );
-    // The Codex plugin deliberately ships no activity-marker hooks: Codex's
-    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
-    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
-    // session. Re-add the hooks (and restore the marker hints + docs) once
-    // Codex exposes a turn-end hook event. See CLAUDE.md → "Plugin Layout".
+    // The Codex plugin ships activity-marker hooks inline in its manifest
+    // (`hooks` key in .codex-plugin/plugin.json), using `Stop` to return
+    // 🤖 → 💬 and `SessionEnd` to clear the marker. See CLAUDE.md → "Plugin
+    // Layout".
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Activity markers appear in <underline>wt list</> once a Codex session runs"
+        ))
+    );
 
     Ok(())
 }
@@ -78,15 +77,10 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         "{}",
         progress_message("Removing Codex plugin marketplace...")
     );
-    let output = Cmd::new("codex")
-        .args(["plugin", "marketplace", "remove", MARKETPLACE_NAME])
-        .run()
-        .context("Failed to run codex CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("codex plugin marketplace remove failed: {}", stderr.trim());
-    }
+    super::run_plugin_cli(
+        "codex",
+        &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
+    )?;
 
     eprintln!("{}", success_message("Codex marketplace removed"));
     eprintln!("{}", hint_message("Installed plugins are left unchanged"));

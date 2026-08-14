@@ -49,13 +49,12 @@ use std::ffi::OsString;
 use std::process;
 
 use ansi_str::AnsiStr;
-use clap::ColorChoice;
 use clap::error::ErrorKind;
 use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
     SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
 };
-use worktrunk::styling::eprintln;
+use worktrunk::styling::{ColorChoice, eprintln, print, println};
 
 use crate::cli;
 
@@ -69,8 +68,13 @@ enum PageMode {
 }
 
 impl PageMode {
-    /// ANSI color for the embedded `--help` reference block. Web keeps ANSI so
-    /// it can be converted to HTML downstream; plain strips it.
+    /// The page's one color choice, declared globally for the stdout it
+    /// prints to. The embedded `--help` reference block always renders with
+    /// escapes and the stream decides what survives: web keeps them for the
+    /// docs pipeline to turn into HTML spans, plain strips them for the
+    /// portable markdown skill files read. Both generators read a pipe rather
+    /// than a tty, so without the global web's escapes would be stripped
+    /// every time.
     fn color(self) -> ColorChoice {
         match self {
             Self::Web => ColorChoice::Always,
@@ -122,19 +126,19 @@ impl PageMode {
     /// uses it as a region marker), or an H1 title for plain skill pages.
     fn emit_header(self, subcommand: &str) {
         match self {
-            Self::Web => std::println!(
+            Self::Web => println!(
                 "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
-            Self::Plain => std::println!("# wt {subcommand}"),
+            Self::Plain => println!("# wt {subcommand}"),
         }
-        std::println!();
+        println!();
     }
 
     /// Emit the closing END marker (web only).
     fn emit_footer(self) {
         if matches!(self, Self::Web) {
-            std::println!();
-            std::println!("{MARKER_CLOSE}");
+            println!();
+            println!("{MARKER_CLOSE}");
         }
     }
 }
@@ -155,11 +159,18 @@ impl PageMode {
 /// On a help/version/doc-generation request, prints output and calls
 /// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
 ///
-/// `alias_help_context` is computed by the caller from the same early-parse
-/// pass that extracts global options. When `Some`, the configured aliases are
+/// `alias_help_context` and `subcommand` both come from the caller's
+/// early-parse pass over the real argv, the same one that extracts global
+/// options. When `alias_help_context` is `Some`, the configured aliases are
 /// spliced into the rendered output — at the top level for `wt --help`, or
-/// under the Aliases section for `wt step --help`.
-pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
+/// under the Aliases section for `wt step --help`. `subcommand` is the command
+/// the doc-generation entry points below render, taken from clap rather than
+/// re-scanned here, so `wt.exe`, a renamed binary, or `wt -C <path> list
+/// --print-schema` all name the same thing.
+pub fn maybe_handle_help_with_pager(
+    alias_help_context: Option<crate::commands::HelpContext>,
+    subcommand: Option<&str>,
+) {
     let args_os: Vec<OsString> = std::env::args_os().collect();
     let args: Vec<String> = args_os
         .iter()
@@ -176,13 +187,20 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
         } else {
             PageMode::Web
         };
-        handle_help_page(&args, mode);
+        handle_help_page(subcommand, mode);
+        process::exit(0);
+    }
+
+    // Check for --print-schema flag (output the JSON Schema for a command's
+    // --format=json payload)
+    if args.iter().any(|a| a == "--print-schema") {
+        handle_print_schema(subcommand);
         process::exit(0);
     }
 
     // Check for --help-description flag (output meta description for docs)
     if args.iter().any(|a| a == "--help-description") {
-        handle_help_description(&args);
+        handle_help_description(subcommand);
         process::exit(0);
     }
 
@@ -190,7 +208,6 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
     if args.iter().any(|a| a == "--help-md") {
         let mut cmd = cli::build_command();
         cmd = crate::completion::inject_hook_subcommands(cmd);
-        cmd = cmd.color(ColorChoice::Never); // No ANSI codes for raw markdown
 
         // Replace --help-md with --help for clap
         let filtered_args: Vec<String> = args
@@ -210,7 +227,11 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
                 ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
             )
         {
-            let output = normalize_clap_help_fences(&err.render().to_string());
+            // Escape-free markdown on stdout is this entry point's contract,
+            // tty or not, so the choice is declared rather than left to the
+            // stream's tty check.
+            ColorChoice::Never.write_global();
+            let output = normalize_clap_help_fences(&err.render().ansi().to_string());
             print!("{output}");
             process::exit(0);
         }
@@ -219,13 +240,12 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
 
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
     if let Err(err) = cmd.try_get_matches_from_mut(args_os) {
         match err.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                // err.render() returns a StyledStr containing ANSI codes.
-                // Use .ansi() to preserve them; .to_string() strips ANSI codes.
+                // .ansi() renders the StyledStr's styles as escapes; its
+                // Display renders the text without them.
                 let clap_output = err.render().ansi().to_string();
 
                 // Splice configured aliases into `wt --help` and
@@ -264,24 +284,15 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
     }
 }
 
-/// Get the help reference block with configurable color output.
-///
-/// `ColorChoice::Always` produces ANSI codes for HTML conversion (web docs).
-/// `ColorChoice::Never` produces plain text (skill reference files).
-fn help_reference_with_color(
-    command_path: &[&str],
-    width: Option<usize>,
-    color: ColorChoice,
-) -> String {
-    let output = help_reference_inner(command_path, width, color);
-    if matches!(color, ColorChoice::Always) {
-        // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
-        // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
-        // (colors), not OSC sequences - hyperlinks leak through as garbage.
-        worktrunk::styling::strip_osc8_hyperlinks(&output)
-    } else {
-        output
-    }
+/// The help reference block, rendered with ANSI codes for the page's stdout
+/// stream to keep or strip.
+fn help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = help_reference_inner(command_path, width);
+    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
+    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
+    // (colors), not OSC sequences - hyperlinks leak through as garbage. The plain
+    // stream drops them anyway, so the strip runs unconditionally.
+    worktrunk::styling::strip_osc8_hyperlinks(&output)
 }
 
 /// Normalize fences in clap-rendered help output for downstream markdown
@@ -296,7 +307,7 @@ fn normalize_clap_help_fences(text: &str) -> String {
         .replace("```console\n", "```bash\n")
 }
 
-fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: ColorChoice) -> String {
+fn help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
@@ -304,7 +315,6 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: Colo
 
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(color);
     if let Some(w) = width {
         cmd = cmd.term_width(w);
     }
@@ -314,15 +324,7 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: Colo
             err.kind(),
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         ) {
-        let rendered = err.render();
-        // .ansi() preserves ANSI codes; .to_string() strips them.
-        // Use .ansi() only when colors are enabled (for web HTML conversion).
-        let text = if matches!(color, ColorChoice::Always) {
-            rendered.ansi().to_string()
-        } else {
-            rendered.to_string()
-        };
-        normalize_clap_help_fences(&text)
+        normalize_clap_help_fences(&err.render().ansi().to_string())
     } else {
         return String::new();
     };
@@ -400,15 +402,9 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 /// Combines the command's `about` (definition) and `long_about` subtitle into
 /// a single description suitable for `<meta name="description">`. This is used
 /// by the docs sync test to auto-populate the `description` field in frontmatter.
-fn handle_help_description(args: &[String]) {
+fn handle_help_description(subcommand: Option<&str>) {
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(ColorChoice::Never);
-
-    let subcommand = args
-        .iter()
-        .filter(|a| *a != "--help-description" && !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| !a.contains("target/") && *a != "wt");
 
     let Some(subcommand) = subcommand else {
         eprintln!("Usage: wt <command> --help-description");
@@ -429,6 +425,33 @@ fn handle_help_description(args: &[String]) {
     };
 
     print!("{description}");
+}
+
+/// Print the JSON Schema for a command's `--format=json` payload.
+///
+/// A developer entry point in the same family as `--help-page`: it exists so
+/// the docs sync (`test_docs_are_in_sync`) can regenerate a committed schema
+/// file by running the binary, which is the only way a `tests/` integration
+/// test can reach a type in the bin-only `crate::commands` tree.
+///
+/// One command has a schema today, because one payload is versioned. The
+/// subcommand is the axis a second would arrive on.
+fn handle_print_schema(subcommand: Option<&str>) {
+    let Some(subcommand) = subcommand else {
+        eprintln!(
+            "Usage: wt <command> --print-schema
+Commands with schemas: list"
+        );
+        process::exit(2);
+    };
+
+    if subcommand != "list" {
+        eprintln!("No JSON schema for '{subcommand}'; commands with schemas: list");
+        process::exit(2);
+    }
+
+    let schema = crate::commands::list::json_v2::schema_document();
+    crate::output::print_json(&schema).expect("schema serializes");
 }
 
 /// Generate a full documentation page for a command.
@@ -453,19 +476,13 @@ fn handle_help_description(args: &[String]) {
 /// ```
 ///
 /// This is used to generate docs/content/merge.md etc from the source.
-fn handle_help_page(args: &[String], mode: PageMode) {
+fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
+    // This page's stdout is a pipe to a generator rather than a tty, so the
+    // mode decides its color.
+    mode.color().write_global();
+
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
-    cmd = cmd.color(ColorChoice::Never);
-
-    // Find the subcommand name (the arg before --help-page, or after wt)
-    let subcommand = args
-        .iter()
-        .filter(|a| *a != "--help-page" && !a.starts_with('-') && !a.ends_with("/wt"))
-        .find(|a| {
-            // Skip the binary name
-            !a.contains("target/") && *a != "wt"
-        });
 
     let Some(subcommand) = subcommand else {
         eprintln!(
@@ -492,20 +509,18 @@ Commands with pages: merge, switch, remove, list"
     };
 
     let main_help = mode.process_body(main_content);
-    let reference_block = help_reference_with_color(&[subcommand], Some(100), mode.color());
+    let reference_block = help_reference(&[subcommand], Some(100));
 
-    // Use std::println! to preserve ANSI codes in output (the styling::println strips them)
     mode.emit_header(subcommand);
-    std::println!("{}", main_help.trim());
-    std::println!();
+    println!("{}", main_help.trim());
+    println!();
 
     // Main command reference immediately after its content
-    std::println!("## Command reference");
-    std::println!();
-    std::println!("```");
-    std::print!("{}", reference_block.trim());
-    std::println!();
-    std::println!("```");
+    println!("## Command reference");
+    println!();
+    println!("```");
+    println!("{}", reference_block.trim());
+    println!("```");
 
     // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
@@ -514,10 +529,10 @@ Commands with pages: merge, switch, remove, list"
         // inside format_subcommand_section, so re-running would double-convert.
         let subdocs = mode.process_subdoc_trailing(subdocs);
         let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
-        std::println!();
-        std::println!("# Subcommands");
-        std::println!();
-        std::println!("{}", subdocs_expanded.trim());
+        println!();
+        println!("# Subcommands");
+        println!();
+        println!("{}", subdocs_expanded.trim());
     }
 
     mode.emit_footer();
@@ -781,7 +796,7 @@ fn format_subcommand_section(
         .chain(std::iter::once(subcommand_name))
         .collect();
 
-    let reference_block = help_reference_with_color(&command_path, Some(100), mode.color());
+    let reference_block = help_reference(&command_path, Some(100));
 
     // Format the section: heading, badge (outside heading), main content, command reference
     let mut section = format!("## {full_command}\n\n");

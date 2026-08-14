@@ -1,4 +1,4 @@
-//! Aggregate `[wt-trace]` records into a performance profile.
+//! Aggregate trace records into a performance profile.
 //!
 //! Where [`parse`](super::parse) turns trace lines into [`TraceEntry`] values and
 //! [`chrome`](super::chrome) exports them for Perfetto, this module answers the
@@ -7,19 +7,23 @@
 //!
 //! - **Where does time go?** — [`Profile::by_type`] groups subprocesses by command
 //!   shape (`git status`, `git rev-list`, `gh pr list`) with count/total/max/avg,
-//!   and [`Profile::slowest`] lists the most expensive individual jobs.
+//!   [`Profile::by_context`] groups them by context (typically worktree name) to
+//!   localize which worktree the parallel phase spends its time on, and
+//!   [`Profile::slowest`] lists the most expensive individual jobs.
 //! - **How parallel are we?** — [`Profile::parallelism`] is Σ(subprocess time) ÷
 //!   their wall span; [`Profile::peak_concurrency`] is the most subprocesses in
 //!   flight at once.
 //! - **Where is work wasted?** — [`CacheReport`] flags commands re-run with the
-//!   same context (a cache miss that should have been a hit).
+//!   same context (a cache miss that should have been a hit). Commands that read
+//!   stdin are excluded — their real input isn't in the command string, so
+//!   identical command lines aren't necessarily identical work.
 //!
 //! The analysis ([`Profile::from_entries`], [`CacheReport::from_entries`]) is pure
 //! data over `&[TraceEntry]` and carries no styling, so it compiles without the
-//! `cli` feature and is shared by both `wt config state logs profile` (which
-//! renders via [`Profile::render_text`] or serializes the struct for `--format=json`)
-//! and the `wt-perf` helper (which reuses [`CacheReport`] for its `cache-check`
-//! output). The struct's `Serialize` impl is the single canonical JSON source.
+//! `cli` feature and is shared by `wt config state logs profile` (which renders
+//! via [`Profile::render_text`] or serializes the struct for `--format=json`) and
+//! the `-vv` diagnostic report (`diagnostic.md`, which embeds the rendered text). The struct's `Serialize` impl
+//! is the single canonical JSON source.
 //!
 //! [`benches/CLAUDE.md`]: ../../../benches/CLAUDE.md
 
@@ -33,9 +37,9 @@ use crate::styling::format_heading;
 use super::{TraceEntry, TraceEntryKind, TraceResult};
 
 /// How many individual calls [`Profile::slowest`] retains.
-const SLOWEST_LIMIT: usize = 8;
+const SLOWEST_LIMIT: usize = 20;
 /// How many cache offenders the text summary lists before collapsing the rest.
-const CACHE_OFFENDER_LIMIT: usize = 3;
+const CACHE_OFFENDER_LIMIT: usize = 10;
 
 // Milestone event strings emitted by the `wt list` / picker collect pipeline
 // (`src/commands/list/collect/mod.rs`). These literals must match the emit
@@ -68,7 +72,7 @@ fn ser_opt_dur_us<S: serde::Serializer>(d: &Option<Duration>, s: S) -> Result<S:
     }
 }
 
-/// A performance profile derived from a set of `[wt-trace]` records.
+/// A performance profile derived from a set of trace records.
 ///
 /// The struct IS the canonical result: `--format=json` serializes it directly
 /// (durations as `*_us` microseconds), and [`Profile::render_text`] renders the
@@ -98,6 +102,9 @@ pub struct Profile {
     pub key_intervals: KeyIntervals,
     /// Subprocess time grouped by command shape, busiest first.
     pub by_type: Vec<TypeStat>,
+    /// Subprocess time grouped by context (typically worktree name), busiest
+    /// first. Commands with no context land in a `(none)` bucket.
+    pub by_context: Vec<ContextStat>,
     /// The most expensive individual jobs (commands and spans), slowest first.
     pub slowest: Vec<Slow>,
     /// Redundant same-context commands.
@@ -158,6 +165,15 @@ pub struct TypeStat {
     pub avg: Duration,
 }
 
+/// Aggregated subprocess timing for one context (typically a worktree name).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ContextStat {
+    pub context: String,
+    pub count: usize,
+    #[serde(rename = "total_us", serialize_with = "ser_dur_us")]
+    pub total: Duration,
+}
+
 /// One expensive job in [`Profile::slowest`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Slow {
@@ -181,17 +197,16 @@ pub struct Phase {
 
 /// Redundant-command analysis: the same `(command, context)` run more than once
 /// in a single invocation is a cache that should have hit but didn't.
+///
+/// Only commands whose work is fully determined by `(command, context)` are
+/// considered. A command that reads stdin (`stdin=true`: a `claude -p` prompt,
+/// a diff piped to `git patch-id`) carries input the command string doesn't
+/// capture, so two runs with identical `(command, context)` may be entirely
+/// different work — it never forms or joins a duplicate bucket. Cross-context
+/// repeats aren't reported either: N worktrees each running `git status` is
+/// expected fan-out, not a cache miss.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CacheReport {
-    pub total_commands: usize,
-    pub unique_commands: usize,
-    pub contexts: usize,
-    #[serde(rename = "total_time_us", serialize_with = "ser_dur_us")]
-    pub total_time: Duration,
-    /// Distinct commands run more than once (in any context).
-    pub duplicated_commands: usize,
-    /// Extra runs beyond the first, regardless of context.
-    pub extra_calls: usize,
     /// Commands re-run within the same context, worst waste first.
     pub same_context_duplicates: Vec<DuplicateCommand>,
     /// Extra same-context runs beyond the first.
@@ -272,8 +287,9 @@ fn command_type(command: &str) -> String {
     parts.join(" ")
 }
 
-/// Display label for one slowest-list command.
-fn command_label(command: &str, context: Option<&str>, result: &TraceResult) -> String {
+/// Display label for a command: `cmd [context]` plus a failure marker. Shared
+/// with the timeline renderer so the two views can't drift.
+pub(super) fn command_label(command: &str, context: Option<&str>, result: &TraceResult) -> String {
     let mut label = match context {
         Some(c) => format!("{command} [{c}]"),
         None => command.to_string(),
@@ -313,6 +329,7 @@ impl Profile {
         let mut command_total_us = 0u64;
         let mut span_total_us = 0u64;
         let mut by_type_map: BTreeMap<String, (usize, u64, u64)> = BTreeMap::new();
+        let mut by_context_map: BTreeMap<&str, (usize, u64)> = BTreeMap::new();
         let mut threads: HashSet<u64> = HashSet::new();
         // (start, end) for timed subprocesses — drives parallelism & peak concurrency.
         let mut intervals: Vec<(u64, u64)> = Vec::new();
@@ -324,6 +341,7 @@ impl Profile {
                     command,
                     duration,
                     result,
+                    ..
                 } => {
                     let dur_us = duration.as_micros() as u64;
                     command_count += 1;
@@ -332,6 +350,11 @@ impl Profile {
                     stat.0 += 1;
                     stat.1 += dur_us;
                     stat.2 = stat.2.max(dur_us);
+                    let ctx_stat = by_context_map
+                        .entry(entry.context.as_deref().unwrap_or("(none)"))
+                        .or_default();
+                    ctx_stat.0 += 1;
+                    ctx_stat.1 += dur_us;
                     if let Some(tid) = entry.thread_id {
                         threads.insert(tid);
                     }
@@ -365,6 +388,20 @@ impl Profile {
             })
             .collect();
         by_type.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.key.cmp(&b.key)));
+
+        let mut by_context: Vec<ContextStat> = by_context_map
+            .into_iter()
+            .map(|(context, (count, total))| ContextStat {
+                context: context.to_string(),
+                count,
+                total: Duration::from_micros(total),
+            })
+            .collect();
+        by_context.sort_by(|a, b| {
+            b.total
+                .cmp(&a.total)
+                .then_with(|| a.context.cmp(&b.context))
+        });
 
         slowest.sort_by_key(|s| std::cmp::Reverse(s.duration));
         slowest.truncate(SLOWEST_LIMIT);
@@ -421,6 +458,7 @@ impl Profile {
             thread_count: threads.len(),
             key_intervals,
             by_type,
+            by_context,
             slowest,
             cache: CacheReport::from_entries(entries),
             phases,
@@ -508,6 +546,30 @@ impl Profile {
                     Align::Right,
                     Align::Right,
                 ],
+            ));
+        }
+
+        // A single bucket would restate the summary line's totals, so the
+        // per-context attribution table only renders when it can attribute.
+        if self.by_context.len() > 1 {
+            out.push('\n');
+            out.push_str(&format_heading("BY CONTEXT", None));
+            out.push('\n');
+            let mut rows = vec![vec![
+                "context".to_string(),
+                "count".to_string(),
+                "total".to_string(),
+            ]];
+            for stat in &self.by_context {
+                rows.push(vec![
+                    stat.context.clone(),
+                    stat.count.to_string(),
+                    fmt_dur(stat.total),
+                ]);
+            }
+            out.push_str(&render_table(
+                &rows,
+                &[Align::Left, Align::Right, Align::Right],
             ));
         }
 
@@ -611,25 +673,31 @@ impl Profile {
 impl CacheReport {
     /// Build a redundant-command report from parsed trace entries.
     pub fn from_entries(entries: &[TraceEntry]) -> Self {
-        let mut total_commands = 0;
-        let mut cmd_counts: HashMap<&str, usize> = HashMap::new();
-        let mut contexts: HashSet<&str> = HashSet::new();
         // (command, context) → durations of every run, in microseconds.
         let mut pair_durations: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
 
         for entry in entries {
             if let TraceEntryKind::Command {
-                command, duration, ..
+                command,
+                duration,
+                reads_stdin,
+                ..
             } = &entry.kind
             {
+                // Duplicate analysis assumes (command, context) fully determines
+                // a command's work. A command that reads stdin carries input the
+                // command string doesn't capture, so two runs with identical
+                // (command, context) may be entirely different work (a different
+                // prompt piped to `claude -p`, a different diff to `git
+                // patch-id`) — never let it form, or join, a duplicate bucket.
+                if *reads_stdin {
+                    continue;
+                }
                 let ctx = entry.context.as_deref().unwrap_or("(none)");
-                *cmd_counts.entry(command.as_str()).or_default() += 1;
                 pair_durations
                     .entry((command.as_str(), ctx))
                     .or_default()
                     .push(duration.as_micros() as u64);
-                contexts.insert(ctx);
-                total_commands += 1;
             }
         }
 
@@ -687,17 +755,7 @@ impl CacheReport {
                 .then_with(|| a.command.cmp(&b.command))
         });
 
-        let total_time_us: u64 = pair_durations.values().flat_map(|d| d.iter()).sum();
-        let duplicated_commands = cmd_counts.values().filter(|c| **c > 1).count();
-        let extra_calls = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
-
         CacheReport {
-            total_commands,
-            unique_commands: cmd_counts.len(),
-            contexts: contexts.len(),
-            total_time: Duration::from_micros(total_time_us),
-            duplicated_commands,
-            extra_calls,
             same_context_duplicates,
             same_context_extra_calls,
             same_context_extra: Duration::from_micros(same_context_extra_us),
@@ -737,26 +795,28 @@ fn concurrency(intervals: &[(u64, u64)]) -> (Option<f64>, Option<usize>) {
 }
 
 #[derive(Clone, Copy)]
-enum Align {
+pub(super) enum Align {
     Left,
     Right,
 }
 
 /// Pad rows into aligned columns, two spaces between columns, two-space indent.
 ///
-/// Widths use `char` count — trace command shapes and durations are ASCII;
-/// only a `[context]` (a branch name) can carry wide characters, and it sits in
-/// the final left-aligned column. Trailing whitespace is trimmed per line.
+/// Widths use display width (`unicode_width`), so a context cell carrying wide
+/// characters (a CJK/emoji worktree name) aligns in any column. Trailing
+/// whitespace is trimmed per line.
 ///
 /// Durations all render in one unit ([`fmt_dur`]) with two decimals, so
 /// right-aligning a duration column lines up both the decimal points and the
 /// `ms` suffix — no decimal-specific alignment is needed.
-fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
+pub(super) fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
+    use unicode_width::UnicodeWidthStr;
+
     let cols = aligns.len();
     let mut widths = vec![0usize; cols];
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
-            widths[i] = widths[i].max(cell.chars().count());
+            widths[i] = widths[i].max(cell.as_str().width());
         }
     }
 
@@ -765,7 +825,7 @@ fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
         let mut line = String::from("  ");
         for (i, cell) in row.iter().enumerate() {
             let last = i + 1 == row.len();
-            let pad = widths[i].saturating_sub(cell.chars().count());
+            let pad = widths[i].saturating_sub(cell.as_str().width());
             match aligns[i] {
                 Align::Left => {
                     line.push_str(cell);
@@ -791,7 +851,7 @@ fn render_table(rows: &[Vec<String>], aligns: &[Align]) -> String {
 /// Format a duration in milliseconds with two decimals — one unit everywhere so
 /// every duration column aligns (decimals and the `ms` suffix line up under
 /// right-alignment) regardless of magnitude.
-fn fmt_dur(d: Duration) -> String {
+pub(super) fn fmt_dur(d: Duration) -> String {
     format!("{:.2}ms", d.as_micros() as f64 / 1_000.0)
 }
 
@@ -822,9 +882,26 @@ mod tests {
                 command: command.to_string(),
                 duration: Duration::from_micros(dur_us),
                 result: TraceResult::Completed { success: ok },
+                reads_stdin: false,
             },
             start_time_us: Some(ts_us),
             thread_id: Some(tid),
+        }
+    }
+
+    /// A successful command that consumed stdin uncaptured by its command
+    /// string (the `stdin=true` shape: `claude -p`, `git patch-id`).
+    fn cmd_stdin(command: &str, ctx: Option<&str>, dur_us: u64) -> TraceEntry {
+        TraceEntry {
+            context: ctx.map(str::to_string),
+            kind: TraceEntryKind::Command {
+                command: command.to_string(),
+                duration: Duration::from_micros(dur_us),
+                result: TraceResult::Completed { success: true },
+                reads_stdin: true,
+            },
+            start_time_us: None,
+            thread_id: None,
         }
     }
 
@@ -878,6 +955,22 @@ mod tests {
         assert_eq!(command_type("git -c foo.bar=baz diff --stat"), "git diff");
         // Empty command string yields an empty key.
         assert_eq!(command_type(""), "");
+    }
+
+    /// A wide-character context (CJK worktree name) in a non-final column must
+    /// not shift the columns after it — widths are display width, not chars.
+    #[test]
+    fn render_table_pads_by_display_width() {
+        let rows = vec![
+            vec!["context".into(), "count".into()],
+            vec!["日本語".into(), "3".into()],
+            vec!["main".into(), "12".into()],
+        ];
+        insta::assert_snapshot!(render_table(&rows, &[Align::Left, Align::Right]), @r"
+        context  count
+        日本語       3
+        main        12
+        ");
     }
 
     #[test]
@@ -939,6 +1032,30 @@ mod tests {
         assert_eq!(cache.same_context_extra, Duration::from_millis(7));
         assert_eq!(cache.same_context_duplicates.len(), 1);
         assert_eq!(cache.same_context_duplicates[0].max_per_context, 3);
+    }
+
+    #[test]
+    fn cache_report_excludes_stdin_reading_commands() {
+        // Three identical `claude -p` lines in one context differ only by the
+        // prompt piped to stdin (not in the command string), so they're real
+        // distinct work, not a cache miss. A plain `git status` repeated in the
+        // same context is the genuine duplicate the report should still catch.
+        let claude = "sh -c claude -p";
+        let entries = vec![
+            cmd_stdin(claude, Some("main"), 5_000),
+            cmd_stdin(claude, Some("main"), 4_000),
+            cmd_stdin(claude, Some("main"), 3_000),
+            cmd("git status", Some("main"), 0, 2_000, 1, true),
+            cmd("git status", Some("main"), 6_000, 1_000, 1, true),
+        ];
+        let cache = CacheReport::from_entries(&entries);
+
+        // The stdin-reading commands are not duplicates; only the repeated
+        // `git status` is.
+        assert_eq!(cache.same_context_duplicates.len(), 1);
+        assert_eq!(cache.same_context_duplicates[0].command, "git status");
+        assert_eq!(cache.same_context_extra_calls, 1);
+        assert_eq!(cache.same_context_extra, Duration::from_millis(1));
     }
 
     #[test]
@@ -1016,6 +1133,13 @@ mod tests {
               "avg_us": 4500
             }
           ],
+          "by_context": [
+            {
+              "context": "main",
+              "count": 2,
+              "total_us": 9000
+            }
+          ],
           "slowest": [
             {
               "dur_us": 5000,
@@ -1027,12 +1151,6 @@ mod tests {
             }
           ],
           "cache": {
-            "total_commands": 2,
-            "unique_commands": 1,
-            "contexts": 1,
-            "total_time_us": 9000,
-            "duplicated_commands": 1,
-            "extra_calls": 1,
             "same_context_duplicates": [
               {
                 "command": "git status",
@@ -1085,6 +1203,7 @@ mod tests {
                 result: TraceResult::Error {
                     message: message.to_string(),
                 },
+                reads_stdin: false,
             },
             start_time_us: None,
             thread_id: None,
@@ -1095,6 +1214,7 @@ mod tests {
                 command: command.to_string(),
                 duration: Duration::from_micros(dur_us),
                 result: TraceResult::Completed { success: true },
+                reads_stdin: false,
             },
             start_time_us: None,
             thread_id: None,
@@ -1120,36 +1240,44 @@ mod tests {
                 command: command.to_string(),
                 duration: Duration::from_micros(dur_us),
                 result: TraceResult::Completed { success: true },
+                reads_stdin: false,
             },
             start_time_us: None,
             thread_id: None,
         };
-        // Four duplicated commands (waste aaa>bbb>ccc>ddd); ddd spans two
-        // contexts. Ten calls total, so the eight-deep slowest list truncates.
-        let entries = vec![
-            dup("git aaa", "w1", 9_000),
-            dup("git aaa", "w1", 8_000),
-            dup("git bbb", "w1", 7_000),
-            dup("git bbb", "w1", 6_000),
-            dup("git ccc", "w1", 5_000),
-            dup("git ccc", "w1", 4_000),
-            dup("git ddd", "w1", 3_000),
-            dup("git ddd", "w1", 2_000),
-            dup("git ddd", "w2", 1_500),
-            dup("git ddd", "w2", 1_000),
-        ];
+        // More distinct commands than either limit, each run twice in one
+        // context so every command is both a slow call and a same-context
+        // duplicate: 24 single-context commands plus one (`git xctx`)
+        // duplicated across two contexts = 25 offenders. The 50 slow calls
+        // truncate to SLOWEST_LIMIT (20); the 25 offenders collapse to
+        // CACHE_OFFENDER_LIMIT (10) with "… and N more". Durations strictly
+        // decrease with index for deterministic ordering.
+        let mut entries = Vec::new();
+        for i in 0..24u64 {
+            let command = format!("git cmd{i:02}");
+            let base = (50 - i) * 1_000;
+            entries.push(dup(&command, "w1", base));
+            entries.push(dup(&command, "w1", base - 100));
+        }
+        // One command across two contexts exercises the per-context sort; its
+        // durations are the smallest, so it lands in the collapsed tail.
+        entries.push(dup("git xctx", "w1", 2_000));
+        entries.push(dup("git xctx", "w1", 1_800));
+        entries.push(dup("git xctx", "w2", 1_500));
+        entries.push(dup("git xctx", "w2", 1_000));
+
         let profile = Profile::from_entries(&entries);
         assert_eq!(profile.slowest.len(), SLOWEST_LIMIT);
-        assert_eq!(profile.cache.same_context_duplicates.len(), 4);
-        // ddd's contexts sort by total time: w1 (5ms) before w2 (2.5ms).
-        let ddd = profile
+        assert_eq!(profile.cache.same_context_duplicates.len(), 25);
+        // xctx's contexts sort by total time: w1 (3.8ms) before w2 (2.5ms).
+        let xctx = profile
             .cache
             .same_context_duplicates
             .iter()
-            .find(|d| d.command == "git ddd")
+            .find(|d| d.command == "git xctx")
             .unwrap();
         assert_eq!(
-            ddd.contexts
+            xctx.contexts
                 .iter()
                 .map(|c| c.context.as_str())
                 .collect::<Vec<_>>(),

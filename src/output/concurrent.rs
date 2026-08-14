@@ -46,8 +46,8 @@ use anyhow::Context;
 use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::{
-    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig,
-    scrub_directive_env_vars,
+    DIRECTIVE_EXEC_FILE_ENV_VAR, ShellConfig, apply_cd_directive_env, scrub_directive_env_vars,
+    scrub_git_discovery_env_vars,
 };
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
@@ -72,6 +72,10 @@ pub struct ConcurrentCommand<'a> {
     /// Directive file env vars to pass through to the child. See
     /// `DirectivePassthrough` for the trust model (CD passthrough, EXEC scrub).
     pub directives: &'a DirectivePassthrough,
+    /// Scrub inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`/…) from the
+    /// child. `true` for hooks (they operate on the worktree wt targets), `false`
+    /// for aliases (they keep wt's inherited context). See issue #3373.
+    pub scrub_git_discovery: bool,
 }
 
 /// Run every command concurrently and return each per-child result in input
@@ -180,7 +184,7 @@ pub fn run_concurrent_commands(
     // user-visible exit code shouldn't be 137 — they only ever sent SIGINT, and
     // wt's escalation to SIGKILL on the second press is an implementation
     // detail. Override each child's reported signal with the originating signal
-    // so wt's `exit_code()` and `interrupt_exit_code()` reflect the user's
+    // so wt's `exit_code()` and `interrupt_signal()` reflect the user's
     // intent (130 from SIGINT, not 137 from SIGKILL).
     if let Some(orig) = originating_signal {
         for outcome in &mut outcomes {
@@ -292,16 +296,19 @@ fn spawn_child(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // User hooks discover their repo from the cwd wt sets, not an inherited
+    // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
+    if cmd.scrub_git_discovery {
+        scrub_git_discovery_env_vars(&mut command);
+    }
+
     // Scrub all directive env vars, then re-add the passthroughs.
     scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
-        command.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+        apply_cd_directive_env(&mut command, path);
     }
     if let Some(path) = &cmd.directives.exec_file {
         command.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
-    }
-    if let Some(path) = &cmd.directives.legacy_file {
-        command.env(DIRECTIVE_FILE_ENV_VAR, path);
     }
 
     #[cfg(unix)]
@@ -320,7 +327,9 @@ fn spawn_child(
 
     // Start the trace just before spawning so its duration brackets the real
     // spawn → wait span (the child keeps running while we drain its output).
-    let mut trace = CommandTrace::new(None, cmd.expanded);
+    // Each child is fed its own `context_json` on stdin, so mark it stdin-reading
+    // — the same command across worktrees isn't a duplicate (different input).
+    let mut trace = CommandTrace::new(None, cmd.expanded).reads_stdin(true);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -473,7 +482,7 @@ mod tests {
     //! Unit tests that exercise the executor's option-bearing code paths which
     //! aren't reachable through the alias integration tests today: every child
     //! currently has `log_label=None` (aliases skip per-child logging) and the
-    //! CD/legacy directive env vars are usually unset. Driving these branches
+    //! CD/EXEC directive env vars are usually unset. Driving these branches
     //! with a direct call proves they behave correctly when a future caller
     //! (concurrent foreground hooks, once their deprecation completes) uses them.
     use super::*;
@@ -492,6 +501,7 @@ mod tests {
             context_json: "{}",
             log_label,
             directives,
+            scrub_git_discovery: false,
         }];
         run_concurrent_commands(&specs).expect("spawn failed")
     }
@@ -513,9 +523,9 @@ mod tests {
         // passing a log_label doesn't panic and the command still runs.
     }
 
-    /// `DirectivePassthrough` with `cd_file`, `exec_file`, and `legacy_file`
-    /// set must propagate all three env vars to the child. The child script
-    /// echoes each env var; we assert every value is delivered.
+    /// `DirectivePassthrough` with `cd_file` and `exec_file` set must propagate
+    /// both env vars to the child. The child script writes to each named file;
+    /// we assert both values are delivered.
     ///
     /// Unix-only: the script uses POSIX `sh` redirect syntax and relies on
     /// native temp paths that don't need escaping. Git Bash on Windows would
@@ -526,29 +536,24 @@ mod tests {
         use tempfile::NamedTempFile;
         let cd = NamedTempFile::new().unwrap();
         let exec = NamedTempFile::new().unwrap();
-        let legacy = NamedTempFile::new().unwrap();
         let directives = DirectivePassthrough {
             cd_file: Some(cd.path().to_path_buf()),
             exec_file: Some(exec.path().to_path_buf()),
-            legacy_file: Some(legacy.path().to_path_buf()),
         };
         // Write each env var's value to its matching temp file. If the child
         // didn't receive the env var, the redirect would fail or write an
         // empty file.
         let script = format!(
-            "printf CD > {} && printf EXEC > {} && printf LEGACY > {}",
+            "printf CD > {} && printf EXEC > {}",
             cd.path().display(),
             exec.path().display(),
-            legacy.path().display(),
         );
         let outcomes = run_one_with_directives("job", &script, None, &directives);
         assert!(outcomes[0].is_ok(), "child should exit 0");
         let cd_contents = std::fs::read_to_string(cd.path()).unwrap();
         let exec_contents = std::fs::read_to_string(exec.path()).unwrap();
-        let legacy_contents = std::fs::read_to_string(legacy.path()).unwrap();
         assert_eq!(cd_contents, "CD");
         assert_eq!(exec_contents, "EXEC");
-        assert_eq!(legacy_contents, "LEGACY");
     }
 
     /// An empty `cmds` slice must return an empty outcomes vec without

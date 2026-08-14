@@ -111,10 +111,19 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
                 // flush-left; the gutter mode quotes it in the house bar.
                 let content = code_block_lines.join("\n");
                 let formatted = if code_blocks == CodeBlocks::Flush {
+                    // Flush code feeds the gutter-free `pr`/comments panes. Wrap each
+                    // line to width (word-wrap, preserving indent) and dim every
+                    // resulting piece, so a long line doesn't overflow the pane — and,
+                    // when the comments pane re-quotes this in the house gutter, every
+                    // wrapped piece already fits, keeping the gutter's own wrap a no-op
+                    // and the dim consistent rather than landing only on the first line.
                     let dim = Style::new().dimmed();
                     code_block_lines
                         .iter()
-                        .map(|l| format!("{dim}{l}{dim:#}"))
+                        .flat_map(|l| {
+                            width.map_or_else(|| vec![l.to_string()], |w| wrap_styled_text(l, w))
+                        })
+                        .map(|piece| format!("{dim}{piece}{dim:#}"))
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {
@@ -473,14 +482,14 @@ fn colorize_status_symbols(text: &str) -> String {
     result = replace_dim(result, "✘", error);
 
     // Git operations, MergeTreeConflicts: WARNING (yellow)
-    result = replace_dim(result, "⤴", warning);
-    result = replace_dim(result, "⤵", warning);
+    result = replace_dim(result, "↻", warning);
     result = replace_dim(result, "✗", warning);
 
-    // Worktree state: BranchWorktreeMismatch (red), Prunable/Locked (yellow)
-    result = replace_dim(result, "⚑", error);
+    // Worktree state: Prunable/Locked (yellow), the irregular-mapping flag
+    // (dim yellow)
     result = replace_dim(result, "⊟", warning);
     result = replace_dim(result, "⊞", warning);
+    result = replace_dim(result, "⚑", warning.dimmed());
 
     // CI legend samples: replace dimmed `#` followed by a color name
     let dimmed_hash = format!("{dim}#{dim:#}");
@@ -718,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_render_markdown_in_help_table() {
-        let result = render_markdown_in_help("| A | B |\n| - | - |\n| 1 | 2 |");
+        let result = render_markdown_in_help("| A | B |\n| --- | --- |\n| 1 | 2 |");
         assert_snapshot!(result, @"
          A   B  
         ─── ─── 
@@ -771,8 +780,8 @@ mod tests {
         assert_snapshot!(conflicts, @"[31m✘[0m conflicts");
 
         // Git operations → yellow
-        let git_ops = colorize_status_symbols(&format!("{dim}⤴{dim:#} rebase"));
-        assert_snapshot!(git_ops, @"[33m⤴[0m rebase");
+        let git_ops = colorize_status_symbols(&format!("{dim}↻{dim:#} rebase"));
+        assert_snapshot!(git_ops, @"[33m↻[0m rebase");
 
         // CI legend samples: dimmed `#` + color name recolors the sample
         let ci_passed = colorize_status_symbols(&format!("{dim}#{dim:#} green"));
@@ -845,6 +854,33 @@ mod tests {
         A   B  
         1   2
         ");
+    }
+
+    #[test]
+    fn test_render_table_ragged_narrow_does_not_panic() {
+        // Regression for #3407. termimad <= 0.34.1 panicked with an out-of-bounds
+        // index when a *ragged* table — a row with more cells than the header —
+        // was rendered at a narrow width: its column fitter (`Table::fix_columns`
+        // in termimad's src/tbl.rs) took an error path that skipped cell padding,
+        // then indexed past the shorter row. PR-comment markdown is untrusted and
+        // can contain such a table, and the picker renders comment bodies through
+        // here, so this used to abort `wt switch`. Fixed upstream in termimad
+        // 0.35.1 (Canop/termimad#77); this guards against a regression or an
+        // accidental downgrade — the render must complete rather than panicking.
+        let lines = vec![
+            "| Key | Value |",
+            "| --- | --- |",
+            "| alpha | beta | gamma | delta | epsilon | zeta |",
+        ];
+        // The bug manifested as an out-of-bounds panic *during* rendering in the
+        // narrow-width band (16/20/24). termimad wraps cells hard and drops
+        // columns to fit width 20, so we don't assert on specific cell text —
+        // reaching this line at all is the proof the panic is gone.
+        let result = render_table(&lines, Some(20));
+        assert!(
+            !result.is_empty(),
+            "render should complete and produce output"
+        );
     }
 
     #[test]

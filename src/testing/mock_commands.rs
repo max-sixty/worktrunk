@@ -1,15 +1,18 @@
 // Cross-platform mock command helpers
 //
 // These helpers create mock executables that work on both Unix and Windows.
-// Mock behavior is defined via JSON config files, read by the mock-stub binary.
+// Mock behavior is defined via JSON config files, played back by the `wt`
+// binary itself: `main()` dispatches to `testing::mock_stub` when
+// `WORKTRUNK_TEST_MOCK_CONFIG_DIR` is set, argv[0] isn't wt's own name, and
+// the config dir holds a `<argv0>.json`.
 //
-// On Unix: mock-stub is copied as the command name (e.g., `gh`)
-// On Windows: mock-stub.exe is copied as `gh.exe`
+// On Unix: `wt` is symlinked as the command name (e.g., `gh`)
+// On Windows: `wt.exe` is hard-linked (or copied) as `gh.exe`
 //
 // Both platforms read `<command>.json` for configuration.
 //
 // This approach:
-// - Single Rust binary for all platforms
+// - The mocks are the binary under test, so they can't be missing or stale
 // - No bash dependency
 // - Config is just JSON - easy to generate and debug
 
@@ -17,44 +20,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-
-/// Path to the mock-stub binary.
-///
-/// `workspace.default-members` builds it under an unfiltered `cargo test` /
-/// `cargo nextest run`, and `.config/nextest.toml`'s setup-script builds it
-/// under filtered nextest (including `cargo llvm-cov nextest`). A bare
-/// `cargo test --test integration` builds neither path — a target filter
-/// overrides `default-members`, and `cargo test` ignores nextest setup-scripts
-/// — so the binary is absent on a clean `target/`, and always absent under
-/// `cargo llvm-cov --test integration` since cargo-llvm-cov uses its own
-/// target dir. Asserting here surfaces the fix; the alternative is an opaque
-/// failure later inside a mock spawn (ENOENT on a dangling symlink, or a
-/// silently-dropped CI indicator when `tool_available("tea")` returns false).
-///
-/// Folding the helper bins back into the worktrunk crate would let
-/// `cargo test --test integration` build them automatically and delete this
-/// whole layer — it's blocked on cargo-dist; see `.config/nextest.toml` and
-/// `tests/helpers/mock-stub/Cargo.toml`.
-fn mock_stub_binary() -> std::path::PathBuf {
-    let path = super::workspace_bin("mock-stub");
-    assert_mock_stub_present(&path);
-    path
-}
-
-/// Panic with build instructions if `path` (the resolved mock-stub location)
-/// doesn't exist. Split out so a unit test can drive the missing-binary arm
-/// without depending on whether the real binary happens to be built.
-fn assert_mock_stub_present(path: &Path) {
-    assert!(
-        path.exists(),
-        "mock-stub binary not found at {}\n\n\
-         Build it once with `cargo build -p mock-stub`, or use a runner that builds\n\
-         the test helper bins:\n\
-         \n  cargo nextest run --features shell-integration-tests --test integration ...\
-         \n  cargo llvm-cov nextest --features shell-integration-tests --test integration ...\n",
-        path.display(),
-    );
-}
 
 /// Builder for mock command configuration.
 ///
@@ -78,7 +43,7 @@ pub struct MockResponse {
     output: Option<String>,
     stderr: Option<String>,
     exit_code: i32,
-    delay_ms: u64,
+    wait_for_file: Option<String>,
 }
 
 impl MockResponse {
@@ -89,7 +54,7 @@ impl MockResponse {
             output: None,
             stderr: None,
             exit_code: 0,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -100,7 +65,7 @@ impl MockResponse {
             output: Some(text.to_string()),
             stderr: None,
             exit_code: 0,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -111,7 +76,7 @@ impl MockResponse {
             output: None,
             stderr: Some(text.to_string()),
             exit_code: 0,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -122,7 +87,7 @@ impl MockResponse {
             output: None,
             stderr: None,
             exit_code: code,
-            delay_ms: 0,
+            wait_for_file: None,
         }
     }
 
@@ -138,10 +103,12 @@ impl MockResponse {
         self
     }
 
-    /// Sleep this long before responding, to simulate a slow command (e.g. a
-    /// forge call) so a test can observe the caller's in-flight UI.
-    pub fn with_delay_ms(mut self, ms: u64) -> Self {
-        self.delay_ms = ms;
+    /// Wait until `path` exists under the mock config directory before
+    /// responding. This gives a test a causal release gate for an in-flight
+    /// command: first assert the caller's loading state, then create the file
+    /// and observe the response without sending another input.
+    pub fn wait_for_file(mut self, path: &str) -> Self {
+        self.wait_for_file = Some(path.to_string());
         self
     }
 
@@ -161,8 +128,8 @@ impl MockResponse {
         {
             obj.insert("exit_code".to_string(), json!(self.exit_code));
         }
-        if self.delay_ms != 0 {
-            obj.insert("delay_ms".to_string(), json!(self.delay_ms));
+        if let Some(path) = &self.wait_for_file {
+            obj.insert("wait_for_file".to_string(), json!(path));
         }
         serde_json::Value::Object(obj)
     }
@@ -171,6 +138,17 @@ impl MockResponse {
 impl MockConfig {
     /// Create a new mock config for the given command name.
     pub fn new(name: &str) -> Self {
+        // Playback dispatches on argv[0] (see `testing::mock_stub`), and wt's
+        // own names are reserved for wt itself — a mock under either name
+        // would silently run the real binary. Case-insensitive to match the
+        // dispatch's own guard: the config lookup goes through a filesystem
+        // that is case-insensitive on macOS and Windows, so a `WT.json` *is*
+        // `wt.json` there.
+        assert!(
+            !name.eq_ignore_ascii_case("wt") && !name.eq_ignore_ascii_case("git-wt"),
+            "a mock command cannot be named {name:?}: the mocks are the wt \
+             binary dispatching on argv[0]"
+        );
         Self {
             name: name.to_string(),
             version: None,
@@ -216,18 +194,50 @@ impl MockConfig {
     }
 }
 
-/// Create mock binary in bin_dir with the given name.
+/// Every invocation of mock command `name`, in call order, one entry per
+/// spawn with the arguments space-joined.
+///
+/// Lets a test assert on the *number of spawns*, not just the response —
+/// the property under test wherever a command is batched (one `lsof` for N
+/// PIDs) rather than called in a loop. Returns empty when the command was
+/// never invoked, so a "was not called" assertion reads naturally.
+///
+/// `log_dir` is the directory passed to the command as
+/// `WORKTRUNK_TEST_MOCK_CALL_LOG_DIR`. It must be OUTSIDE the repo under test:
+/// mocks spawned by hooks would otherwise dirty the working tree mid-run and
+/// change the behavior being measured.
+pub fn mock_calls(log_dir: &Path, name: &str) -> Vec<String> {
+    fs::read_to_string(log_dir.join(format!("{}.calls", name)))
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Create mock binary in bin_dir with the given name: a link to the `wt`
+/// binary, whose argv\[0\] dispatch plays back the mock config
+/// (`testing::mock_stub`).
+///
+/// Private on purpose: `MockConfig::write` is the only caller, and it writes
+/// `<name>.json` before linking. A link therefore can't exist without its
+/// config, which is what lets the dispatch treat a foreign argv\[0\] with no
+/// config as wt itself rather than a broken mock.
+///
 /// Uses symlinks on Unix (instant, works across filesystems).
-/// Uses hard links on Windows (symlinks require admin privileges).
-pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
-    let stub = mock_stub_binary();
+/// Uses hard links on Windows (symlinks require admin privileges), falling
+/// back to a copy when the link fails — hard links can't cross drives, and
+/// the debug `wt.exe` is large enough that a copy per mock is the fallback
+/// rather than the default. CI keeps the fallback rare by pinning TEMP to
+/// the workspace volume (ci.yaml's Windows TEMP step); on a machine whose
+/// temp dir is on another drive, mock setup degrades to a full copy per
+/// mock but still works.
+fn copy_mock_binary(bin_dir: &Path, name: &str) {
+    let stub = super::wt_bin();
 
     #[cfg(unix)]
     {
         let dest = bin_dir.join(name);
         // Remove existing (config may have changed)
         let _ = fs::remove_file(&dest);
-        std::os::unix::fs::symlink(&stub, &dest).expect("failed to symlink mock-stub binary");
+        std::os::unix::fs::symlink(&stub, &dest).expect("failed to symlink wt as mock binary");
     }
 
     #[cfg(windows)]
@@ -235,15 +245,29 @@ pub fn copy_mock_binary(bin_dir: &Path, name: &str) {
         let dest = bin_dir.join(format!("{}.exe", name));
         // Remove existing (config may have changed)
         let _ = fs::remove_file(&dest);
-        // Copy on Windows - hard links fail across drives (common on CI),
-        // and symlinks require admin privileges
-        fs::copy(&stub, &dest).expect("failed to copy mock-stub.exe");
+        if fs::hard_link(&stub, &dest).is_err() {
+            fs::copy(&stub, &dest).expect("failed to copy wt.exe as mock binary");
+        }
     }
 }
 
 // =============================================================================
 // High-level mock helpers for common test scenarios
 // =============================================================================
+
+/// The stderr `tea api --include` writes ahead of the body: the status line,
+/// then the response headers, then a blank line.
+///
+/// Every mock `tea api` response that stands for an HTTP response carries this
+/// — both Gitea backends read the status from here, and a body arriving with no
+/// status line is a failed request rather than a resource. `status` is the
+/// status line's tail (`200 OK`, `404 Not Found`).
+///
+/// A mock standing for `tea` itself failing (non-zero exit, no response) has no
+/// status line to write, and must not have one.
+pub fn tea_api_include_stderr(status: &str) -> String {
+    format!("HTTP/1.1 {status}\r\nContent-Type: application/json;charset=utf-8\r\n\r\n")
+}
 
 /// Create a mock cargo command for tests.
 pub fn create_mock_cargo(bin_dir: &Path) {
@@ -306,115 +330,22 @@ API authentication.
         .write(bin_dir);
 }
 
-/// Create a mock uv command for dependency sync and dev server.
-pub fn create_mock_uv_sync(bin_dir: &Path) {
-    MockConfig::new("uv")
-        .command(
-            "sync",
-            MockResponse::output(
-                "
-  Resolved 24 packages in 145ms
-  Installed 24 packages in 1.2s
-",
-            ),
-        )
-        .command(
-            "run",
-            MockResponse::output(
-                "
-  Starting dev server on http://localhost:3000...
-",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create mock uv that delegates to pytest/ruff commands.
-///
-/// Note: This mock doesn't actually delegate - it provides fixed output.
-/// For tests needing real delegation, set up both commands separately.
-pub fn create_mock_uv_pytest_ruff(bin_dir: &Path) {
-    MockConfig::new("uv")
-        .command(
-            "run",
-            MockResponse::output(
-                "
-============================= test session starts ==============================
-collected 3 items
-
-tests/test_auth.py::test_login_success PASSED                            [ 33%]
-tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-tests/test_auth.py::test_token_validation PASSED                         [100%]
-
-============================== 3 passed in 0.8s ===============================
-",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock pytest command with test output.
-pub fn create_mock_pytest(bin_dir: &Path) {
-    MockConfig::new("pytest")
-        .command(
-            "_default",
-            MockResponse::output(
-                "
-============================= test session starts ==============================
-collected 3 items
-
-tests/test_auth.py::test_login_success PASSED                            [ 33%]
-tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-tests/test_auth.py::test_token_validation PASSED                         [100%]
-
-============================== 3 passed in 0.8s ===============================
-",
-            ),
-        )
-        .write(bin_dir);
-}
-
-/// Create a mock ruff command.
-pub fn create_mock_ruff(bin_dir: &Path) {
-    MockConfig::new("ruff")
-        .command("check", MockResponse::output("\nAll checks passed!\n\n"))
-        .write(bin_dir);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
-    fn test_mock_config_write() {
-        let temp = TempDir::new().unwrap();
-        let bin_dir = temp.path();
-
-        MockConfig::new("test-cmd")
-            .version("test-cmd version 1.0")
-            .command("foo", MockResponse::output("hello"))
-            .command("bar", MockResponse::exit(42))
-            .write(bin_dir);
-
-        // Check config file exists and is valid JSON
-        let config_path = bin_dir.join("test-cmd.json");
-        assert!(config_path.exists());
-        let content = fs::read_to_string(&config_path).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(parsed["version"], "test-cmd version 1.0");
-
-        // Check binary exists
-        #[cfg(unix)]
-        assert!(bin_dir.join("test-cmd").exists());
-
-        #[cfg(windows)]
-        assert!(bin_dir.join("test-cmd.exe").exists());
+    #[should_panic(expected = "a mock command cannot be named")]
+    fn mock_config_rejects_wt_as_name() {
+        MockConfig::new("wt");
     }
 
+    /// The filesystem the dispatch probes is case-insensitive on macOS and
+    /// Windows — `WT.json` there *is* `wt.json` — so the name guard must be
+    /// case-insensitive too.
     #[test]
-    #[should_panic(expected = "mock-stub binary not found at")]
-    fn assert_mock_stub_present_panics_when_absent() {
-        assert_mock_stub_present(Path::new("/nonexistent/mock-stub"));
+    #[should_panic(expected = "a mock command cannot be named")]
+    fn mock_config_rejects_wt_case_insensitively() {
+        MockConfig::new("WT");
     }
 }

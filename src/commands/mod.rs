@@ -42,6 +42,7 @@ pub(crate) use config::{
     handle_logs_list, handle_logs_profile, handle_opencode_install, handle_opencode_uninstall,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
     handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
+    list_approvals,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -63,8 +64,7 @@ pub(crate) use step::{
     step_relocate, step_show_squash_prompt, step_tether,
 };
 pub(crate) use worktree::{
-    handle_switch_command, is_worktree_at_expected_path, resolve_worktree_arg,
-    worktree_display_name,
+    handle_switch_command, is_worktree_at_expected_path, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location
@@ -189,11 +189,14 @@ pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> a
     let mut args = vec!["diff", "--color=always", "--stat"];
     // With no detectable width, omit the flag and let git use its default width.
     let stat_width_arg;
-    if let Some(term_width) = crate::display::terminal_width() {
+    if let Some(term_width) = worktrunk::styling::terminal_width() {
         let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
         stat_width_arg = format!("--stat-width={stat_width}");
         args.push(&stat_width_arg);
     }
+    // Fence the range positional so a target branch named like a flag
+    // (`-x..HEAD`) can't be misparsed as an option.
+    args.push("--end-of-options");
     args.push(range);
     let diff_stat = repo.run_command(&args)?.trim_end().to_string();
 

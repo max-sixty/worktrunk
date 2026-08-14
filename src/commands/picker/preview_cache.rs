@@ -1,4 +1,8 @@
-//! Persistent cache for picker preview content, keyed by SHA + dimensions.
+//! Persistent cache for picker preview content, keyed by a stable content
+//! signature + dimensions.
+//!
+//! This is the on-disk tier for three of the modes; the in-memory tier above it
+//! and the system-wide invalidation rules live in [`super::preview_orchestrator`].
 //!
 //! Three of the picker's preview modes are deterministic functions of git
 //! object SHAs at a given terminal width: Log on `(branch_head_sha)`,
@@ -9,10 +13,34 @@
 //! cached — its inputs include the mutable working tree, which has no cheap
 //! stable hash. Summary has its own cache (`crate::summary`).
 //!
-//! Layout: `.git/wt/cache/picker-preview/{mode}-{sha}[-{sha}]-{w}[-{h}].json`.
-//! The diff modes cache the pre-pager rendered string; the pager step in
-//! `compute_and_page_preview` runs on every read, so changing the
-//! configured pager invalidates nothing — the cache is pager-agnostic.
+//! The Comments mode has no git SHA, but a GitHub PR's `updatedAt` is the
+//! equivalent content signature: it bumps on comment add, edit, review, and
+//! review-comment (not deletion — see [`comments_key`]). So a matching key lets
+//! a later `wt switch` skip the per-row `gh pr view --json comments` fetch.
+//! `updatedAt` rides the `gh pr list` / `gh pr view` call the picker already
+//! makes (CI column / `--prs` list), so the signal costs no extra network. The
+//! worktree-row CI call (`gh pr list --head`) goes one better: it already
+//! transfers the whole comment thread (it counts it for the `pr` pane's
+//! `comments` line), so [`list::ci_status`](crate::commands::list::ci_status)
+//! *primes* this cache from that otherwise-discarded data — turning even the
+//! *first* `wt switch`'s comments fetch into a hit, including the common
+//! zero-comment PR (an empty thread is cached, so the tab resolves to
+//! "No comments" with no fetch). Like
+//! Log (and unlike the diff modes), Comments caches the *raw* parsed thread
+//! ([`CommentEntry`]s) rather than the rendered pane, and re-renders on read —
+//! the pane folds in width-dependent wrapping and `epoch_now()`-relative times,
+//! so baking those into the cache would freeze them. Only GitHub PRs are cached;
+//! see [`comments_key`] and `PrStatus::updated_at` for why GitLab MRs are not.
+//! The repo-scoped cache dir isolates by repository, so the PR number alone
+//! disambiguates within it.
+//!
+//! Layout: `.git/wt/cache/picker-preview/{mode}-{sig}[-{sig}][-{w}[-{h}]].json`
+//! (the Comments key carries no width — its entry is width-independent raw data).
+//! The diff modes cache the pre-pager rendered diff *body* plus the facts
+//! needed to re-render the branch-naming headline on read — see
+//! [`BranchDiffCacheEntry`] for why the name must stay out of the value. The
+//! pager step in `compute_and_page_preview` runs on every read, so changing
+//! the configured pager invalidates nothing — the cache is pager-agnostic.
 //! The Log mode caches a small struct (raw `git log` output + per-commit
 //! stats) and recomputes the dim/bright split and relative-time formatting
 //! on every render — see [`LogCacheEntry`] for why.
@@ -32,6 +60,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use worktrunk::cache;
 use worktrunk::git::Repository;
+use worktrunk::path::sanitize_for_filename;
 
 const KIND: &str = "picker-preview";
 
@@ -71,7 +100,12 @@ pub(super) struct LogCacheEntry {
 }
 
 /// 500 entries × tens-of-KB rendered diffs ≈ tens of MB. Tunable; the
-/// user-visible knob is `wt config state clear`.
+/// user-visible knob is `wt config state clear`. Comments entries share this
+/// single count-based bound and KIND with the diff/log entries (so one
+/// `clear_all`/`count_all` covers them), but are small raw-comment JSON; the
+/// mtime sweep can evict either type to hold the count, which is benign — an
+/// evicted entry is just recomputed (a git subprocess for a diff, a forge fetch
+/// for comments) on its next visit.
 const MAX_ENTRIES: usize = 500;
 
 fn log_key(sha: &str, w: usize, h: usize) -> String {
@@ -84,6 +118,40 @@ fn branch_diff_key(base_sha: &str, branch_sha: &str, w: usize) -> String {
 
 fn upstream_diff_key(branch_sha: &str, upstream_sha: &str, w: usize) -> String {
     format!("upstream-diff-{branch_sha}-{upstream_sha}-{w}.json")
+}
+
+/// Cached payload for the BranchDiff preview.
+///
+/// The key is `(base_sha, branch_sha, width)` — deliberately no branch
+/// *name* — so branches parked at the same commit (common after `wt landed`
+/// resets merged branches to main's tip) share one entry. That sharing is
+/// only sound if the value is name-free: the rendered diff body is a pure
+/// function of the SHAs, but the empty-diff headline names the row's branch,
+/// so the compute path stores `body: None` and the read path re-renders the
+/// headline for its own row. (Caching the finished pane instead served the
+/// first writer's branch name to every same-SHA row.)
+///
+/// Entries from before this struct existed hold a bare rendered string; they
+/// fail to deserialize, read as a miss, and are recomputed and overwritten
+/// in place.
+#[derive(Serialize, Deserialize)]
+pub(super) struct BranchDiffCacheEntry {
+    /// Rendered `git diff --stat` + colored diff; `None` when the diff is
+    /// empty (the caller renders the branch-named headline).
+    pub body: Option<String>,
+}
+
+/// Cached payload for the UpstreamDiff preview — the same name-free split as
+/// [`BranchDiffCacheEntry`]. The ahead/behind counts are pure functions of
+/// `(branch_sha, upstream_sha)` and select which headline the read side
+/// renders when `body` is `None`.
+#[derive(Serialize, Deserialize)]
+pub(super) struct UpstreamDiffCacheEntry {
+    pub ahead: usize,
+    pub behind: usize,
+    /// Rendered `git diff --stat` + colored diff; `None` when the diff is
+    /// empty (the caller renders the branch-named headline from the counts).
+    pub body: Option<String>,
 }
 
 pub(super) fn read_log(repo: &Repository, sha: &str, w: usize, h: usize) -> Option<LogCacheEntry> {
@@ -99,7 +167,7 @@ pub(super) fn read_branch_diff(
     base_sha: &str,
     branch_sha: &str,
     w: usize,
-) -> Option<String> {
+) -> Option<BranchDiffCacheEntry> {
     cache::read(repo, KIND, &branch_diff_key(base_sha, branch_sha, w))
 }
 
@@ -108,13 +176,13 @@ pub(super) fn write_branch_diff(
     base_sha: &str,
     branch_sha: &str,
     w: usize,
-    value: &str,
+    value: &BranchDiffCacheEntry,
 ) {
     cache::write_with_lru(
         repo,
         KIND,
         &branch_diff_key(base_sha, branch_sha, w),
-        &value,
+        value,
         MAX_ENTRIES,
     );
 }
@@ -124,7 +192,7 @@ pub(super) fn read_upstream_diff(
     branch_sha: &str,
     upstream_sha: &str,
     w: usize,
-) -> Option<String> {
+) -> Option<UpstreamDiffCacheEntry> {
     cache::read(repo, KIND, &upstream_diff_key(branch_sha, upstream_sha, w))
 }
 
@@ -133,12 +201,79 @@ pub(super) fn write_upstream_diff(
     branch_sha: &str,
     upstream_sha: &str,
     w: usize,
-    value: &str,
+    value: &UpstreamDiffCacheEntry,
 ) {
     cache::write_with_lru(
         repo,
         KIND,
         &upstream_diff_key(branch_sha, upstream_sha, w),
+        value,
+        MAX_ENTRIES,
+    );
+}
+
+/// One cached PR comment — the deterministic, render-independent fields parsed
+/// from the forge (`gh pr view --json comments`, or the same thread riding the
+/// worktree-row `gh pr list --head` call — see [`write_comments`]). Stored as a
+/// `Vec` and re-rendered on every read, mirroring [`LogCacheEntry`]: the
+/// rendered pane folds in the pane *width* (body wrapping) and *relative time*
+/// ("2h", "3d", against `epoch_now()`), neither of which is stable, so caching
+/// the rendered string would freeze both. Caching the raw comments instead keeps
+/// width and relative time out of the key and correct as the terminal resizes
+/// and wall-clock advances.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct CommentEntry {
+    pub author: String,
+    pub body: String,
+    /// RFC-3339 timestamp; rendered as relative time at display.
+    pub created_at: String,
+}
+
+/// Cache key for a PR's comment thread: PR `number` + the GitHub PR's
+/// `updated_at` content signature. The timestamp is `sanitize_for_filename`'d
+/// because RFC-3339 strings carry `:`. The repo-scoped cache dir isolates by
+/// repository, so `number` alone disambiguates the PR within it. Width is
+/// deliberately absent — the entry holds raw [`CommentEntry`]s re-rendered at
+/// the live width on read, so one entry serves every pane width.
+///
+/// Only GitHub PRs reach this path: a GitHub PR's `updated_at` bumps on comment
+/// add, edit, review, and review-comment, so a stable key means the thread is
+/// unchanged — *except* deletion, which GitHub does not reflect in `updated_at`
+/// (the same delete-blindness, plus a 1-minute throttle, that excludes GitLab
+/// MRs entirely; see `PrStatus::updated_at`). A deleted GitHub comment can
+/// therefore linger in the cached thread until the next add/edit/review bumps
+/// the timestamp — an accepted best-effort gap for a read-only preview, matching
+/// the Log tab's documented ref-decoration drift.
+fn comments_key(number: u32, updated_at: &str) -> String {
+    let ts = sanitize_for_filename(updated_at);
+    format!("comments-{number}-{ts}.json")
+}
+
+pub(crate) fn read_comments(
+    repo: &Repository,
+    number: u32,
+    updated_at: &str,
+) -> Option<Vec<CommentEntry>> {
+    cache::read(repo, KIND, &comments_key(number, updated_at))
+}
+
+/// Write a PR's comment thread to the on-disk cache. Called from two places:
+/// the picker's own lazy `gh pr view --json comments` fetch ([`super::prs`]),
+/// and [`list::ci_status`](crate::commands::list::ci_status), which primes it
+/// from the thread the worktree-row `gh pr list --head` CI call already
+/// transferred — so the lazy fetch never has to run for a worktree row whose
+/// `updatedAt` matches. An empty `value` is a valid entry (a zero-comment PR),
+/// and writing it lets that common case skip the fetch too.
+pub(crate) fn write_comments(
+    repo: &Repository,
+    number: u32,
+    updated_at: &str,
+    value: &[CommentEntry],
+) {
+    cache::write_with_lru(
+        repo,
+        KIND,
+        &comments_key(number, updated_at),
         &value,
         MAX_ENTRIES,
     );
@@ -206,18 +341,38 @@ mod tests {
         assert!(read_log(&repo, "cafe", 80, 24).is_none());
     }
 
+    fn branch_entry(body: &str) -> BranchDiffCacheEntry {
+        BranchDiffCacheEntry {
+            body: Some(body.to_string()),
+        }
+    }
+
     #[test]
     fn branch_diff_roundtrip_and_asymmetric() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_branch_diff(&repo, "base", "tip", 80, "rendered diff");
+        write_branch_diff(&repo, "base", "tip", 80, &branch_entry("rendered diff"));
         assert_eq!(
-            read_branch_diff(&repo, "base", "tip", 80),
+            read_branch_diff(&repo, "base", "tip", 80).unwrap().body,
             Some("rendered diff".to_string())
         );
         // Asymmetric: swapping is a different key.
-        assert_eq!(read_branch_diff(&repo, "tip", "base", 80), None);
+        assert!(read_branch_diff(&repo, "tip", "base", 80).is_none());
+
+        // An empty diff is a valid entry — `body: None` roundtrips, distinct
+        // from a cache miss.
+        write_branch_diff(
+            &repo,
+            "base2",
+            "tip",
+            80,
+            &BranchDiffCacheEntry { body: None },
+        );
+        assert_eq!(
+            read_branch_diff(&repo, "base2", "tip", 80).unwrap().body,
+            None
+        );
     }
 
     #[test]
@@ -225,11 +380,49 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_upstream_diff(&repo, "branch", "upstream", 80, "rendered upstream diff");
-        assert_eq!(
-            read_upstream_diff(&repo, "branch", "upstream", 80),
-            Some("rendered upstream diff".to_string())
+        write_upstream_diff(
+            &repo,
+            "branch",
+            "upstream",
+            80,
+            &UpstreamDiffCacheEntry {
+                ahead: 2,
+                behind: 1,
+                body: Some("rendered upstream diff".to_string()),
+            },
         );
+        let read = read_upstream_diff(&repo, "branch", "upstream", 80).expect("entry exists");
+        assert_eq!(read.ahead, 2);
+        assert_eq!(read.behind, 1);
+        assert_eq!(read.body, Some("rendered upstream diff".to_string()));
+    }
+
+    #[test]
+    fn pre_struct_string_entry_reads_as_miss() {
+        // Entries from before the struct formats cached the finished pane as
+        // a bare JSON string (with the branch name baked in). Those must fail
+        // to deserialize and read as a miss, so the compute path overwrites
+        // them in place instead of serving another branch's headline.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        cache::write_with_lru(
+            &repo,
+            KIND,
+            &branch_diff_key("base", "tip", 80),
+            &"old rendered pane",
+            MAX_ENTRIES,
+        );
+        assert!(read_branch_diff(&repo, "base", "tip", 80).is_none());
+
+        cache::write_with_lru(
+            &repo,
+            KIND,
+            &upstream_diff_key("tip", "up", 80),
+            &"old rendered pane",
+            MAX_ENTRIES,
+        );
+        assert!(read_upstream_diff(&repo, "tip", "up", 80).is_none());
     }
 
     #[test]
@@ -241,22 +434,88 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
 
         write_log(&repo, "x", 80, 24, &sample_log_entry());
-        write_branch_diff(&repo, "x", "x", 80, "branch-diff-value");
-        write_upstream_diff(&repo, "x", "x", 80, "upstream-diff-value");
+        write_branch_diff(&repo, "x", "x", 80, &branch_entry("branch-diff-value"));
+        write_upstream_diff(
+            &repo,
+            "x",
+            "x",
+            80,
+            &UpstreamDiffCacheEntry {
+                ahead: 0,
+                behind: 0,
+                body: Some("upstream-diff-value".to_string()),
+            },
+        );
 
         assert_eq!(
             read_log(&repo, "x", 80, 24).unwrap().raw_log,
             "raw log content"
         );
         assert_eq!(
-            read_branch_diff(&repo, "x", "x", 80).unwrap(),
+            read_branch_diff(&repo, "x", "x", 80).unwrap().body.unwrap(),
             "branch-diff-value"
         );
         assert_eq!(
-            read_upstream_diff(&repo, "x", "x", 80).unwrap(),
+            read_upstream_diff(&repo, "x", "x", 80)
+                .unwrap()
+                .body
+                .unwrap(),
             "upstream-diff-value"
         );
         assert_eq!(count_all(&repo), 3);
+    }
+
+    fn sample_comments() -> Vec<CommentEntry> {
+        vec![CommentEntry {
+            author: "alice".to_string(),
+            body: "looks good".to_string(),
+            created_at: "2026-06-28T18:30:00Z".to_string(),
+        }]
+    }
+
+    #[test]
+    fn comments_roundtrip_and_keyed_by_signature() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let ts = "2026-06-28T18:36:07Z";
+        assert!(read_comments(&repo, 42, ts).is_none());
+        write_comments(&repo, 42, ts, &sample_comments());
+        let read = read_comments(&repo, 42, ts).expect("entry exists");
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].author, "alice");
+        assert_eq!(read[0].created_at, "2026-06-28T18:30:00Z");
+
+        // A different `updated_at` (a new/edited comment) misses, so the next
+        // visit re-fetches rather than serving a stale thread.
+        assert!(read_comments(&repo, 42, "2026-06-28T19:00:00Z").is_none());
+        // A different number is a different key. Width is NOT in the key — the
+        // raw entry is re-rendered at the live width on read.
+        assert!(read_comments(&repo, 43, ts).is_none());
+    }
+
+    #[test]
+    fn comments_share_kind_without_colliding_with_diffs() {
+        // Comments live under the same `picker-preview` kind as the diff modes
+        // (so `clear_all`/`count_all` cover them) but the `comments-` filename
+        // prefix keeps them distinct from `log-`/`branch-diff-`/`upstream-diff-`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        write_log(&repo, "x", 80, 24, &sample_log_entry());
+        write_comments(&repo, 1, "2026-06-28T00:00:00Z", &sample_comments());
+
+        assert_eq!(
+            read_log(&repo, "x", 80, 24).unwrap().raw_log,
+            "raw log content"
+        );
+        assert_eq!(
+            read_comments(&repo, 1, "2026-06-28T00:00:00Z")
+                .expect("entry exists")
+                .len(),
+            1
+        );
+        assert_eq!(count_all(&repo), 2);
     }
 
     #[test]
@@ -266,7 +525,7 @@ mod tests {
 
         write_log(&repo, "a", 80, 24, &sample_log_entry());
         write_log(&repo, "b", 80, 24, &sample_log_entry());
-        write_branch_diff(&repo, "base", "tip", 80, "z");
+        write_branch_diff(&repo, "base", "tip", 80, &branch_entry("z"));
 
         assert_eq!(count_all(&repo), 3);
         let removed = clear_all(&repo).unwrap();

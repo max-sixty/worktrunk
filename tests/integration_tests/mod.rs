@@ -4,7 +4,6 @@
 //
 // Windows path differences are handled by snapshot filters in setup_snapshot_settings().
 
-pub mod analyze_trace;
 pub mod approval_pty;
 
 pub mod approval_save;
@@ -13,7 +12,6 @@ pub mod approvals;
 pub mod bare_repository;
 pub mod cache_sharing;
 pub mod ci_status;
-pub mod column_alignment_verification;
 pub mod completion;
 pub mod completion_validation;
 pub mod config_init;
@@ -36,8 +34,8 @@ pub mod help;
 pub mod hook_show;
 pub mod init;
 pub mod list;
-pub mod list_column_alignment;
 pub mod list_config;
+pub mod list_layout;
 pub mod list_progressive;
 pub mod merge;
 pub mod nushell_default_config_dir;
@@ -55,7 +53,6 @@ pub mod shell_integration_windows;
 pub mod shell_powershell;
 pub mod shell_wrapper;
 pub mod snapshot_formatting_guard;
-pub mod spacing_edge_cases;
 pub mod statusline;
 pub mod step_alias;
 pub mod step_copy_ignored;

@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 
 use crate::config::ConfigError;
+use crate::git::resolve_input_path;
 
 /// Override for user config path, set via --config CLI flag
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -33,18 +34,43 @@ pub fn is_config_path_explicit() -> bool {
 /// 1. CLI --config flag (set via `set_config_path`)
 /// 2. WORKTRUNK_CONFIG_PATH environment variable
 /// 3. Platform-specific default location (via `default_config_path`)
+///
+/// The first two are supplied by the user, so a relative one resolves against
+/// `-C` (see [`resolve_input_path`]). The third is an absolute XDG location.
+///
+/// Priority 3 is absent under `#[cfg(test)]`: it resolves the developer's own
+/// config, which callers both read (`prewarm_user_config`) and — via
+/// `set_skip_shell_integration_prompt` / `set_skip_commit_generation_prompt` —
+/// write. An in-process test has no way to set priority 2 for itself
+/// (`std::env::set_var` is `unsafe`, and this crate forbids `unsafe`), so a test
+/// that reaches here wanted an explicit path, not the developer's.
+///
+/// `None` rather than the `panic!` [`crate::config::approvals_path`] uses: that
+/// one guards a mutation target, where a silent absence would let a test believe
+/// it saved something. This is a lookup whose absent state is already meaningful
+/// and already handled — `require_config_path` turns it into an error, so a
+/// config *write* still fails loudly, while a best-effort *read* like the
+/// prewarm cache simply preloads nothing.
+///
+/// The guard fires for lib-crate tests only; a bin-crate test links this crate
+/// in non-test mode, so `src/commands/` and `src/output/` stay uncovered. See
+/// `tests/CLAUDE.md`.
 pub fn config_path() -> Option<PathBuf> {
     // Priority 1: CLI --config flag
     if let Some(path) = CONFIG_PATH.get() {
-        return Some(path.clone());
+        return Some(resolve_input_path(path));
     }
 
     // Priority 2: Environment variable (also used by tests for isolation)
     if let Ok(path) = std::env::var("WORKTRUNK_CONFIG_PATH") {
-        return Some(PathBuf::from(path));
+        return Some(resolve_input_path(path));
     }
 
     // Priority 3: Platform-specific default location
+    #[cfg(test)]
+    return None;
+
+    #[cfg(not(test))]
     default_config_path()
 }
 
@@ -57,6 +83,20 @@ pub fn require_config_path() -> Result<PathBuf, ConfigError> {
     config_path().ok_or_else(|| {
         ConfigError("Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string())
     })
+}
+
+/// Resolve the user config path for display, formatted with `~` and falling
+/// back to the canonical location when none can be determined.
+///
+/// The display counterpart of [`config_path`]: user-facing messages that name
+/// "the config file wt would load or write" route through this, so the
+/// `--config` / `WORKTRUNK_CONFIG_PATH` / `$XDG_CONFIG_HOME` resolution and the
+/// fallback literal live in one place. Use [`require_config_path`] for the
+/// actual mutation; this is display-only.
+pub fn config_path_for_display() -> String {
+    config_path()
+        .map(|p| crate::path::format_path_for_display(&p))
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string())
 }
 
 /// Platform-specific default config path, without CLI or env var overrides.
@@ -90,7 +130,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 pub fn system_config_path() -> Option<PathBuf> {
     // Priority 1: Explicit environment variable override
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
-        let path = PathBuf::from(path);
+        let path = resolve_input_path(path);
         if path.exists() {
             return Some(path);
         }
@@ -100,6 +140,12 @@ pub fn system_config_path() -> Option<PathBuf> {
     // Priority 2+3: Check XDG_CONFIG_DIRS (if set), otherwise platform defaults.
     // When XDG_CONFIG_DIRS is set, system_config_dirs() returns only those dirs
     // (per XDG spec, no fallback to platform defaults).
+    //
+    // Deliberately unguarded, unlike `config_path()`: this resolves a
+    // machine-wide file (`/etc/xdg`, `/Library/Application Support`) rather than
+    // the developer's own config, and `config::deprecation`'s `PendingDefault`
+    // rules genuinely need the lookup to decide whether the system layer already
+    // defines a key.
     for dir in &system_config_dirs() {
         let path = dir.join("worktrunk").join("config.toml");
         if path.exists() {
@@ -117,7 +163,7 @@ pub fn system_config_path() -> Option<PathBuf> {
 /// path matches where the tool actually looks.
 pub fn default_system_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
-        return Some(PathBuf::from(path));
+        return Some(resolve_input_path(path));
     }
 
     system_config_dirs()

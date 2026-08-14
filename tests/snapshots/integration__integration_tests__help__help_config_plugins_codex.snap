@@ -10,6 +10,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -26,6 +27,7 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -62,7 +64,7 @@ Usage: [1m[36mwt config plugins codex[0m [36m[OPTIONS][0m [36m<COMMAND>[0
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths. Activity markers in [2mwt list[0m are Claude Code only: Codex exposes no turn-end hook event, so the Codex plugin omits them until it does.
+Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths — plus activity-marker hooks that show 🤖/💬 in [2mwt list[0m while a Codex session runs and clear the marker when it ends.
 
 [1m[32mExamples[0m
 

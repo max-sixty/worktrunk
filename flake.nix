@@ -19,7 +19,11 @@
       rust-overlay,
       crane,
     }:
-    flake-utils.lib.eachDefaultSystem (
+    # `eachDefaultSystem` minus x86_64-darwin: nixpkgs drops Intel macOS in
+    # 26.11, so that system stops evaluating once flake.lock advances past
+    # it. Release binaries still ship for Intel macOS (dist-workspace.toml);
+    # this is the Nix surface only.
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (
       system:
       let
         overlays = [ (import rust-overlay) ];
@@ -40,10 +44,10 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Filter source to include Cargo files plus templates (needed by askama)
-        # and the Gemini extension manifest (embedded via include_str! in
-        # src/testing/mod.rs; lives at the repo root because Gemini's loader
-        # reads it only from the clone root — see #2807).
+        # Filter source to include Cargo files, askama templates, and compile-time data.
+        # Gemini's loader requires its manifest at the repo root (see #2807).
+        # The benchmark fixture definition stays extensionless so Cargo does not
+        # auto-discover it as a bench target.
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter =
@@ -53,7 +57,8 @@
             || (baseNameOf (dirOf p) == "templates")
             || (pkgs.lib.hasInfix "/dev/" p)
             || (baseNameOf (dirOf p) == "dev")
-            || (baseNameOf p == "gemini-extension.json");
+            || (baseNameOf p == "gemini-extension.json")
+            || (baseNameOf p == "imported-fixture");
         };
 
         # Common arguments for crane builds
@@ -149,8 +154,9 @@
           # Wider src than the package build: tests need .snap files and
           # tests/ fixtures (prebuilt _git/ trees, .sh scripts, no-extension
           # git database files). Default features only — shell-integration-
-          # tests requires zsh/fish/nushell + PTY (see CLAUDE.md → "Shell/PTY
-          # Integration Tests").
+          # tests wants a PTY and more shells than this derivation carries;
+          # the devShell below is where that set lives (see tests/CLAUDE.md →
+          # "Feature Flags, Not Runtime Skipping").
           worktrunk-tests = craneLib.cargoTest (
             commonArgs
             // {
@@ -158,12 +164,14 @@
               src = pkgs.lib.cleanSource ./.;
               # Tests shell out to a few host tools — `git` for the harness,
               # `python3` for argv-quoting and post-start fixtures, `ps`
-              # (procps) for the pgid invariant test. Without these on PATH
+              # (procps) for the pgid invariant test, `lsof` for the
+              # `--reap` process-discovery test. Without these on PATH
               # the sandbox surfaces them as `No such file or directory`.
               nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
                 pkgs.git
                 pkgs.python3
                 pkgs.procps
+                pkgs.lsof
               ];
             }
           );
@@ -197,13 +205,19 @@
             cargo-release
             cargo-llvm-cov
 
-            # For shell integration tests
+            # Shells the `shell-integration-tests` feature drives, plus the
+            # `jq` its Claude-hook tests pipe the hook payload through. The
+            # pre-merge gate runs `--all-features`, so a run here exercises
+            # every one.
             bash
             zsh
             fish
+            nushell
+            powershell
+            jq
 
-            # Development tools
-            git
+            # Development tools. `git` comes from the `checks` above: crane
+            # folds each check's `nativeBuildInputs` in via `inputsFrom`.
             gh
             pre-commit
           ];

@@ -2,7 +2,7 @@
 
 use crate::common::{
     TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
+    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, setup_snapshot_settings, wt_bin,
 };
 // Used only by the `#[cfg(unix)]` signal tests below; gate the import to match,
 // or it reads as unused on Windows under `-D warnings`.
@@ -789,26 +789,11 @@ deploy = "echo deploying"
 fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
     repo.commit("initial");
 
-    // Escape the wt binary path for embedding in a sh -c command string.
-    // Test temp paths never contain single quotes.
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    // Double backslashes so the Windows path (e.g. `D:\a\worktrunk\...\wt.exe`)
-    // parses as literal characters inside a TOML basic string rather than
-    // being interpreted as escape sequences (`\a`, `\w`, ...).
-    let wt_toml = wt_str.replace('\\', r"\\");
-
     // Alias body invokes the test wt binary directly (PATH lookup in the
     // subprocess shell wouldn't find it).
-    repo.write_test_config(&format!(
-        r#"
-[aliases]
-new-branch = "'{wt_toml}' switch --create alias-created"
-"#
+    repo.write_test_config(&wt_alias_config(
+        "new-branch",
+        "switch --create alias-created",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -846,6 +831,111 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
+/// Build an `[aliases]` config whose single alias body invokes the test `wt`
+/// binary. Suits either config source — pass it to `write_test_config` for a
+/// user alias or `write_project_config` for a project one.
+///
+/// The binary path has to be embedded in a TOML basic string inside a shell
+/// command, so single quotes must be absent (they'd terminate the shell
+/// quoting) and backslashes doubled (a Windows path like `D:\a\wt.exe` would
+/// otherwise parse `\a` as a TOML escape).
+fn wt_alias_config(name: &str, args: &str) -> String {
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+    let wt_toml = wt_str.replace('\\', r"\\");
+    format!(
+        r#"
+[aliases]
+{name} = "'{wt_toml}' {args}"
+"#
+    )
+}
+
+/// `wt switch` inside an alias body preserves the user's subdirectory position,
+/// the same as a top-level `wt switch` does.
+///
+/// Regression test for #3723: alias steps run with the worktree root as their
+/// working directory, so the nested `wt` used to see the root as the user's
+/// cwd and land the shell at the target worktree's root instead of the
+/// matching subdirectory.
+#[rstest]
+fn test_alias_wrapping_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // The same subdirectory exists in both worktrees.
+    let subdir = std::path::Path::new("apps").join("gateway");
+    std::fs::create_dir_all(repo.root_path().join(&subdir)).unwrap();
+    std::fs::create_dir_all(feature_wt.join(&subdir)).unwrap();
+
+    repo.write_test_config(&wt_alias_config("go", "switch feature"));
+
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["step", "go"])
+        .current_dir(repo.root_path().join(&subdir));
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt step go failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
+    let expected = feature_wt.join(&subdir);
+    let expected_str = expected.to_string_lossy();
+    assert!(
+        cd_content.contains(&*expected_str),
+        "CD file should preserve the subdirectory ({expected_str}), got: {cd_content:?}"
+    );
+}
+
+/// `wt remove` inside an alias body preserves the user's subdirectory position.
+///
+/// Regression test for #3723: the reported case is a `remove`-wrapping alias
+/// (`[aliases] finish = "wt remove -y"`) in a monorepo, which used to drop the
+/// user at the primary worktree root instead of their sub-project.
+#[rstest]
+fn test_alias_wrapping_remove_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // The same subdirectory exists in the worktree being removed (where the
+    // user is) and in the main worktree (where removal lands).
+    let subdir = std::path::Path::new("apps").join("gateway");
+    std::fs::create_dir_all(repo.root_path().join(&subdir)).unwrap();
+    std::fs::create_dir_all(feature_wt.join(&subdir)).unwrap();
+
+    repo.write_test_config(&wt_alias_config("finish", "remove -y"));
+
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["step", "finish"])
+        .current_dir(feature_wt.join(&subdir));
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt step finish failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
+    let expected = repo.root_path().join(&subdir);
+    let expected_str = expected.to_string_lossy();
+    assert!(
+        cd_content.contains(&*expected_str),
+        "CD file should preserve the subdirectory ({expected_str}), got: {cd_content:?}"
+    );
+}
+
 /// User-source aliases pass the EXEC directive file through to the body, so a
 /// nested `wt switch --execute X` writes the payload back to the parent
 /// shell's EXEC file the same as a top-level `wt switch --execute X` would.
@@ -856,19 +946,10 @@ new-branch = "'{wt_toml}' switch --create alias-created"
 #[rstest]
 fn test_user_alias_passes_exec_directive(repo: TestRepo) {
     repo.commit("initial");
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    let wt_toml = wt_str.replace('\\', r"\\");
 
-    repo.write_test_config(&format!(
-        r#"
-[aliases]
-exec-passthrough = "'{wt_toml}' switch --create user-alias-target --execute 'echo from-user-alias'"
-"#
+    repo.write_test_config(&wt_alias_config(
+        "exec-passthrough",
+        "switch --create user-alias-target --execute 'echo from-user-alias'",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -903,19 +984,10 @@ exec-passthrough = "'{wt_toml}' switch --create user-alias-target --execute 'ech
 #[rstest]
 fn test_project_alias_scrubs_exec_directive(repo: TestRepo) {
     repo.commit("initial");
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    let wt_toml = wt_str.replace('\\', r"\\");
 
-    repo.write_project_config(&format!(
-        r#"
-[aliases]
-exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo should-not-pass'"
-"#
+    repo.write_project_config(&wt_alias_config(
+        "exec-blocked",
+        "switch --create project-alias-target --execute 'echo should-not-pass'",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -959,27 +1031,16 @@ exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo
 #[rstest]
 fn test_user_and_project_alias_collision_scrubs_only_project_step(repo: TestRepo) {
     repo.commit("initial");
-    let wt = wt_bin();
-    let wt_str = wt.to_string_lossy();
-    assert!(
-        !wt_str.contains('\''),
-        "wt binary path should not contain single quotes: {wt_str}"
-    );
-    let wt_toml = wt_str.replace('\\', r"\\");
 
-    repo.write_test_config(&format!(
-        r#"
-[aliases]
-shared = "'{wt_toml}' switch --create user-step-target --execute 'echo from-user-step'"
-"#
+    repo.write_test_config(&wt_alias_config(
+        "shared",
+        "switch --create user-step-target --execute 'echo from-user-step'",
     ));
     // Project step also tries `--execute` so we can assert its payload is
     // scrubbed even though the user step's payload passes through.
-    repo.write_project_config(&format!(
-        r#"
-[aliases]
-shared = "'{wt_toml}' switch --create project-step-target --execute 'echo from-project-step'"
-"#,
+    repo.write_project_config(&wt_alias_config(
+        "shared",
+        "switch --create project-step-target --execute 'echo from-project-step'",
     ));
 
     let (cd_path, exec_path, _guard) = directive_files();
@@ -2525,4 +2586,44 @@ greet = "echo hello {{ args }}"
         );
         assert_cmd_snapshot!("alias_verbose_args_shell_escaped", cmd);
     });
+}
+
+/// Aliases keep `wt`'s inherited git-discovery context: `wt <alias>` is the
+/// user's own top-level command, run where they invoked it, so the inherited
+/// `GIT_DIR`/`GIT_WORK_TREE` pass through — unlike hooks and `wt step
+/// for-each`, which `wt` relocates into worktrees it selects and therefore
+/// scrubs (the keep side of the classification in
+/// `scrub_git_discovery_env_vars`; issue #3373).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_keeps_inherited_git_discovery_vars(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+record-git-env = "printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > env_seen.txt"
+"#,
+    );
+    repo.commit("Add alias config");
+
+    let git_dir = repo.root_path().join(".git");
+    let output = repo
+        .wt_command()
+        .args(["-y", "record-git-env"])
+        .env("GIT_DIR", &git_dir)
+        .env("GIT_WORK_TREE", repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let seen = std::fs::read_to_string(repo.root_path().join("env_seen.txt")).unwrap();
+    let expected = format!("[{}][{}]", git_dir.display(), repo.root_path().display());
+    assert_eq!(
+        seen, expected,
+        "alias should see wt's inherited git-discovery vars unchanged"
+    );
 }

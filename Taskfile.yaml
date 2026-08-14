@@ -11,7 +11,20 @@ tasks:
   # Development
   coverage:
     desc: Run tests with coverage report
-    cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
+    cmd: cargo llvm-cov nextest --html --features shell-integration-tests {{.CLI_ARGS}}
+
+  profile-tests:
+    desc: Run the suite under CPU accounting and report where the time goes
+    # tests/CLAUDE.md → Profiling the Suite covers how to read the numbers.
+    cmds:
+      # Build first so the measurement covers the test run alone.
+      - cargo nextest run --no-run --features shell-integration-tests
+      # bash's `time` keyword counts every reaped child. Task's own interpreter
+      # (mvdan/sh) parses `time` but reports user/sys as zero, and /usr/bin/time
+      # is an extra package on minimal Linux; bash is present on every dev and
+      # CI platform (Git Bash on Windows).
+      - bash -c 'time "$@"' bash cargo nextest run --features shell-integration-tests {{.CLI_ARGS}}
+      - echo "per-test timings in target/nextest/default/junit.xml"
 
   setup-web:
     desc: Setup Claude Code web environment for development
@@ -40,22 +53,48 @@ tasks:
         fi
         echo "Rust version: $(rustc --version | awk '{print $2}')"
 
-        # Install shells
+        # Install what the `shell-integration-tests` feature drives
         echo ""
-        echo "Installing shells for integration tests..."
+        echo "Installing shell-integration test dependencies..."
         if command -v apt-get &> /dev/null; then
             export DEBIAN_FRONTEND=noninteractive
+            # An `if` rather than an `&&` chain: under `set -e` a chain
+            # ending false takes the whole task down, and this one ends
+            # false both on an unmatched glob and on a `.list` file with
+            # no `[` line.
             for f in /etc/apt/sources.list.d/*.list; do
-                [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null && rm -f "$f"
+                if [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null; then
+                    rm -f "$f"
+                fi
             done
-            if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null; then
+            # A missing pwsh joins the condition so one refresh serves both
+            # installs: apt resolves the PowerShell .deb's dependencies from
+            # these lists too.
+            if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null \
+                || ! command -v jq &> /dev/null || ! command -v pwsh &> /dev/null; then
                 apt-get update -qq
-                apt-get install -y -qq zsh fish
+                apt-get install -y -qq zsh fish jq
+            fi
+            # PowerShell isn't in Debian's repos. Install the release .deb
+            # rather than the tarball: pwsh aborts at startup without libicu,
+            # and only the .deb declares that dependency for apt to resolve.
+            if ! command -v pwsh &> /dev/null; then
+                PWSH_VERSION="7.6.4"
+                URL="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell_${PWSH_VERSION}-1.deb_amd64.deb"
+                TEMP=$(mktemp -d)
+                curl -fsSL -o "$TEMP/powershell.deb" "$URL"
+                apt-get install -y -qq "$TEMP/powershell.deb"
+                rm -rf "$TEMP"
+                echo "pwsh installed"
             fi
         fi
-        for shell in bash zsh fish nu; do
-            command -v "$shell" &> /dev/null || { echo "Error: $shell not found"; exit 1; }
-            echo "$shell available"
+        # The shells the feature drives, plus the `jq` its Claude-hook tests
+        # pipe the hook payload through. Run each rather than looking for it
+        # on PATH, because a pwsh missing its libicu is on PATH and aborts at
+        # startup anyway.
+        for tool in bash zsh fish nu pwsh jq; do
+            "$tool" --version > /dev/null 2>&1 || { echo "Error: $tool not usable"; exit 1; }
+            echo "$tool available"
         done
 
         # Install gh CLI
@@ -218,87 +257,6 @@ tasks:
         echo "Done:"
         ls -lh "$OUTPUT_DIR"/*.png
 
-  test:create-standard-fixture:
-    desc: Create/recreate the standard test fixture (repo + worktrees + remote)
-    dir: "{{.REPO_ROOT}}"
-    cmds:
-      - |
-        set -euo pipefail
-
-        FIXTURE_DIR="tests/fixtures/standard"
-        TIMESTAMP="2025-01-01T00:00:00"
-
-        echo "Creating standard test fixture..."
-
-        # Clean slate
-        rm -rf "$FIXTURE_DIR"
-        mkdir -p "$FIXTURE_DIR"
-        cd "$FIXTURE_DIR"
-
-        # Create the main repo
-        git init repo
-        cd repo
-
-        # Configure for deterministic output (disable GPG signing)
-        git config user.name "Test User"
-        git config user.email "test@example.com"
-        git config commit.gpgsign false
-
-        # Initial commit on main
-        echo "initial content" > file.txt
-        cat > .gitattributes << 'EOF'
-        * text=auto eol=lf
-        EOF
-        git add -A
-        GIT_AUTHOR_DATE="$TIMESTAMP" GIT_COMMITTER_DATE="$TIMESTAMP" \
-            git commit -m "Initial commit"
-
-        # Create bare remote and push
-        cd ..
-        git clone --bare repo origin.git
-        cd repo
-        git remote add origin ../origin.git
-        git push -u origin main
-
-        # Create worktrees with commits
-        for branch in feature-a feature-b feature-c; do
-            git worktree add -b "$branch" "../repo.$branch"
-            echo "$branch content" > "../repo.$branch/$branch.txt"
-            git -C "../repo.$branch" add "$branch.txt"
-            GIT_AUTHOR_DATE="$TIMESTAMP" GIT_COMMITTER_DATE="$TIMESTAMP" \
-                git -C "../repo.$branch" commit -m "Add $branch file"
-        done
-
-        cd ..
-
-        # Rename .git directories to _git to avoid git treating fixture as repo
-        mv repo/.git repo/_git
-        mv origin.git origin_git
-        for wt in repo.feature-a repo.feature-b repo.feature-c; do
-            # Worktrees have .git files pointing to main repo, rename those too
-            mv "$wt/.git" "$wt/_git"
-        done
-
-        # Update worktree gitdir references (they point to .git, need to point to _git)
-        for wt in feature-a feature-b feature-c; do
-            # Fix the gitdir file in worktree (it's a file, not a directory)
-            sed -i.bak 's/\.git/_git/g' "repo.$wt/_git"
-            rm -f "repo.$wt/_git.bak"
-            # Fix the worktree config in main repo (worktree dir is repo.$wt)
-            sed -i.bak 's/\.git/_git/g' "repo/_git/worktrees/repo.$wt/gitdir"
-            rm -f "repo/_git/worktrees/repo.$wt/gitdir.bak"
-        done
-
-        # Fix remote URL (origin.git -> origin_git)
-        sed -i.bak 's/origin\.git/origin_git/g' "repo/_git/config"
-        rm -f "repo/_git/config.bak"
-
-        echo ""
-        echo "Created fixture structure:"
-        find . -maxdepth 2 -type d | head -20
-        echo ""
-        echo "Done! Fixture at: tests/fixtures/standard/"
-
   bench-llm-commits:
     desc: Benchmark LLM commit message tools (claude, llm, aichat, codex, opencode)
     silent: true
@@ -388,7 +346,7 @@ tasks:
         COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='"'"''"'"' --safe-mode --setting-sources='"'"'user'"'"' --system-prompt='"'"''"'"''
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
         COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
-        COMMANDS["codex"]='codex exec -m gpt-5.4-mini -c model_reasoning_effort='"'"'low'"'"' -c system_prompt='"'"''"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+        COMMANDS["codex"]='codex exec -m gpt-5.6-luna -c model_reasoning_effort='"'"'low'"'"' -c system_prompt='"'"''"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
         COMMANDS["opencode"]='opencode run -m anthropic/claude-haiku-4.5 --variant fast'
 
         # Check which tools are available
@@ -408,7 +366,14 @@ tasks:
           echo "  ✓ jq (required for codex)"
         else
           echo "  ✗ jq (required for codex)"
-          AVAILABLE=("${AVAILABLE[@]/codex}")
+          # Drop codex from the list. String substitution (${AVAILABLE[@]/codex})
+          # would rewrite the element to "" rather than remove it, leaving an
+          # empty tool name to iterate over later — rebuild the array instead.
+          FILTERED=()
+          for tool in "${AVAILABLE[@]}"; do
+            [ "$tool" = codex ] || FILTERED+=("$tool")
+          done
+          AVAILABLE=("${FILTERED[@]}")
         fi
         echo ""
 
