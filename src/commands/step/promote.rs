@@ -36,8 +36,10 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
 ///
-/// Refuses to delete when the copy skipped an entry: the source still holds
-/// content the destination never received, so the delete would destroy it.
+/// Refuses to delete when the copy reports a skip, since the source still holds
+/// content the destination never received. A socket or FIFO is not a skip and
+/// goes with the rest of the source: it carries no content to lose, and
+/// refusing over one would abort a promote after the branch exchange.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     let skipped = if is_dir {
         copy_dir_recursive(src, dest, None, true, &Progress::disabled())?
@@ -557,6 +559,9 @@ mod tests {
         fs::write(src.join("regular.txt"), "content").unwrap();
         let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
         drop(listener);
+        // Closing the fd doesn't unlink, so the socket is still there to
+        // classify. Asserted, so the test can't pass on a fixture that made none.
+        assert!(src.join("sock").exists());
 
         copy_and_remove(&src, &dest, true).unwrap();
 

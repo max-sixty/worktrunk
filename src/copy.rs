@@ -499,6 +499,9 @@ mod tests {
         fs::write(src.join("regular"), b"content").unwrap();
         let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
         drop(listener);
+        // Closing the fd doesn't unlink, so the socket is still there to
+        // classify. Asserted, so a zero count can't come from an empty fixture.
+        assert!(src.join("sock").exists());
 
         let skipped = copy_dir_recursive(&src, &dest, None, true, &Progress::disabled()).unwrap();
 
