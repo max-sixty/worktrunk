@@ -49,7 +49,7 @@ use worktrunk::HookType;
 use worktrunk::config::{Approvals, Command, CommandConfig, ProjectConfig, UserConfig};
 use worktrunk::git::add_hook_skip_hint;
 
-use super::command_approval::{ApprovalMode, approve_command_batch};
+use super::command_approval::approve_command_batch;
 use super::command_executor::{
     CommandContext, FailureStrategy, PipelineKind, execute_pipeline_foreground, prepare_steps,
 };
@@ -214,20 +214,13 @@ impl HookPlan {
         }
         let project_id =
             project_id.context("project identifier is required to approve project commands")?;
-        // `approve_command_batch` in `ApprovalMode::Assume` is an
-        // unconditional `Ok(true)`, so loading `Approvals` here would be dead
-        // work.
+        // `approve_command_batch` with `yes = true` is an unconditional
+        // `Ok(true)`, so loading `Approvals` here would be dead work.
         let approved = if yes {
             true
         } else {
             let approvals = Approvals::load().context("Failed to load approvals")?;
-            approve_command_batch(
-                &approvable,
-                project_id,
-                &approvals,
-                ApprovalMode::Prompt,
-                false,
-            )?
+            approve_command_batch(&approvable, project_id, &approvals, false, false)?
         };
         if !approved {
             return Ok(None);

@@ -7,11 +7,6 @@ expression: render_cases(cases)
 [31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 [2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt config approvals add --yes[24m[22m
 
-## non-interactive from the approvals command itself
-
-[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
-[2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m[22m
-
 ## LLM command failed
 
 [31m✗[39m [31mCommit generation command failed[39m

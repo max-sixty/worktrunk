@@ -56,4 +56,4 @@ exit_code: 1
 ○ pre-start:
   echo 'hello'
 ✗ Cannot prompt for approval in non-interactive environment
-↳ To skip prompts in CI/CD, add --yes
+↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add --yes
