@@ -252,7 +252,7 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## Interactive hooks and JSON context
 
-A hook's stdin carries the terminal when the hook runs alone in the foreground, and the JSON context otherwise.
+A hook's stdin carries the terminal when the hook runs in the foreground, and the JSON context when it can't.
 
 A `pre-*` hook gets the terminal, so it can ask before continuing:
 
@@ -261,7 +261,9 @@ A `pre-*` hook gets the terminal, so it can ask before continuing:
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
 
-Two forms receive all template variables as JSON on stdin instead: `post-*` hooks, which run detached with no terminal, and concurrent groups, whose children would otherwise race for one terminal. Adding a second key to the table above turns it into a concurrent group, which is enough to take the terminal away from `gum confirm` — keep a hook that prompts in a table of its own. `wt hook <type> --foreground` runs a hook in the foreground whatever its type, so a lone `post-*` hook invoked that way gets the terminal and no JSON. A concurrent group keeps its JSON either way.
+Two forms receive all template variables as JSON on stdin instead: detached `post-*` hooks, which have no terminal, and concurrent groups, whose children would otherwise race for one. A table of two or more keys *is* a concurrent group, so adding a second key takes the terminal away from `gum confirm` — keep a hook that prompts in a table of its own. `wt hook <type> --foreground` runs a hook in the foreground whatever its type, so `post-*` follows the same rule there.
+
+Foreground steps run in order and share one stdin, so a step that reads it to EOF leaves nothing for the steps behind it — only one step in a pipeline can prompt. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
 The JSON context enables logic that templates can't express:
 

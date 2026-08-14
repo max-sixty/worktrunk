@@ -1904,6 +1904,52 @@ fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_foreground_pipeline_steps_share_one_stdin(repo: TestRepo) {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // Foreground steps run in order against wt's own stdin, so the first one
+    // to read it to EOF leaves nothing behind — only one step in a pipeline
+    // can prompt. Steps accumulate across config files, so a user and a
+    // project hook of the same type reach this shape without an array.
+    repo.write_project_config(r#"post-start = ["cat > a.txt", "cat > b.txt"]"#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--foreground"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn wt hook post-start");
+    child
+        .stdin
+        .take()
+        .expect("stdin piped")
+        .write_all(b"sentinel-from-parent-stdin\n")
+        .expect("failed to write to wt stdin");
+    let output = child.wait_with_output().expect("failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "wt hook post-start --foreground should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("a.txt")).unwrap(),
+        "sentinel-from-parent-stdin\n",
+        "the first foreground step should read the parent's stdin"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("b.txt")).unwrap(),
+        "",
+        "the first step drained stdin, so the second should see EOF"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_concurrent_group_keeps_json_under_foreground(repo: TestRepo) {
     use std::io::Write;
     use std::process::Stdio;
