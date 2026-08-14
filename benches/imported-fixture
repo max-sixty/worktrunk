@@ -1,0 +1,2 @@
+pub const CORPUS: &str = "rust-lang/rust";
+pub const REVISION: &str = "be3d26db984c6f96335faca1f254dc04873cb1c1";

@@ -16,8 +16,7 @@ use worktrunk::shell::{Shell, ShellInit};
 /// The fix was adding `| Out-String` to the config_line.
 #[test]
 fn test_powershell_config_line_evaluates_correctly() {
-    // Use CARGO_BIN_EXE_wt which Cargo sets to the wt binary path during tests
-    let wt_bin = std::path::Path::new(env!("CARGO_BIN_EXE_wt"));
+    let wt_bin = crate::common::wt_bin();
     let bin_dir = wt_bin.parent().expect("Failed to get binary directory");
 
     // Build a script that:

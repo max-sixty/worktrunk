@@ -53,6 +53,15 @@ session.
 
 When shell integration isn't working, `wt switch` shows warnings explaining why.
 
+### "shell wrapper is out of date"
+
+**Meaning**: The active shell still has a pre-split wrapper loaded. Current
+versions no longer write shell commands to that wrapper's single directive
+file, because it mixes trusted directory paths with arbitrary shell.
+
+**Fix**: Run `wt config shell install`, then restart the shell (or reload its
+config) to activate the current split-file wrapper.
+
 ### "shell integration not installed"
 
 **Meaning**: The current shell's config file doesn't have the
@@ -149,6 +158,15 @@ wt() {
     return "$exit_code"
 }
 ```
+
+### Directive trust boundary
+
+The CD file contains only a raw path, so Worktrunk can pass it through to
+alias and hook subprocesses. The EXEC file contains shell code that the parent
+wrapper sources, so Worktrunk removes it from project-defined aliases and
+hooks. User-config aliases are the intentional exception: because their
+commands are authored by the user, they retain the EXEC file and can run a
+nested `wt switch --execute`.
 
 ## Debugging Checklist
 
@@ -255,6 +273,7 @@ If you see path issues, ensure you're using a recent Git for Windows version.
 | `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Set by shell wrapper; wt writes shell commands, wrapper sources the file |
 | `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
 | `WORKTRUNK_SHELL` | Set by the PowerShell (`powershell`) and fish (`fish`) wrappers; selects how wt escapes the EXEC directive payload for that shell |
+| `WORKTRUNK_COMPLETE_NAME` | Set by the bash, zsh, and PowerShell wrappers when they load completions; names the command the registration binds to, so `--cmd` integrations complete |
 
 ## See Also
 

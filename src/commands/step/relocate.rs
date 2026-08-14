@@ -6,7 +6,8 @@ use std::path::PathBuf;
 
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::println;
+
+use crate::output::print_json;
 
 /// Move worktrees to their expected paths based on the `worktree-path` template.
 ///
@@ -124,14 +125,19 @@ pub fn step_relocate(
             all_skipped.extend(validation_skipped);
             print_relocate_json(&[], &all_skipped, false)?;
         } else {
-            show_all_skipped(validation_skipped.len());
+            // Include template-error branches — the JSON path folds them into
+            // `all_skipped`, so the human count must match.
+            show_all_skipped(validation_skipped.len() + template_skips.len());
         }
         return Ok(());
     }
 
     // Phase 3 & 4: Create executor (classifies targets) and execute relocations
     let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
-    let cwd = std::env::current_dir().ok();
+    // Where the user's shell stands — inherited from the parent `wt` when this
+    // runs inside an alias or hook body, whose process cwd is the worktree
+    // root (#3723).
+    let cwd = worktrunk::shell_exec::shell_cwd();
     executor.execute(&default_branch, cwd.as_deref())?;
 
     if json_mode {
@@ -149,7 +155,10 @@ pub fn step_relocate(
         all_skipped.extend(executor.skipped_entries);
         print_relocate_json(&relocated_views, &all_skipped, false)?;
     } else {
-        let total_skipped = validation_skipped.len() + executor.skipped_count();
+        // Template-error branches count as skips too — the JSON path folds
+        // them into `all_skipped`, so keep the human total consistent.
+        let total_skipped =
+            template_skips.len() + validation_skipped.len() + executor.skipped_count();
         show_summary(executor.relocated_count(), total_skipped);
     }
 
@@ -180,6 +189,6 @@ fn print_relocate_json(
             "reason": s.reason,
         })).collect::<Vec<_>>(),
     });
-    println!("{}", serde_json::to_string_pretty(&payload)?);
+    print_json(&payload)?;
     Ok(())
 }

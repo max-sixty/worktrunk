@@ -8,20 +8,18 @@ use serde::Deserialize;
 
 use super::{CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error};
 use crate::git::canonical_url_path_segment;
-use crate::git::url::GitRemoteUrl;
-use crate::git::{RefType, Repository};
+use crate::git::ci_platform::host_is_within;
+use crate::git::url::{GitRemoteUrl, authority_host};
+use crate::git::{ForgeKind, Repository};
+use crate::shell_exec::Cmd;
 
 /// Azure DevOps Pull Request provider.
 #[derive(Debug, Clone, Copy)]
 pub struct AzureDevOpsProvider;
 
 impl RemoteRefProvider for AzureDevOpsProvider {
-    fn ref_type(&self) -> RefType {
-        RefType::Pr
-    }
-
-    fn platform_label(&self) -> &'static str {
-        "azure-devops"
+    fn forge_kind(&self) -> ForgeKind {
+        ForgeKind::AzureDevOps
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -44,7 +42,7 @@ pub fn fork_remote_url(host: &str, organization: &str, project: &str, repo: &str
     let organization = canonical_url_path_segment(organization);
     let project = canonical_url_path_segment(project);
     let repo = canonical_url_path_segment(repo);
-    if host.to_ascii_lowercase().ends_with(".visualstudio.com") {
+    if host_is_within(host, "visualstudio.com") {
         format!("https://{}/{}/_git/{}", host, project, repo)
     } else {
         format!(
@@ -59,7 +57,7 @@ pub fn pr_web_url(host: &str, organization: &str, project: &str, repo: &str, pr:
     let organization = canonical_url_path_segment(organization);
     let project = canonical_url_path_segment(project);
     let repo = canonical_url_path_segment(repo);
-    if host.to_ascii_lowercase().ends_with(".visualstudio.com") {
+    if host_is_within(host, "visualstudio.com") {
         format!(
             "https://{}/{}/_git/{}/pullrequest/{}",
             host, project, repo, pr
@@ -76,7 +74,7 @@ pub fn pr_web_url(host: &str, organization: &str, project: &str, repo: &str, pr:
 pub fn build_web_url(host: &str, organization: &str, project: &str, build_id: u32) -> String {
     let organization = canonical_url_path_segment(organization);
     let project = canonical_url_path_segment(project);
-    if host.to_ascii_lowercase().ends_with(".visualstudio.com") {
+    if host_is_within(host, "visualstudio.com") {
         format!(
             "https://{}/{}/_build/results?buildId={}",
             host, project, build_id
@@ -168,8 +166,7 @@ fn detect_azure_target(repo: &Repository) -> Option<(String, String)> {
 /// API host. Legacy `*.visualstudio.com` hosts keep their hostname (the API
 /// accepts both forms).
 pub fn az_org_url(host: &str, organization: &str) -> String {
-    let lower = host.to_ascii_lowercase();
-    if lower.ends_with(".visualstudio.com") {
+    if host_is_within(host, "visualstudio.com") {
         format!("https://{}", host)
     } else {
         format!("https://dev.azure.com/{}", organization)
@@ -191,17 +188,46 @@ fn parse_web_url(web_url: Option<&str>) -> Option<(String, String)> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
-    let (host, path) = rest.split_once('/')?;
-    let host_lower = host.to_ascii_lowercase();
-    if host_lower == "dev.azure.com" {
+    let (authority, path) = rest.split_once('/')?;
+    let host = authority_host(authority)?;
+    if host_is_within(host, "dev.azure.com") {
         let org = path.split('/').next().filter(|s| !s.is_empty())?;
         Some((host.to_string(), org.to_string()))
-    } else if host_lower.ends_with(".visualstudio.com") {
+    } else if host_is_within(host, "visualstudio.com") {
         let org = host.split('.').next().filter(|s| !s.is_empty())?;
         Some((host.to_string(), org.to_string()))
     } else {
         None
     }
+}
+
+/// One entry of `az extension list --output json`.
+#[derive(Debug, Deserialize)]
+struct AzExtension {
+    name: String,
+}
+
+/// Whether the `azure-devops` extension is installed.
+///
+/// `az extension list --output json` answers with a name/version array, so no
+/// prose is involved. An `az` that can't answer — spawn failure, non-zero
+/// exit, output that won't parse — leaves the question open, and an open
+/// question counts as installed: callers then say nothing about the extension
+/// rather than blaming one we never confirmed was missing.
+///
+/// Two callers, both on a path where the answer is actionable: `fetch_pr_info`
+/// when `az repos pr show` has already failed, and `wt config show --full`,
+/// which reports a missing extension as the persistent condition it is.
+pub fn azure_devops_extension_installed(repo_root: &std::path::Path) -> bool {
+    Cmd::new("az")
+        .args(["extension", "list", "--output", "json"])
+        .current_dir(repo_root)
+        .env("AZURE_CORE_NO_COLOR", "true")
+        .run()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| serde_json::from_slice::<Vec<AzExtension>>(&output.stdout).ok())
+        .is_none_or(|extensions| extensions.iter().any(|e| e.name == "azure-devops"))
 }
 
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -236,24 +262,21 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        if stderr.contains("does not exist") || stdout_str.contains("does not exist") {
-            bail!("Azure DevOps PR #{} not found", pr_number);
+        // The whole `az repos` command group ships in the azure-devops
+        // extension, so "is the extension installed?" is a precondition of this
+        // call rather than one guess among many — and `az extension list`
+        // answers it in JSON. Asking it here, on the failure path only, keeps
+        // the install command out of the happy path's cost.
+        if !azure_devops_extension_installed(repo_root) {
+            bail!("azure-devops extension not installed; run az extension add --name azure-devops");
         }
-        if stderr.contains("login") || stderr.contains("authenticate") {
-            bail!("Azure CLI not authenticated; run az login");
-        }
-        if stderr.contains("azure-devops") && stderr.contains("extension") {
-            bail!(
-                "Azure DevOps CLI extension not installed; \
-                 run: az extension add --name azure-devops"
-            );
-        }
-
+        // Everything else `az` reports is prose on stderr — no exit code, no
+        // JSON error channel. Rather than guess at the cause from English
+        // substrings, surface what `az` said: its own text names the remedy
+        // ("Please run 'az login' …") more reliably than a paraphrase keyed on
+        // a word that can occur anywhere in an org, project, or repo name.
         return Err(cli_api_error(
-            RefType::Pr,
+            ForgeKind::AzureDevOps.ref_type(),
             format!("az repos pr show failed for PR #{}", pr_number),
             &output,
         ));
@@ -313,7 +336,6 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     let pr_url = pr_web_url(&host, &organization, &project, &repo_name, pr_number);
 
     Ok(RemoteRefInfo {
-        ref_type: RefType::Pr,
         number: pr_number,
         title: response.title,
         author: response.created_by.unique_name,
@@ -346,7 +368,7 @@ mod tests {
     #[test]
     fn test_ref_type() {
         let provider = AzureDevOpsProvider;
-        assert_eq!(provider.ref_type(), RefType::Pr);
+        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
     }
 
     #[test]
@@ -364,6 +386,12 @@ mod tests {
         let parsed = parse_web_url(Some("https://myorg.visualstudio.com/myproject/_git/myrepo"));
         assert_eq!(
             parsed,
+            Some(("myorg.visualstudio.com".to_string(), "myorg".to_string()))
+        );
+        assert_eq!(
+            parse_web_url(Some(
+                "https://user:token@myorg.visualstudio.com/myproject/_git/myrepo"
+            )),
             Some(("myorg.visualstudio.com".to_string(), "myorg".to_string()))
         );
     }
@@ -399,6 +427,32 @@ mod tests {
             pr_web_url("myorg.visualstudio.com", "myorg", "myproject", "myrepo", 42),
             "https://myorg.visualstudio.com/myproject/_git/myrepo/pullrequest/42"
         );
+    }
+
+    #[test]
+    fn legacy_url_builders_recognize_ports_and_trailing_root_dots() {
+        for host in ["myorg.visualstudio.com:443", "myorg.visualstudio.com."] {
+            assert_eq!(
+                fork_remote_url(host, "myorg", "myproject", "myrepo"),
+                format!("https://{host}/myproject/_git/myrepo"),
+                "{host}"
+            );
+            assert_eq!(
+                pr_web_url(host, "myorg", "myproject", "myrepo", 42),
+                format!("https://{host}/myproject/_git/myrepo/pullrequest/42"),
+                "{host}"
+            );
+            assert_eq!(
+                build_web_url(host, "myorg", "myproject", 7),
+                format!("https://{host}/myproject/_build/results?buildId=7"),
+                "{host}"
+            );
+            assert_eq!(
+                az_org_url(host, "myorg"),
+                format!("https://{host}"),
+                "{host}"
+            );
+        }
     }
 
     #[test]

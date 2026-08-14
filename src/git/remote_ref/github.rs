@@ -11,7 +11,7 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
     extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{RefType, Repository};
+use crate::git::{ForgeKind, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
@@ -19,12 +19,8 @@ use crate::shell_exec::Cmd;
 pub struct GitHubProvider;
 
 impl RemoteRefProvider for GitHubProvider {
-    fn ref_type(&self) -> RefType {
-        RefType::Pr
-    }
-
-    fn platform_label(&self) -> &'static str {
-        "github"
+    fn forge_kind(&self) -> ForgeKind {
+        ForgeKind::GitHub
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -49,12 +45,16 @@ struct GhApiPrResponse {
     html_url: String,
 }
 
-/// Error response from GitHub API.
+/// The status GitHub reports in an API error body.
+///
+/// Not what separates an error from a PR — `gh` exits non-zero for that. This
+/// selects the one failure worth a message of our own (a 404); every other
+/// status forwards, so the struct needs no other field. `status` carries no
+/// `#[serde(default)]` because an error body that omits it isn't the shape this
+/// type describes, and a failed parse and an unmatched status both land on the
+/// same forwarding path.
 #[derive(Debug, Deserialize)]
 struct GhApiErrorResponse {
-    #[serde(default)]
-    message: String,
-    #[serde(default)]
     status: String,
 }
 
@@ -127,11 +127,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     let api_path = format!("repos/{}/{}/pulls/{}", owner, repo_name, pr_number);
 
     // Only pass --hostname when explicitly configured (for GHE / self-hosted).
-    let hostname = repo
-        .load_project_config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.forge_hostname().map(String::from));
+    let hostname = repo.forge_hostname();
 
     let mut args = vec!["api", api_path.as_str()];
     if let Some(h) = &hostname {
@@ -147,35 +143,31 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     })?;
 
     if !output.status.success() {
-        if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
-            match error_response.status.as_str() {
-                "404" => {
-                    let hint = if source == "gh default" {
-                        "Check that `gh repo set-default` points to the correct repository."
-                    } else {
-                        "If the PR is on a different repository, \
-                         run `gh repo set-default` to set the default \
-                         or configure a different primary remote."
-                    };
-                    bail!(
-                        "PR #{pr_number} not found on {owner}/{repo_name} ({source}). \
-                         {hint}",
-                    );
-                }
-                "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
-                "403" => {
-                    let message_lower = error_response.message.to_lowercase();
-                    if message_lower.contains("rate limit") {
-                        bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
-                    }
-                    bail!("GitHub API access forbidden: {}", error_response.message);
-                }
-                _ => {}
-            }
+        // A 404 is the one GitHub failure we can describe better than `gh` can:
+        // it answers about the owner/repo *we* picked, and which repo that is —
+        // and where the pick came from — is ours to report, not gh's. Auth,
+        // permissions, and rate limits are forwarded instead, since gh's line
+        // ("gh: Bad credentials (HTTP 401)") carries the status and GitHub's own
+        // message. See the module docs.
+        if serde_json::from_slice::<GhApiErrorResponse>(&output.stdout)
+            .is_ok_and(|error| error.status == "404")
+        {
+            let hint = if source == "gh default" {
+                "Check that `gh repo set-default` points to the correct repository."
+            } else {
+                "If the PR is on a different repository, \
+                 run `gh repo set-default` to set the default \
+                 or configure a different primary remote."
+            };
+            return Err(cli_api_error(
+                ForgeKind::GitHub.ref_type(),
+                format!("PR #{pr_number} not found on {owner}/{repo_name} ({source}). {hint}"),
+                &output,
+            ));
         }
 
         return Err(cli_api_error(
-            RefType::Pr,
+            ForgeKind::GitHub.ref_type(),
             format!("gh api failed for PR #{}", pr_number),
             &output,
         ));
@@ -221,7 +213,6 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
 
     Ok(RemoteRefInfo {
-        ref_type: RefType::Pr,
         number: pr_number,
         title: response.title,
         author: response.user.login,
@@ -285,7 +276,7 @@ mod tests {
     #[test]
     fn test_ref_type() {
         let provider = GitHubProvider;
-        assert_eq!(provider.ref_type(), RefType::Pr);
+        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
     }
 
     #[test]

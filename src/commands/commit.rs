@@ -64,7 +64,6 @@ pub struct CommitOptions<'a> {
     pub target_branch: Option<&'a str>,
     pub hooks: HookGate,
     pub stage_mode: StageMode,
-    pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
     /// Whether `commit()` runs its own guidance approval gate or trusts a
     /// value supplied by the caller (`wt merge` resolves the guidance via
@@ -73,14 +72,12 @@ pub struct CommitOptions<'a> {
 }
 
 impl<'a> CommitOptions<'a> {
-    /// Convenience constructor for the common case where untracked files should trigger a warning.
     pub fn new(ctx: &'a CommandContext<'a>) -> Self {
         Self {
             ctx,
             target_branch: None,
             hooks: HookGate::Run,
             stage_mode: StageMode::All,
-            warn_about_untracked: true,
             show_no_squash_note: false,
             guidance: super::step::PreApprovedGuidance::RunOwnGate,
         }
@@ -222,6 +219,15 @@ impl CommitOptions<'_> {
     /// share one announce line; standalone callers (e.g. `wt commit`)
     /// construct an announcer of their own and flush right after.
     pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
+        // Use the worktree path from context — this is the target worktree when
+        // --branch is specified, or the current worktree otherwise.
+        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
+
+        // Refuse before hooks, staging, or any announcement: auto-staging an
+        // unmerged path is what would put conflict markers in the commit, and
+        // nothing below is worth doing for a commit that cannot happen.
+        wt.ensure_no_unmerged_paths("commit")?;
+
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
         let any_hooks_exist = user_hooks.get(HookType::PreCommit).is_some()
@@ -250,33 +256,17 @@ impl CommitOptions<'_> {
             )?;
         }
 
-        // Use the worktree path from context — this is the target worktree when
-        // --branch is specified, or the current worktree otherwise.
-        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
-
-        if self.warn_about_untracked && self.stage_mode == StageMode::All {
+        if self.stage_mode == StageMode::All {
             let status = wt
                 .run_command(&["status", "--porcelain", "-z"])
                 .context("Failed to get status")?;
             warn_about_untracked_files(&status)?;
         }
 
-        // Stage changes based on mode
-        match self.stage_mode {
-            StageMode::All => {
-                // Stage everything: tracked modifications + untracked files
-                wt.run_command(&["add", "-A"])
-                    .context("Failed to stage changes")?;
-            }
-            StageMode::Tracked => {
-                // Stage tracked modifications only (no untracked files)
-                wt.run_command(&["add", "-u"])
-                    .context("Failed to stage tracked changes")?;
-            }
-            StageMode::None => {
-                // Stage nothing - commit only what's already in the index
-            }
-        }
+        // Stage changes based on mode. Re-gated inside `stage`: the refusal
+        // above ran before the pre-commit hooks, and a hook is free to leave
+        // unmerged paths behind.
+        wt.stage(self.stage_mode)?;
 
         let effective_config = self.ctx.commit_generation();
         // Skip the approval gate when the LLM isn't configured — the fallback

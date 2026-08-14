@@ -24,9 +24,7 @@ use std::sync::Arc;
 use crossbeam_channel as chan;
 use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
 
-use super::super::model::{
-    ActiveGitOperation, ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
@@ -245,7 +243,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
         }
         TaskKind::GitOperation => {
             if let ItemKind::Worktree(data) = &mut item.kind {
-                data.git_operation = Some(ActiveGitOperation::None);
+                data.git_operation = Some(None);
             }
         }
     }

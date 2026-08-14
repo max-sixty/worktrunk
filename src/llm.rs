@@ -391,7 +391,7 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 ///
 /// All fields are available to both commit and squash templates.
 /// Squash-specific fields (`commit_details`, `target_branch`) are empty/None for regular commits.
-struct TemplateContext<'a> {
+struct PromptContext<'a> {
     /// The diff to describe (staged changes for commit, combined diff for squash)
     git_diff: &'a str,
     /// Diff statistics summary (output of git diff --stat)
@@ -616,7 +616,7 @@ fn load_template(
 fn build_prompt(
     config: &CommitGenerationConfig,
     template_type: TemplateType,
-    context: &TemplateContext<'_>,
+    context: &PromptContext<'_>,
 ) -> anyhow::Result<String> {
     // Get template source based on type
     let (template, type_name) = match template_type {
@@ -883,7 +883,7 @@ pub(crate) fn build_commit_prompt(
 
     let recent_commits = repo.recent_commit_subjects(None, 5);
 
-    let context = TemplateContext {
+    let context = PromptContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
         branch: &current_branch,
@@ -970,7 +970,7 @@ pub(crate) fn build_squash_prompt(
     let prepared = prepare_diff(diff_output, diff_stat);
 
     let recent_commits = repo.recent_commit_subjects(Some(merge_base), 5);
-    let context = TemplateContext {
+    let context = PromptContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
         branch: current_branch,
@@ -1022,7 +1022,7 @@ pub(crate) fn test_commit_generation(
         "fix: Handle edge case in parser".to_string(),
         "docs: Update README".to_string(),
     ];
-    let context = TemplateContext {
+    let context = PromptContext {
         git_diff: SYNTHETIC_DIFF,
         git_diff_stat: SYNTHETIC_DIFF_STAT,
         branch: "feature/example",
@@ -1165,8 +1165,8 @@ mod tests {
         branch: &'a str,
         recent_commits: Option<&'a Vec<String>>,
         repo_name: &'a str,
-    ) -> TemplateContext<'a> {
-        TemplateContext {
+    ) -> PromptContext<'a> {
+        PromptContext {
             git_diff,
             git_diff_stat: "",
             branch,
@@ -1186,8 +1186,8 @@ mod tests {
         repo_name: &'a str,
         commit_details: &'a [CommitMessageDetail],
         target_branch: &'a str,
-    ) -> TemplateContext<'a> {
-        TemplateContext {
+    ) -> PromptContext<'a> {
+        PromptContext {
             git_diff,
             git_diff_stat: "",
             branch,

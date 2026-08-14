@@ -8,6 +8,7 @@
 //!
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
+//! | Outdated wrapper | `Worktree for X @ path, but cannot change directory — shell wrapper is out of date` | `To update the shell wrapper, run wt config shell install` |
 //! | Not installed | `Worktree for X @ path, but cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Installed, not active | `Worktree for X @ path, but cannot change directory — shell integration installed but not active` | `A shell restart usually activates shell integration; if it doesn't, ask an agent to debug with the docs @ https://worktrunk.dev/llms.txt` |
 //! | Explicit path | `Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
@@ -20,6 +21,7 @@
 //! | Condition | Success | Warning | Hint |
 //! |-----------|---------|---------|------|
 //! | Shell active | `Created new worktree for X from base @ path` | (none) | (none) |
+//! | Outdated wrapper | `Created new worktree for X from base @ path` | `Cannot change directory — shell wrapper is out of date` | `To update the shell wrapper, run wt config shell install` |
 //! | Not installed | `Created new worktree for X from base @ path` | `Cannot change directory — shell integration not installed` | `To enable automatic cd, run wt config shell install` |
 //! | Explicit path | `Created new worktree for X from base @ path` | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch X` |
 //! | Git subcommand | `Created new worktree for X from base @ path` | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
@@ -29,6 +31,7 @@
 //! | Condition | Warning | Hint |
 //! |-----------|---------|------|
 //! | Shell active | (info) `Switched to worktree for main @ path` | (none) |
+//! | Outdated wrapper | `Cannot change directory — shell wrapper is out of date` | `To update the shell wrapper, run wt config shell install` |
 //! | Git subcommand | `Cannot change directory — ran git wt; running through git prevents cd` | `For automatic cd, invoke directly (with the -): git-wt` |
 //! | Explicit path | `Cannot change directory — ran ./wt; shell integration wraps wt` | `To change directory, run wt switch main` |
 //! | Other | `Cannot change directory — {reason}` | `To enable automatic cd, run wt config shell install` |
@@ -40,6 +43,7 @@
 //! | Condition | Action |
 //! |-----------|--------|
 //! | Git subcommand | Return early (warning already shown) |
+//! | Outdated wrapper | Return early (targeted reinstall hint already shown) |
 //! | Unsupported shell | Hint: `Shell integration not yet supported for <shell>` |
 //! | No shell detected | Hint: `To enable automatic cd, run wt config shell install` |
 //! | Current shell already installed | Hint: `A shell restart usually activates shell integration; …` |
@@ -52,6 +56,7 @@
 //!
 //! | Reason | Meaning |
 //! |--------|---------|
+//! | `shell wrapper is out of date` | Only the retired single-file directive env var is set |
 //! | `shell integration not installed` | Shell config doesn't have the `eval` line |
 //! | `shell integration installed but not active` | Shell config has `eval` line but wrapper not active |
 //! | `ran X; shell integration wraps Y` | Invoked with explicit path (e.g., `./target/debug/wt`) |
@@ -70,8 +75,8 @@ use worktrunk::styling::{
 };
 
 use crate::commands::configure_shell::{
-    ConfigAction, UninstallScanResult, handle_configure_shell, prompt_for_install,
-    scan_shell_configs,
+    ConfigAction, UninstallScanResult, collect_legacy_cleanups, format_matched_lines,
+    handle_configure_shell, prompt_for_install, scan_shell_configs,
 };
 
 /// Git config key tracking how many times the shell-integration install hint
@@ -165,6 +170,10 @@ pub(crate) fn should_show_explicit_path_hint() -> bool {
 /// any shell. This prevents misleading "restart" advice when e.g. bash has
 /// integration but the user is running fish.
 pub(crate) fn compute_shell_warning_reason() -> String {
+    if super::retired_shell_wrapper_active() {
+        return "shell wrapper is out of date".to_string();
+    }
+
     // Check if the CURRENT shell has integration configured, not just ANY shell
     let is_configured = current_shell()
         .and_then(|shell| shell.is_shell_configured(&crate::binary_name()).ok())
@@ -412,6 +421,11 @@ pub fn prompt_shell_integration(
     if crate::is_git_subcommand() {
         return Ok(false);
     }
+    // The caller already showed the targeted outdated-wrapper warning and
+    // reinstall hint. Do not follow it with the generic first-run prompt.
+    if super::retired_shell_wrapper_active() {
+        return Ok(false);
+    }
 
     let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
@@ -468,9 +482,17 @@ pub fn prompt_shell_integration(
 
     // TTY + first time: Show interactive prompt
     // Accepting installs for all shells with config files (same as `wt config shell install`)
+    // Detect (without removing) the legacy files the subsequent handle_configure_shell
+    // would delete, so this offer names them before the user consents — the removal is
+    // destructive and must not happen unpreviewed, exactly as `wt config shell install`
+    // now previews it (issue #3644). The list is computed from the same dry-run scan
+    // handle_configure_shell re-derives internally, so the prompt names precisely what
+    // the install removes.
+    let legacy_preview = collect_legacy_cleanups(&scan.configured, binary_name, true);
     let confirmed = prompt_for_install(
         &scan.configured,
         &scan.completion_results,
+        &legacy_preview,
         binary_name,
         "Install shell integration?",
     )
@@ -505,18 +527,21 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
     let completion_count = scan_result.completion_results.len();
     let total_changes = shell_count + completion_count;
 
-    // Show shell extension results
+    // Show shell extension results, each with the rc-file lines it took. With
+    // --yes there is no confirmation, so this is the only place the user sees
+    // which of their lines went.
     for result in &scan_result.results {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
         let what = shell_extension_label(shell);
 
         eprintln!(
-            "{}",
+            "{}{}",
             success_message(cformat!(
                 "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
                 result.action.description(),
-            ))
+            )),
+            format_matched_lines(&result.matched_lines),
         );
     }
 

@@ -141,7 +141,8 @@ pub fn handle_claude_install_statusline(yes: bool) -> anyhow::Result<()> {
     );
 
     let json = serde_json::to_string_pretty(&settings).context("Failed to serialize settings")?;
-    std::fs::write(&settings_path, json + "\n").context("Failed to write settings.json")?;
+    worktrunk::utils::write_atomically(&settings_path, &(json + "\n"))
+        .context("Failed to write settings.json")?;
 
     eprintln!("{}", success_message("Statusline configured"));
 

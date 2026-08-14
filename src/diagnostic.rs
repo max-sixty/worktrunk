@@ -425,21 +425,30 @@ fn truncate_log(content: &str) -> String {
     format!("(log truncated to last ~50KB)\n{}", &content[start..])
 }
 
-/// Get git version string.
-fn git_version() -> anyhow::Result<String> {
+/// Get the version reported by `git --version`.
+pub(crate) fn git_version() -> anyhow::Result<String> {
     let output = Cmd::new("git")
         .arg("--version")
         .run()
         .context("Failed to run git --version")?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let version = stdout
-        .trim()
-        .strip_prefix("git version ")
-        .unwrap_or(stdout.trim())
-        .to_string();
+    anyhow::ensure!(output.status.success(), "git --version failed");
+    parse_git_version(&output.stdout)
+}
 
-    Ok(version)
+fn parse_git_version(stdout: &[u8]) -> anyhow::Result<String> {
+    let stdout = std::str::from_utf8(stdout)
+        .context("git --version returned invalid UTF-8")?
+        .trim();
+    let version = stdout
+        .strip_prefix("git version ")
+        .context("git --version returned an unexpected response")?;
+    anyhow::ensure!(
+        !version.is_empty() && !version.contains(['\r', '\n']),
+        "git --version returned an unexpected response"
+    );
+
+    Ok(version.to_string())
 }
 
 /// Render the curated environment variables ([`DIAGNOSTIC_ENV_VARS`]) plus git's
@@ -622,6 +631,27 @@ mod tests {
     #[test]
     fn test_render_trace_profile_none_without_records() {
         assert!(render_trace_profile("not a trace line\nanother line\n").is_none());
+    }
+
+    #[test]
+    fn test_parse_git_version_requires_standard_single_line_output() {
+        assert_eq!(
+            parse_git_version(b"git version 2.47.1\n").unwrap(),
+            "2.47.1"
+        );
+        assert_eq!(
+            parse_git_version(b"git version 2.39.5 (Apple Git-154)\n").unwrap(),
+            "2.39.5 (Apple Git-154)"
+        );
+
+        for malformed in [
+            b"2.47.1".as_slice(),
+            b"git version \n",
+            b"git version 2.47.1\nextra",
+            b"git version 2.\xff",
+        ] {
+            assert!(parse_git_version(malformed).is_err());
+        }
     }
 
     #[test]

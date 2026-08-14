@@ -94,9 +94,9 @@ pub struct ProjectCommitGenerationConfig {
 
 /// Project-level forge configuration.
 ///
-/// Names the forge explicitly, for repos where URL-based detection can't
-/// determine it (e.g., SSH host aliases, GitHub Enterprise, or self-hosted
-/// GitLab with custom domains).
+/// Names the forge explicitly, for a remote whose hostname carries no forge
+/// name for [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) to read
+/// (a Forgejo instance at `forge.example.com`, a company git server).
 ///
 /// # Example
 ///

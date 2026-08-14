@@ -104,7 +104,7 @@ pub fn handle_opencode_install(yes: bool) -> Result<()> {
         .with_context(|| format!("Failed to create directory {}", parent.display()))?;
 
     // Write the plugin file
-    std::fs::write(&target, PLUGIN_SOURCE)
+    worktrunk::utils::write_atomically(&target, PLUGIN_SOURCE)
         .with_context(|| format!("Failed to write plugin to {target_display}"))?;
 
     eprintln!(

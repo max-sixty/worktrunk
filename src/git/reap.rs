@@ -67,7 +67,18 @@ pub struct CwdProcess {
 
 /// Timeout for the `lsof` / `ps` probes. Discovery is opt-in and off the hot
 /// path, but a hung probe should still not stall removal indefinitely.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// Tests override via `WORKTRUNK_TEST_PROBE_TIMEOUT_MS` (set generously in
+/// `STATIC_TEST_ENV_VARS`): under suite load a probe's spawn alone can stall
+/// past the production bound, and the timeout's fail-safe empty result then
+/// reads as "no processes to reap" — a load-dependent test outcome.
+fn probe_timeout() -> Duration {
+    let ms = std::env::var("WORKTRUNK_TEST_PROBE_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5_000);
+    Duration::from_millis(ms)
+}
 
 /// Parse `lsof -d cwd -F pcn` field output into one [`CwdProcess`] per process.
 ///
@@ -153,7 +164,7 @@ fn without_controlling_terminal(pids: &[u32]) -> HashSet<u32> {
     // partial-output shape `lsof` has in `processes_under`).
     let Ok(output) = Cmd::new("ps")
         .args(["-o", "pid=,tty=", "-p", &pid_list])
-        .timeout(PROBE_TIMEOUT)
+        .timeout(probe_timeout())
         .run()
     else {
         return HashSet::new();
@@ -182,7 +193,7 @@ pub fn processes_under(worktree_path: &Path) -> Vec<CwdProcess> {
     // exit status. Only a spawn failure (lsof missing) means "no data".
     let Ok(output) = Cmd::new("lsof")
         .args(["-d", "cwd", "-F", "pcn"])
-        .timeout(PROBE_TIMEOUT)
+        .timeout(probe_timeout())
         .run()
     else {
         return Vec::new();
@@ -360,10 +371,11 @@ not-a-pid tty
     }
 
     /// `reap_pids` against a real process: `SIGTERM` terminates it and the
-    /// count comes back confirmed. Discovery and the controlling-terminal
-    /// guard are covered in-process by the `test_remove_reap_kills_process`
-    /// integration test (which calls `processes_under` / `collect_reapable`
-    /// directly), so this focuses on the signalling half.
+    /// count comes back confirmed. Discovery is covered in-process by the
+    /// `test_remove_reap_kills_process` integration test (which polls
+    /// `processes_under` directly); the controlling-terminal guard's
+    /// classification has the `parse_ps_tty` unit tests, and the spawned `wt`
+    /// exercises the assembled gate — so this focuses on the signalling half.
     #[test]
     fn reap_pids_terminates_a_process() {
         use std::process::Command;

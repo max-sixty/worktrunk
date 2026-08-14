@@ -132,10 +132,36 @@ static ZOLA_LINK_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
 
 /// Regex guardrail: any leftover `](@/...md...)` link that the transform
-/// above failed to rewrite. Used by the sync test to fail loudly on stray
-/// Zola internal links in generated skill content.
+/// above failed to rewrite. Used by [`assert_no_untransformed_zola_links`] to
+/// fail loudly on stray Zola internal links in generated content.
 static UNTRANSFORMED_ZOLA_LINK_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\]\(@/[^)]+\.md").unwrap());
+
+/// Guardrail for every generated surface that rewrites Zola internal links.
+///
+/// A `@/page.md` target is meaningful only to Zola: it resolves when the docs
+/// site builds and is dead text anywhere else. Both link rewrites here are
+/// regexes over link *text*, so their failure mode is silence — an
+/// unanticipated character makes the pattern decline to match and the raw
+/// markdown survives into the generated file. Neither sync test can see it,
+/// because each compares the generated file against the same transform that
+/// produced it, so an unconverted link is "in sync" by construction.
+///
+/// So each surface asserts the negative afterwards: no `](@/…md` may remain.
+/// `surface` names the generated content for the failure message.
+fn assert_no_untransformed_zola_links(content: &str, surface: &str) {
+    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(content) {
+        let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+        let snippet_end = content[m.end()..]
+            .find('\n')
+            .map_or(content.len(), |i| m.end() + i);
+        panic!(
+            "Failed to transform a Zola internal link in {surface} — likely an \
+             unsupported character in the link text. Offending line:\n{}",
+            &content[snippet_start..snippet_end]
+        );
+    }
+}
 
 /// Regex to convert Zola rawcode shortcode to HTML pre tags
 /// Matches: {% rawcode() %}...{% end %}
@@ -1108,7 +1134,15 @@ fn transform_config_source_to_toml(source: &str) -> String {
         result.pop();
     }
 
-    result.join("\n")
+    let result = result.join("\n");
+
+    // Guardrail: a link `convert_markdown_links_for_config` declined to match
+    // survives as raw markdown into the generated example file, which
+    // `wt config create` writes to the user's config and `wt config create
+    // --help` prints — so the `@/` target would reach the user verbatim.
+    assert_no_untransformed_zola_links(&result, "a generated config example");
+
+    result
 }
 
 /// Convert markdown links to plain text with URL in parentheses.
@@ -1116,12 +1150,22 @@ fn transform_config_source_to_toml(source: &str) -> String {
 /// Config files aren't rendered as markdown, so links need to be readable as plain text.
 /// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
 /// - `[Link text](https://example.com)` → `Link text (https://example.com)`
+///
+/// The link text may itself contain a bracketed span — a TOML section name in
+/// backticks (``[pattern-keyed `[projects]` entry](@/config.md#…)``) is the
+/// shape that occurs here. A link that isn't converted survives as raw
+/// markdown into the generated example file, which `wt config create` writes
+/// to the user's config and `wt config create --help` prints, so a Zola `@/`
+/// target reaches the user verbatim. Brackets in these link texts always sit
+/// inside a backticked code span, so the text class alternates a code span
+/// with any non-`]`-non-backtick char — the same rule `ZOLA_LINK_PATTERN`
+/// uses above, which also covers `[[…]]` array-of-tables names.
 fn convert_markdown_links_for_config(line: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
 
     static MARKDOWN_LINK: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+        LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(([^)]+)\)").unwrap());
 
     MARKDOWN_LINK
         .replace_all(line, |caps: &regex::Captures| {
@@ -1146,6 +1190,81 @@ fn convert_markdown_links_for_config(line: &str) -> String {
             format!("{text} ({url})")
         })
         .to_string()
+}
+
+/// Every link form the config sections use converts to plain text, including
+/// one whose text carries a bracketed span of its own.
+///
+/// The generated file is what `wt config create` writes and what `wt config
+/// create --help` prints, so a link this misses ships a raw `@/page.md` target
+/// to the user. Nothing downstream catches that: the sync test compares the
+/// example against this same transform, so an unconverted link is "in sync".
+#[test]
+fn test_config_markdown_links_convert_to_plain_text() {
+    let cases = [
+        // Zola page link, and the same with an anchor.
+        (
+            "See [hooks](@/hook.md) for details",
+            "See hooks (https://worktrunk.dev/hook/) for details",
+        ),
+        (
+            "See [forge platform](@/config.md#forge-platform).",
+            "See forge platform (https://worktrunk.dev/config/#forge-platform).",
+        ),
+        // An absolute URL passes through untouched.
+        (
+            "See [the spec](https://example.com/a) too",
+            "See the spec (https://example.com/a) too",
+        ),
+        // Link text containing a bracketed span — a TOML section name in
+        // backticks. The pre-fix regex stopped at the inner `]` and left the
+        // whole link as raw markdown.
+        (
+            "name it once with a [pattern-keyed `[projects]` entry](@/config.md#user-project-specific-settings) instead",
+            "name it once with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead",
+        ),
+        // The same shape naming an array-of-tables. These sections document
+        // `[[projects."…".post-start]]` pipelines, so a link naming one is the
+        // next form to arrive; the code-span class covers it.
+        (
+            "see [`[[projects.\"…\".post-start]]` hooks](@/config.md#hooks) for the pipeline form",
+            "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#hooks) for the pipeline form",
+        ),
+        // Two links on one line still both convert.
+        (
+            "[a](@/hook.md) and [b](@/config.md)",
+            "a (https://worktrunk.dev/hook/) and b (https://worktrunk.dev/config/)",
+        ),
+        // A bare bracketed span is not a link and must survive verbatim —
+        // `[forge]` and `[list]` appear all over these sections.
+        (
+            "A repository's own `[forge]` still wins, field by field.",
+            "A repository's own `[forge]` still wins, field by field.",
+        ),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            convert_markdown_links_for_config(input),
+            expected,
+            "input: {input}"
+        );
+    }
+}
+
+/// A link shape the rewrite declines to match fails loudly rather than
+/// shipping its `@/` target.
+///
+/// This is the backstop for the case the test above can't anticipate: the next
+/// unsupported link text. The generated config example runs through
+/// `transform_config_source_to_toml`, so the assertion is what turns "the
+/// regex silently declined" into a test failure naming the line.
+#[test]
+#[should_panic(expected = "a generated config example")]
+fn test_untransformed_zola_link_fails_the_config_transform() {
+    // An unbalanced backtick in the link text: the code-span alternative can't
+    // close, so the rewrite declines and the raw `@/` target would survive.
+    transform_config_source_to_toml("See [a `broken span](@/config.md#hooks) here");
 }
 
 /// Extract a config section from src/cli/mod.rs by marker pattern.
@@ -1519,91 +1638,6 @@ fn test_config_source_templates_are_in_sync() {
              Run tests locally and commit the changes.",
             updated_count
         );
-    }
-}
-
-/// Update help markers in a docs file
-/// Uses unified MARKER_PATTERN, processes only help commands (backtick IDs)
-fn sync_help_markers(file_path: &Path, project_root: &Path) -> Result<usize, Vec<String>> {
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| vec![format!("Failed to read {}: {}", file_path.display(), e)])?;
-
-    let mut result = content.clone();
-    let mut errors = Vec::new();
-    let mut updated = 0;
-
-    // Collect all matches and filter to help commands only
-    let matches: Vec<_> = MARKER_PATTERN
-        .captures_iter(&content)
-        .filter_map(|cap| {
-            let id = cap.get(1).unwrap().as_str().trim();
-            // Only process help commands (backtick IDs)
-            if matches!(MarkerType::from_id(id), MarkerType::Help) {
-                let full_match = cap.get(0).unwrap();
-                let current = cap.get(2).unwrap().as_str();
-                Some((
-                    full_match.start(),
-                    full_match.end(),
-                    id.to_string(),
-                    current.to_string(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Process in reverse order
-    for (start, end, id, current) in matches.into_iter().rev() {
-        let expected = match help_output(&id, project_root) {
-            Ok(content) => content,
-            Err(e) => {
-                errors.push(format!("❌ {}: {}", id, e));
-                continue;
-            }
-        };
-
-        if trim_lines(&current) != trim_lines(&expected) {
-            let replacement = format_replacement(&id, &expected, &OutputFormat::Unwrapped);
-            result.replace_range(start..end, &replacement);
-            updated += 1;
-        }
-    }
-
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-
-    if updated > 0 {
-        fs::write(file_path, &result).unwrap();
-    }
-    Ok(updated)
-}
-
-#[test]
-fn test_docs_commands_are_in_sync() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let commands_path = project_root.join("docs/content/commands.md");
-
-    if !commands_path.exists() {
-        // Skip if docs directory doesn't exist
-        return;
-    }
-
-    match sync_help_markers(&commands_path, project_root) {
-        Ok(updated_count) => {
-            if updated_count > 0 {
-                panic!(
-                    "Docs commands out of sync: updated {} section(s) in {}. \
-                     Run tests locally and commit the changes.",
-                    updated_count,
-                    commands_path.display()
-                );
-            }
-        }
-        Err(errors) => {
-            panic!("Docs commands are out of sync:\n\n{}\n", errors.join("\n"));
-        }
     }
 }
 
@@ -2173,20 +2207,8 @@ fn finalize_skill_content(content: &str) -> String {
         .into_owned();
 
     // Guardrail: ZOLA_LINK_PATTERN must catch every Zola internal link before
-    // we ship skill content. A stray `](@/...md...)` means the regex failed to
-    // match — usually because of unexpected chars in the link text — and the
-    // skill file would ship a dead link. Fail loudly instead.
-    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(&content) {
-        let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
-        let snippet_end = content[m.end()..]
-            .find('\n')
-            .map_or(content.len(), |i| m.end() + i);
-        panic!(
-            "ZOLA_LINK_PATTERN failed to transform a Zola internal link in skill content — \
-             likely an unsupported character in the link text. Offending line:\n{}",
-            &content[snippet_start..snippet_end]
-        );
-    }
+    // we ship skill content, which would otherwise carry a dead link.
+    assert_no_untransformed_zola_links(&content, "skill content");
 
     // Remove "See also" section (just contains links to other pages)
     let content = remove_section(&content, "## See also");
@@ -2471,6 +2493,52 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
     (errors, updated_files)
 }
 
+/// Generate `docs/static/schema/list-v2.json` from `wt list --print-schema`,
+/// publishing it at the `$id` the document carries
+/// (`https://worktrunk.dev/schema/list-v2.json`).
+///
+/// Shells out rather than calling `schema_for!` directly: the `JsonEnvelope`
+/// it derives from lives in the bin-only `crate::commands` tree, which an
+/// integration test can't import. Same reason `sync_command_pages` runs
+/// `--help-page`.
+///
+/// A schemars upgrade rewrites this file. That shows up here as an ordinary
+/// out-of-sync failure, which is the intent — a consumer's schema changing
+/// under a dependency bump should be a reviewed diff.
+fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut updated_files = Vec::new();
+
+    let output = wt_command()
+        .args(["list", "--print-schema"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt list --print-schema");
+
+    if !output.status.success() {
+        errors.push(format!(
+            "'wt list --print-schema' failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+        return (errors, updated_files);
+    }
+
+    let generated = String::from_utf8_lossy(&output.stdout).to_string();
+    if generated.trim().is_empty() {
+        errors.push("Empty output from 'wt list --print-schema'".to_string());
+        return (errors, updated_files);
+    }
+
+    let rel_path = "docs/static/schema/list-v2.json";
+    let dst = project_root.join(rel_path);
+    if fs::read_to_string(&dst).unwrap_or_default() != generated {
+        write_tracked(&dst, &generated, rel_path, &mut updated_files);
+    }
+
+    (errors, updated_files)
+}
+
 /// Generate `docs/static/llms.txt` from `docs/content/*.md` front-matter,
 /// following the llms.txt spec (https://llmstxt.org/): H1, blockquote summary,
 /// optional intro prose, H2 section headings with bulleted link lists.
@@ -2709,6 +2777,13 @@ fn test_docs_are_in_sync() {
     // Step 5: Generate docs/static/llms.txt from docs/content front-matter
     let (llms_errors, llms_files) = sync_llms_txt(project_root);
     tag("llms.txt", llms_errors, llms_files);
+
+    // Step 5b: Generate docs/static/schema/list-v2.json from the derived
+    // schema. Grouped here because it also writes docs/static/, but it reads
+    // the binary rather than the markdown pipeline, so it has no ordering
+    // dependency on the steps above.
+    let (schema_errors, schema_files) = sync_json_schema(project_root);
+    tag("json schema", schema_errors, schema_files);
 
     // Step 6: Sync README from the now-fresh docs files. Runs last because
     // section extraction depends on docs/content/*.md being current.

@@ -1,37 +1,40 @@
 # wt-switch-create design rationale
 
-Why the skill is create-then-reach: create the worktree with `wt`, enter it with
-`EnterWorktree`, and when entry is rejected, work in it if it's reachable or
-escalate to the user to make it reachable. Not
-the guard-heavy multi-route flow it replaced, and not the silent absolute-paths
-fallback that read as a failure.
+The design of the skill's create-and-enter flow, and the verified harness
+behavior behind it. The flow is error-driven; predictive guards and extra
+routes were tried and cut.
 
 Every claim here was verified against primary sources (2026-06-11 to
 2026-06-17): Claude Code 2.1.173, with the path-entry and working-directory
 logic re-confirmed live and against the 2.1.177 binary, plus official docs at
 code.claude.com/docs; and wt v0.57.0-16-g371d28662 (live runs in a scratch
-repo). Re-verify against current versions before relying on a specific behavior;
-the *shape* of the argument should outlive the details. Binary symbol names are
-deliberately omitted — they re-minify every build.
+repo). Entry — the confirmation, both `EnterWorktree` routes, and what each
+leaves behind at exit — was re-run live on 2026-07-28 against Claude Code
+2.1.220 and wt v0.69.2. Re-verify against current versions before relying on a
+specific behavior; the *shape* of the argument should outlive the details.
+Binary symbol names are deliberately omitted — they re-minify every build.
 
 ## The design
 
-1. Create the worktree with `wt -C <repo> switch --create <branch> --no-cd
-   --format=json` in Bash (omit `-C` for this repo). `wt` solves repo targeting
-   (`-C` works from anywhere), existing-branch handling (rerun without
-   `--create`), and machine-readable output (`.path` on stdout, status on
-   stderr). Creating in another repo is fine; only *entering* the result is
-   constrained.
-2. Enter it with `EnterWorktree({path})` — the only way to re-root a Claude Code
-   session, and it accepts only a worktree of the session's own repo.
-3. On rejection, the session can still work there iff the path sits inside a
-   directory it's allowed in (an
-   `additionalDirectories` entry). A single `cd <path>` discovers which: it
-   sticks when reachable, resets when not. Reachable → work in place.
-   Unreachable → escalate, because the agent can't enlarge that set itself: ask
-   the user to add the repo or a parent (e.g. `~/workspace`) to
-   `additionalDirectories`, or `/add-dir <path>`. A one-line, set-once handback,
-   not a silent degrade.
+1. `EnterWorktree({name})` for a new branch in this repo. It creates through
+   worktrunk's `WorktreeCreate` hook (`wt switch --create`), so the result is
+   an ordinary `wt` worktree, and it passes no `path`, which is what keeps M2's
+   confirmation from firing. It fails on an existing branch and from a session
+   that already entered a worktree, and it has no repo targeting.
+2. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
+   Bash, then `EnterWorktree({path})`. `wt` solves repo targeting (`-C` works
+   from anywhere), existing-branch handling (rerun without `--create`), and
+   machine-readable output (`.path` on stdout, status on stderr). Creating in
+   another repo is fine; only *entering* the result is constrained. Entry that
+   someone declined ends there, with the worktree left unentered (M2).
+3. On a tool error (or a denial with no user behind it), the session can still
+   work there iff the path sits
+   inside a directory it's allowed in (an `additionalDirectories` entry). A
+   single `cd <path>` discovers which: it sticks when reachable, resets when
+   not. Reachable → work in place. Unreachable → escalate, because the agent
+   can't enlarge that set itself: ask the user to add the repo or a parent
+   (e.g. `~/workspace`) to `additionalDirectories`, or `/add-dir <path>`. A
+   one-line, set-once handback, not a silent degrade.
 
 Two independent harness facts underlie this — re-root is repo-scoped, and `cd`
 persistence is working-directory-membership-scoped — detailed below.
@@ -64,7 +67,8 @@ either wording.
   `wt remove -D`; clean and merged → removes worktree and branch.
 - The git stash is per-repo, shared across worktrees: `git stash push -u` in
   one worktree pops cleanly in another via `git -C <path> stash pop`,
-  untracked files included — the mid-session carry-across in step 2.
+  untracked files included — the mid-session carry-across in the skill's
+  creation step.
 
 ## Claude Code behavior
 
@@ -97,11 +101,41 @@ cwd.
 - **Gate:** a worktree of **the repo the current cwd resolves to**, by session
   state:
   - **Plain / first-entry session** → any worktree *registered to that repo*
-    (`git worktree list`), anywhere on disk.
+    (`git worktree list`), anywhere on disk; in a multi-repo workspace, also
+    one registered to a repo nested inside it.
   - **Already in a worktree-session, or a pinned agent** → only under that
     repo's `.claude/worktrees/`; rejects even same-repo siblings.
   - **cwd outside any git repo** → refuses entirely.
-- Rejections are graceful and side-effect-free (nothing is created), verbatim:
+- **Confirmation:** the safety check runs on the two facts the call carries —
+  a `path` argument, and a target outside the project's `.claude/worktrees/` —
+  and asks before anything else runs, the dialog reading "permission-root
+  relocation to `<path>` — a model-supplied worktree outside
+  .claude/worktrees/". Yes/no only: no always-allow, nothing persisted after a
+  yes, and `permissions.allow` entries for `EnterWorktree` (bare, `(*)`, or a
+  path glob) don't suppress it. It asks wherever the session can prompt
+  (`default`, `acceptEdits`, `auto`); `bypassPermissions` allows without
+  asking, and a session that can't prompt denies without asking.
+  `EnterWorktree({name})` passes no `path`, so it never asks.
+- **Reading the failure:** step 3 splits tool errors from denials
+  structurally rather than by parsing the denial's wording. The tool's own
+  rejections are verbatim and graceful (`Cannot enter …`), so they key the
+  recovery; a denial of the call defaults to being the user's answer, the
+  no-user case an exception keyed on the denial saying the session couldn't
+  prompt. The default falls on the safe side because denial texts don't
+  classify reliably: a typed "no" arrives as the generic `The user doesn't
+  want to proceed with this tool use`, naming neither the tool nor the
+  confirmation, and in blind tests every wording that asked the agent to
+  recognize it — branches labeled by who refused, "the denial reports a
+  decision", even that string quoted as an example — sent the agent into the
+  recovery, into the worktree the user had just declined. A recovery that
+  follows a denial invites that routing, so the denial branch leads with
+  stopping. The only decision that reaches step 3 is that answer — a
+  `permissions.deny` entry for `EnterWorktree`, with or without an argument
+  pattern, drops the tool from the session instead, so there is no call to
+  deny.
+- Rejections are graceful and side-effect-free (nothing is created). The three
+  the skill's own flow produces, verbatim (others exist — a worktree locked by
+  another running session, the main working tree, a prunable registration):
   - registered-check: `Cannot enter worktree: <path> is not a registered
     worktree of <repo>. Run 'git -C <repo> worktree list' …`
   - managed-location: `Cannot enter worktree: <path> is not under
@@ -150,32 +184,36 @@ Bash call. Where the user never installed integration (a fresh shell, CI) the
 wrapper is absent and wt cannot cd regardless, so `--no-cd` is load-bearing on an
 integrated machine and a no-op elsewhere. Don't drop it.
 
-### Why not `EnterWorktree({name})` + the WorktreeCreate hook
+### What `EnterWorktree({name})` costs, and where it stops
 
-A worktree could also be created by `EnterWorktree({name})`, which the worktrunk
-plugin routes through its `WorktreeCreate` hook. Rejected for the skill — the
-hook itself stays; it is how `isolation: "worktree"` agents get worktrunk
-worktrees:
+The `name` route is worth having because it skips M2's confirmation entirely,
+which no configuration can do for a path entry. The same plugin hook backs
+`isolation: "worktree"` agents, so the worktree it produces is the one `wt`
+would have made either way. Three properties come with it, all verified live:
 
-1. **Hard-fails on existing branches.** The hook runs `wt switch --create`,
-   and a nonzero hook exit fails worktree creation outright — there is no
-   git fallback (binary: "Other exit codes - worktree creation failed";
-   docs: "the hook replaces the default git behavior"). That forced a
-   second route for existing branches; `path` entry needs no second route.
-2. **No repo targeting.** `EnterWorktree({name})` creates the worktree wherever
-   the session is rooted; it can't make one in another repo, which `wt -C` does
-   trivially in step 1.
-3. **Wrong exit-time semantics for durable worktrees.** Worktrees created by
-   `name` are tracked for session-exit cleanup: when the session has no
-   user-set title, a clean worktree (no changed files, no new commits) is
-   *silently auto-removed* at exit (binary: auto-remove iff zero changes,
-   zero commits, and no session title; message "Worktree removed (no
-   changes)"). A worktrunk worktree the user asked for should outlive the
-   session (`wt list`, later `wt merge`). Path-entered worktrees get exactly
-   that: left in place, no prompt ("worktree at <path> left in place").
-4. **Hook contract details leak into the skill.** stdout's last non-empty
-   line must be an existing directory, etc. — irrelevant when the skill reads
-   `.path` from `wt --format=json` directly.
+1. **An untouched worktree is cleaned up at exit, branch included.** With no
+   changed files, no commits, and no user-set session title, the exiting
+   session removes it through the plugin's `WorktreeRemove` hook, which is
+   `wt remove`, so a clean fully-merged branch goes too. Verified end-to-end:
+   `EnterWorktree({name: "probe"})`, then `/exit`, leaves neither `repo.probe`
+   nor the `probe` branch; one untracked file is enough for exit to report
+   "Keeping worktree…" and leave both. This is a feature at this scale — a
+   research task that wrote nothing leaves nothing to prune — and it is the
+   reason step 2's worktrees are not described as durable. Path-entered
+   worktrees are always left in place ("worktree at <path> left in place").
+2. **It hard-fails on an existing branch.** The hook runs `wt switch --create`,
+   and a nonzero hook exit fails creation outright, with no git fallback
+   (binary: "Other exit codes - worktree creation failed"; docs: "the hook
+   replaces the default git behavior"). The failure is clean: `wt`'s own
+   `✗ Branch <branch> already exists` surfaces and nothing is created.
+3. **It only works on a session's first entry, and only in its own repo.** From
+   a session already in a worktree it returns "Already in a worktree session.
+   Pass `path` to switch into another existing worktree", and it has no `-C`.
+
+Each failure names the route out, which is why step 3 needs no pre-check: try
+the cheap call, read the error, fall back. The hook contract (stdout's last
+non-empty line must be an existing directory) stays the hook's business, since
+the skill reads only the tool result.
 
 ### Why escalate instead of grinding through absolute paths
 
@@ -211,16 +249,21 @@ exits 1 with empty stdout.
 
 ## Known limits (deliberate)
 
-- `EnterWorktree` re-roots only within the repo the cwd is in, and the cwd can't
-  `cd` outside the session's `additionalDirectories` (Claude Code restrictions,
-  not skill gaps). So another repo is reachable only when it, or a parent like
-  `~/workspace`, is in `additionalDirectories` — then the session `cd`s in and
-  works there (and, from a plain session, can re-root within it). Otherwise the
-  skill escalates for a one-line config add rather than degrading to
-  absolute-paths mode. The agent can't enlarge the set itself (`/add-dir` is
-  user-typed), so this handback is irreducible — but set once, it is permanent.
+- Another repo is reachable only through `additionalDirectories` ("How they
+  compose", above); outside it the skill escalates for the one-line config add
+  rather than degrading to absolute-paths mode.
 - A pinned or already-in-worktree session can't even re-enter a *same-repo*
   sibling worktree (the stricter `.claude/worktrees/` check); it lands in the
   same reachability test and the same escalation.
+- The invocations that fall to step 3 still ask the user to confirm, once each,
+  in any session that can prompt (M2): another repo, an existing branch, a
+  second worktree in one session. Nothing in the skill's reach removes that —
+  the check ignores `permissions.allow`, and pointing a project's
+  `worktree-path` into `.claude/worktrees/` would satisfy it only by leaving
+  worktrunk's default layout and putting `wt` and Claude Code in one directory,
+  a combination we haven't run. Removing it there is upstream's to do, by
+  asking once per repo rather than once per call.
 - `wt switch --create` is not idempotent. If that ever changes upstream
-  (enter-if-exists), step 2's existing-branch retry collapses to nothing.
+  (enter-if-exists), step 3's existing-branch retry collapses to nothing, and
+  the hook stops failing on an existing branch, which removes one of the two
+  reasons step 3 exists.

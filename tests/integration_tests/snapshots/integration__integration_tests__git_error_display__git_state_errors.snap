@@ -1,0 +1,57 @@
+---
+source: tests/integration_tests/git_error_display.rs
+expression: render_cases(cases)
+---
+## detached HEAD while merging
+
+[31m✗[39m [31mCannot merge: not on a branch (detached HEAD)[39m
+[2m↳[22m [2mTo switch to a branch, run [4mgit switch <branch>[24m[22m
+
+## detached HEAD without action
+
+[31m✗[39m [31mNot on a branch (detached HEAD)[39m
+[2m↳[22m [2mTo switch to a branch, run [4mgit switch <branch>[24m[22m
+
+## detached HEAD in a named target worktree
+
+[31m✗[39m [31mCannot use /tmp/repo.other as a target: not on a branch (detached HEAD)[39m
+[2m↳[22m [2mTo switch to a branch, run [4mgit -C /tmp/repo.other switch <branch>[24m[22m
+
+## rebase in progress
+
+[31m✗[39m [31mCannot rebase: a git operation is already in progress[39m
+
+## merge in progress
+
+[31m✗[39m [31mCannot merge: a git operation is already in progress[39m
+
+## operation in progress in the target worktree
+
+[31m✗[39m [31mCannot push: a git operation is already in progress in the [1mmain[22m worktree[39m
+
+## uncommitted changes
+
+[31m✗[39m [31mCannot remove worktree: working tree has uncommitted changes[39m
+[2m↳[22m [2mCommit or stash changes first[22m
+
+## uncommitted changes on named branch
+
+[31m✗[39m [31mCannot remove worktree: [1mfeature-branch[22m has uncommitted changes[39m
+[2m↳[22m [2mCommit or stash changes first[22m
+
+## uncommitted changes with force hint
+
+[31m✗[39m [31mCannot remove worktree: [1mfeature-branch[22m has uncommitted changes[39m
+[2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [4mwt remove --force feature-branch[24m[22m
+
+## uncommitted changes with dirty files
+
+[31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
+[107m [0m  M auth.rs
+[107m [0m ?? .DS_Store
+[2m↳[22m [2mCommit or stash changes first[22m
+
+## branch already exists
+
+[31m✗[39m [31mBranch [1mfeature[22m already exists[39m
+[2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch feature[24m[22m

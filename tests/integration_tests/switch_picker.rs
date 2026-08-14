@@ -26,8 +26,8 @@
 //! - **Stabilization detection** waits for screen to stop changing
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
-use crate::common::mock_commands::{MockConfig, MockResponse};
-use crate::common::{TEST_EPOCH, TestRepo, repo, wt_bin};
+use crate::common::mock_commands::{MockConfig, MockResponse, mock_calls};
+use crate::common::{TEST_EPOCH, TestRepo, wt_bin};
 use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
@@ -53,13 +53,22 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time to wait for the picker child to exit after the terminating
-/// keystroke (Enter to switch, Escape to abort) before force-killing it. A clean
-/// switch or abort exits in well under a second, but under heavy CI parallelism
-/// the final git work (or skim's Windows terminal teardown) can lag; killing a
-/// still-finishing child reports exit 1 on Windows, turning a successful-but-slow
-/// switch into a spurious failure. Generous like `READY_TIMEOUT`/`STABILIZE_TIMEOUT`
-/// for the same reason — fast polling means the common case still returns at once.
+/// keystroke (Enter to switch, Escape to abort). A clean switch or abort exits in
+/// well under a second, but under heavy CI parallelism the final git work (or
+/// skim's Windows terminal teardown) can lag. Generous like
+/// `READY_TIMEOUT`/`STABILIZE_TIMEOUT` for the same reason — fast polling means
+/// the common case still returns at once. Reaching it is a hang, and
+/// [`wait_for_exit`] panics rather than reporting an exit code for it.
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the PTY must stay silent after the child exits before its final
+/// frame counts as complete. Long enough that a loaded runner's last flush lands
+/// in the parser; short enough to add no meaningful cost per test.
+const POST_EXIT_QUIET: Duration = Duration::from_millis(250);
+
+/// Ceiling on the post-exit drain, in case something else on the PTY keeps
+/// writing (a detached background hook shares the terminal).
+const POST_EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
@@ -77,6 +86,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// an async item-list refresh resets the cursor to the top.
 const CURSOR_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Picker tests shape their own linked-worktree topology. Starting from the
+/// cached main-only variant avoids constructing and immediately removing the
+/// standard fixture's three unrelated linked worktrees in every PTY test.
+#[rstest::fixture]
+fn repo() -> TestRepo {
+    TestRepo::standard_main_only()
+}
+
 /// Columns that split the list and preview panels in the 120-col test terminal.
 /// skim 4.x draws the │ separator at col 59, with the list to its left (cols
 /// 0..59) and the preview interior to its right (cols 60..120). Slicing around
@@ -85,6 +102,23 @@ const CURSOR_REISSUE_INTERVAL: Duration = Duration::from_secs(1);
 const LIST_WIDTH: u16 = 59;
 const PREVIEW_START_COL: u16 = 60;
 
+/// Full screen content as rows of text.
+///
+/// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
+/// rows to the full column width with spaces. This padding is terminal buffer
+/// fill, not meaningful content, and varies across platforms. Trailing empty
+/// lines are also removed (unwritten terminal rows become empty after trim).
+fn screen_text(parser: &vt100::Parser) -> String {
+    parser
+        .screen()
+        .rows(0, TERM_COLS)
+        .map(|row| row.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
 /// Result of executing a command in a PTY, holding the parsed terminal state.
 struct PtyResult {
     parser: vt100::Parser,
@@ -92,21 +126,9 @@ struct PtyResult {
 }
 
 impl PtyResult {
-    /// Full screen content as rows of text.
-    ///
-    /// Trailing whitespace is trimmed from each row because `vt100::rows()` pads
-    /// rows to the full column width with spaces. This padding is terminal buffer
-    /// fill, not meaningful content, and varies across platforms. Trailing empty
-    /// lines are also removed (unwritten terminal rows become empty after trim).
+    /// Full screen content as rows of text — see [`screen_text`].
     fn screen(&self) -> String {
-        self.parser
-            .screen()
-            .rows(0, TERM_COLS)
-            .map(|row| row.trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim_end()
-            .to_string()
+        screen_text(&self.parser)
     }
 
     /// List and preview panel content, split at the skim border column.
@@ -241,7 +263,6 @@ fn boot_picker_pty(
 
     // Isolated environment with coverage passthrough
     crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
 
     // Test-specific environment variables
@@ -312,36 +333,59 @@ fn abort_and_exit_code(
     }
     drop(writer);
 
-    let start = Instant::now();
-    // Generous like the keystroke-driven helpers: a slow-but-successful exit that
-    // gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
-    let timeout = CHILD_EXIT_TIMEOUT;
-    loop {
-        while rx.try_recv().is_ok() {} // discard chunks
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        if start.elapsed() >= timeout {
-            let _ = child.kill();
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    child.wait().unwrap().exit_code() as i32
+    // Teardown bytes are discarded rather than parsed, so this waits with a
+    // sink parser — the caller's frame was captured before the Escape.
+    let mut sink = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    wait_for_exit(&mut child, &rx, &mut sink, "Escape")
 }
 
-/// Execute a command in a PTY and return the parsed terminal state.
+/// Wait for the picker child to exit, then drain its final output into `parser`
+/// and return its exit code.
 ///
-/// Uses polling with stabilization detection instead of fixed delays.
-fn exec_in_pty_with_input(
-    command: &str,
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-    input: &str,
-) -> PtyResult {
-    exec_in_pty_with_input_expectations(command, args, working_dir, env_vars, &[(input, None)])
+/// A child still running after [`CHILD_EXIT_TIMEOUT`] is hung, and the harness
+/// must not turn that into an exit code: `Child::kill` on Windows is
+/// `TerminateProcess(proc, 1)`, so a killed hang and a wt that failed on its own
+/// both report 1 — the ambiguity that had a *correct* picker-create reported as a
+/// mysterious Windows "self-exit 1" (#3427). Panic on the hang instead, so every
+/// exit code a caller asserts on is one the child chose.
+///
+/// `terminator` names the keystroke that should have ended the session, for the
+/// panic message.
+fn wait_for_exit(
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    terminator: &str,
+) -> i32 {
+    let start = Instant::now();
+    let mut exited = false;
+    while start.elapsed() < CHILD_EXIT_TIMEOUT {
+        if child.try_wait().unwrap().is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        drain_until_quiet(rx, parser);
+        panic!(
+            "Picker child did not exit within {CHILD_EXIT_TIMEOUT:?} of {terminator}.\n\
+             Screen content:\n{}",
+            screen_text(parser)
+        );
+    }
+
+    // Drain to quiet, not once: `try_wait` reports the child reaped, but its
+    // final writes can still be in the PTY (and in the reader thread) at that
+    // moment, so a single non-blocking sweep drops the tail — which is exactly
+    // where a failing run's explanation lives (wt's error line, the last
+    // warning). Without this the captured frame reads as a silent exit.
+    drain_until_quiet(rx, parser);
+
+    child.wait().unwrap().exit_code() as i32
 }
 
 /// Execute a command in a PTY with a sequence of inputs and optional content expectations.
@@ -368,13 +412,6 @@ fn exec_in_pty_with_input_expectations(
         mut parser,
     } = boot_picker_pty(command, args, working_dir, env_vars);
 
-    // Helper to drain available output from the channel (non-blocking)
-    let drain_output = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-
     // Send each input and wait for screen to stabilize after each
     for (input, expected_content) in inputs {
         send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
@@ -382,27 +419,35 @@ fn exec_in_pty_with_input_expectations(
 
     // Release the main thread's writer handle. The reader thread holds the
     // other Arc clone until the PTY drains, so this no longer drives stdin EOF.
-    // The picker exits on Accept/Escape, or the kill below.
+    // The picker exits on Accept/Escape.
     drop(writer);
 
-    // Poll for process exit (fast polling, long timeout for CI)
-    let start = std::time::Instant::now();
-    let timeout = CHILD_EXIT_TIMEOUT;
-    while start.elapsed() < timeout {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill(); // Kill if still running after timeout
-
-    // Drain any remaining output
-    drain_output(&rx, &mut parser);
-
-    let exit_status = child.wait().unwrap();
-    let exit_code = exit_status.exit_code() as i32;
+    let exit_code = wait_for_exit(&mut child, &rx, &mut parser, "the last input");
 
     PtyResult { parser, exit_code }
+}
+
+/// Drain the PTY into `parser` until the child's output goes quiet — nothing new
+/// for [`POST_EXIT_QUIET`], or [`POST_EXIT_DRAIN_TIMEOUT`] elapsed.
+///
+/// Used after the child exits, where the goal is a complete final frame rather
+/// than a stable one. The bound keeps a still-chatty PTY (a detached background
+/// hook writing to the same terminal) from holding the test.
+fn drain_until_quiet(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
+    let start = Instant::now();
+    let mut last_chunk = Instant::now();
+    while start.elapsed() < POST_EXIT_DRAIN_TIMEOUT && last_chunk.elapsed() < POST_EXIT_QUIET {
+        match rx.recv_timeout(POLL_INTERVAL) {
+            Ok(chunk) => {
+                parser.process(&chunk);
+                last_chunk = Instant::now();
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            // Reader thread hit PTY EOF and dropped its sender: nothing more is
+            // coming, and the channel is already empty.
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
 }
 
 /// Execute a command in a PTY, capture screen state, then abort with Escape.
@@ -423,60 +468,6 @@ fn exec_in_pty_capture_before_abort(
     env_vars: &[(String, String)],
     pre_abort_inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
-    exec_in_pty_capture_before_abort_inner(
-        command,
-        args,
-        working_dir,
-        env_vars,
-        pre_abort_inputs,
-        false,
-    )
-}
-
-/// Like `exec_in_pty_capture_before_abort`, but additionally waits for every
-/// asynchronously-decorated list-pane column (git ahead/behind, CI status) to
-/// resolve — its `·` loading placeholder cleared — before capturing.
-///
-/// Committed snapshots of the settled list frame must use this.
-/// `wait_for_stable` alone gates on "no screen change for STABLE_DURATION plus
-/// the awaited row text present", which a column's async output can satisfy
-/// *inside a lull*: a slow git ahead/behind or CI-status compute (e.g. under
-/// coverage instrumentation on a loaded Windows runner) emits nothing during
-/// the window, so the screen looks stable while a cell still shows `·` where
-/// the snapshot has the resolved value. That freezes a different async-render
-/// frame than the committed snapshot — the exact race documented on
-/// `exec_in_pty_capture_noop_probe`. No committed `switch_picker` snapshot
-/// contains `·`, so the settled frame is always reachable.
-///
-/// Tests that *intentionally* capture a transient frame keep the non-settling
-/// `exec_in_pty_capture_before_abort` — e.g.
-/// `test_switch_picker_prs_shows_loading_marker`, which asserts the "loading
-/// open PRs…" header is on screen before the rows stream in.
-fn exec_in_pty_capture_settled_before_abort(
-    command: &str,
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-    pre_abort_inputs: &[(&str, Option<&str>)],
-) -> PtyResult {
-    exec_in_pty_capture_before_abort_inner(
-        command,
-        args,
-        working_dir,
-        env_vars,
-        pre_abort_inputs,
-        true,
-    )
-}
-
-fn exec_in_pty_capture_before_abort_inner(
-    command: &str,
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-    pre_abort_inputs: &[(&str, Option<&str>)],
-    settle_columns: bool,
-) -> PtyResult {
     let PickerSession {
         child,
         _master,
@@ -490,40 +481,11 @@ fn exec_in_pty_capture_before_abort_inner(
         send_input_awaiting_content(&writer, &rx, &mut parser, input, *expected_content);
     }
 
-    // The rows are on screen, but their async-decorated columns may still show
-    // the `·` loading placeholder. A committed-snapshot caller waits for those
-    // to resolve so it freezes the settled frame, not a loading one.
-    if settle_columns {
-        wait_for_list_columns_settled(&rx, &mut parser);
-    }
-
     // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
     // The parser retains this state because we stop feeding output to it.
     let exit_code = abort_and_exit_code(child, writer, rx);
 
     PtyResult { parser, exit_code }
-}
-
-/// Wait until every asynchronously-decorated list-pane column has resolved — no
-/// `·` loading placeholder remains anywhere on screen.
-///
-/// `·` loading placeholders live in the list pane's column gutter, and no
-/// committed `switch_picker` snapshot contains one, so a full-screen check
-/// settles correctly for callers whose preview pane never renders a literal
-/// `·` — e.g. `--branches` (commit-log preview). The `--prs` comments preview
-/// renders `@author · {when}`, so a `--prs` caller can't use this full-screen
-/// gate as-is (it would never clear, panicking at the stabilize timeout).
-/// Routed through `wait_for_stable_until`'s
-/// readiness predicate, so a timeout that never saw the placeholders clear
-/// panics with diagnostics rather than silently capturing a loading frame.
-fn wait_for_list_columns_settled(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
-    wait_for_stable_until(
-        rx,
-        parser,
-        |screen| !screen.contains('·'),
-        Some("all list-pane loading placeholders (·) to clear"),
-        None,
-    );
 }
 
 /// Drive the picker to a settled baseline, capture the list pane, send a
@@ -774,9 +736,8 @@ fn is_cursor_arrow(input: &str) -> bool {
 /// that decorate asynchronously (CI status / PR markers): when the background
 /// resolution lands it refreshes skim's item list, which resets the cursor to the
 /// top, stranding the pointer on the primary worktree. That is a Windows-CI flake
-/// — observed as `test_switch_picker_worktree_row_comments_tab_shows_thread`
-/// timing out with the cursor stuck on `main`, so the HEAD± tab showed the
-/// primary's (empty) diff and the awaited `diff --git` never appeared. Re-issuing
+/// observed with the cursor stuck on `main`, where the HEAD± tab showed the
+/// primary's empty diff and the awaited `diff --git` never appeared. Re-issuing
 /// the idempotent arrow drives the cursor back down after any reset; the wait
 /// returns only once the pointer holds on the target through [`STABLE_DURATION`],
 /// by which point the list has stopped refreshing.
@@ -863,8 +824,7 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
 }
 
 #[rstest]
-fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
+fn test_switch_picker_abort_with_escape(repo: TestRepo) {
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
     let env_vars = repo.test_env_vars();
@@ -886,34 +846,6 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     });
 }
 
-#[rstest]
-fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
-    repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("feature-one");
-    repo.add_worktree("feature-two");
-
-    let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        // Wait for items to render before capturing (prevents flakiness on slow CI)
-        &[("", Some("feature-two"))],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (list, preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_multiple_worktrees_list", list);
-        assert_snapshot!("switch_picker_multiple_worktrees_preview", preview);
-    });
-}
-
 /// A branch name containing `/` (`feature/auth`) must keep its place in collect
 /// order on the empty-query view — it must not sink below plainer names. skim's
 /// empty-query engine scores every row `(score=0, begin=0)`, so a `PathName`
@@ -927,7 +859,6 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
 /// timing can't drift it.
 #[rstest]
 fn test_switch_picker_slashed_branch_keeps_collect_order(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     // Remove origin so the list doesn't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("feature/auth");
@@ -971,7 +902,6 @@ fn test_switch_picker_slashed_branch_keeps_collect_order(mut repo: TestRepo) {
 /// render timing the way a frozen snapshot can.
 #[rstest]
 fn test_switch_picker_alt_l_does_not_hscroll(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     // Remove origin so the list doesn't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("feature-one");
@@ -998,47 +928,6 @@ fn test_switch_picker_alt_l_does_not_hscroll(mut repo: TestRepo) {
     );
 }
 
-#[rstest]
-fn test_switch_picker_with_branches(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
-    repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("active-worktree");
-    // Create a branch without a worktree
-    let output = repo
-        .git_command()
-        .args(["branch", "orphan-branch"])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to create branch");
-
-    let env_vars = repo.test_env_vars();
-    // Snapshot captures the settled column values (git ahead/behind), so wait
-    // for the `·` loading placeholders to clear, not just for the row text:
-    // under coverage instrumentation on a loaded Windows runner the stat
-    // compute can lag past wait_for_stable's window, freezing a `···` loading
-    // frame instead of the committed settled one (run 28213021257).
-    let result = exec_in_pty_capture_settled_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--branches"],
-        repo.root_path(),
-        &env_vars,
-        // Wait for branch items to render before capturing. On macOS CI under
-        // heavy load, skim may show the prompt and header before item rows,
-        // causing wait_for_stable to capture too early (just the header).
-        &[("", Some("orphan-branch"))],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (list, preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_with_branches_list", list);
-        assert_snapshot!("switch_picker_with_branches_preview", preview);
-    });
-}
-
 /// A list taller than the viewport renders skim's scrollbar thumb (`▐`) down
 /// the right edge of the item pane. The thumb only appears because the picker
 /// sets `.scrollbar("▐")` explicitly: skim's `▐` default lives in its clap
@@ -1048,16 +937,16 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
 /// `--branches` overflows the 30-row test terminal cheaply (one `git branch`
 /// per row, no `git worktree add`).
 #[rstest]
-fn test_switch_picker_scrollbar_on_overflow(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
+fn test_switch_picker_scrollbar_on_overflow(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Far more branches than the ~24 item rows the 30-row terminal can show, so
     // the list is guaranteed to overflow and skim paints the scrollbar.
-    for i in 0..50 {
-        let name = format!("scroll-{i:02}");
-        repo.run_git(&["branch", name.as_str()]);
-    }
+    repo.create_branches(
+        &(0..50)
+            .map(|i| format!("scroll-{i:02}"))
+            .collect::<Vec<_>>(),
+    );
 
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
@@ -1081,371 +970,72 @@ fn test_switch_picker_scrollbar_on_overflow(mut repo: TestRepo) {
     );
 }
 
-/// Typing a gutter glyph filters the picker by row kind. `+` is the linked-
-/// worktree glyph, so it narrows to linked worktrees — excluding the current
-/// worktree (`@`) and branch rows (`/`). This is the end-to-end answer to "why
-/// doesn't `+` select *all* the worktrees?": the current worktree is a
-/// different gutter kind. The `active-worktree` row has no literal `+` in its
-/// name or path, so the match succeeds *only* via the glyph folded into the
-/// search text (`progressive_handler::on_skeleton`) — if the fold regressed,
-/// the list would empty out and the `active-worktree` wait below would time out.
 #[rstest]
-fn test_switch_picker_gutter_glyph_filters_by_kind(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so a remote-tracking row doesn't join the list.
-    repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("active-worktree");
-    // Create a branch without a worktree (a `/` gutter row).
-    let output = repo
-        .git_command()
-        .args(["branch", "orphan-branch"])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to create branch");
-
-    let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--branches"],
-        repo.root_path(),
-        &env_vars,
-        // Type the linked-worktree glyph, then wait for the filtered list to
-        // settle on the one linked worktree before capturing.
-        &[("+", Some("active-worktree"))],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (list, _preview) = result.panels();
-    assert!(
-        list.contains("active-worktree"),
-        "`+` keeps the linked worktree:\n{list}"
-    );
-    assert!(
-        !list.contains("@ main"),
-        "`+` filters out the current worktree (`@`):\n{list}"
-    );
-    assert!(
-        !list.contains("orphan-branch"),
-        "`+` filters out branch rows (`/`):\n{list}"
-    );
-}
-
-#[rstest]
-fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
+fn test_switch_picker_preview_navigation_and_log_panel(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
 
-    // First, create and commit a file so we have something to modify
-    std::fs::write(feature_path.join("tracked.txt"), "Original content\n").unwrap();
-    let output = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "tracked.txt"])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to add file");
-    let output = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Add tracked file",
-        ])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to commit");
-
-    // Now make uncommitted modifications to the tracked file
-    std::fs::write(
-        feature_path.join("tracked.txt"),
-        "Modified content\nNew line added\nAnother line\n",
-    )
-    .unwrap();
+    // One clean commit is enough to distinguish the log pane from HEAD±.
+    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
+    repo.run_git_in(&feature_path, &["add", "file.txt"]);
+    repo.run_git_in(
+        &feature_path,
+        &["commit", "-m", "Commit for preview navigation"],
+    );
+    // Make the wrapped comments tab deterministic and local.
+    seed_ci_status(&repo, "feature", "null");
 
     let env_vars = repo.test_env_vars();
-    // Select `feature`, then Alt-1 for the HEAD± panel (bare digits filter; the
-    // preview tabs moved to Alt). Wait for "diff --git" — the async preview can
-    // be slow under congestion.
-    let result = exec_in_pty_capture_before_abort(
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[
-            // Select `feature` by cursor navigation, not a filter query. skim's
-            // matcher runs on a separate thread; under heavy parallel macOS load
-            // its row redraw can lag the keystroke-driven prompt by more than the
-            // 30s gate timeout (#2334/#2729/#2767). Arrow navigation never invokes
-            // the matcher, so the selection is deterministic regardless of load.
-            // The list now shows both worktrees with the cursor on `feature`; the
-            // panel-content gate below still fails loudly if the wrong row is
-            // selected (the snapshot would not match `feature`'s preview).
-            ("\x1b[B", None),              // Down: move cursor to `feature`
-            ("\x1b1", Some("diff --git")), // Alt-1: HEAD± panel; wait for diff
-        ],
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
+    // One real session covers both cyclic directions and direct Alt-N
+    // selection. The paired Shift-Tab then Tab transition distinguishes
+    // comments (7) from PR (6): both empty panes say "has no PR", but only
+    // comments advances to HEAD± (1).
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("feature"));
 
-    let (list, preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_preview_uncommitted_list", list);
-        assert_snapshot!("switch_picker_preview_uncommitted_preview", preview);
-    });
-}
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[Z", Some("has no PR"));
 
-#[rstest]
-fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
-    repo.run_git(&["remote", "remove", "origin"]);
-    let feature_path = repo.add_worktree("feature");
-
-    // Make several commits in the feature worktree
-    for i in 1..=5 {
-        std::fs::write(
-            feature_path.join(format!("file{i}.txt")),
-            format!("Content for file {i}\n"),
-        )
-        .unwrap();
-        let output = repo
-            .git_command()
-            .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-            .run()
-            .unwrap();
-        assert!(output.status.success(), "Failed to add files");
-        let output = repo
-            .git_command()
-            .args([
-                "-C",
-                feature_path.to_str().unwrap(),
-                "commit",
-                "-m",
-                &format!("Add file {i} with content"),
-            ])
-            .run()
-            .unwrap();
-        assert!(output.status.success(), "Failed to commit");
-    }
-
-    let env_vars = repo.test_env_vars();
-    // Select `feature`, then Alt-2 for the log panel. Wait for commit log
-    // format "* [hash]" — the async preview can be slow under congestion.
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None),      // Down: move cursor to `feature`
-            ("\x1b2", Some("* ")), // Alt-2: log panel; wait for git log output
-        ],
+    send_input_awaiting_content(
+        &writer,
+        &rx,
+        &mut parser,
+        "\t",
+        Some("has no uncommitted changes"),
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\t", Some("* "));
 
-    let (list, preview) = result.panels();
+    send_input_awaiting_content(
+        &writer,
+        &rx,
+        &mut parser,
+        "\x1b1",
+        Some("has no uncommitted changes"),
+    );
+
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b2", Some("* "));
+
+    let list = list_pane_text(parser.screen());
+    let preview = preview_pane_text(parser.screen());
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+
     let settings = switch_picker_settings(&repo);
     settings.bind(|| {
         assert_snapshot!("switch_picker_preview_log_list", list);
         assert_snapshot!("switch_picker_preview_log_preview", preview);
-    });
-}
-
-#[rstest]
-fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
-    repo.run_git(&["remote", "remove", "origin"]);
-    let feature_path = repo.add_worktree("feature");
-
-    // Make commits in the feature worktree that differ from main
-    std::fs::write(
-        feature_path.join("feature_code.rs"),
-        r#"fn new_feature() {
-    println!("This is a new feature!");
-    let x = 42;
-    let y = x * 2;
-    println!("Result: {}", y);
-}
-"#,
-    )
-    .unwrap();
-    let output = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to add files");
-    let output = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Add new feature implementation",
-        ])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to commit");
-
-    // Add another commit
-    std::fs::write(
-        feature_path.join("tests.rs"),
-        r#"#[test]
-fn test_new_feature() {
-    assert_eq!(42 * 2, 84);
-}
-"#,
-    )
-    .unwrap();
-    let output = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to add files");
-    let output = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Add tests for new feature",
-        ])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to commit");
-
-    let env_vars = repo.test_env_vars();
-    // Select `feature`, then Alt-3 for the main…± panel. Wait for "diff --git"
-    // — the async preview can be slow under congestion.
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None),              // Down: move cursor to `feature`
-            ("\x1b3", Some("diff --git")), // Alt-3: main…± panel; wait for diff
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (list, preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_preview_main_diff_list", list);
-        assert_snapshot!("switch_picker_preview_main_diff_preview", preview);
-    });
-}
-
-#[rstest]
-fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
-    repo.run_git(&["remote", "remove", "origin"]);
-    let feature_path = repo.add_worktree("feature");
-
-    // Make a commit so there's content to potentially summarize
-    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
-    let output = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to add file");
-    let output = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Add new file",
-        ])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to commit");
-
-    let env_vars = repo.test_env_vars();
-    // Select `feature`, then Alt-5 for the summary panel. Wait for the
-    // "commit.generation" config hint since no LLM is configured.
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None),                     // Down: move cursor to `feature`
-            ("\x1b5", Some("commit.generation")), // Alt-5: summary panel; wait for hint
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (list, preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_preview_summary_list", list);
-        assert_snapshot!("switch_picker_preview_summary_preview", preview);
-    });
-}
-
-/// The summary panel's "enable summaries" hint — shown when commit.generation
-/// IS configured but `[list] summary = false`. Covers the second hint arm (the
-/// first is exercised by `test_switch_picker_preview_panel_summary`), and pins
-/// that both hints point at the resolved config path: under the test's
-/// `WORKTRUNK_CONFIG_PATH` isolation that path redacts to `[TEST_CONFIG]`, not
-/// a hardcoded `~/.config/worktrunk/config.toml`.
-#[rstest]
-fn test_switch_picker_preview_panel_summary_disabled(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so snapshots don't show origin/main
-    repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("feature");
-
-    // commit.generation configured, but summaries off — the picker seeds the
-    // Summary tab with the "enable summaries" hint rather than generating one.
-    repo.write_test_config(
-        "[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = false\n",
-    );
-
-    let env_vars = repo.test_env_vars();
-    // Select `feature`, then Alt-5 for the summary panel. Wait for the hint.
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None),          // Down: move cursor to `feature`
-            ("\x1b5", Some("Enable")), // Alt-5: summary panel; wait for hint
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (_, preview) = result.panels();
-    let settings = switch_picker_settings(&repo);
-    settings.bind(|| {
-        assert_snapshot!("switch_picker_preview_summary_disabled_preview", preview);
     });
 }
 
@@ -1467,41 +1057,13 @@ fn seed_ci_status(repo: &TestRepo, branch: &str, status_json: &str) {
     std::fs::write(cache_dir.join(format!("{branch}.json")), entry).unwrap();
 }
 
-/// Install a mock forge CLI (`gh`/`glab`) that answers the `--prs` list call
-/// from a canned JSON file, and return env vars (mock on PATH + MOCK_CONFIG_DIR)
-/// for a `wt switch --prs` PTY run. No network is touched. `list_delay_ms`
-/// sleeps the list call (0 = instant) so a test can observe the picker's
-/// in-flight loading marker before the rows land.
-fn mock_forge_env(
-    repo: &TestRepo,
-    cli: &str,
-    list_cmd: &str,
-    list_json: &str,
-    list_delay_ms: u64,
-) -> Vec<(String, String)> {
-    let mock_bin = repo.root_path().join("mock-bin");
-    std::fs::create_dir_all(&mock_bin).unwrap();
-    std::fs::write(mock_bin.join("list.json"), list_json).unwrap();
-    MockConfig::new(cli)
-        .version(&format!("{cli} version 1.0.0 (mock)"))
-        .command(
-            list_cmd,
-            MockResponse::file("list.json").with_delay_ms(list_delay_ms),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-
-    forge_mock_env_vars(repo, &mock_bin)
-}
-
-/// Env vars (mock-bin on PATH + `MOCK_CONFIG_DIR`) for a PTY `wt` run that should
-/// resolve `gh`/`glab` to a mock written into `mock_bin`. Shared by
-/// [`mock_forge_env`] and tests that build a richer mock (extra `pr view`
-/// responses) directly.
+/// Env vars (mock-bin on PATH + `WORKTRUNK_TEST_MOCK_CONFIG_DIR`) for a PTY
+/// `wt` run that should resolve `gh`/`glab` to a mock written into `mock_bin`.
+/// Shared by tests that build their own strict list, CI, and preview responses.
 fn forge_mock_env_vars(repo: &TestRepo, mock_bin: &Path) -> Vec<(String, String)> {
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "MOCK_CONFIG_DIR".to_string(),
+        "WORKTRUNK_TEST_MOCK_CONFIG_DIR".to_string(),
         mock_bin.display().to_string(),
     ));
     // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
@@ -1516,91 +1078,24 @@ fn forge_mock_env_vars(repo: &TestRepo, mock_bin: &Path) -> Vec<(String, String)
     env_vars
 }
 
-/// `wt switch --prs` on a GitHub repo: the open-PR list streams into the picker
-/// via a mocked `gh pr list`. Asserts the PR row reaches the list (the `#42`
-/// reference in the CI column), which deterministically exercises the whole
-/// fetch → stream → render path (`fetch_open_prs`, `fetch_github`,
-/// `parse_github_prs`, `stream_open_prs`, `PrEntry::display_status`, `render_grid_row`,
-/// `render_pr_description`). The title isn't on the row — it lives in the `pr`
-/// preview tab so the columns align — so the row's stable substring is `#42`.
-/// The full list isn't snapshotted because the worktree rows' CI cells fill
-/// asynchronously.
-#[rstest]
-fn test_switch_picker_prs_github_list(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"Wraps the request in a retry so the suite stops flaking."}]"#;
-    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 0);
+/// A file-backed mock response gate that also releases on panic, so a failed
+/// PTY assertion cannot leave the mock subprocess blocked until its timeout.
+struct MockReleaseGate(PathBuf);
 
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--prs"],
-        repo.root_path(),
-        &env_vars,
-        // `main…±` now occupies the preview-shown list pane, clipping the CI
-        // column (`#42`) past skim's split. Toggle the preview off (alt-p) so
-        // the list spans full width and renders the number, then gate on it —
-        // deterministic, no dependency on selecting an async-arrived row.
-        &[("\x1bp", Some("#42"))],
-    );
+impl MockReleaseGate {
+    fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
 
-    assert_valid_abort_exit_code(result.exit_code);
-    // Preview off → full-width list renders the CI column; assert on the whole
-    // screen since `#42` sits past the panel split column.
-    let screen = result.screen();
-    assert!(screen.contains("#42"), "PR number on screen:\n{screen}");
-    // The title lives in the preview (now hidden), never on the row itself.
-    assert!(
-        !screen.contains("Retry the flaky network test"),
-        "PR title should stay off the row:\n{screen}"
-    );
-    // The header's loading marker is gone once the rows have streamed in.
-    assert!(
-        !screen.contains("Loading open PRs"),
-        "loading marker cleared once rows arrived:\n{screen}"
-    );
+    fn release(&self) {
+        std::fs::write(&self.0, "").expect("release gated mock response");
+    }
 }
 
-/// `wt switch --prs` on a GitLab repo: the open-MR list streams in via a mocked
-/// `glab mr list`. Covers the GitLab fetch path (`fetch_gitlab`,
-/// `parse_gitlab_mrs`, `gitlab_mr_status`).
-#[rstest]
-fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://gitlab.com/owner/test-repo.git",
-    ]);
-    let mr_json = r#"[{"iid":7,"title":"Cache the dependency graph","source_branch":"feat/cache","author":{"username":"alice"},"draft":false,"web_url":"https://gitlab.com/owner/test-repo/-/merge_requests/7","detailed_merge_status":"ci_still_running","description":"Speeds up CI by caching deps between jobs."}]"#;
-    let env_vars = mock_forge_env(&repo, "glab", "mr list", mr_json, 0);
-
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--prs"],
-        repo.root_path(),
-        &env_vars,
-        // `main…±` clips the CI column (`!7`) past skim's split in the
-        // preview-shown pane. Toggle the preview off (alt-p) so the full-width
-        // list renders the ref, then gate on it.
-        &[("\x1bp", Some("!7"))],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-    // Preview off → full-width list renders the CI column; assert on the whole
-    // screen since `!7` sits past the panel split column.
-    let screen = result.screen();
-    assert!(screen.contains("!7"), "MR number on screen:\n{screen}");
-    assert!(
-        !screen.contains("Cache the dependency graph"),
-        "MR title should stay off the row:\n{screen}"
-    );
+impl Drop for MockReleaseGate {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.0, "");
+    }
 }
 
 /// Removing a worktree row with alt-x in `--prs` mode must keep the streamed
@@ -1610,11 +1105,11 @@ fn test_switch_picker_prs_gitlab_list(mut repo: TestRepo) {
 /// alt-x's drop path rebuilds skim's item pool from the picker's shared row list
 /// (`resync_pool`). The `--prs` thread streams its PR rows straight to skim's
 /// item channel, so unless they're also recorded in that shared list the rebuild
-/// drops them. This drives the drop path (a clean, integrated worktree, removed
-/// row leaves the list) and asserts the `#42` PR row survives it.
+/// drops them. This first proves the complete mocked GitHub
+/// fetch lifecycle from its in-flight marker through the loaded state, then
+/// drives the drop path and asserts the `#42` PR row survives it.
 #[rstest]
 fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&[
         "remote",
         "set-url",
@@ -1637,10 +1132,14 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
     std::fs::write(mock_bin.join("list.json"), pr_json).unwrap();
     MockConfig::new("gh")
         .version("gh version 1.0.0 (mock)")
-        .command("pr list --state", MockResponse::file("list.json"))
+        .command(
+            "pr list --state",
+            MockResponse::file("list.json").wait_for_file("prs.release"),
+        )
         .command("pr list --head", MockResponse::output("[]"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
+    let release = MockReleaseGate::new(mock_bin.join("prs.release"));
     let env_vars = forge_mock_env_vars(&repo, &mock_bin);
 
     let PickerSession {
@@ -1656,12 +1155,40 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
         &env_vars,
     );
 
+    // The list fetch is causally held, so this is the real in-flight frame and
+    // no PR row can have streamed in yet.
+    wait_for_stable_with_content(&rx, &mut parser, Some("Loading open PRs"));
+    let loading_screen = parser.screen().contents();
+    assert!(
+        loading_screen.contains("Loading open PRs"),
+        "loading line on the header while --prs fetches:\n{loading_screen}"
+    );
+    assert!(
+        !loading_screen.contains("#42"),
+        "PR row must not render before the list response is released:\n{loading_screen}"
+    );
+
+    release.release();
+
     // Preview off (alt-p) so the full-width list renders the CI column (`#42`),
     // which the preview-shown pane otherwise clips past skim's split. The wait
     // also blocks until the `--prs` row has streamed in.
     send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bp", Some("#42"));
     // The worktree row is on screen too (one skeleton batch).
     wait_for_stable_with_content(&rx, &mut parser, Some("wt-drop"));
+    let loaded_screen = parser.screen().contents();
+    assert!(
+        loaded_screen.contains("#42"),
+        "mocked GitHub PR row reached the picker:\n{loaded_screen}"
+    );
+    assert!(
+        !loaded_screen.contains("Retry the flaky network test"),
+        "PR title belongs in the hidden preview, not the list row:\n{loaded_screen}"
+    );
+    assert!(
+        !loaded_screen.contains("Loading open PRs"),
+        "loading marker clears when the PR row lands:\n{loaded_screen}"
+    );
 
     // Cursor onto the removable worktree row (the row below the pinned current
     // worktree), then alt-x removes it.
@@ -1689,21 +1216,19 @@ fn test_switch_picker_prs_rows_survive_alt_x_removal(mut repo: TestRepo) {
     );
 }
 
-/// alt-x on a row that can't be removed flashes the reason in the header at
-/// alt-x time, not only when the stash drains on exit. The current worktree is
-/// the picker's pinned top row, so launching from the main worktree and pressing
-/// alt-x (no cursor move) targets it — and the main worktree can't be removed, so
-/// the header swaps the column labels for `✗ The main worktree cannot be removed`
-/// for a beat. The flash *clearing* after the beat is covered by the `HeaderFlash`
-/// unit tests; this asserts it paints. A presence-wait catches it before the beat
-/// elapses (`HEADER_FLASH_DURATION`), so the test never depends on the timer.
+/// alt-x on a row that can't be removed explains the rejection immediately and
+/// keeps the cursor on that row. Launching from `wt-a` puts the unremovable main
+/// worktree between two real rows; that setup makes a one-row cursor drift
+/// observable rather than letting bottom-of-list clamping hide it. One transient
+/// frame must contain both the header reason and the pointer on `^ main`.
+///
+/// The flash clearing after the beat is covered by
+/// `test_header_flash_set_then_self_clears`; this asserts the flash paints.
 #[rstest]
 fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
-    // A second worktree so the skeleton paints a distinctive row to gate on; the
-    // cursor still starts on the pinned current (main) worktree above it.
-    repo.add_worktree("wt-extra");
+    let wt_a = repo.add_worktree("wt-a");
+    repo.add_worktree("wt-b");
 
     let env_vars = repo.test_env_vars();
     let PickerSession {
@@ -1712,45 +1237,82 @@ fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
         writer,
         rx,
         mut parser,
-    } = boot_picker_pty(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
+    } = boot_picker_pty(wt_bin().to_str().unwrap(), &["switch"], &wt_a, &env_vars);
+
+    wait_for_stable_with_content(&rx, &mut parser, Some("wt-b"));
+
+    // Prove main is genuinely mid-list before relying on cursor preservation:
+    // row-specific gutter/name pairs keep the `main↕` column header from
+    // satisfying the main lookup.
+    let list = list_pane_text(parser.screen());
+    let row = |needle: &str| {
+        list.lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("missing picker row {needle:?}:\n{list}"))
+    };
+    let wt_a_row = row("@ wt-a");
+    let main_row = row("^ main");
+    let wt_b_row = row("+ wt-b");
+    assert!(
+        wt_a_row < main_row && main_row < wt_b_row,
+        "expected rendered row order wt-a < main < wt-b, got \
+         {wt_a_row} < {main_row} < {wt_b_row}:\n{list}"
     );
 
-    // The worktree rows have painted (one skeleton batch); the cursor is on the
-    // pinned current worktree — the main worktree, which can't be removed.
-    wait_for_stable_with_content(&rx, &mut parser, Some("wt-extra"));
+    // Down from the pinned current row onto the mid-list main worktree.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("^ main"));
 
-    // alt-x is declined, and the reason flashes in the header. The presence-wait
-    // returns as soon as the flash paints — before it self-clears.
-    send_input_awaiting_content(
-        &writer,
-        &rx,
-        &mut parser,
-        "\x1bx",
-        Some("main worktree cannot be removed"),
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1bx").unwrap();
+        w.flush().unwrap();
+    }
+
+    // Observe one frame that proves both effects of the rejected alt-x. Process
+    // queued output byte-by-byte and check after each parser state: even if this
+    // test thread is descheduled for the flash's full 2.5-second lifetime, a
+    // later clear repaint queued behind it cannot erase the transient frame
+    // before the predicate sees it.
+    let start = Instant::now();
+    let mut saw_rejected_frame = false;
+    'wait: while start.elapsed() < STABILIZE_TIMEOUT {
+        match rx.recv_timeout(POLL_INTERVAL) {
+            Ok(chunk) => {
+                for byte in chunk {
+                    parser.process(&[byte]);
+                    let screen = parser.screen().contents();
+                    if screen.contains("main worktree cannot be removed")
+                        && cursor_points_at(&screen, "^ main")
+                    {
+                        saw_rejected_frame = true;
+                        break 'wait;
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    assert!(
+        saw_rejected_frame,
+        "never observed one frame with both the unremovable reason and the cursor \
+         on the main row:\n{}",
+        parser.screen().contents()
     );
 
-    let screen = parser.screen().contents();
     let exit_code = abort_and_exit_code(child, writer, rx);
     assert_valid_abort_exit_code(exit_code);
-    assert!(
-        screen.contains("main worktree cannot be removed"),
-        "the unremovable reason flashes in the header at alt-x time:\n{screen}"
-    );
 }
 
 /// A preview pane fills in on its own once its background compute lands — no
 /// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
-/// tab: the comment fetch (`gh pr view <n> --json comments`) is mocked behind a
-/// delay, so when the row is selected and the comments tab is opened the pane is
-/// still on its "Loading comments…" placeholder. The comment then surfaces with
-/// no further input once the delayed fetch resolves and the orchestrator pokes a
-/// repaint (`PreviewNotifier`). Before that product-side poke the placeholder
-/// would strand until the next keystroke — the gap the picker's test harness
-/// used to paper over by re-issuing the tab key.
+/// tab: the comment fetch (`gh pr view <n> --json comments`) is held behind a
+/// causal file gate. The test first observes the "Loading comments…"
+/// placeholder, then releases the fetch; the comment must surface with no
+/// further input once the orchestrator pokes a repaint (`PreviewNotifier`).
+/// Before that product-side poke the placeholder would strand until the next
+/// keystroke — the gap the picker's test harness used to paper over by
+/// re-issuing the tab key.
 ///
 /// The PR row is selected by driving the cursor with a re-issued Down, not by an
 /// `!main` filter: a filter applied before the async `--prs` row streams in
@@ -1761,8 +1323,7 @@ fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
 /// `flaky`, outlasting both the stream-in and the cursor reset that the
 /// item-list refresh triggers.
 #[rstest]
-fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
+fn test_switch_picker_preview_auto_refreshes_when_compute_lands(repo: TestRepo) {
     repo.run_git(&[
         "remote",
         "set-url",
@@ -1770,567 +1331,83 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(mut repo: TestRe
         "https://github.com/owner/test-repo.git",
     ]);
 
-    // The mock holds `gh pr view` (the comments / log fetch) long enough that the
-    // tab is reliably opened before the fetch resolves — so the pane is observed
-    // mid-load and the appearance of the comment proves the auto-refresh, not a
-    // cache hit. `pr list` is instant so the row lands promptly.
+    // `pr list` is instant so the row lands promptly. `pr view` cannot answer
+    // until the test creates `comments.release`, so boot speed cannot erase the
+    // loading-state precondition.
     let mock_bin = repo.root_path().join("mock-bin");
     std::fs::create_dir_all(&mock_bin).unwrap();
     // A short head branch so the PR row isn't truncated in the narrow
-    // (preview-shown) list pane.
-    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"body"}]"#;
+    // (preview-shown) list pane. A locally resolvable head OID keeps the log
+    // preview on its local fast path, so the gated `pr view` is exclusively the
+    // comments fetch whose repaint this test measures.
+    let head = repo.git_output(&["rev-parse", "HEAD"]);
+    let pr_json = format!(
+        r#"[{{"number":42,"title":"Retry the flaky network test","headRefName":"flaky","headRefOid":"{}","author":{{"login":"octocat"}},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"body"}}]"#,
+        head.trim()
+    );
     std::fs::write(mock_bin.join("pr_list.json"), pr_json).unwrap();
     let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"AUTOREFRESHMARK","createdAt":"2025-01-01T00:00:00Z"}]}"#;
     MockConfig::new("gh")
         .version("gh version 1.0.0 (mock)")
-        .command("pr list", MockResponse::file("pr_list.json"))
+        .command("pr list --state", MockResponse::file("pr_list.json"))
+        .command("pr list --head", MockResponse::output("[]"))
         .command(
-            "pr view",
-            MockResponse::output(comments_json).with_delay_ms(3000),
+            "pr view 42",
+            MockResponse::output(comments_json).wait_for_file("comments.release"),
         )
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
-    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
+    let release = MockReleaseGate::new(mock_bin.join("comments.release"));
+    let call_log = tempfile::tempdir().unwrap();
+    let mut env_vars = forge_mock_env_vars(&repo, &mock_bin);
+    env_vars.push((
+        "WORKTRUNK_TEST_MOCK_CALL_LOG_DIR".to_string(),
+        call_log.path().display().to_string(),
+    ));
 
-    let result = exec_in_pty_capture_before_abort(
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
         &["switch", "--prs"],
         repo.root_path(),
         &env_vars,
-        &[
-            // Drive the cursor onto the PR row. Its narrow (preview-shown) list
-            // line shows the short head branch `flaky`; the worktree row shows
-            // `main`. A re-issued Down lands the `>` pointer on `flaky` (the
-            // bottom row) and re-drives it there if a streamed-row refresh resets
-            // the cursor — see the docstring for why this replaces the `!main`
-            // filter.
-            ("\x1b[B", Some("flaky")),
-            // alt-7: comments tab. The fetch is still in flight, so the pane shows
-            // "Loading comments…"; the comment appears with NO further input once
-            // the delayed fetch lands and the picker repaints on its own.
-            ("\x1b7", Some("AUTOREFRESHMARK")),
-        ],
     );
 
-    assert_valid_abort_exit_code(result.exit_code);
-    let (_list, preview) = result.panels();
+    // Drive the cursor onto the PR row. Its narrow (preview-shown) list line
+    // shows the short head branch `flaky`; the worktree row shows `main`. A
+    // re-issued Down re-drives the pointer after a streamed-row refresh.
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("flaky"));
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b7", Some("Loading comments"));
+    let loading = preview_pane_text(parser.screen());
+    assert!(
+        loading.contains("Loading comments"),
+        "comments fetch must be visibly in flight before release:\n{loading}"
+    );
+
+    // Release the already-open fetch, then wait without sending another
+    // keystroke. Only the product's notifier can repaint the marker.
+    release.release();
+    wait_for_stable_with_content(&rx, &mut parser, Some("AUTOREFRESHMARK"));
+    let preview = preview_pane_text(parser.screen());
     assert!(
         preview.contains("AUTOREFRESHMARK"),
-        "comment surfaced on its own once the delayed fetch landed:\n{preview}"
+        "comment surfaced on its own once the gated fetch landed:\n{preview}"
     );
-}
-
-/// `wt switch --prs` shows a dim "↳ Loading open PRs…" marker on the header row
-/// while the forge call is in flight. A delayed mock holds the PR list long
-/// enough to observe the marker on the real screen before the rows land. The
-/// picker captures and aborts at stabilize time — well before the delay
-/// elapses — and the `--prs` thread is detached on exit (not joined), so the
-/// test never pays the full delay. The marker's *clearing* once rows arrive is
-/// covered by the `header_loading_marker_shows_until_cleared` unit test and the
-/// negative assertion in `test_switch_picker_prs_github_list`.
-#[rstest]
-fn test_switch_picker_prs_shows_loading_marker(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-    let pr_json = r#"[{"number":42,"title":"Retry the flaky network test","headRefName":"fix/flaky","author":{"login":"octocat"},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":""}]"#;
-    // 3s delay >> the ~1s capture, so the marker is still on screen when the
-    // helper snapshots and aborts.
-    let env_vars = mock_forge_env(&repo, "gh", "pr list", pr_json, 3000);
-
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--prs"],
-        repo.root_path(),
-        &env_vars,
-        // The loading line paints at skeleton, before the (slow) forge call
-        // returns its rows.
-        &[("", Some("Loading open PRs"))],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-    let (list, _preview) = result.panels();
-    assert!(
-        list.contains("Loading open PRs"),
-        "loading line on the header while --prs fetches:\n{list}"
-    );
-    // The PR row hasn't streamed in yet — still inside the delayed forge call.
-    assert!(!list.contains("#42"), "rows not yet streamed in:\n{list}");
-}
-
-/// A plain `wt switch` (no `--prs`) worktree row whose branch has an open PR
-/// shows the real comment thread in its `comments` tab — the same background
-/// `gh pr view <n> --json comments` fetch and render a `--prs` row makes. This
-/// is the crux of the unification: the comments tab no longer points a worktree
-/// row at `--prs`; it loads the thread directly. The PR is primed from a fresh
-/// CI cache so the row resolves to "has PR" at skeleton with no `gh pr list`,
-/// and the conversation comes from a mocked `gh pr view`.
-#[rstest]
-fn test_switch_picker_worktree_row_comments_tab_shows_thread(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-    let feature_path = repo.add_worktree("feature");
-    // Commit a file, then leave an uncommitted edit so `feature`'s HEAD± tab
-    // shows a `diff --git` — a preview-only sync anchor (it never appears in the
-    // list) that confirms the cursor landed on `feature` before reading comments.
-    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
-    let add = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(add.status.success(), "Failed to add file");
-    let commit = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Commit for comments tab",
-        ])
-        .run()
-        .unwrap();
-    assert!(commit.status.success(), "Failed to commit");
-    std::fs::write(feature_path.join("file.txt"), "content\nmore\n").unwrap();
-
-    // Prime a fresh CI status carrying an open PR (#42) so the row resolves to
-    // "has PR" at skeleton — detect reads this same fresh entry, so no `gh pr
-    // list`. The comments thread still needs a live `gh pr view`, mocked below.
-    seed_ci_status(
-        &repo,
-        "feature",
-        r##"{"ci_status":"passed","source":"pr","is_stale":false,"number":{"number":42,"sigil":"#"}}"##,
-    );
-
-    // Mock the only forge call a worktree row makes — `gh pr view 42 --json
-    // comments` (the `log` tab is local; the `pr` tab rides the cached CI). Any
-    // other gh invocation falls through to `_default` exit 1.
-    let mock_bin = repo.root_path().join("mock-bin");
-    std::fs::create_dir_all(&mock_bin).unwrap();
-    let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"Looks solid, shipping it.","createdAt":"2024-12-01T00:00:00Z"}]}"#;
-    std::fs::write(mock_bin.join("comments.json"), comments_json).unwrap();
-    MockConfig::new("gh")
-        .version("gh version 1.0.0 (mock)")
-        .command("pr view", MockResponse::file("comments.json"))
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-    let mut env_vars = repo.test_env_vars();
-    env_vars.push((
-        "MOCK_CONFIG_DIR".to_string(),
-        mock_bin.display().to_string(),
-    ));
-    // Prepend mock-bin to PATH using the OS separator (`;` on Windows, `:` on
-    // Unix) — a hardcoded `:` corrupts the PATH on Windows, so the mock `gh.exe`
-    // is never found and the comments fetch fails ("Couldn't load comments").
-    let base_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = vec![mock_bin.clone()];
-    paths.extend(std::env::split_paths(&base_path));
-    let joined = std::env::join_paths(paths).expect("mock-bin joins into PATH");
-    env_vars.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
-
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale. Gate on the row name so the Down is
-            // re-issued until the `>` pointer lands on `feature` — this row
-            // decorates asynchronously (primed CI status → "has PR"), and that
-            // background refresh resets skim's cursor to the top, which stranded
-            // the pointer on `main` and timed this test out on Windows CI.
-            ("\x1b[B", Some("feature")), // Down: move cursor to `feature`
-            // Alt-1: HEAD± panel. `feature`'s uncommitted diff (`diff --git`) is a
-            // preview-only anchor that gives the skeleton-spawned comments fetch
-            // time to land before we read its tab.
-            ("\x1b1", Some("diff --git")),
-            // Alt-7: jump to comments (7). The thread was fetched in the
-            // background at skeleton time (the PR was primed), so it's cached by
-            // now — wait for the comment body to confirm the real thread renders.
-            ("\x1b7", Some("Looks solid")),
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-    let (_list, preview) = result.panels();
-    assert!(
-        preview.contains("octocat"),
-        "comment author renders on a worktree row's comments tab:\n{preview}"
-    );
-    assert!(
-        preview.contains("Looks solid"),
-        "comment body renders on a worktree row's comments tab:\n{preview}"
-    );
-    // No `--prs` pointer — the worktree row loads the thread itself.
-    assert!(
-        !preview.contains("--prs"),
-        "comments tab must not point at --prs:\n{preview}"
-    );
-}
-
-/// The `pr` tab auto-resolves from "Fetching PR status…" to the live PR with no
-/// keystroke. A worktree row's CI status is fetched live (`gh pr list --head`),
-/// mocked behind a delay and left UNSEEDED so the tab is observed mid-fetch; when
-/// the status lands, `on_update` pokes a `RunPreview` (`PreviewNotifier`) and the
-/// pane re-renders. Distinct producer from
-/// `test_switch_picker_preview_auto_refreshes_when_compute_lands` (an orchestrator
-/// cache fill): here it's the CI fetch surfaced through `on_update`.
-#[rstest]
-fn test_switch_picker_pr_tab_auto_resolves_from_fetching(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-
-    let mock_bin = repo.root_path().join("mock-bin");
-    std::fs::create_dir_all(&mock_bin).unwrap();
-    // The per-row CI fetch (`gh pr list --head <branch>`), delayed so the `pr`
-    // tab is opened while still "Fetching PR status…"; unseeded, so it starts
-    // there rather than resolving at skeleton from the cache.
-    let pr_list_json = r#"[{"number":654,"title":"PRTABMARK auto-resolve","body":"","comments":[],"statusCheckRollup":[],"url":"https://github.com/owner/test-repo/pull/654","isDraft":false}]"#;
-    std::fs::write(mock_bin.join("pr_list.json"), pr_list_json).unwrap();
-    MockConfig::new("gh")
-        .version("gh version 1.0.0 (mock)")
-        .command(
-            "pr list",
-            MockResponse::file("pr_list.json").with_delay_ms(3000),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
-
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // alt-6: the `pr` tab. The CI fetch is still in flight (delayed), so
-            // the pane shows the fetching hint.
-            ("\x1b6", Some("Fetching PR status")),
-            // No further input: the resolved PR title appears on its own once the
-            // delayed CI fetch lands and the picker repaints.
-            ("", Some("PRTABMARK")),
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-    let (_list, preview) = result.panels();
-    assert!(
-        preview.contains("PRTABMARK"),
-        "pr tab resolved from 'Fetching' on its own:\n{preview}"
-    );
-}
-
-#[rstest]
-fn test_switch_picker_preview_cycle_tab_forward(mut repo: TestRepo) {
-    // Tab cycles the preview tab forward. From the default HEAD± tab (1), one
-    // Tab lands on the log tab (2), exercising the native `PreviewMode::next`
-    // rotation behind the tab key's `Action::Custom` binding. (alt-1..alt-7 jump
-    // directly; the panel tests above cover those — this covers the cycle path.)
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-    let feature_path = repo.add_worktree("feature");
-
-    // Commit a file so the log tab has content; the worktree stays clean, so the
-    // HEAD± tab shows no diff and the "* " log-graph marker is unambiguous.
-    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
-    let add = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(add.status.success(), "Failed to add file");
-    let commit = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Commit for tab cycle",
-        ])
-        .run()
-        .unwrap();
-    assert!(commit.status.success(), "Failed to commit");
-
-    let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None),   // Down: move cursor to `feature`
-            ("\t", Some("* ")), // Tab: HEAD± → log; wait for git log output
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (_list, preview) = result.panels();
-    assert!(
-        preview.contains("* "),
-        "Tab should advance the preview to the log tab; preview was:\n{preview}"
-    );
-}
-
-#[rstest]
-fn test_switch_picker_preview_cycle_tab_forward_wraps(mut repo: TestRepo) {
-    // Forward cycling wraps 7 → 1: from the comments tab (reached via Alt-7), one
-    // Tab returns to the HEAD± tab. This covers the `7 → 1` wraparound in
-    // `PreviewMode::next`, the half most easily typo'd away.
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-    let feature_path = repo.add_worktree("feature");
-
-    // Commit so the worktree is clean: the HEAD± tab then reads "no uncommitted
-    // changes", a message unique to tab 1 — so seeing it proves the wrap landed
-    // there and not on some other tab.
-    std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
-    let add = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(add.status.success(), "Failed to add file");
-    let commit = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Commit for forward-wrap cycle",
-        ])
-        .run()
-        .unwrap();
-    assert!(commit.status.success(), "Failed to commit");
-
-    seed_ci_status(&repo, "feature", "null");
-
-    let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None), // Down: move cursor to `feature`
-            // Alt-7: jump to comments (7). The comments tab behaves the same on a
-            // worktree row as on a `--prs` row — with no PR (seeded above) it shows
-            // "has no PR", matching the `pr` tab.
-            ("\x1b7", Some("has no PR")),
-            ("\t", Some("no uncommitted changes")), // Tab: wrap 7 → HEAD± (1)
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (_list, preview) = result.panels();
-    assert!(
-        preview.contains("no uncommitted changes"),
-        "Tab from the comments tab should wrap to the HEAD± tab; preview was:\n{preview}"
-    );
-}
-
-#[rstest]
-fn test_switch_picker_preview_cycle_shift_tab_wraps(mut repo: TestRepo) {
-    // Shift-Tab cycles backward and wraps: from the default HEAD± tab (1), one
-    // Shift-Tab lands on the comments tab (7), exercising the reverse rotation
-    // `PreviewMode::prev` including the 1 → 7 wraparound.
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-    let feature_path = repo.add_worktree("feature");
-
-    std::fs::write(feature_path.join("new.txt"), "content\n").unwrap();
-    let add = repo
-        .git_command()
-        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .run()
-        .unwrap();
-    assert!(add.status.success(), "Failed to add file");
-    let commit = repo
-        .git_command()
-        .args([
-            "-C",
-            feature_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "Add new file",
-        ])
-        .run()
-        .unwrap();
-    assert!(commit.status.success(), "Failed to commit");
-
-    seed_ci_status(&repo, "feature", "null");
-
-    let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
-            // for the matcher-lag rationale.
-            ("\x1b[B", None), // Down: move cursor to `feature`
-            // Shift-Tab: HEAD± (1) → comments (7), the 1 → 7 wraparound. With no PR
-            // (seeded above) the comments tab shows "has no PR", like the `pr` tab.
-            ("\x1b[Z", Some("has no PR")),
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let (_list, preview) = result.panels();
-    assert!(
-        preview.contains("has no PR"),
-        "Shift-Tab should wrap to the comments tab; preview was:\n{preview}"
-    );
-}
-
-#[rstest]
-fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
-    // Use the same reliable setup as test_switch_picker_with_branches:
-    // remove fixture worktrees (which use relative gitdir paths that can fail
-    // to resolve under concurrent operations) and origin (to avoid remote branch noise)
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    repo.add_worktree("active-worktree");
-    // Create a branch without a worktree
-    let output = repo
-        .git_command()
-        .args(["branch", "orphan-branch"])
-        .run()
-        .unwrap();
-    assert!(output.status.success(), "Failed to create branch");
-
-    // Write user config with [list] branches = true
-    // This should enable branches in the picker without the --branches flag
-    repo.write_test_config(
-        r#"
-[list]
-branches = true
-"#,
-    );
-
-    let env_vars = repo.test_env_vars();
-    // Capture screen BEFORE sending Escape. Screen must stabilize with orphan-branch visible.
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"], // No --branches flag - config should enable it
-        repo.root_path(),
-        &env_vars,
-        &[("", Some("orphan-branch"))], // Wait for orphan-branch to appear in list before abort
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-
-    let screen = result.screen();
-    // Verify that orphan-branch appears (enabled by config, not CLI flag)
-    assert!(
-        screen.contains("orphan-branch"),
-        "orphan-branch should appear when [list] branches = true in config.\nScreen:\n{}",
-        screen
-    );
-}
-
-#[rstest]
-fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so there's no interference from remote branches
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    let env_vars = repo.test_env_vars();
-
-    // Type branch name "new-feature", then press Alt-C (escape + c) to create
-    let result = exec_in_pty_with_input_expectations(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            ("new-feature", None), // Type the branch name
-            ("\x1bc", None),       // Alt-C (escape + c) to create worktree
-        ],
-    );
-
-    // Alt-C triggers accept which should exit normally. The create's success is
-    // proven deterministically by the branch existing below; the exit code
-    // tolerates the Windows self-exit-1 quirk (see assert_valid_create_exit_code).
-    assert_valid_create_exit_code(result.exit_code);
-
-    let screen = result.screen();
-
-    // Verify the success message shows the new branch
-    assert!(
-        screen.contains("new-feature") || screen.contains("Switched"),
-        "Expected success message showing new-feature branch.\nScreen:\n{}",
-        screen
-    );
-
-    // Verify the worktree was actually created by checking the branch exists
-    let branch_output = repo
-        .git_command()
-        .args(["branch", "--list", "new-feature"])
-        .run()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
-        "Branch new-feature should have been created"
-    );
-}
-
-#[rstest]
-fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so there's no interference from remote branches
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    let env_vars = repo.test_env_vars();
-
-    // Press Alt-C without typing a query - should error
-    let result = exec_in_pty_with_input(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        "\x1bc", // Alt-C (escape + c) without typing a branch name
-    );
-
-    // Should exit with error (non-zero)
-    assert_ne!(
-        result.exit_code, 0,
-        "Expected non-zero exit for empty query"
-    );
-
-    let screen = result.screen();
-
-    // Verify the error message
-    assert!(
-        screen.contains("no branch name entered") || screen.contains("Cannot create"),
-        "Expected error message about missing branch name.\nScreen:\n{}",
-        screen
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+    let preview_calls: Vec<_> = mock_calls(call_log.path(), "gh")
+        .into_iter()
+        .filter(|call| call.starts_with("pr view"))
+        .collect();
+    assert_eq!(
+        preview_calls,
+        ["pr view 42 --json comments"],
+        "only the intended comments fetch may drive this repaint"
     );
 }
 
@@ -2345,8 +1422,7 @@ fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
 /// succeeds — proving the pre-flight aborts cleanly rather than leaving a
 /// half-created worktree behind.
 #[rstest]
-fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
+fn test_switch_picker_create_validates_templates_before_worktree(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Broken `pre-start` in user config: unbalanced `{{` is a minijinja parse
@@ -2432,29 +1508,14 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     );
 }
 
-/// Helper to create temporary directive files for PTY tests.
-/// Returns (cd_path, exec_path, guards) — guards keep the temp files alive.
-fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
-    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
-    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
-    let cd_path = cd.path().to_path_buf();
-    let exec_path = exec.path().to_path_buf();
-    (
-        cd_path,
-        exec_path,
-        (cd.into_temp_path(), exec.into_temp_path()),
-    )
-}
-
 #[rstest]
 fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Create a worktree to switch to
-    repo.add_worktree("target-branch");
+    let target_path = repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2473,41 +1534,45 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the preview-pane text that's emitted only once skim's
-            // selection has moved to target-branch. Under heavy macOS load
-            // skim's matcher (and the row redraw it drives) can lag the typed
-            // query, but the preview pane tracks the selection cursor — and
-            // Enter acts on the cursor, not on which rows are painted. Gating
-            // on the preview text rides that lag instead of racing it
-            // (#2334/#2729/#2767).
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select, gated on the list-pane `>` pointer: the
+            // picker sorts the current worktree first, so one Down lands on
+            // `target-branch`. Typing a query instead would tie the selection to
+            // skim's matcher, whose filtered item list is swapped in during a
+            // *render* while `Accept` reads the cursor's slot directly — so a
+            // query gate can only ever assert what was painted, not what Enter
+            // will act on. The pointer comes from the same render state as the
+            // accept (see `wait_for_cursor_on_row`), and an async row refresh
+            // that resets the cursor is absorbed by the re-issued arrow.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
     assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
+        result.exit_code,
+        0,
+        "Expected exit code 0 for successful switch.\nScreen:\n{}",
+        result.screen()
     );
 
-    // Verify CD file DOES contain a path (default behavior)
+    // The directive must name the row the picker actually selected, not merely
+    // contain some path (which could hide a stale/default-worktree write).
     let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
-    assert!(
-        !cd_content.trim().is_empty(),
-        "CD file should contain a path without --no-cd, got: {}",
-        cd_content
+    assert_eq!(
+        crate::common::canonicalize(Path::new(cd_content.trim())).unwrap(),
+        crate::common::canonicalize(&target_path).unwrap(),
+        "CD directive must point at the selected target-branch worktree; got {cd_content:?}"
     );
 }
 
 #[rstest]
 fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2529,21 +1594,21 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default
-            // for the rationale (matcher-driven row redraw can lag the cursor).
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default
+            // for why the `>` pointer is the gate rather than a typed query.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
+    let screen = result.screen();
     assert_eq!(
         result.exit_code, 0,
-        "Expected exit code 0 for --no-cd switch"
+        "Expected exit code 0 for --no-cd switch.\nScreen:\n{screen}"
     );
 
     // The structured result reaches stdout only after execute_switch — the
     // old print-only path emitted a bare branch name and never reached it.
-    let screen = result.screen();
     assert!(
         screen.contains("\"action\""),
         "Expected --format=json switch result on screen.\nScreen:\n{}",
@@ -2559,58 +1624,6 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     );
 }
 
-/// `wt switch -x <cmd>` with no branch argument opens the picker and runs the
-/// command against the selected worktree — the composition requested in #3370.
-/// Before the fix, `--execute`'s `requires = "branch"` rejected this at parse
-/// time. The EXEC directive file is the observable proof: `--execute` writes
-/// the expanded command there for the shell wrapper to source, so its presence
-/// confirms the picker threaded `execute` into the shared `SwitchPipeline`.
-#[rstest]
-fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("target-branch");
-
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
-
-    let mut env_vars = repo.test_env_vars();
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
-        cd_path.display().to_string(),
-    ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
-    ));
-
-    // No branch argument — `-x` alone opens the picker. Select target-branch and
-    // press Enter; the switch pipeline then writes the execute command to the
-    // EXEC file instead of a cd directive.
-    let result = exec_in_pty_with_input_expectations(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--execute", "echo picker-exec-ran"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
-            ("target", Some("target-branch has no uncommitted changes")),
-            ("\r", None), // Enter to switch
-        ],
-    );
-
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for picker switch with --execute"
-    );
-
-    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
-    assert!(
-        exec_contents.contains("picker-exec-ran"),
-        "EXEC file should contain the --execute command after a picker switch, got: {}",
-        exec_contents
-    );
-}
-
 /// `{{ base }}` in a picker `--execute` resolves to the source worktree, just
 /// as it does on the argument path (`wt switch <branch> -x …`). The picker now
 /// captures pre-switch source identity, so the two paths no longer diverge:
@@ -2620,11 +1633,10 @@ fn test_switch_picker_runs_execute_command(mut repo: TestRepo) {
 /// Selecting from the `main` worktree, `{{ base }}` expands to `main`.
 #[rstest]
 fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
+    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
@@ -2643,15 +1655,18 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", None), // Enter to switch
         ],
     );
 
     assert_eq!(
-        result.exit_code, 0,
+        result.exit_code,
+        0,
         "picker `-x '{{{{ base }}}}'` should succeed, not error on an undefined \
-         value after the switch"
+         value after the switch.\nScreen:\n{}",
+        result.screen()
     );
 
     let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
@@ -2673,7 +1688,6 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
 /// declined at the prompt; it must not run, and the switch must still succeed.
 #[rstest]
 fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
@@ -2694,8 +1708,8 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
-            ("target", Some("target-branch has no uncommitted changes")),
+            // Cursor-navigation select: see test_switch_picker_emits_cd_directive_by_default.
+            ("\x1b[B", Some("target-branch")),
             ("\r", Some("needs approval")), // Enter; wait for the approval prompt
             // Decline. The line terminator is CR, not LF: once skim releases the
             // terminal, the approval prompt's `read_line` runs in the OS line
@@ -2720,180 +1734,16 @@ fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
     assert!(!marker.exists(), "a declined pre-switch hook must not run");
 }
 
-/// Drive the picker to remove the first non-current worktree with alt-x, then
-/// switch — capturing the screen between steps so the assertion doesn't depend on
-/// the picker's commit-recency row order. Returns `(landing_branch, final_screen,
-/// exit_code)`, where `landing_branch` is the worktree that slid into the removed
-/// row's slot (the row the sticky cursor must land on).
-fn drive_alt_x_then_switch(
-    args: &[&str],
-    working_dir: &Path,
-    env_vars: &[(String, String)],
-    candidates: [&str; 2],
-) -> (String, String, i32) {
-    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
-
-    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd.cwd(working_dir);
-    crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("TERM", "xterm-256color");
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-
-    let reader = pair.master.try_clone_reader().unwrap();
-    let writer: crate::common::pty::SharedPtyWriter =
-        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
-    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
-
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
-        let mut w = writer.lock().unwrap();
-        w.write_all(bytes).unwrap();
-        w.flush().unwrap();
-    };
-
-    // Wait for skim to be ready.
-    let start = Instant::now();
-    loop {
-        drain(&rx, &mut parser);
-        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
-            break;
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    }
-
-    // Both worktree rows land in one skeleton batch, so waiting for the first
-    // candidate implies the second is present too.
-    wait_for_stable_with_content(&rx, &mut parser, Some(candidates[0]));
-
-    // Learn the row order: the candidate on the earlier list line is row 1 — the
-    // one Down lands on and alt-x removes; the other is the sticky landing row.
-    let (row1, row2) = {
-        let screen = parser.screen();
-        let list = screen
-            .rows(0, LIST_WIDTH)
-            .map(|row| row.trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let line_of = |name: &str| list.lines().position(|l| l.contains(name));
-        let a = line_of(candidates[0]).expect("candidate 0 in list");
-        let b = line_of(candidates[1]).expect("candidate 1 in list");
-        if a < b {
-            (candidates[0], candidates[1])
-        } else {
-            (candidates[1], candidates[0])
-        }
-    };
-
-    // Down onto row 1, confirmed via the list-pane cursor pointer (cursor
-    // navigation never invokes the matcher, and the pointer refreshes on every
-    // render, so this is deterministic regardless of load).
-    send(&writer, b"\x1b[B");
-    wait_for_cursor_on_row(&rx, &mut parser, row1);
-
-    // alt-x removes row 1; the cursor must stick to its slot — now holding row 2.
-    // The pointer landing on row 2 *is* the sticky assertion: a cursor reset to
-    // the top would leave the pointer on the current worktree and time this out.
-    // We gate on the pointer, not row 2's preview pane, because the reposition is
-    // a `Custom` action and skim doesn't repaint the preview after one — see
-    // `wait_for_cursor_on_row`.
-    send(&writer, b"\x1bx");
-    wait_for_cursor_on_row(&rx, &mut parser, row2);
-
-    // Enter switches to the cursor row (row 2).
-    send(&writer, b"\r");
-    drop(writer);
-
-    // Let the switch finish and the process exit on its own; the kill is a
-    // hung-child backstop. The wait is generous because a slow-but-successful
-    // exit that gets killed reports exit 1 on Windows — see `CHILD_EXIT_TIMEOUT`.
-    let start = Instant::now();
-    while start.elapsed() < CHILD_EXIT_TIMEOUT {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill();
-    drain(&rx, &mut parser);
-    let exit_code = child.wait().unwrap().exit_code() as i32;
-
-    (row2.to_string(), parser.screen().contents(), exit_code)
-}
-
-/// alt-x keeps the cursor on the removed row's slot. After removing the first
-/// non-current worktree, the cursor stays on the row that slides up (the next
-/// worktree), so Enter switches there — not back to the current worktree at the
-/// top, which is where skim's reload would otherwise reset the cursor.
-#[rstest]
-fn test_switch_picker_alt_x_keeps_cursor_sticky(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("wt-keep");
-    repo.add_worktree("wt-drop");
-
-    let env_vars = repo.test_env_vars();
-    let (landing, screen, exit_code) = drive_alt_x_then_switch(
-        &["switch", "--no-cd", "--format=json"],
-        repo.root_path(),
-        &env_vars,
-        ["wt-keep", "wt-drop"],
-    );
-
-    // The cursor-stickiness belief is proven by the emitted result on screen,
-    // not by the process exit code: the `--format=json` payload reaches stdout
-    // only after the switch pipeline ran, and it names the sticky landing row
-    // (not the current worktree at the top, which is where a cursor reset would
-    // have switched instead).
-    assert!(
-        screen.contains("\"action\""),
-        "switch emitted its --format=json result.\nScreen:\n{screen}"
-    );
-    assert!(
-        screen.contains(&landing),
-        "switch targeted the sticky row `{landing}`.\nScreen:\n{screen}"
-    );
-    // The interactive skim session's *process* exit code is a separate, weaker
-    // signal than the emitted result above. It has been observed as 1 on Windows
-    // even when the switch verifiably succeeded (the result lines are present) —
-    // a non-zero exit from somewhere after the success output, distinct from the
-    // cursor stickiness this test covers. Accept skim's selection/abort codes
-    // (0 or 1) rather than pinning to 0 and flaking on that race; the same
-    // tolerance `assert_valid_abort_exit_code` already applies across this
-    // file's PTY tests. A gross failure (panic, crash) still fails the screen
-    // assertions above, which require the success output to be present.
-    assert!(
-        exit_code == 0 || exit_code == 1,
-        "switch after alt-x exited with an unexpected code {exit_code} (expected 0 or 1).\nScreen:\n{screen}"
-    );
-}
-
 /// alt-x lands the cursor on the row that slides up — the *immediate* next row —
 /// not one past it, even when the removed row has several rows below it.
 ///
-/// [`test_switch_picker_alt_x_keeps_cursor_sticky`] removes the row directly below
-/// the pinned current worktree, leaving a single row beneath it. That can't tell a
-/// correct landing from a one-row overshoot: `scroll_by` clamps the cursor to the
-/// list's last row, so an off-by-one lands on the same (only) remaining row and the
-/// test passes anyway. This removes a *middle* row with two rows below it, where an
-/// overshoot lands one row too far instead of being clamped — the exact "jumps two
-/// down" a user sees with a long worktree list.
+/// A two-row setup can't distinguish a correct landing from a one-row overshoot:
+/// `scroll_by` clamps the cursor to the list's last row, so both land on the same
+/// remaining row. This removes a *middle* row with two rows below it, where an
+/// overshoot lands one row too far instead of being clamped — the exact "jumps
+/// two down" a user sees with a long worktree list.
 #[rstest]
 fn test_switch_picker_alt_x_lands_on_immediate_next_row(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     // Four worktrees beneath the pinned current (main) row. All sit at main's
     // commit, so each alt-x integrates-and-drops (no morph) — the drop path.
@@ -2986,7 +1836,6 @@ fn test_switch_picker_alt_x_lands_on_immediate_next_row(mut repo: TestRepo) {
 /// removed row's preview until the next keystroke.
 #[rstest]
 fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     // Two clean worktrees at main's commit, so alt-x integrates-and-drops them.
     for branch in ["wt-a", "wt-b"] {
@@ -3075,8 +1924,7 @@ fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
 /// worktree (the top row), so the cursor sits on it before and after the reload
 /// regardless of skim's reload cursor behavior — no navigation needed.
 #[rstest]
-fn test_switch_picker_alt_r_refreshes_preview(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
+fn test_switch_picker_alt_r_refreshes_preview(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     // A committed, tracked file in the current worktree so `git diff HEAD` has
@@ -3136,51 +1984,8 @@ fn test_switch_picker_alt_r_refreshes_preview(mut repo: TestRepo) {
 /// stays responsive — its screen stabilizes, then aborts cleanly.
 #[rstest]
 fn test_switch_picker_alt_x_no_match_stays_responsive(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
-    repo.add_worktree("solo-wt");
-
-    let env_vars = repo.test_env_vars();
-    let result = exec_in_pty_capture_before_abort(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            ("solo-wt", Some("solo-wt")), // filter to the sole matching worktree
-            ("\x1bx", None),              // alt-x removes it; query now matches nothing
-            ("\x1bx", None),              // alt-x again with nothing selected: a no-op
-        ],
-    );
-
-    assert_valid_abort_exit_code(result.exit_code);
-}
-
-/// alt-x on an unmerged branch-only row leaves the row present end-to-end through
-/// real skim — `SafeDelete` refuses to delete an unmerged branch, so the row must
-/// not vanish. The inverse of `…_no_match_stays_responsive`, which removes a row
-/// and expects emptiness.
-///
-/// This guards the integration outcome (the real reload re-renders the row, the
-/// list doesn't empty), not the no-flicker mechanism specifically: a regression in
-/// the up-front keep would be masked here by the background restore backstop, which
-/// re-inserts the row. The keep-path-specific "never dropped, no flicker" property
-/// is unit-tested in `test_invoke_keeps_unmerged_branch_only_row`, which checks the
-/// synchronous `items` state before any backstop can run.
-#[rstest]
-fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // An unmerged branch — a commit off the default branch — with no worktree.
-    // Use the branch wt itself resolves as the default, so the picker's
-    // integration check and this checkout key off the same ref.
-    let default_branch = repo.git_output(&["symbolic-ref", "--short", "HEAD"]);
-    repo.run_git(&["checkout", "-b", "unmerged-orphan"]);
-    std::fs::write(repo.root_path().join("orphan.txt"), "unmerged work").unwrap();
-    repo.run_git(&["add", "."]);
-    repo.run_git(&["commit", "-m", "unmerged work"]);
-    repo.run_git(&["checkout", &default_branch]);
+    let wt_path = repo.add_worktree("solo-wt");
 
     let env_vars = repo.test_env_vars();
     let PickerSession {
@@ -3191,30 +1996,46 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
         mut parser,
     } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
-        &["switch", "--branches"],
+        &["switch"],
         repo.root_path(),
         &env_vars,
     );
 
-    // Filter to the branch-only row, then wait for the cursor (`>`) to land on it.
-    // A local branch with no worktree carries the `/` gutter, so `/ unmerged-orphan`
-    // names the data row specifically — skim's query-echo prompt line is
-    // `> unmerged-orphan` (no gutter), which this gate ignores. Keying off the
-    // gutter rather than the bare name is what makes the wait robust: under Windows
-    // CI load the prompt echo trails its keystrokes (the final character can still
-    // be unrendered once the row is already on screen), and an assertion that
-    // counted the name across both the prompt and the row flaked when the prompt
-    // came up a character short.
-    send_input_awaiting_content(&writer, &rx, &mut parser, "unmerged-orphan", None);
-    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
+    send_input_awaiting_content(&writer, &rx, &mut parser, "solo-wt", Some("solo-wt"));
+    wait_for_cursor_on_row(&rx, &mut parser, "+ solo-wt");
 
-    // alt-x: `SafeDelete` refuses to drop an unmerged branch, so the row stays and
-    // the cursor holds on `/ unmerged-orphan`. A regression that dropped the row
-    // would empty the filtered list, the `/` data row would never reappear, and
-    // this wait would time out with a screen dump.
+    // First alt-x must actually remove the selected worktree row. The query
+    // line still contains `solo-wt`, so look only for the linked-worktree row.
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1bx").unwrap();
+        w.flush().unwrap();
+    }
+    wait_for_stable_until(
+        &rx,
+        &mut parser,
+        |screen| {
+            !screen.lines().any(|line| {
+                let list: String = line.chars().take(LIST_WIDTH as usize).collect();
+                list.contains("+ solo-wt")
+            })
+        },
+        Some("the + solo-wt row to leave the filtered list"),
+        None,
+    );
+    worktrunk::testing::wait_for_worktree_removed(&wt_path);
+    worktrunk::testing::wait_for("integrated solo-wt branch deletion", || {
+        repo.git_output(&["branch", "--list", "solo-wt"]).is_empty()
+    });
+    worktrunk::testing::assert_worktree_removed(&wt_path);
+    assert!(
+        repo.git_output(&["branch", "--list", "solo-wt"]).is_empty(),
+        "integrated solo-wt branch should be deleted with its worktree"
+    );
+
+    // The filtered list is now empty. A second alt-x has no selection and must
+    // be a no-op; normal Escape teardown proves the event loop stayed live.
     send_input_awaiting_content(&writer, &rx, &mut parser, "\x1bx", None);
-    wait_for_cursor_on_row(&rx, &mut parser, "/ unmerged-orphan");
-
     let exit_code = abort_and_exit_code(child, writer, rx);
     assert_valid_abort_exit_code(exit_code);
 }
@@ -3229,7 +2050,6 @@ fn test_switch_picker_alt_x_keeps_unmerged_branch_row(mut repo: TestRepo) {
 /// gutter flip and the sticky cursor in one assertion.
 #[rstest]
 fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
     // A worktree on a branch with a commit the default branch lacks, so
@@ -3252,210 +2072,6 @@ fn test_switch_picker_alt_x_morphs_removed_worktree_in_place(mut repo: TestRepo)
         .unwrap();
 
     let env_vars = repo.test_env_vars();
-    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
-    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
-    cmd.arg("switch");
-    cmd.cwd(repo.root_path());
-    crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("TERM", "xterm-256color");
-    for (key, value) in &env_vars {
-        cmd.env(key, value);
-    }
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-
-    let reader = pair.master.try_clone_reader().unwrap();
-    let writer: crate::common::pty::SharedPtyWriter =
-        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
-    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
-        let mut w = writer.lock().unwrap();
-        w.write_all(bytes).unwrap();
-        w.flush().unwrap();
-    };
-
-    // Wait for skim to be ready, then for the worktree row to land.
-    let start = Instant::now();
-    loop {
-        drain(&rx, &mut parser);
-        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
-            break;
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    }
-    wait_for_stable_with_content(&rx, &mut parser, Some("transform-me"));
-
-    // Filter to the single worktree row so the selection is deterministic
-    // regardless of commit-recency order, then confirm the cursor is on it. The
-    // row still reads `> + transform-me` — a linked worktree.
-    send(&writer, b"transform-me");
-    wait_for_cursor_on_row(&rx, &mut parser, "+ transform-me");
-
-    // alt-x morphs the row in place. The cursor must land back on the morphed
-    // row — `> / transform-me`, gutter flipped to the branch sigil. The morph
-    // leaves `search_text` untouched, so the row still matches the active filter;
-    // a drop would empty the list, and the old re-collect would reset the cursor.
-    send(&writer, b"\x1bx");
-    wait_for_cursor_on_row(&rx, &mut parser, "/ transform-me");
-
-    send(&writer, b"\x1b"); // Esc to exit the picker.
-    drop(writer);
-    let start = Instant::now();
-    while start.elapsed() < CHILD_EXIT_TIMEOUT {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill();
-    drain(&rx, &mut parser);
-    let _ = child.wait();
-
-    // The worktree is gone but its branch survives — the morph's premise.
-    assert!(
-        !wt_path.exists(),
-        "alt-x removed the worktree directory.\nScreen:\n{}",
-        parser.screen().contents()
-    );
-    let branches = repo.git_output(&["branch", "--list", "transform-me"]);
-    assert!(
-        branches.contains("transform-me"),
-        "the unmerged branch is retained after its worktree is removed: {branches:?}"
-    );
-}
-
-/// alt-x on the *current* worktree — the one the picker was launched from — keeps
-/// the row in place rather than removing it. Removing the worktree the shell is
-/// sitting in would have to cd elsewhere first, which drags `post-switch` hooks
-/// into the picker and swaps an empty placeholder under the cursor mid-render, so
-/// the picker declines (`removal_targets_current_worktree`). End-to-end through
-/// real skim launched from inside the worktree: after alt-x the cursor stays on
-/// the unchanged `@ standing-here` row (gutter still `@` — not dropped, not
-/// morphed to `/`) and the worktree survives on disk. The branch is unmerged, so
-/// were the guard absent the row would morph; a surviving `@` proves the
-/// current-worktree check fires before the morph path.
-#[rstest]
-fn test_switch_picker_alt_x_keeps_current_worktree(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    let wt_path = repo.add_worktree("standing-here");
-    std::fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
-    repo.git_command()
-        .args(["-C", wt_path.to_str().unwrap(), "add", "new.txt"])
-        .run()
-        .unwrap();
-    repo.git_command()
-        .args([
-            "-C",
-            wt_path.to_str().unwrap(),
-            "commit",
-            "-m",
-            "unmerged work",
-        ])
-        .run()
-        .unwrap();
-
-    let env_vars = repo.test_env_vars();
-    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
-    let mut cmd = CommandBuilder::new(wt_bin().to_str().unwrap());
-    cmd.arg("switch");
-    cmd.cwd(&wt_path); // launched from inside the worktree → it's the current one
-    crate::common::configure_pty_command(&mut cmd);
-    cmd.env("CLICOLOR_FORCE", "1");
-    cmd.env("TERM", "xterm-256color");
-    for (key, value) in &env_vars {
-        cmd.env(key, value);
-    }
-    let mut child = pair.slave.spawn_command(cmd).unwrap();
-    drop(pair.slave);
-
-    let reader = pair.master.try_clone_reader().unwrap();
-    let writer: crate::common::pty::SharedPtyWriter =
-        Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
-    let rx = crate::common::pty::spawn_pty_reader_answering_queries(reader, Arc::clone(&writer));
-    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
-    let drain = |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser| {
-        while let Ok(chunk) = rx.try_recv() {
-            parser.process(&chunk);
-        }
-    };
-    let send = |writer: &crate::common::pty::SharedPtyWriter, bytes: &[u8]| {
-        let mut w = writer.lock().unwrap();
-        w.write_all(bytes).unwrap();
-        w.flush().unwrap();
-    };
-
-    let start = Instant::now();
-    loop {
-        drain(&rx, &mut parser);
-        if is_skim_ready(&parser.screen().contents()) || start.elapsed() > READY_TIMEOUT {
-            break;
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    }
-    wait_for_stable_with_content(&rx, &mut parser, Some("standing-here"));
-
-    // Filter to the current-worktree row so the selection is deterministic, then
-    // confirm the cursor is on it — `> @ standing-here`, the `@` current gutter.
-    send(&writer, b"standing-here");
-    wait_for_cursor_on_row(&rx, &mut parser, "@ standing-here");
-
-    // alt-x is declined for the current worktree: the row neither drops (the
-    // filtered list would empty) nor morphs (the gutter would flip to `/`). After
-    // the reload settles the cursor is back on the unchanged `@ standing-here` row.
-    send(&writer, b"\x1bx");
-    wait_for_cursor_on_row(&rx, &mut parser, "@ standing-here");
-
-    send(&writer, b"\x1b"); // Esc to exit the picker.
-    drop(writer);
-    let start = Instant::now();
-    while start.elapsed() < CHILD_EXIT_TIMEOUT {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let _ = child.kill();
-    drain(&rx, &mut parser);
-    let _ = child.wait();
-
-    // The worktree survives — alt-x declined to remove the one we're standing in.
-    assert!(
-        wt_path.exists(),
-        "alt-x removed the current worktree.\nScreen:\n{}",
-        parser.screen().contents()
-    );
-}
-
-/// alt-x on an unremovable row (here the main worktree) keeps the cursor exactly on
-/// that row — it must not drift down — even with several rows below it.
-///
-/// This mirrors the keep paths a user hits most: alt-x on the main worktree or a
-/// dirty worktree surfaces a diagnostic and keeps the row. The single-row filtered
-/// case in [`test_switch_picker_alt_x_keeps_current_worktree`] can't catch a
-/// one-row drift (only one row matches the filter), so this drives a full,
-/// unfiltered list and removes nothing: the cursor has to come back to the *same*
-/// row, not the one below it.
-#[rstest]
-fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-    // Launch from `wt-a` so it's the pinned current row; `main` then sorts second,
-    // with `wt-b`/`wt-c`/`wt-d` below it — main is a mid-list unremovable row.
-    let wt_a = repo.add_worktree("wt-a");
-    for branch in ["wt-b", "wt-c", "wt-d"] {
-        repo.add_worktree(branch);
-    }
-
-    let env_vars = repo.test_env_vars();
     let PickerSession {
         child,
         _master,
@@ -3464,8 +2080,8 @@ fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
         mut parser,
     } = boot_picker_pty(
         wt_bin().to_str().unwrap(),
-        &["switch", "--no-cd", "--format=json"],
-        &wt_a,
+        &["switch"],
+        repo.root_path(),
         &env_vars,
     );
     let send = |bytes: &[u8]| {
@@ -3474,19 +2090,32 @@ fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
         w.flush().unwrap();
     };
 
-    wait_for_stable_with_content(&rx, &mut parser, Some("wt-d"));
+    wait_for_stable_with_content(&rx, &mut parser, Some("transform-me"));
 
-    // Down from the pinned current `wt-a` onto the `main` row (sorted second).
-    send(b"\x1b[B");
-    wait_for_cursor_on_row(&rx, &mut parser, "main");
+    // Filter to the single worktree row so the selection is deterministic
+    // regardless of commit-recency order, then confirm the cursor is on it. The
+    // row still reads `> + transform-me` — a linked worktree.
+    send(b"transform-me");
+    wait_for_cursor_on_row(&rx, &mut parser, "+ transform-me");
 
-    // alt-x is declined for the main worktree (it can't be removed). The row stays
-    // and the cursor must land back on it — a one-row drift lands on the worktree
-    // below `main` and times this out.
+    // alt-x morphs the row in place. The cursor must land back on the morphed
+    // row — `> / transform-me`, gutter flipped to the branch sigil. The morph
+    // leaves `search_text` untouched, so the row still matches the active filter;
+    // a drop would empty the list, and the old re-collect would reset the cursor.
     send(b"\x1bx");
-    wait_for_cursor_on_row(&rx, &mut parser, "main");
+    wait_for_cursor_on_row(&rx, &mut parser, "/ transform-me");
 
-    let _ = abort_and_exit_code(child, writer, rx);
+    worktrunk::testing::wait_for_worktree_removed(&wt_path);
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+
+    // The worktree is gone but its branch survives — the morph's premise.
+    worktrunk::testing::assert_worktree_removed(&wt_path);
+    let branches = repo.git_output(&["branch", "--list", "transform-me"]);
+    assert!(
+        branches.contains("transform-me"),
+        "the unmerged branch is retained after its worktree is removed: {branches:?}"
+    );
 }
 
 /// alt-x under an active fuzzy query lands the cursor on the row displayed just
@@ -3504,7 +2133,6 @@ fn test_switch_picker_alt_x_unremovable_row_keeps_cursor(mut repo: TestRepo) {
 /// clamps it to the last filtered row), an identity-based one lands on the neighbor.
 #[rstest]
 fn test_switch_picker_alt_x_lands_on_neighbor_under_filter(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
     // Keepers (match the query `keep`) interleaved with decoys (don't), so each
     // keeper carries decoys ahead of it in `shared_items` order. All sit at main's

@@ -2,52 +2,34 @@
 //!
 //! # Forge detection
 //!
-//! Worktrunk needs three pieces of information to talk to GitHub/GitLab:
+//! Forge-aware operations need three pieces of information:
 //!
-//! 1. **Platform** — GitHub or GitLab (which CLI to invoke)
-//! 2. **Owner/repo** — the project path (for API calls)
-//! 3. **API hostname** — which server to talk to (only needed for GHE /
-//!    self-hosted GitLab; `gh`/`glab` default to github.com/gitlab.com)
+//! 1. **Forge** — GitHub, GitLab, Gitea, or Azure DevOps
+//! 2. **Repository identity** — the owner/namespace and repository path
+//! 3. **API hostname** — needed when a CLI cannot infer a self-hosted server
 //!
-//! ## Design principle
+//! [`ForgeKind::from_host`](crate::git::ForgeKind::from_host) is the canonical host
+//! classifier. Azure DevOps service domains use domain-suffix matching and
+//! take precedence over forge-like labels within those domains. GitHub, GitLab,
+//! and Gitea require the forge name as a complete DNS label. Matching ignores
+//! case, numeric ports, and a trailing DNS root dot.
 //!
-//! Derive owner/repo from URL paths, not hostnames. SSH aliases only
-//! corrupt the host component — the path (`owner/repo`) is always real.
-//! Only use the hostname for platform detection (substring match), and
-//! let `gh`/`glab` default to the right API host unless overridden.
+//! Repository identity comes from the URL path. This keeps owner/repository
+//! extraction valid when an SSH alias replaces the hostname.
 //!
-//! **Resolution order:**
+//! Remote selection depends on the operation:
 //!
-//! 1. **Remote** — branch's remote (for remote branches) >
-//!    [`primary_remote()`](Repository::primary_remote)
-//! 2. **Platform** — `forge.platform` config > hostname substring match
-//!    ([`is_github()`](super::GitRemoteUrl::is_github) /
-//!    [`is_gitlab()`](super::GitRemoteUrl::is_gitlab)) on effective URL
-//! 3. **Owner/repo** — parsed from the chosen remote's URL path (works
-//!    regardless of hostname, including SSH aliases)
-//! 4. **API hostname** — `forge.hostname` config > omit (let CLI default)
-//!
-//! For `wt list`, steps 1-4 are sufficient — each branch uses its
-//! associated remote.
-//!
-//! For `wt switch pr:N`, the API call uses owner/repo from the primary
-//! remote's raw URL. The API response provides the base repo's identity,
-//! and `Repository::find_remote_for_repo` matches it back to a local remote by
-//! owner/repo (host is not required to match).
-//!
-//! ## Where each piece is used
-//!
-//! | Need | `wt switch pr:N` | `wt list` CI status |
-//! |------|------------------|---------------------|
-//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `Repository::ci_platform` |
-//! | Owner/repo | `fetch_pr_info` builds API path | `github_owner_repo` for check-runs API |
-//! | API hostname | `forge.hostname` config, else omit | `forge.hostname` config, else omit |
-//! | Fetch remote | `Repository::find_remote_for_repo` by owner/repo | Not needed |
+//! - [`Repository::ci_platform`] uses `forge.platform`, then the hinted
+//!   remote's effective URL, then the primary remote's effective URL.
+//! - `wt switch pr:N` honors `forge.platform`, then scans every raw remote
+//!   using an explicit provider priority. Its provider owns the final fallback.
+//! - Forge API calls extract repository identity from a matching raw remote.
+//!   API responses are matched back to local remotes by repository identity.
 //!
 //! ## Config: `[forge]` section
 //!
-//! All fields are optional. For most repositories (single remote, hostname
-//! contains "github" or "gitlab"), no configuration is needed.
+//! All fields are optional. Standard service hosts and self-hosted names with
+//! an exact `github`, `gitlab`, or `gitea` label need no platform override.
 //!
 //! ```toml
 //! [forge]
@@ -60,25 +42,14 @@
 //! ## SSH host aliases
 //!
 //! Multi-account SSH setups use host aliases (`git@github-personal:owner/repo`)
-//! where SSH resolves `github-personal` → `github.com` via `~/.ssh/config`.
+//! where SSH resolves `github-personal` to `github.com` via `~/.ssh/config`.
 //! Git operations work, but the literal hostname affects forge detection.
 //!
-//! Owner/repo extraction is unaffected — aliases only change the host, not
-//! the path. The impact depends on the alias name:
-//!
-//! | Alias | Platform detection | API calls | Config needed |
-//! |-------|-------------------|-----------|---------------|
-//! | `github-personal` | Works ("github" in name) | Works (`gh` defaults to github.com) | None |
-//! | `work` (opaque) | Fails | Works (`gh` defaults to github.com) | `forge.platform` |
-//! | GHE alias | May work | Needs explicit host | `forge.hostname` (+ `forge.platform` if opaque) |
-//!
-//! ### `url.insteadOf` (alternative)
-//!
-//! Git's `url.insteadOf` rewrites URLs before any tool sees them, which
-//! solves all detection problems. Trade-off: it also affects SSH, which
-//! sees `github.com` instead of the alias and can't select the correct
-//! `IdentityFile`. Users must pair it with per-repo `core.sshCommand`.
-//! The `[forge]` config avoids this trade-off.
+//! Owner/repo extraction is unaffected because aliases only change the host.
+//! An alias with an exact forge label, such as `github.personal`, classifies
+//! automatically. Hyphenated and opaque aliases, such as `github-personal` or
+//! `work`, need `forge.platform`. A self-hosted alias also needs
+//! `forge.hostname` when the forge CLI cannot infer the API server.
 //!
 //! ## URL methods
 //!
@@ -296,33 +267,69 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
-    /// Configured `[forge].platform` override, if any.
+    /// Configured forge platform: the repository's `[forge].platform` (or the
+    /// deprecated `ci.platform`), else a user-config `[projects."…"].forge`
+    /// entry matching this repository.
     ///
-    /// Local-only: reads (and may cache) project config. Every structured-output
-    /// path that derives a forge provider feeds this into the URL parser so a
-    /// self-hosted instance whose host can't be auto-detected reports the
-    /// configured provider instead of `unknown`. Centralized here so the three
-    /// call sites (`wt list`, `wt list statusline`, `wt config state ci-status`)
-    /// can't drift — see `repo_info` and `json_output::JsonCi`.
-    pub fn forge_platform_override(&self) -> Option<String> {
-        self.project_config()
+    /// Local-only: reads (and may cache) project and user config. Every path
+    /// that derives a forge provider resolves it here — `wt list` and its
+    /// statusline via `repo_info`, `wt switch pr:` when picking a provider,
+    /// and CI-platform detection via `Repository::ci_platform` — so a
+    /// self-hosted instance whose host carries no forge brand answers the same
+    /// way everywhere instead of resolving in one command and reading
+    /// `unknown` in the next.
+    ///
+    /// The repository's own block wins over a user entry: a
+    /// `[projects."git.company.example/*"]` entry states what a host is, and a
+    /// repository that names something else knows better.
+    pub fn configured_forge_platform(&self) -> Option<String> {
+        if let Some(platform) = self
+            .project_config()
             .ok()
             .flatten()
             .and_then(|config| config.forge_platform().map(str::to_string))
+        {
+            return Some(platform);
+        }
+        let project_id = self.project_identifier().ok()?;
+        self.user_config()
+            .forge_platform(Some(&project_id))
+            .map(str::to_string)
+    }
+
+    /// The forge API hostname for GitHub Enterprise or self-hosted GitLab.
+    ///
+    /// The repository's `[forge].hostname`, else a matching user-config
+    /// `[projects."…"].forge.hostname`. Passed to the forge CLI as
+    /// `--hostname` when the remote's own host isn't the API server — an SSH
+    /// alias, or an API on a different name.
+    pub fn forge_hostname(&self) -> Option<String> {
+        if let Some(hostname) = self
+            .project_config()
+            .ok()
+            .flatten()
+            .and_then(|config| config.forge_hostname().map(str::to_string))
+        {
+            return Some(hostname);
+        }
+        let project_id = self.project_identifier().ok()?;
+        self.user_config()
+            .forge_hostname(Some(&project_id))
+            .map(str::to_string)
     }
 
     /// Repository metadata derived from the primary remote.
     ///
-    /// Local-only: built from the cached primary remote URL and optional
-    /// `[forge].platform`, with no network access. This may load/cache project
-    /// config to inspect the configured forge platform. The returned
+    /// Local-only: built from the cached primary remote URL and the configured
+    /// forge platform, with no network access. This may load/cache project and
+    /// user config to resolve that platform. The returned
     /// [`GitRepoInfo::remote`] names which local remote was used, so structured
     /// JSON can report it.
     pub fn repo_info(&self) -> Option<GitRepoInfo> {
         let remote = self.primary_remote().ok()?;
         let url = self.remote_url(&remote)?;
         let parsed = GitRemoteUrl::parse(&url)?;
-        let provider_override = self.forge_platform_override();
+        let provider_override = self.configured_forge_platform();
         let mut info = parsed.repo_info(provider_override.as_deref())?;
         info.remote = Some(remote);
         Some(info)
@@ -353,10 +360,10 @@ impl Repository {
             .or_else(|| self.primary_remote_parsed_url())
     }
 
-    /// Detect the platform's reference type (PR for GitHub, MR for GitLab).
+    /// Detect the known forge's reference type (PR or MR).
     ///
-    /// Hostname-matches the primary remote's effective URL (so `url.insteadOf`
-    /// rewrites are respected). Returns `None` when the platform can't be
+    /// Classifies the primary remote's effective URL (so `url.insteadOf`
+    /// rewrites are respected). Returns `None` when the forge can't be
     /// determined (no remote, opaque host).
     ///
     /// Drives the numeric-branch hint in `BranchNotFound` only — `forge.platform`
@@ -369,13 +376,7 @@ impl Repository {
             .ok()
             .and_then(|remote| self.effective_remote_url(&remote))?;
         let parsed = GitRemoteUrl::parse(&url)?;
-        if parsed.is_github() {
-            Some(RefType::Pr)
-        } else if parsed.is_gitlab() {
-            Some(RefType::Mr)
-        } else {
-            None
-        }
+        parsed.forge_kind().map(|forge| forge.ref_type())
     }
 
     /// Get a project identifier for approval tracking.

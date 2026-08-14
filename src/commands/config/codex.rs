@@ -39,10 +39,9 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
         hint_message("Next, run /plugins in Codex and install Worktrunk from the marketplace")
     );
     // The Codex plugin ships activity-marker hooks inline in its manifest
-    // (`hooks` key in .codex-plugin/plugin.json), using Codex's native `Stop`
-    // turn-end event to return 🤖 → 💬. Codex has no session-exit event, so the
-    // marker persists after a session ends (documented tradeoff). See CLAUDE.md
-    // → "Plugin Layout".
+    // (`hooks` key in .codex-plugin/plugin.json), using `Stop` to return
+    // 🤖 → 💬 and `SessionEnd` to clear the marker. See CLAUDE.md → "Plugin
+    // Layout".
     eprintln!(
         "{}",
         hint_message(cformat!(

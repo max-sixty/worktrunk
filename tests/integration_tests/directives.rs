@@ -1,6 +1,5 @@
 use crate::common::{
-    TestRepo, configure_directive_cd_only, configure_directive_files,
-    configure_legacy_directive_file, directive_files, legacy_directive_file, repo,
+    TestRepo, configure_directive_cd_only, configure_directive_files, directive_files, repo,
     repo_with_feature_worktree, repo_with_remote, repo_with_remote_and_feature,
     setup_snapshot_settings, wt_command,
 };
@@ -20,132 +19,120 @@ use std::path::Path;
 // - WORKTRUNK_DIRECTIVE_EXEC_FILE: wt writes arbitrary shell (e.g. from --execute).
 //   The shell wrapper sources the file.
 
-// ============================================================================
-// Legacy Directive File Tests (single WORKTRUNK_DIRECTIVE_FILE)
-// ============================================================================
-// These tests verify the legacy single-file protocol still works for users
-// who haven't restarted their shell after upgrading.
-
 #[rstest]
-fn test_switch_legacy_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
-    let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = legacy_directive_file();
-
-    let mut settings = setup_snapshot_settings(&repo);
-    // Normalize the directive file cd path
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.arg("switch")
-            .arg("feature")
-            .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-
-        // Verify directive file contains cd command (legacy format)
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
-        assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {}",
-            directives
-        );
-    });
-}
-
-/// Legacy directive file in PowerShell mode: single quotes are doubled
-/// instead of using POSIX escaping.
-#[rstest]
-fn test_switch_legacy_directive_file_powershell(#[from(repo_with_remote)] mut repo: TestRepo) {
-    let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = legacy_directive_file();
+fn test_switch_retired_directive_file_refuses_execute_after_switch(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let feature_wt = repo.add_worktree("feature");
+    let directive_dir = tempfile::TempDir::new().unwrap();
+    let directive_path = directive_dir.path().join("directive");
+    let execute_marker = feature_wt.join("retired-execute-ran");
+    fs::write(&directive_path, "").unwrap();
 
     let settings = setup_snapshot_settings(&repo);
-
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.env("WORKTRUNK_SHELL", "powershell");
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_path);
         cmd.arg("switch")
             .arg("feature")
+            .arg("--execute")
+            .arg("echo spawned > retired-execute-ran")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
         assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {directives}",
+            !execute_marker.exists(),
+            "wt must never spawn an --execute payload from the retired wrapper"
+        );
+        assert_eq!(
+            fs::read_to_string(&directive_path).unwrap(),
+            "",
+            "wt must never write to the retired directive file"
         );
     });
 }
 
-/// Legacy directive file in fish mode: the `cd` path is fish-escaped (`\`
-/// doubled, `'` backslash-escaped) instead of using the POSIX `'\''` idiom,
-/// which the fish wrapper's `eval` would mis-parse.
 #[rstest]
-fn test_switch_legacy_directive_file_fish(#[from(repo_with_remote)] mut repo: TestRepo) {
-    let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = legacy_directive_file();
+fn test_switch_retired_directive_file_refuses_execute_when_already_at(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let feature_wt = repo.add_worktree("feature");
+    let directive_dir = tempfile::TempDir::new().unwrap();
+    let directive_path = directive_dir.path().join("directive");
+    let execute_marker = feature_wt.join("retired-execute-ran");
+    fs::write(&directive_path, "").unwrap();
 
     let settings = setup_snapshot_settings(&repo);
-
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.env("WORKTRUNK_SHELL", "fish");
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_path);
         cmd.arg("switch")
             .arg("feature")
-            .current_dir(repo.root_path());
+            .arg("--execute")
+            .arg("echo spawned > retired-execute-ran")
+            .current_dir(&feature_wt);
 
         assert_cmd_snapshot!(cmd);
 
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
         assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {directives}",
+            !execute_marker.exists(),
+            "wt must never spawn an --execute payload from the retired wrapper"
+        );
+        assert_eq!(
+            fs::read_to_string(&directive_path).unwrap(),
+            "",
+            "wt must never write to the retired directive file"
         );
     });
 }
 
-/// Legacy directive file with --execute: both cd and execute commands
-/// should be written to the single file.
+/// A current split wrapper may inherit the retired variable from an older
+/// parent shell. The split files still take precedence: both directives land
+/// in their dedicated files, and the retired file remains untouched.
 #[rstest]
-fn test_switch_legacy_directive_file_with_execute(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = legacy_directive_file();
+fn test_split_directive_files_win_over_retired_variable(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+    let retired_dir = tempfile::TempDir::new().unwrap();
+    let retired_path = retired_dir.path().join("directive");
+    fs::write(&retired_path, "").unwrap();
 
-    let mut settings = setup_snapshot_settings(&repo);
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    let output = cmd
+        .env("WORKTRUNK_DIRECTIVE_FILE", &retired_path)
+        .args(["switch", "feature", "--execute", "echo through-split"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
 
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.args([
-            "switch",
-            "--create",
-            "exec-legacy",
-            "--execute",
-            "echo hello",
-        ])
-        .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
-        assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {directives}",
-        );
-        assert!(
-            directives.contains("echo hello"),
-            "Legacy directive file should contain execute command, got: {directives}",
-        );
-    });
+    assert!(
+        output.status.success(),
+        "split directives must remain active when the retired variable is also set.\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !fs::read_to_string(&cd_path)
+            .unwrap_or_default()
+            .trim()
+            .is_empty(),
+        "the split CD file must receive the target path"
+    );
+    assert_eq!(
+        fs::read_to_string(&exec_path).unwrap(),
+        "echo through-split\n",
+        "the split EXEC file must receive the command"
+    );
+    assert_eq!(
+        fs::read_to_string(&retired_path).unwrap(),
+        "",
+        "wt must never write to the retired directive file"
+    );
 }
 
 /// When only the CD file is set (EXEC scrubbed — running inside an alias/hook),
@@ -208,6 +195,66 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
             cd_content
         );
     });
+}
+
+/// A failed EXEC-directive write names the file and the write.
+///
+/// This write is the last thing a `--switch --execute` does, after the switch
+/// has already landed and after `◎ Executing (--execute):`, so the bare
+/// `io::Error` it used to propagate (`✗ No such file or directory (os error 2)`)
+/// read as if the *command* were missing. The paths come from the shell wrapper,
+/// so the message has to point there.
+#[rstest]
+fn test_exec_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+    // A path under a directory that doesn't exist: the open fails, and nothing
+    // about it depends on platform or timing.
+    let unwritable_exec = exec_path.parent().unwrap().join("no-such-dir").join("exec");
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &unwritable_exec);
+    let output = cmd
+        .args(["switch", "feature", "--execute", "echo hi"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "an unwritable exec directive file must fail the command.\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to write the command to the directive file"),
+        "the error must name the write and the file.\nstderr:\n{stderr}"
+    );
+}
+
+/// A failed CD-directive write names the file too, for the same reason.
+#[rstest]
+fn test_cd_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+    let unwritable_cd = cd_path.parent().unwrap().join("no-such-dir").join("cd");
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &unwritable_cd, &exec_path);
+    let output = cmd
+        .args(["switch", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "an unwritable cd directive file must fail the command.\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to write the cd directive file"),
+        "the error must name the write and the file.\nstderr:\n{stderr}"
+    );
 }
 
 #[rstest]
@@ -620,7 +667,7 @@ cd = false
 }
 
 // ============================================================================
-// Non-Directive Mode Tests (no WORKTRUNK_DIRECTIVE_FILE)
+// Non-Directive Mode Tests (no split directive env vars)
 // ============================================================================
 
 #[rstest]
@@ -633,19 +680,6 @@ fn test_switch_without_directive_file(repo: TestRepo) {
         cmd.arg("switch")
             .arg("my-feature")
             .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
-fn test_remove_without_directive_file(repo: TestRepo) {
-    let settings = setup_snapshot_settings(&repo);
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.arg("remove").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
     });

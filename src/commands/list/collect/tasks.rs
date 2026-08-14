@@ -14,9 +14,7 @@ use worktrunk::git::{
 };
 
 use super::super::ci_status::{CiBranchName, PrStatus};
-use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
-};
+use super::super::model::{AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus};
 use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 
 // ============================================================================
@@ -777,7 +775,7 @@ impl Task for WorkingTreeConflictsTask {
     }
 }
 
-/// Task 7 (worktree only): Git operation state detection (rebase/merge)
+/// Task 7 (worktree only): Git operation state detection (rebase, merge, …)
 pub struct GitOperationTask;
 
 impl Task for GitOperationTask {
@@ -789,7 +787,9 @@ impl Task for GitOperationTask {
             .branch_ref
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
-        let git_operation = detect_active_git_operation(&wt);
+        let git_operation = wt
+            .operation_in_progress()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::GitOperation {
             item_idx: ctx.item_idx,
             git_operation,
@@ -990,19 +990,6 @@ fn first_line(s: &str) -> String {
         .find(|l| !l.trim().is_empty())
         .unwrap_or(s)
         .to_string()
-}
-
-/// Detect if a worktree is in the middle of a git operation (rebase/merge).
-pub(crate) fn detect_active_git_operation(
-    wt: &worktrunk::git::WorkingTree<'_>,
-) -> ActiveGitOperation {
-    if wt.is_rebasing().unwrap_or(false) {
-        ActiveGitOperation::Rebase
-    } else if wt.is_merging().unwrap_or(false) {
-        ActiveGitOperation::Merge
-    } else {
-        ActiveGitOperation::None
-    }
 }
 
 /// Parse port number from a URL string (e.g., "http://localhost:12345" -> 12345)

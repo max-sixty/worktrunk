@@ -3,31 +3,22 @@
 //! This module provides utilities for detecting the current shell, extracting
 //! shell names from paths, and probing shell configuration state.
 
-use std::process::{Command, Stdio};
-use std::time::Duration;
-
-use wait_timeout::ChildExt;
-
 use super::Shell;
 
-/// Extract executable name from a path, stripping `.exe` on Windows.
+/// Extract executable name from a path, stripping a trailing `.exe`.
 ///
 /// Uses `std::path::Path` for platform-native path handling:
 /// - Unix: `/usr/bin/bash` -> "bash"
 /// - Windows: `C:\Program Files\Git\usr\bin\bash.exe` -> "bash"
 ///
-/// Only strips `.exe` extension (not other extensions like `.9` in `zsh-5.9`).
+/// Only `.exe`, and on every platform — a version suffix like the `.9` in
+/// `zsh-5.9` stays, which is why this isn't `file_stem`.
+///
+/// `None` when the path names nothing, or names nothing but the suffix.
 pub fn extract_filename_from_path(path: &str) -> Option<&str> {
     let filename = std::path::Path::new(path).file_name()?.to_str()?;
-
-    // Strip .exe extension (case-insensitive for Windows)
-    // Don't use file_stem() because it would strip version numbers like ".9" from "zsh-5.9"
-    // Handle all case variants: .exe, .EXE, .Exe, .eXe, etc.
-    if filename.len() > 4 && filename[filename.len() - 4..].eq_ignore_ascii_case(".exe") {
-        Some(&filename[..filename.len() - 4])
-    } else {
-        Some(filename)
-    }
+    let name = crate::path::strip_suffix_ignoring_case(filename, ".exe");
+    (!name.is_empty()).then_some(name)
 }
 
 /// Determine Shell variant from a shell name (without path or extension).
@@ -303,19 +294,36 @@ fn process_name_and_ppid(_pid: u32) -> Option<(String, u32)> {
     None
 }
 
-/// Leading flags for the interactive zsh compinit probe.
-///
-/// `+m` (disable job control) is load-bearing — see the call site and issue
-/// #3322. It must precede `-ic` so zsh parses it as an option, not a command
-/// argument.
-const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
+const ZSH_COMPDEF_PROBE: &str = "(( $+functions[compdef] ))";
+const ZSH_USER_ONLY_PROBE_ARGS: [&str; 4] = ["--no-globalrcs", "+m", "-ic", ZSH_COMPDEF_PROBE];
+const ZSH_GLOBAL_AND_USER_PROBE_ARGS: [&str; 3] = ["+m", "-ic", ZSH_COMPDEF_PROBE];
 
-/// Detect if user's zsh has compinit enabled by probing for the compdef function.
+/// Which startup files an interactive zsh probe should source.
+#[derive(Debug, Clone, Copy)]
+pub enum ZshStartupScope {
+    /// Source the user's startup files while excluding global rc files after
+    /// the always-read `/etc/zshenv`.
+    UserOnly,
+    /// Source both global and user startup files, as a normal interactive zsh
+    /// session does.
+    GlobalAndUser,
+}
+
+impl ZshStartupScope {
+    fn probe_args(self) -> &'static [&'static str] {
+        match self {
+            Self::UserOnly => &ZSH_USER_ONLY_PROBE_ARGS,
+            Self::GlobalAndUser => &ZSH_GLOBAL_AND_USER_PROBE_ARGS,
+        }
+    }
+}
+
+/// Probe whether an interactive zsh defines the `compdef` function.
 ///
 /// Zsh's completion system (compinit) must be explicitly enabled - it's not on by default.
 /// When compinit runs, it defines the `compdef` function. We probe for this function
-/// by spawning an interactive zsh that sources the user's config, then checking if
-/// compdef exists.
+/// by spawning an interactive zsh with the requested startup scope, then checking
+/// the command's exit status.
 ///
 /// This approach matches what other CLI tools (hugo, podman, dvc) recommend: detect
 /// the state and advise users, rather than trying to auto-enable compinit.
@@ -324,12 +332,7 @@ const ZSH_PROBE_FLAGS: [&str; 2] = ["+m", "-ic"];
 /// - `Some(true)` if compinit is enabled (compdef function exists)
 /// - `Some(false)` if compinit is NOT enabled
 /// - `None` if detection failed (zsh not installed, timeout, error)
-///
-// TODO(zsh-compinit-probe-unify): see `config::show::check_zsh_compinit_missing`
-// for the matching probe and why the two haven't been merged (intentional
-// `--no-globalrcs` divergence, different result types and runners). #3322 had to
-// apply the `+m` job-control fix in both places.
-pub fn detect_zsh_compinit() -> Option<bool> {
+pub fn probe_zsh_compdef(startup_scope: ZshStartupScope) -> Option<bool> {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
         return Some(true); // Assume compinit is configured
@@ -340,26 +343,17 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         return Some(false); // Force warning to appear
     }
 
-    // Probe command: check if compdef function exists (proof compinit ran).
-    // We use unique markers (__WT_COMPINIT_*) to avoid false matches from any
-    // output the user's zshrc might produce during startup.
-    let probe_cmd =
-        r#"(( $+functions[compdef] )) && echo __WT_COMPINIT_YES__ || echo __WT_COMPINIT_NO__"#;
-
-    tracing::debug!(command = %probe_cmd, "$ zsh -ic '{}' (probe)", probe_cmd);
-
-    let mut cmd = Command::new("zsh");
     // `+m` disables job control so the interactive probe doesn't grab wt's
     // controlling terminal. An interactive zsh with job control on `tcsetpgrp`s
     // to claim the terminal foreground; if the 2s timeout kills it before it
     // restores that, wt is left in a background process group and the next
     // terminal write raises SIGTTOU. See issue #3322. `+m` must precede `-ic`
     // so it's parsed as an option rather than a command argument.
-    cmd.args(ZSH_PROBE_FLAGS)
-        .arg(probe_cmd)
-        .stdin(Stdio::null()) // Prevent compinit from prompting interactively
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null()) // Suppress user's zsh startup messages
+    //
+    // `Cmd::run` supplies null stdin and captures stdout/stderr, preventing
+    // startup prompts and messages from reaching the terminal.
+    let output = crate::shell_exec::Cmd::new("zsh")
+        .args(startup_scope.probe_args().iter().copied())
         // Suppress zsh's "insecure directories" warning from compinit.
         //
         // When fpath contains directories with insecure permissions, compinit prompts:
@@ -377,47 +371,36 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         //
         // Safe to suppress because we're only probing shell state, not doing anything
         // security-sensitive, and this only affects our subprocess.
-        .env("ZSH_DISABLE_COMPFIX", "true");
-    crate::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = cmd.spawn().ok()?;
+        .env("ZSH_DISABLE_COMPFIX", "true")
+        .timeout(std::time::Duration::from_secs(2))
+        .run()
+        .ok()?;
 
-    let timeout = Duration::from_secs(2);
-
-    match child.wait_timeout(timeout) {
-        Ok(Some(_status)) => {
-            // Child exited: pipe write ends are closed, safe to read sequentially.
-            use std::io::Read;
-            let mut buf = Vec::new();
-            child.stdout.as_mut()?.read_to_end(&mut buf).ok()?;
-            let stdout = String::from_utf8_lossy(&buf);
-            Some(stdout.contains("__WT_COMPINIT_YES__"))
-        }
-        Ok(None) => {
-            // Timed out - kill and clean up
-            let _ = child.kill();
-            let _ = child.wait();
-            None
-        }
-        Err(_) => None,
-    }
+    Some(output.status.success())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
+    #[cfg(unix)]
+    use std::process::{Command, Stdio};
+    #[cfg(unix)]
+    use std::time::Duration;
 
-    /// Regression guard for #3322: the interactive zsh compinit probe must
-    /// disable job control (`+m`) so it can't grab wt's controlling terminal —
-    /// otherwise a timeout-kill leaves the parent in a background process group
-    /// and the next terminal write raises SIGTTOU.
+    /// The two callers intentionally observe different startup scopes. Both
+    /// disable job control before `-ic` so a timeout cannot strand wt in a
+    /// background process group (#3322).
     #[test]
-    fn test_zsh_probe_disables_job_control() {
+    fn test_zsh_probe_startup_scopes() {
         assert_eq!(
-            ZSH_PROBE_FLAGS[0], "+m",
-            "job control must be disabled before -ic (#3322)"
+            ZshStartupScope::UserOnly.probe_args(),
+            ["--no-globalrcs", "+m", "-ic", "(( $+functions[compdef] ))"]
         );
-        assert!(ZSH_PROBE_FLAGS.contains(&"-ic"));
+        assert_eq!(
+            ZshStartupScope::GlobalAndUser.probe_args(),
+            ["+m", "-ic", "(( $+functions[compdef] ))"]
+        );
     }
 
     // ==========================================================================
@@ -430,7 +413,15 @@ mod tests {
     #[case::mixed_case_exe_title("bash.Exe", Some("bash"))]
     #[case::mixed_case_exe_upper("bash.EXE", Some("bash"))]
     #[case::mixed_case_exe_camel("bash.eXe", Some("bash"))]
+    // Multibyte names are ordinary input: `ps_snapshot` feeds every process
+    // name on the machine through here. `日本語`'s last four bytes start
+    // mid-character; `café.exe`'s do not, and still strip.
+    #[case::multibyte("日本語", Some("日本語"))]
+    #[case::multibyte_exe("café.exe", Some("café"))]
     #[case::empty("", None)]
+    // Nothing but the suffix names no command, so callers fall back to their
+    // next detection source rather than reporting an empty shell name.
+    #[case::suffix_only(".exe", None)]
     fn test_extract_filename_from_path_common(#[case] path: &str, #[case] expected: Option<&str>) {
         assert_eq!(extract_filename_from_path(path), expected);
     }
@@ -589,9 +580,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn test_probe_reports_invoked_name_for_sh() {
-        // Compound command so sh doesn't exec-replace itself with `sleep`.
+        // Block in a shell builtin so sh stays alive without spawning a child.
         let mut child = Command::new("/bin/sh")
-            .args(["-c", "sleep 30; true"])
+            .args(["-c", "read _"])
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()
             .expect("spawn sh");

@@ -1,27 +1,38 @@
-//! Statusline output for shell prompts and editors.
+//! Statusline output for hosts that render in the background (Claude Code's
+//! statusline, a `tmux` status bar).
 //!
 //! Outputs a single-line status for the current worktree:
-//! `branch  status  ±working  commits  upstream  [ci]`
+//! `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
 //!
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
+//!
+//! Which worktree gets described has one resolution point, in [`run`]:
+//! `--format=claude-code` takes the directory Claude Code names on stdin,
+//! since that's the session's directory rather than wt's; every other caller
+//! (and claude-code mode with no stdin) gets [`Repository::current_worktree`].
+//! That accessor resolves against the repository's discovery path, so `-C`
+//! selects the worktree — `std::env::current_dir()` would not, because `-C`
+//! sets the discovery path without chdir'ing the process.
 
 use std::collections::HashMap;
 use std::env;
 use std::io::{self, IsTerminal, Read};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use dunce::canonicalize;
 
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorkingTree};
 use worktrunk::styling::{
-    fix_dim_after_color_reset, terminal_width_for_statusline, truncate_visible,
+    ColorChoice, fix_dim_after_color_reset, println, terminal_width_for_statusline,
+    truncate_visible,
 };
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::StatuslineFormat;
+use crate::output::print_json;
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -713,12 +724,21 @@ fn format_context_gauge(percentage: f64) -> String {
 
 /// Run the statusline command.
 ///
-/// Output uses `println!` for raw stdout (bypasses anstream color detection).
-/// Shell prompts (PS1) and Claude Code always expect ANSI codes.
+/// Output goes through anstream like every other stdout surface, with the
+/// process-global [`ColorChoice`] set to `Always` so the escapes survive:
+/// shell prompts (PS1) and Claude Code always expect ANSI codes, and neither
+/// is a tty from this process's point of view.
 pub fn run(format: StatuslineFormat) -> Result<()> {
     // Statusline runs on every prompt redraw — deprecation warnings on stderr
     // would appear above each prompt.
     worktrunk::config::suppress_warnings();
+
+    // A shell prompt or Claude Code captures this line and re-renders it, so
+    // the escapes are part of the answer rather than presentation this process
+    // chose. `Always` is the conventional `--color=always` semantic and
+    // overrides `NO_COLOR` by design — an explicit request for color wins
+    // (no-color.org).
+    ColorChoice::Always.write_global();
 
     // JSON format: output current worktree as JSON
     if matches!(format, StatuslineFormat::Json) {
@@ -727,37 +747,42 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
 
     let claude_code = matches!(format, StatuslineFormat::ClaudeCode);
 
-    // Get context - either from stdin (claude-code mode) or current directory
-    let (cwd, model_name, context_used_percentage, rate_limits) = if claude_code {
+    // Get context from stdin (claude-code mode only)
+    let (workspace_dir, model_name, context_used_percentage, rate_limits) = if claude_code {
         let ctx = ClaudeCodeContext::from_stdin();
-        let current_dir = ctx
-            .as_ref()
-            .map(|c| c.current_dir.clone())
-            .unwrap_or_else(|| env::current_dir().unwrap_or_default().display().to_string());
+        let dir = ctx.as_ref().map(|c| PathBuf::from(&c.current_dir));
         let model = ctx.as_ref().and_then(|c| c.model_name.clone());
         let context_pct = ctx.as_ref().and_then(|c| c.context_used_percentage);
         let limits = ctx.map(|c| c.rate_limits).unwrap_or_default();
-        (
-            Path::new(&current_dir).to_path_buf(),
-            model,
-            context_pct,
-            limits,
-        )
+        (dir, model, context_pct, limits)
     } else {
-        (
-            env::current_dir().context("Failed to get current directory")?,
-            None,
-            None,
-            Vec::new(),
-        )
+        (None, None, None, Vec::new())
     };
+
+    let repo = Repository::current().ok();
+
+    // The worktree this statusline describes. Claude Code names its session's
+    // directory on stdin, which wins; every other caller is described by the
+    // directory `wt` itself was pointed at, which is `current_worktree()` and
+    // not `env::current_dir()` — `-C` sets the discovery path without chdir'ing
+    // the process, so reading the process cwd would silently drop the flag.
+    let worktree = repo.as_ref().map(|repo| match &workspace_dir {
+        Some(dir) => repo.worktree_at(dir),
+        None => repo.current_worktree(),
+    });
 
     // Build segments with priorities
     let mut segments: Vec<StatuslineSegment> = Vec::new();
 
     // Directory (claude-code mode only) - priority 0
     let dir_str = if claude_code {
-        let formatted = format_directory_fish_style(&cwd);
+        // Without stdin the directory falls back to the worktree above, so it
+        // honours `-C` too; the process cwd is the last resort for a path that
+        // isn't in a repo at all.
+        let dir = workspace_dir
+            .or_else(|| worktree.as_ref().map(|wt| wt.path().to_path_buf()))
+            .unwrap_or_else(|| env::current_dir().unwrap_or_default());
+        let formatted = format_directory_fish_style(&dir);
         // Only push non-empty directory segments (empty can happen if cwd is ".")
         if !formatted.is_empty() {
             segments.push(StatuslineSegment::new(
@@ -770,11 +795,11 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
         None
     };
 
-    // Git status segments (skip links in claude-code mode - OSC 8 not supported)
-    if let Ok(repo) = Repository::current()
-        && repo.worktree_at(&cwd).git_dir().is_ok()
+    // Git status segments
+    if let Some(worktree) = &worktree
+        && worktree.git_dir().is_ok()
     {
-        let git_segments = git_status_segments(&repo, &cwd, !claude_code)?;
+        let git_segments = git_status_segments(worktree)?;
 
         // In claude-code mode, skip branch segment if directory matches worktrunk template
         let git_segments = if let Some(ref dir) = dir_str {
@@ -835,23 +860,13 @@ pub fn run(format: StatuslineFormat) -> Result<()> {
     Ok(())
 }
 
-/// Run statusline with JSON output format.
+/// The collection plan both statusline surfaces share.
 ///
-/// Outputs the current worktree as JSON, using the same structure as `wt list --format=json`.
-fn run_json() -> Result<()> {
-    let cwd = env::current_dir().context("Failed to get current directory")?;
-
-    let repo = Repository::current().context("Not in a git repository")?;
-
-    // Warnings are suppressed on this surface, so an unset (or invalid) key
-    // resolves to schema 1 silently; the nag reaches the same user on their
-    // next interactive `wt list --format=json`.
-    let json_schema = list::resolve_json_schema(&repo);
-
-    // The statusline renders the full column set condensed (status, diffs,
-    // ahead/behind, upstream, CI, URL — see `format_statusline_segments`) but no
-    // LLM summary, so its plan is every column's tasks under full gates: CI runs,
-    // summary doesn't. URL is gated on a configured template like everywhere else.
+/// The statusline renders the full column set condensed (status, diffs,
+/// ahead/behind, upstream, CI, URL — see `format_statusline_segments`) but no
+/// LLM summary, so its plan is every column's tasks under full gates: CI runs,
+/// summary doesn't. URL is gated on a configured template like everywhere else.
+fn statusline_options(repo: &Repository) -> CollectOptions {
     let url_template = repo.url_template();
     let gates = list::columns::ColumnGates {
         show_full: true,
@@ -859,14 +874,61 @@ fn run_json() -> Result<()> {
         has_llm_command: false,
         has_url_template: url_template.is_some(),
     };
-    let options = CollectOptions {
+    CollectOptions {
         url_template,
         // Match `wt list --full`: include untracked files in the working
         // diff (`HEAD±`) so the segment counts the same lines `wt step
         // diff` would show, consistent with the rest of the statusline data.
         include_untracked_in_working_diff: true,
         ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
+    }
+}
+
+/// Build the unpopulated list item for `worktree`, matched by its toplevel
+/// against the repo's worktree list.
+///
+/// `None` when the directory belongs to no worktree of the repo; the two
+/// callers render that differently (an empty JSON result, a bare branch
+/// segment), so this reports it rather than deciding.
+fn current_worktree_item(worktree: &WorkingTree) -> Result<Option<list::model::ListItem>> {
+    let repo = worktree.repo();
+
+    // Use git rev-parse --show-toplevel (via WorkingTree::root()) to correctly identify
+    // the worktree containing that directory, rather than prefix matching which fails for
+    // nested worktrees.
+    let worktree_root = worktree.root()?;
+    let Some(wt) = repo.list_worktrees()?.iter().find(|wt| {
+        canonicalize(&wt.path)
+            .map(|p| p == worktree_root)
+            .unwrap_or(false)
+    }) else {
+        return Ok(None);
     };
+
+    // Determine if this is the primary worktree
+    // - Normal repos: the main worktree (repo root)
+    // - Bare repos: the default branch's worktree
+    let is_home = repo
+        .primary_worktree()
+        .ok()
+        .flatten()
+        .is_some_and(|p| wt.path == p);
+
+    Ok(Some(list::build_worktree_item(wt, is_home, true, false)))
+}
+
+/// Run statusline with JSON output format.
+///
+/// Outputs the current worktree as JSON, using the same structure as `wt list --format=json`.
+fn run_json() -> Result<()> {
+    let repo = Repository::current().context("Not in a git repository")?;
+
+    // Warnings are suppressed on this surface, so an unset (or invalid) key
+    // resolves to schema 1 silently; the nag reaches the same user on their
+    // next interactive `wt list --format=json`.
+    let json_schema = list::resolve_json_schema(&repo);
+
+    let options = statusline_options(&repo);
     // What the schema-2 envelope reports as requested — read from the task
     // plan itself (like `collect()` does), so it can't drift from the gates.
     let collected = list::model::Collected {
@@ -881,43 +943,23 @@ fn run_json() -> Result<()> {
             // report, and resolving it here could reach the network on a
             // fresh clone — this path runs on every prompt redraw.
             let envelope = list::json_v2::envelope_with_items(&repo, None, collected, vec![]);
-            list::print_json(&envelope)
+            print_json(&envelope)
         } else {
-            println!("[]");
-            Ok(())
+            print_json(&serde_json::json!([]))
         }
     };
 
-    // Verify we're in a worktree
-    if repo.worktree_at(&cwd).git_dir().is_err() {
+    let worktree = repo.current_worktree();
+    // Verify the directory this command operates on (`-C`, else the process
+    // cwd) is in a worktree
+    if worktree.git_dir().is_err() {
         // Not in a worktree - emit an empty result (consistent with wt list)
         return print_empty();
     }
 
-    // Get current worktree info
-    // Use git rev-parse --show-toplevel (via current_worktree().root()) to correctly identify
-    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
-    let worktrees = repo.list_worktrees()?;
-    let worktree_root = repo.current_worktree().root()?;
-    let current_worktree = worktrees.iter().find(|wt| {
-        canonicalize(&wt.path)
-            .map(|p| p == worktree_root)
-            .unwrap_or(false)
-    });
-
-    let Some(wt) = current_worktree else {
+    let Some(mut item) = current_worktree_item(&worktree)? else {
         return print_empty();
     };
-
-    // Determine if this is the primary worktree
-    let is_home = repo
-        .primary_worktree()
-        .ok()
-        .flatten()
-        .is_some_and(|p| wt.path == p);
-
-    // Build item with identity fields
-    let mut item = list::build_worktree_item(wt, is_home, true, false);
 
     // Populate computed fields (parallel git operations)
     list::populate_item(&repo, &mut item, options)?;
@@ -932,7 +974,7 @@ fn run_json() -> Result<()> {
     }
     // No custom columns: the statusline path never expands `[list.custom-columns]`
     // (prompt hot path; its compact format has no column grid).
-    let ci_provider_override = repo.forge_platform_override();
+    let ci_provider_override = repo.configured_forge_platform();
 
     // Output follows `wt list --format=json`: schema 1 is a bare
     // single-item array, schema 2 a single-item envelope.
@@ -950,7 +992,7 @@ fn run_json() -> Result<()> {
         );
         let envelope =
             list::json_v2::envelope_with_items(&repo, default_branch, collected, vec![json_item]);
-        list::print_json(&envelope)
+        print_json(&envelope)
     } else {
         let repo_metadata = repo.repo_info();
         let json_item = json_output::JsonItem::from_list_item(
@@ -960,7 +1002,7 @@ fn run_json() -> Result<()> {
             ci_provider_override.as_deref(),
             &[],
         );
-        list::print_json(&[json_item])
+        print_json(&[json_item])
     }
 }
 
@@ -990,28 +1032,15 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 
 /// Get git status as prioritized segments for the current worktree.
 ///
-/// When `include_links` is true, CI status includes clickable OSC 8 hyperlinks.
-fn git_status_segments(
-    repo: &Repository,
-    cwd: &Path,
-    include_links: bool,
-) -> Result<Vec<StatuslineSegment>> {
+/// CI status and the dev-server URL render as underlined OSC 8 hyperlinks.
+fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>> {
     use super::list::columns::ColumnKind;
 
-    // Get current worktree info
-    // Use git rev-parse --show-toplevel (via worktree_at().root()) to correctly identify
-    // the worktree containing cwd, rather than prefix matching which fails for nested worktrees.
-    let worktrees = repo.list_worktrees()?;
-    let worktree_root = repo.worktree_at(cwd).root()?;
-    let current_worktree = worktrees.iter().find(|wt| {
-        canonicalize(&wt.path)
-            .map(|p| p == worktree_root)
-            .unwrap_or(false)
-    });
+    let repo = worktree.repo();
 
-    let Some(wt) = current_worktree else {
+    let Some(mut item) = current_worktree_item(worktree)? else {
         // Not in a worktree - just show branch name as a segment
-        if let Ok(Some(branch)) = repo.current_worktree().branch() {
+        if let Ok(Some(branch)) = worktree.branch() {
             return Ok(vec![StatuslineSegment::from_column(
                 branch.to_string(),
                 ColumnKind::Branch,
@@ -1023,59 +1052,18 @@ fn git_status_segments(
     // If we can't determine the default branch, just show current branch
     if repo.default_branch().is_none() {
         return Ok(vec![StatuslineSegment::from_column(
-            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
+            item.branch.as_deref().unwrap_or("HEAD").to_string(),
             ColumnKind::Branch,
         )]);
     }
 
-    // Determine if this is the primary worktree
-    // - Normal repos: the main worktree (repo root)
-    // - Bare repos: the default branch's worktree
-    let is_home = repo
-        .primary_worktree()
-        .ok()
-        .flatten()
-        .is_some_and(|p| wt.path == p);
+    // Populate computed fields (parallel git operations) — the full plan gives
+    // complete status symbols.
+    list::populate_item(repo, &mut item, statusline_options(repo))?;
 
-    // Build item with identity fields
-    let mut item = list::build_worktree_item(wt, is_home, true, false);
-
-    // Load URL template from project config (if configured)
-    let url_template = repo.url_template();
-
-    // Same plan as the other statusline path: the full column set condensed
-    // (CI included), no LLM summary. See `format_statusline_segments`.
-    let gates = list::columns::ColumnGates {
-        show_full: true,
-        summary_enabled: false,
-        has_llm_command: false,
-        has_url_template: url_template.is_some(),
-    };
-    let options = CollectOptions {
-        url_template,
-        // Match `wt list --full`: include untracked files in the working
-        // diff (`HEAD±`) so the segment counts the same lines `wt step
-        // diff` would show, consistent with the rest of the statusline data.
-        include_untracked_in_working_diff: true,
-        ..CollectOptions::for_columns(list::columns::all_columns(), &gates)
-    };
-
-    // Populate computed fields (parallel git operations) — the full plan above
-    // gives complete status symbols.
-    list::populate_item(repo, &mut item, options)?;
-
-    // Get prioritized segments
-    let segments = item.format_statusline_segments(include_links);
-
-    if segments.is_empty() {
-        // Fallback: just show branch name
-        Ok(vec![StatuslineSegment::from_column(
-            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
-            ColumnKind::Branch,
-        )])
-    } else {
-        Ok(segments)
-    }
+    // Never empty: the branch segment is unconditional, so there is no
+    // emptier case to fall back to.
+    Ok(item.format_statusline_segments())
 }
 
 #[cfg(test)]
@@ -1208,6 +1196,85 @@ mod tests {
             dir,
             pattern,
             branch
+        );
+    }
+
+    /// Width fitting must never cut inside a linked segment's OSC 8 sequence.
+    /// `truncate_visible` ends its cut with `\e[0m`, which resets colour but
+    /// leaves a hyperlink *open*, so a severed link would make the rest of the
+    /// terminal line clickable.
+    ///
+    /// What rules it out is that the two cuts can't meet. `fit_to_width` drops
+    /// whole segments, worst priority first, and stops at one; character
+    /// truncation only ever reaches that lone survivor, which is always a
+    /// best-priority segment — Directory (0), Branch or Model (1). Every
+    /// link-bearing segment is strictly worse — CI (5), URL (9) — so each is
+    /// dropped entire long before the survivor is cut into.
+    ///
+    /// The sweep covers both, and they leave at different pressures: URL is
+    /// the worst priority in the table, so it goes before CI.
+    #[test]
+    fn test_statusline_fitting_never_splits_a_hyperlink() {
+        use super::super::list::columns::ColumnKind;
+        use super::super::list::layout::{LinkStyle, format_url_cell};
+
+        let ci = StatuslineSegment::from_column(
+            format!(
+                "{}#3550{}",
+                osc8::Hyperlink::new("https://github.com/max-sixty/worktrunk/pull/3550"),
+                osc8::Hyperlink::END
+            ),
+            ColumnKind::CiStatus,
+        );
+        let url = StatuslineSegment::from_column(
+            format_url_cell("http://127.0.0.1:17913", LinkStyle::Linked),
+            ColumnKind::Url,
+        );
+        let segments = vec![
+            StatuslineSegment::from_column(
+                "statusline-osc8-hyperlinks".to_string(),
+                ColumnKind::Branch,
+            ),
+            ci,
+            url,
+        ];
+
+        // Count of intact links seen at each width, so the sweep can prove it
+        // exercised every drop stage rather than only the roomy ones.
+        let mut seen_link_counts = std::collections::BTreeSet::new();
+        for max_width in 1usize..=90 {
+            let fitted =
+                StatuslineSegment::fit_to_width(segments.clone(), max_width.saturating_sub(1));
+            let joined = StatuslineSegment::join(&fitted);
+            let out = truncate_visible(&format!("{} {joined}", anstyle::Reset), max_width);
+
+            // Opener and closer both begin `\e]8;;`, so every surviving link
+            // contributes exactly two markers. An odd total is a link the cut
+            // landed inside.
+            let markers = out.matches("\u{1b}]8;;").count();
+            assert_eq!(
+                markers % 2,
+                0,
+                "severed hyperlink at width {max_width} ({markers} markers): {out:?}"
+            );
+            seen_link_counts.insert(markers / 2);
+
+            // When only one link is left it must be CI's: the URL is the
+            // worst priority in the table, so it is the first to go.
+            if markers / 2 == 1 {
+                assert!(
+                    out.contains("/pull/3550") && !out.contains("127.0.0.1"),
+                    "URL should drop before CI, got {out:?}"
+                );
+            }
+        }
+
+        // Both links, then one, then none — if fitting stopped dropping them
+        // the sweep would silently cover only one regime.
+        assert_eq!(
+            seen_link_counts,
+            [0, 1, 2].into_iter().collect(),
+            "sweep should span every drop stage"
         );
     }
 

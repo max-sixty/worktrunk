@@ -31,11 +31,11 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 List all worktrees:
 
 {% terminal(cmd="wt list") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth:…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure token…</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth:…</span>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>   <b>Age</b>   <b>Message</b>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>6814f02</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee083</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: h…</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>b772e68</span>  <span class=d>5h</span>    <span class=d>Add secure token…</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>41ee083</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: h…</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
@@ -43,11 +43,11 @@ List all worktrees:
 Include CI status and LLM summaries:
 
 {% terminal(cmd="wt list --full") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware       <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02a</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee0834</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation           <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68b</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                             <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee0834</span>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                 <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware        <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                            <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee083</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation            <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                              <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee083</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden</span>
 {% end %}
@@ -55,13 +55,13 @@ Include CI status and LLM summaries:
 Include branches that don't have worktrees:
 
 {% terminal(cmd="wt list --branches --full") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware       <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02a</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                           <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee0834</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation           <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68b</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                             <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee0834</span>
-<span class=d>/ </span>exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>       Explore GraphQL schema and resolvers                                  <span class=d>96379229</span>
-<span class=d>/ </span>wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>       Start API documentation                                               <span class=d>b40716dc</span>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                 <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware        <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                            <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee083</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation            <span class=d>|</span>     <span class=g>#408</span>  <span class=d>b772e68</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                              <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee083</span>
+<span class=d>/ </span>exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>       Explore GraphQL schema and resolvers                                   <span class=d>9637922</span>
+<span class=d>/ </span>wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>       Start API documentation                                                <span class=d>b40716d</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden</span>
 {% end %}
@@ -74,7 +74,7 @@ Output as JSON for scripting:
 
 | Column | Shows |
 |--------|-------|
-| Branch | Branch name |
+| Branch | Branch name; a detached worktree has none, so it shows its short hash in dim yellow |
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
@@ -85,7 +85,7 @@ Output as JSON for scripting:
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
 | *(custom)* | User-defined [custom columns](#custom-columns) from `[list.custom-columns]` user config <span class="badge-experimental"></span> |
-| Commit | Short hash (8 chars) |
+| Commit | Short hash, abbreviated per `core.abbrev` |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
@@ -164,16 +164,16 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ⤴ > ⤵ > ⊟ > ⊞ > ⚑ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⚑ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
 | `✘` | `operation_state` `"conflicts"` | Merge conflicts |
-| `⤴` | `operation_state` `"rebase"` | Rebase in progress |
-| `⤵` | `operation_state` `"merge"` | Merge in progress |
+| `↻` | `operation_state` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
 | `⊟` | `worktree.state` `"prunable"` | Prunable (worktree directory missing) |
 | `⊞` | `worktree.state` `"locked"` | Locked worktree |
-| `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Branch name doesn't match the worktree path |
+| `⚑` | `worktree.state` `"duplicate_branch"` | Branch checked out in more than one worktree, so `wt` resolves it to whichever git lists first; every worktree on the branch is flagged |
+| `⚑` | `worktree.state` `"branch_worktree_mismatch"` | Worktree isn't at the path its branch implies — including a detached one, which has no branch to imply a path and so is never at home |
 | `/` | `kind` `"branch"` | Branch without a worktree (no `worktree` object) |
 
 ### Default branch
@@ -244,6 +244,7 @@ One envelope object. Items carry independent facts; rendered strings
                "committed_at": "2025-01-01T08:00:00Z"},
       "worktree": {"path": "/home/user/repo.feature", "main": false, "current": true,
                    "previous": false, "detached": false, "branch_mismatch": false,
+                   "duplicate_branch": false,
                    "changes": {"staged": false, "modified": true, "untracked": false,
                                "renamed": false, "deleted": false, "conflicted": false,
                                "diff": {"added": 10, "deleted": 2}}},
@@ -275,7 +276,7 @@ Item fields:
 | `branch` | Branch name; null for a detached-HEAD worktree. Remote rows carry the bare name with the remote in `remote` |
 | `remote` | Remote name, present only on remote-only branch rows |
 | `head` | `{sha, short_sha, subject, committed_at}`; null for unborn branches. `committed_at` is RFC 3339 UTC |
-| `worktree` | `{path, main, current, previous, detached, locked, prunable, branch_mismatch, operation, changes}`; absent on branch-only rows. `locked`/`prunable` are `{reason}` objects and can co-occur; `operation` is `"rebase"` or `"merge"`; `changes` holds the five working-tree flags plus `conflicted` and `diff {added, deleted}` |
+| `worktree` | `{path, main, current, previous, detached, locked, prunable, branch_mismatch, duplicate_branch, operation, changes}`; absent on branch-only rows. `locked`/`prunable` are `{reason}` objects and can co-occur; `operation` is `"rebase"` or `"merge"`; `changes` holds the five working-tree flags plus `conflicted` and `diff {added, deleted}` |
 | `default_branch` | Relation to the default branch: `{ahead, behind, diff, orphan, integration, merge_conflicts}`; absent on the default branch itself. `integration.reason` is one of `same_commit`, `ancestor`, `no_added_changes`, `trees_match`, `merge_adds_nothing`, `patch_id_match`; a dirty tree skips the checks, leaving `integration` null |
 | `upstream` | Tracking branch: `{remote, branch, ahead, behind}`; absent when none is configured |
 | `pr` | Open PR/MR: `{number, url, review, mergeable, repo}`; collected with `--full` or a listed `ci` column. `review` uses the schema 1 `ci.review_state` vocabulary; `mergeable` is false when the forge reports conflicts, null otherwise |
@@ -283,7 +284,7 @@ Item fields:
 | `dev_server` | `{url, listening}` from the project's `list.url` template |
 | `summary` | LLM branch summary (requires `[list] summary = true`) |
 | `vars` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
-| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors), `columns` (custom-column cells keyed by header) |
+| `display` | Rendered strings: `state` (schema 1's `main_state` vocabulary), `symbols`, `statusline` (with ANSI colors and OSC 8 hyperlinks), `columns` (custom-column cells keyed by header) |
 
 Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `worktree.changes`, `main` + `main_state` → `default_branch` +
@@ -292,6 +293,11 @@ Schema 1 names map directly: `commit` → `head`, `working_tree` →
 and the per-item `repo` moves to the envelope's `repo.forge`.
 
 {{ terminal(cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.items[] | select(.display.state == __WT_QUOT__integrated__WT_QUOT__ or .display.state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Worktrees ahead of upstream (needs pushing)|||wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'") }}
+
+A JSON Schema for the envelope is published at
+[worktrunk.dev/schema/list-v2.json](https://worktrunk.dev/schema/list-v2.json).
+It describes what `wt` writes, so a field the absence rule can omit is
+optional there rather than required-and-null.
 
 ### Schema 1
 
@@ -323,7 +329,7 @@ The original bare-array format, and the default while unset:
 | `url` | string | Dev server URL from project config; absent when not configured |
 | `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
 | `summary` | string | LLM-generated branch summary; `--full` only, then absent when not configured or no summary |
-| `statusline` | string | Pre-formatted status with ANSI colors |
+| `statusline` | string | Pre-formatted status with colors and links |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
 | `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |
@@ -375,7 +381,7 @@ Present only for worktree-kind items. `state` is the worktree-location attribute
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | string | `"branch_worktree_mismatch"`, `"prunable"`, or `"locked"` (absent when normal) |
+| `state` | string | `"branch_worktree_mismatch"`, `"duplicate_branch"`, `"prunable"`, or `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 
@@ -441,7 +447,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
        <b><span class=c>wt list</span></b> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>statusline</span></b>  Single-line status for shell prompts
+  <b><span class=c>statusline</span></b>  Single-line status for the current worktree
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
@@ -465,6 +471,78 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Displays local data (branches, paths, status) first, then updates with remote data (CI,
           upstream) as it arrives. Use --no-progressive to force buffered rendering. Auto-enabled
           for TTY.
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+      <b><span class=c>--config-set</span></b><span class=c> &lt;toml&gt;</span>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+# Subcommands
+
+## wt list statusline
+
+Single-line status for the current worktree.
+
+The line carries the same cells as the worktree's row in `wt list`. A stale CI status cache makes it reach the network for a second or two, so it fits a statusline the host renders in the background — Claude Code's, a `tmux` status bar — better than a prompt the shell blocks on. Want it fast enough for a synchronous prompt? [Open an issue](https://github.com/max-sixty/worktrunk/issues).
+
+### Output formats
+
+- `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
+- `json`: A one-entry array in the `wt list --format=json` schema
+- `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
+
+A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.
+
+The CI reference links to its PR/MR, and a dev server URL carrying a port shows as `:3000` linking to the URL in full, dim until something answers on that port. Both are underlined, which is what marks them as clickable. They are OSC 8 links, and a terminal that doesn't support those discards the escape, leaving the underlined text unclickable.
+
+### Claude Code mode
+
+`--format=claude-code` reads JSON context from stdin (`.workspace.current_dir` is required; the rest are optional):
+
+- `.workspace.current_dir` — working directory
+- `.model.display_name` — model name
+- `.context_window.used_percentage` — context usage (0–100), rendered as `🌔 65%`, the moon waning 🌕→🌑 as context fills
+- `.rate_limits.{five_hour,seven_day}.used_percentage` — rate-limit window usage (0–100)
+- `.rate_limits.{five_hour,seven_day}.resets_at` — window reset time (Unix epoch seconds)
+
+The pace segment appears only when usage is likely to hit a rate limit before its window resets, and shows the higher-risk window: `2.9×(Tue–Tue 5pm)` reads as 2.9× the pace that would exactly fill that window. Above 90% used it shows usage instead of pace — `93%(Tue–Tue 5pm)` — near the cap, how much is left matters more than how fast it's going. "Likely" is a Bayesian forecast; early-window bursts don't trigger it. Its colour deepens with severity — dim, then dim-yellow, then yellow — as the forecast lockout (how much of the window would be spent capped) grows, so a fast pace that would only tip over near the reset stays dim rather than alarming. With `-vv`, each window's inputs and projection are logged to `.git/wt/logs/trace.log`.
+
+[Claude Code statusline setup](@/claude-code.md#statusline-claude-code-only) has the `~/.claude/settings.json` entry that feeds this mode.
+
+### Command reference
+
+{% terminal() %}
+wt list statusline - Single-line status for the current worktree
+
+Usage: <b><span class=c>wt list statusline</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          Possible values:
+          - <b><span class=c>table</span></b>
+          - <b><span class=c>json</span></b>
+          - <b><span class=c>claude-code</span></b>: Claude Code statusline mode (reads context from stdin)
+
+          [default: table]
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

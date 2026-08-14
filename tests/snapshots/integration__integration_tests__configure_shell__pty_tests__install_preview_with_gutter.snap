@@ -3,9 +3,9 @@ source: tests/integration_tests/configure_shell.rs
 expression: "output.trim_start_matches('\\n')"
 ---
 [36m❯[39m Install shell integration? [1m[y/N/?][22m 
-✓ Added shell extension & completions for zsh @ ~/.zshrc
+[32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
 
-✓ Configured 1 shell
-▲ Completions require compinit; add to ~/.zshrc before the wt line:
-  autoload -Uz compinit && compinit
-↳ Restart shell to activate shell integration
+[32m✓[39m [32mConfigured 1 shell[39m
+[33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
+[107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
+[2m↳[22m [2mRestart shell to activate shell integration[22m

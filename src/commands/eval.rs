@@ -3,16 +3,15 @@
 //! Evaluates a template expression in the current worktree context and prints
 //! the result to stdout.
 
-use std::collections::HashMap;
-
 use color_print::cformat;
-use worktrunk::config::{UserConfig, expand_template, format_base_variables};
+use worktrunk::config::{UserConfig, VarScope, format_base_variables};
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::ShellEscapeMode;
 use worktrunk::styling::{eprintln, format_with_gutter, info_message, println, verbosity};
 
 use crate::cli::SwitchFormat;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::output::print_json;
 
 /// Template name reported in errors, the `-v` expansion view, and JSON output.
 const EVAL_NAME: &str = "eval";
@@ -37,7 +36,7 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
     let worktree_path = wt.root()?;
 
     let ctx = CommandContext::new(&repo, &config, branch.as_deref(), &worktree_path, false);
-    let context_map = build_hook_context(&ctx, &[], None)?;
+    let context_map = build_hook_context(&ctx, &[], VarScope::All)?;
 
     if verbosity() >= 1 {
         eprintln!(
@@ -50,12 +49,7 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
         );
     }
 
-    let vars: HashMap<&str, &str> = context_map
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-
-    let result = expand_template(template, &vars, ShellEscapeMode::Literal, &repo, EVAL_NAME)?;
+    let result = context_map.expand(template, ShellEscapeMode::Literal, &repo, EVAL_NAME)?;
     // `expand_template` emitted the `source` / `result` view to stderr under
     // `-v`; a trailing blank separates it from the result printed below.
     if verbosity() >= 1 {
@@ -70,7 +64,7 @@ pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
                 "template": template,
                 "result": result,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            print_json(&payload)?;
         }
     }
     Ok(())

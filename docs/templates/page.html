@@ -18,13 +18,18 @@
 {% set next_page = false %}
 {% set found_current = false %}
 {% for doc_page in docs_section.pages %}
-    {% if found_current and not next_page %}
+    {# A hide_from_nav page is skipped as a prev/next candidate, so nothing links
+       into it, but the current-page test below stays unguarded: viewing such a
+       page directly must still flip found_current, or its own prev/next would
+       compute against the wrong neighbour. It keeps a prev link back out. #}
+    {% set hidden = doc_page.extra.hide_from_nav | default(value=false) %}
+    {% if found_current and not next_page and not hidden %}
         {% set_global next_page = doc_page %}
     {% endif %}
     {% if doc_page.permalink == page.permalink %}
         {% set_global found_current = true %}
     {% endif %}
-    {% if not found_current %}
+    {% if not found_current and not hidden %}
         {% set_global prev_page = doc_page %}
     {% endif %}
 {% endfor %}

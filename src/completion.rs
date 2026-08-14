@@ -1,3 +1,34 @@
+//! Shell completion (`COMPLETE=$SHELL wt -- <tokens>`).
+//!
+//! Every Tab press forks a whole `wt` process, and the user is waiting on it
+//! with a finger still on the key — so this is the one path where wall-clock
+//! latency is the feature. It is also the path with the least room to hide
+//! work: there is no progressive rendering to paint behind, no cache to amortize
+//! across invocations (the process exits, and no shell caches a dynamic
+//! completion), and nothing the shell can show until the process is done.
+//!
+//! Two structural rules follow, both easy to undo by accident:
+//!
+//! - **Everything the completion needs is fetched concurrently.** The work is a
+//!   handful of independent git reads, each roughly one fork's latency, so
+//!   sequencing them costs their sum where the user waits for their max. The
+//!   process runs in two waves: [`Repository::prewarm`] fills the discovery,
+//!   git-config, and user-config caches on three threads, and then
+//!   `branches_for_completion` runs the ref and worktree scans on three more.
+//!   The second wave depends on the first only through `Repository::at`, which
+//!   needs the common dir the first wave resolved.
+//! - **Nothing is scanned that cannot reach the user.** The completer decides
+//!   up front whether a remote-only branch could be offered from this argument
+//!   at all, and passes that down rather than filtering afterwards —
+//!   `refs/remotes/` is the most expensive read here, since a long-lived clone
+//!   carries far more remote-tracking refs than local branches.
+//!
+//! `main` returns here before it builds the rayon pool, which this path never
+//! uses; see the call site. A change to any of this is measured against
+//! `benches/completion.rs`, which runs one repo big enough in every dimension
+//! to make the difference visible — and *not* against a `-vv` trace, which
+//! skips prewarm's rev-parse batch (benches/CLAUDE.md, "Analyzing a trace").
+
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
@@ -57,13 +88,37 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
 
     // If no args after `--`, output the shell registration script
     if args.is_empty() {
-        // Use CompleteEnv for registration script generation
+        // Use CompleteEnv for registration script generation, under the name the
+        // shell integration binds — not clap's own (see `registration_name`).
+        //
+        // A bare `Command` is all the registration needs: clap_complete 4.6.9's
+        // `write_registration` reads `cmd.get_name()` and `self.bin` (set below,
+        // so its `cmd.get_bin_name()` fallback never fires), and nothing else off
+        // the command. Handing it `completion_command()` instead would build the
+        // whole completion tree — `Repository::current()`, both config loads, and
+        // a scan of every `PATH` directory for `wt-*` — to produce one string, on
+        // the first TAB of every new shell.
+        let name = registration_name();
         let all_args: Vec<OsString> = std::env::args_os().collect();
-        let _ = CompleteEnv::with_factory(completion_command)
+        let _ = CompleteEnv::with_factory(move || Command::new(name))
+            .bin(name)
             .try_complete(all_args, current_dir.as_deref());
         CONTEXT.with(|ctx| ctx.borrow_mut().take());
         return true;
     }
+
+    // Fill the git-discovery, git-config, and user-config caches on three
+    // concurrent threads, exactly as `main` does before dispatching a command.
+    // Completion answers and returns long before `main` reaches its own
+    // `Repository::prewarm` call, so without this every one of those reads is
+    // a separate fork taken serially, on the one path where the user is
+    // waiting with a finger on Tab: `completion_command`'s alias injection
+    // needs the configs, and the branch completers below need the discovery
+    // caches. Placed after the registration-script return, which resolves no
+    // repository at all, and after `suppress_warnings` above, since
+    // `prewarm_user_config` loads `UserConfig` eagerly and its deprecation
+    // warnings must not land above the user's prompt.
+    Repository::prewarm();
 
     // If the subcommand word matches a custom-subcommand binary, forward the
     // completion request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
@@ -341,7 +396,15 @@ impl ValueCompleter for BranchCompleter {
             return Vec::new();
         }
 
-        let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
+        // Whether a remote-only branch could reach the user from this argument
+        // at all. It decides the scan as well as the filter: a completer that
+        // answers "no" never runs `for-each-ref refs/remotes/`, which on a
+        // fetched-into clone is the most expensive call on this path.
+        let may_offer_remote_only = !self.exclude_remote_only && !self.worktree_only;
+
+        let branches = match Repository::current()
+            .and_then(|repo| repo.branches_for_completion(may_offer_remote_only))
+        {
             Ok(b) => b,
             Err(_) => return Vec::new(),
         };
@@ -350,16 +413,11 @@ impl ValueCompleter for BranchCompleter {
             return Vec::new();
         }
 
-        // If remote-only branches aren't already excluded, drop them when the total
+        // Even where they're on offer, drop remote-only branches once the total
         // count is large. Shells like bash/zsh prompt "do you wish to see all N
         // possibilities?" which makes completion unusable in repos with many remotes.
         // Threshold of 100 aligns with bash's default `completion-query-items`.
-        let exclude_remote_only = self.exclude_remote_only
-            || (!self.worktree_only
-                && branches.len() > 100
-                && branches
-                    .iter()
-                    .any(|b| matches!(b.category, BranchCategory::Remote(_))));
+        let exclude_remote_only = !may_offer_remote_only || branches.len() > 100;
 
         branches
             .into_iter()
@@ -440,6 +498,48 @@ fn detect_hook_type(ctx: &CompletionContext) -> Option<&'static str> {
 // branch completion when creating a new worktree (since the branch doesn't exist yet).
 thread_local! {
     static CONTEXT: RefCell<Option<CompletionContext>> = const { RefCell::new(None) };
+}
+
+/// The command name the registration script binds completions to.
+///
+/// clap derives every identifier in that script — the completer function name,
+/// zsh's trailing `compdef`, bash's `complete -F`, PowerShell's
+/// `Register-ArgumentCompleter -CommandName` — from its own `Command` name,
+/// which is the compile-time `wt`. The shell integration can be generated for a
+/// different name (`wt config shell init --cmd git-wt`, or a binary installed
+/// under another name), and then the generated loader guards on and calls a
+/// function the registration never defines: nothing completes, and since the
+/// guard never becomes true the script is regenerated on every TAB (#3816).
+/// zsh's trailing `compdef` is worse than inert — it hands worktrunk's
+/// completer to whatever name it carries, i.e. to the *other* `wt` that
+/// `--cmd` exists to step around.
+///
+/// So the generated loader passes the name it bound in `WORKTRUNK_COMPLETE_NAME`
+/// and the registration is emitted under that name. The fallback is
+/// [`crate::binary_name`], which covers a binary installed as `git-wt` and
+/// invoked directly.
+///
+/// Both arms are validated, because both end up embedded verbatim in generated
+/// shell code and neither has necessarily been through the `--cmd` gate:
+/// `binary_name` is `argv[0]`'s file stem, so a binary installed under a name
+/// outside the allowlist would otherwise emit `complete -F _clap_complete_<name>`
+/// with an identifier the shell can't parse — completions would silently do
+/// nothing rather than fall back. `handle_completions` in `src/commands/init.rs`
+/// validates `binary_name` for the same reason before writing a registration.
+/// A rejected env var still defers to the binary name, which is the more useful
+/// answer than the constant; only a binary name that also fails lands on `wt`.
+///
+/// Leaked because `Command::name` takes a `clap::builder::Str`, which borrows
+/// unless clap's `string` feature is on — the same trade `build_hook_completion_command`
+/// makes. One small allocation in a process that writes the script and exits.
+fn registration_name() -> &'static str {
+    let is_valid = |name: &String| worktrunk::shell::validate_shell_command_name(name).is_ok();
+    let name = std::env::var("WORKTRUNK_COMPLETE_NAME")
+        .ok()
+        .filter(is_valid)
+        .or_else(|| Some(crate::binary_name()).filter(is_valid))
+        .unwrap_or_else(|| "wt".to_string());
+    Box::leak(name.into_boxed_str())
 }
 
 fn completion_command() -> Command {
@@ -754,6 +854,8 @@ fn try_forward_completion_to_custom(
     // work at best, the parent's trace lost at worst (the child's stderr is
     // discarded below, so it can't surface anything useful anyway).
     cmd.env_remove(crate::logging::VERBOSE_ENV);
+    // The retired single-file protocol is never delegated to child processes.
+    cmd.env_remove(worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR);
 
     // Capture the custom binary's stdout — it carries the forwarded completion
     // candidates. Uses `std::process::Command` rather than `shell_exec::Cmd`

@@ -46,7 +46,8 @@
 //! First run in a repo without cached default branch adds ~100-300ms for network lookup.
 //!
 //! After the skeleton appears, cells fill in progressively as git operations complete.
-//! The slowest operation (CI status) only runs with `--full`.
+//! The slowest operation (CI status) runs with `--full`, or when `[list] columns`
+//! names `ci` (which forces the column and its fetch on without `--full`).
 //!
 //! ## Git Commands Per Worktree
 //!
@@ -67,7 +68,6 @@
 //! 1. **Index (`.git/index`)** - Cached file metadata (mtime, size, mode)
 //!    - Speeds up `git status` by avoiding full file content comparisons
 //!    - Invalidated when files change or staging area updates
-//!    - Cold: ~100ms per worktree, Warm: ~10ms per worktree (typical repo)
 //!
 //! 2. **Commit graph (`.git/objects/info/commit-graph`)** - Precomputed commit metadata
 //!    - Speeds up `git rev-list --count` by avoiding commit object parsing
@@ -102,11 +102,10 @@
 //! ## Performance Characteristics
 //!
 //! Scaling (from benches/list.rs):
-//! - Linear with worktree count due to parallelization (Rayon thread pool)
-//! - Dominated by git command overhead, not Rust code
-//! - Cold caches: ~150-300ms per worktree (typical repo, 500 commits, 100 files)
-//! - Warm caches: ~20-50ms per worktree
-//! - Real-world: rust-lang/rust repo with 8 worktrees: ~400ms (warm caches)
+//! - Each worktree adds a `git status --porcelain`, parallelized on the Rayon pool
+//! - Git command overhead dominates the Rust code
+//! - Warm/cold 1-vs-8-worktree contrasts use the generated corpus
+//! - The imported corpus (currently rust-lang/rust) covers deep history and large trees
 //!
 //! Bottlenecks:
 //! 1. `git status --porcelain` - Slowest when index is cold or many files changed
@@ -132,11 +131,12 @@ pub(crate) mod render;
 
 // Layout is calculated in collect/mod.rs
 use anstyle::Style;
-use anyhow::Context;
-use model::{ListData, ListItem};
+use model::{BranchScope, ItemKind, ListData, ListItem};
 use progressive::RenderTarget;
 use worktrunk::git::Repository;
-use worktrunk::styling::INFO_SYMBOL;
+use worktrunk::styling::{INFO_SYMBOL, eprintln};
+
+use crate::output::print_json;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
@@ -191,13 +191,6 @@ pub fn handle_list(
     Ok(())
 }
 
-/// Serialize a JSON answer to stdout (pretty, one trailing newline).
-pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> anyhow::Result<()> {
-    let json = serde_json::to_string_pretty(value).context("Failed to serialize to JSON")?;
-    println!("{}", json);
-    Ok(())
-}
-
 /// Resolve `[list] json-schema` (per-project resolved config) to 1 or 2.
 ///
 /// Unset defaults to schema 1 and nags once per process; an out-of-range
@@ -220,7 +213,7 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
     use color_print::cformat;
-    use worktrunk::styling::{eprintln, hint_message, warning_message};
+    use worktrunk::styling::{hint_message, warning_message};
 
     static WARNED: Once = Once::new();
     match repo.config().list.json_schema {
@@ -309,12 +302,14 @@ impl SummaryMetrics {
                 self.dirty_worktrees += 1;
             }
         } else {
-            // Distinguish local vs remote branches by presence of '/' in name
-            // Remote branches are like "origin/feature", local are like "feature"
-            if item.branch.as_ref().is_some_and(|b| b.contains('/')) {
-                self.remote_branches += 1;
-            } else {
-                self.local_branches += 1;
+            // Local vs remote is recorded structurally on the item
+            // (`BranchScope`), never inferred from the name — a local branch
+            // may legitimately be named `origin/foo`, so a name-prefix
+            // heuristic would misclassify it. See `BranchScope` in
+            // `model/item.rs`.
+            match item.kind {
+                ItemKind::Branch(BranchScope::Remote) => self.remote_branches += 1,
+                _ => self.local_branches += 1,
             }
         }
 
@@ -406,6 +401,26 @@ mod tests {
         assert_eq!(metrics.remote_branches, 0);
         assert_eq!(metrics.dirty_worktrees, 0);
         assert_eq!(metrics.ahead_items, 0);
+    }
+
+    #[test]
+    fn test_summary_metrics_classifies_by_scope_not_name() {
+        // A local branch may legitimately contain '/' (e.g. `feature/login`);
+        // it must be counted as local on its structural `BranchScope`, not on
+        // a name-prefix heuristic that would misread the '/' as "remote".
+        // Regression test for the prior `b.contains('/')` classification.
+        let items = vec![
+            ListItem::new_branch("aaaaaaa".to_string(), "feature/login".to_string()),
+            ListItem::new_branch("bbbbbbb".to_string(), "main".to_string()),
+            ListItem::new_remote_branch("ccccccc".to_string(), "origin/feature".to_string()),
+        ];
+        let metrics = SummaryMetrics::from_items(&items);
+        assert_eq!(
+            metrics.local_branches, 2,
+            "`feature/login` must count as a local branch"
+        );
+        assert_eq!(metrics.remote_branches, 1);
+        assert_eq!(metrics.worktrees, 0);
     }
 
     #[test]

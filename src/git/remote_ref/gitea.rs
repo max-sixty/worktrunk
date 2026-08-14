@@ -1,15 +1,37 @@
 //! Gitea PR provider.
 //!
-//! Implements `RemoteRefProvider` for Gitea Pull Requests using the `tea` CLI.
+//! Implements `RemoteRefProvider` for Gitea Pull Requests using the `tea` CLI,
+//! and hosts the `tea`-facing helpers other modules share: [`api_status`] (how
+//! every caller separates a failed request from a resource, and decides whether
+//! a retry could help), [`is_authed_for`], and [`has_any_login`] — read by the
+//! switch dispatcher and the CI-status backend, so a change to one of them is
+//! not local.
+//!
+//! ## Reading the HTTP status
+//!
+//! `tea api` copies the response body to stdout and exits 0 whatever the status,
+//! so the exit code answers only whether `tea` itself ran. `--include` adds the
+//! status line and response headers on stderr, and that line is where every
+//! caller here reads the status from. Both `tea api` call sites pass the flag.
+//!
+//! The flag shipped with the `api` subcommand itself in tea v0.12.0 and is
+//! unchanged since, so every `tea` that can make this call accepts it — a `tea`
+//! old enough to lack `--include` has no `api` subcommand to send it to.
+//!
+//! It writes the whole header block, not just the status line, so the captured
+//! stderr now holds whatever the server sends back — a `Set-Cookie` among it,
+//! on a Gitea that issues one. That reaches disk only under `-vv`, which logs
+//! every subprocess's output to `subprocess.log`; there is no narrower flag to
+//! ask for, and the status is not available any other way.
 //!
 //! ## API path resolution
 //!
 //! `tea api <path>` does support `{owner}` and `{repo}` placeholders, but their
 //! values come from `tea`'s own repo-context resolver, which depends on the
 //! local git remote being a Gitea-accessible URL and on the user having set up
-//! `tea login add` first. We resolve owner/repo from the primary remote URL
-//! ourselves and pass an already-expanded path so the call works regardless of
-//! how `tea` resolves its own context.
+//! `tea login add` first. We resolve owner/repo from a matching Gitea remote
+//! and pass an already-expanded path so the call works regardless of how `tea`
+//! resolves its own context.
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -18,19 +40,15 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error,
     extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{RefType, Repository};
+use crate::git::{ForgeKind, Repository};
 
 /// Gitea Pull Request provider.
 #[derive(Debug, Clone, Copy)]
 pub struct GiteaProvider;
 
 impl RemoteRefProvider for GiteaProvider {
-    fn ref_type(&self) -> RefType {
-        RefType::Pr
-    }
-
-    fn platform_label(&self) -> &'static str {
-        "gitea"
+    fn forge_kind(&self) -> ForgeKind {
+        ForgeKind::Gitea
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -55,11 +73,54 @@ struct TeaApiPrResponse {
     html_url: String,
 }
 
-/// Error response from Gitea API.
+/// Gitea's `APIError` body, which the API returns in place of the resource
+/// whenever the request fails.
 #[derive(Debug, Deserialize)]
 struct TeaApiErrorResponse {
-    #[serde(default)]
     message: String,
+}
+
+/// The HTTP status of a `tea api --include` response, read from the status
+/// line `tea` writes to stderr (`HTTP/1.1 404 Not Found`).
+///
+/// `None` means no such line arrived. From a `tea` that exited 0 that is
+/// structurally impossible — `--include` prints the moment the response does,
+/// before the body — so callers treat it as a failed request rather than
+/// reading stdout as the resource.
+///
+/// Scans for the line rather than taking the first, so anything `tea` writes
+/// to stderr ahead of it can't hide it.
+pub fn api_status(stderr: &[u8]) -> Option<u16> {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .find_map(|line| line.strip_prefix("HTTP/"))
+        .and_then(|rest| rest.split_whitespace().nth(1))
+        .and_then(|code| code.parse().ok())
+}
+
+/// Gitea's own account of a failed request, from the `APIError` body it returns
+/// in place of the resource.
+///
+/// Read only after [`api_status`] has said the request failed, so this decides
+/// nothing. It reports three states, and [`fetch_pr_info`] — which does have
+/// prose to write — says something different for each:
+///
+/// - `Some(message)` — Gitea said what went wrong.
+/// - `Some("")` — Gitea's envelope with nothing in it. Production blanks a 5xx
+///   message unless the token belongs to an admin, so the body arrives as
+///   `{"message":"","url":"…/api/swagger"}`. There is no more to report, and
+///   that is worth saying.
+/// - `None` — not an `APIError` at all, so the body didn't come from Gitea's
+///   API layer: a reverse proxy's HTML error page, or a shape Gitea doesn't
+///   send today.
+///
+/// Local to this module: the CI-status backend reads only [`api_status`], since
+/// a CI cell has no room for the text and the status already decides what the
+/// cell shows.
+fn api_error_message(stdout: &[u8]) -> Option<String> {
+    serde_json::from_slice::<TeaApiErrorResponse>(stdout)
+        .ok()
+        .map(|error| error.message.trim().to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,7 +169,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
 
     let output = run_cli_api(CliApiRequest {
         tool: "tea",
-        args: &["api", &api_path],
+        args: &["api", "--include", &api_path],
         repo_root,
         // tea reads no prompt-disable env var; pass a no-op key/value so the
         // shared helper has something to set without inventing a fake var.
@@ -117,32 +178,44 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         run_context: "Failed to run tea api",
     })?;
 
+    // `tea api` exits 0 for every HTTP response, so a non-zero exit means `tea`
+    // itself failed (no login configured, unresolvable endpoint, transport
+    // error) and its own stderr names which. It also means no status line, so
+    // this branch comes first.
     if !output.status.success() {
-        if let Ok(error_response) = serde_json::from_slice::<TeaApiErrorResponse>(&output.stdout) {
-            let message_lower = error_response.message.to_ascii_lowercase();
-            if message_lower.contains("404") || message_lower.contains("not found") {
-                bail!(
-                    "Gitea PR #{} not found on {}/{}",
-                    pr_number,
-                    parsed.owner(),
-                    parsed.repo()
-                );
-            }
-            if message_lower.contains("401") || message_lower.contains("unauthorized") {
-                bail!("Gitea CLI not authenticated; run tea login add");
-            }
-            if message_lower.contains("403") || message_lower.contains("forbidden") {
-                bail!("Gitea API access forbidden for PR #{}", pr_number);
-            }
-        }
-
         return Err(cli_api_error(
-            RefType::Pr,
+            ForgeKind::Gitea.ref_type(),
             format!("tea api failed for PR #{}", pr_number),
             &output,
         ));
     }
 
+    // A 404, 401, 403, or 500 therefore arrives here as a successful spawn
+    // carrying Gitea's `APIError` body instead of the PR, and the status line
+    // from `--include` is what says so.
+    let status = api_status(&output.stderr).with_context(|| {
+        format!(
+            "tea api --include wrote no HTTP status line for PR #{pr_number}, \
+             so a PR can't be told from an API error"
+        )
+    })?;
+
+    if status >= 400 {
+        let (owner, repo_name) = (parsed.owner(), parsed.repo());
+        let context =
+            format!("Gitea API error {status} for PR #{pr_number} on {owner}/{repo_name}");
+        match api_error_message(&output.stdout) {
+            Some(message) if !message.is_empty() => bail!("{context}: {message}"),
+            Some(_) => bail!(
+                "{context}, but the response carried no message — Gitea hides 5xx messages \
+                 from non-admin tokens"
+            ),
+            None => bail!("{context}, and the response body is not one Gitea sends"),
+        }
+    }
+
+    // A 2xx that isn't the resource: report the parse failure, whose source
+    // names where the body diverged.
     let response: TeaApiPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
         format!(
             "Failed to parse Gitea API response for PR #{}. \
@@ -194,7 +267,6 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
 
     Ok(RemoteRefInfo {
-        ref_type: RefType::Pr,
         number: pr_number,
         title: response.title,
         author: response.user.login,
@@ -354,7 +426,65 @@ mod tests {
     #[test]
     fn test_ref_type() {
         let provider = GiteaProvider;
-        assert_eq!(provider.ref_type(), RefType::Pr);
+        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
+    }
+
+    /// The status line is the discriminator, and it is the second token of the
+    /// first `HTTP/` line — reachable past whatever `tea` wrote before it, and
+    /// past a status with no reason phrase.
+    #[test]
+    fn test_api_status_reads_the_status_line() {
+        let status = |stderr: &str| api_status(stderr.as_bytes());
+
+        assert_eq!(status("HTTP/1.1 200 OK\r\n\r\n"), Some(200));
+        assert_eq!(status("HTTP/2.0 404 Not Found\n\n"), Some(404));
+        assert_eq!(status("HTTP/1.1 500\n"), Some(500));
+        // Headers follow the status line and must not be mistaken for it.
+        assert_eq!(
+            status("HTTP/1.1 403 Forbidden\r\nX-Proto: HTTP/1.1 200 OK\r\n\r\n"),
+            Some(403)
+        );
+        // Anything `tea` says first is stepped over.
+        assert_eq!(
+            status("warning: login token expires soon\nHTTP/1.1 401 Unauthorized\n"),
+            Some(401)
+        );
+
+        // Nothing to read: no `--include` output at all, or a line that
+        // doesn't carry a number where the status belongs.
+        assert_eq!(status(""), None);
+        assert_eq!(status("Error: dial tcp: connection refused\n"), None);
+        assert_eq!(status("HTTP/1.1 OK\n"), None);
+    }
+
+    /// The body supplies the error text, and its three states are three
+    /// different things to say: Gitea's message, Gitea's envelope with the
+    /// message blanked, and a body Gitea didn't write.
+    #[test]
+    fn test_api_error_message_reads_the_body() {
+        let error = |body: &str| api_error_message(body.as_bytes());
+
+        assert_eq!(
+            error(
+                r#"{"errors":null,"message":"token is required","url":"https://gitea.example.com/api/swagger"}"#
+            ),
+            Some("token is required".to_string())
+        );
+
+        // Gitea's envelope, blanked for a non-admin token. Whitespace-only is
+        // the same thing — trimmed, so one branch covers both.
+        assert_eq!(
+            error(r#"{"message":"","url":"https://gitea.example.com/api/swagger"}"#),
+            Some(String::new())
+        );
+        assert_eq!(error(r#"{"message":"   "}"#), Some(String::new()));
+
+        // Not an `APIError` at all: a resource, an unknown shape, a proxy's
+        // error page.
+        assert_eq!(error(r#"{"title":"Fix login","state":"open"}"#), None);
+        assert_eq!(error("[]"), None);
+        assert_eq!(error(r#"{"unexpected":1}"#), None);
+        assert_eq!(error("<html>Bad Gateway</html>"), None);
     }
 
     #[test]

@@ -48,12 +48,54 @@ use worktrunk::styling::{eprintln, println, stderr};
 // Status messages to stderr
 eprintln!("{}", success_message("Created worktree"));
 
-// Primary output to stdout (tables, JSON, pipeable)
+// Primary output to stdout (tables, shell code, pipeable)
 println!("{}", table_output);
 
 // Flush before interactive prompts
 stderr().flush()?;
 ```
+
+Which `println!` is in scope decides whether a closed pipe panics: std's
+panics on the `BrokenPipe` write error, anstream's drops it. `wt … | head`
+closes the pipe, so command code imports the `worktrunk::styling` one and no
+`std::println!` is left in `src/`.
+
+The stderr macros carry the same rule for a different consequence: anstream's
+`eprint!` / `eprintln!` strip ANSI when stderr isn't a terminal, std's keep it,
+so a file importing one but not the other writes escapes on one line of a
+message block and not the next under `wt … 2>log`. `eprint!` is the half that
+slips — it has no newline, so it gets reached for mid-block in a file that
+imported only `eprintln`. Every bare `eprint!` / `eprintln!` under `src/` must
+resolve to anstream's: import it, or qualify the call as
+`styling::eprintln!(…)`. `check_stderr_macros_come_from_styling` in
+`tests/integration_tests/output_system_guard.rs` holds that statically, since
+no snapshot can — the suite forces `CLICOLOR_FORCE=1`, so both printers emit
+color and a snapshot agrees whichever macro is in scope. Its
+`STD_STDERR_ALLOWED_PATHS` exempts whole files, not calls, so an entry is only
+right where std's macro is right throughout.
+
+**Output whose ANSI is already decided** declares that once at the top of the
+command with `worktrunk::styling::ColorChoice::Always.write_global()` and then
+prints through the same anstream macros — the statusline a shell prompt or
+Claude Code renders, and the `--help-page` document whose escapes the docs
+pipeline turns into HTML (`--plain` and `--help-md` declare `Never` the same
+way). Neither consumer is ever a tty, so without the declaration anstream
+would strip their color every time — and the test suite would not catch it,
+because it forces color with `CLICOLOR_FORCE=1`;
+`test_color_follows_the_consumer` pins the unforced behavior. Declare `Always`
+only when the pipe is a courier rather than the destination; anything a person
+reads directly stays on plain anstream, which is what strips color on a pipe
+and honors `NO_COLOR`.
+
+**`--format=json` answers** go through `crate::output::print_json`, never a
+hand-rolled `println!("{}", serde_json::to_string_pretty(&v)?)`. It serializes
+pretty with one trailing newline and prints through anstream, so no
+`--format=json` surface panics when its consumer stops reading. Before that,
+thirty call sites had open-coded those two lines, and whether any one of them
+panicked under `| head -3` came down to which `println!` its module happened to
+import. `wt switch --format=json` is the one non-caller: it emits its single
+result as one compact line (still through anstream's `println!`), because that
+is what a shell loop reads.
 
 **Shell integration functions** (`src/output/global.rs`):
 
@@ -140,7 +182,7 @@ The split-trust design enforces two trust levels:
 
 All directive env vars are removed from spawned subprocesses by default via
 `shell_exec::scrub_directive_env_vars()`. `DirectivePassthrough::inherit_from_env()`
-re-adds only the CD file (and legacy compat file) for trusted contexts.
+re-adds only the CD file for trusted contexts.
 
 ## Windows Compatibility (Git Bash / MSYS2)
 
@@ -735,6 +777,33 @@ eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktree
 // BAD - quoted commands
 eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
 ```
+
+## Hyperlinks
+
+Every OSC 8 link is underlined. Link text is sized to fit a column (`#3604`,
+`:11486`) and reads as ordinary content, and color already carries state (the
+CI verdict, dim for a port nothing answers on), so the underline is what marks
+a run of text as clickable.
+
+`worktrunk::styling::hyperlink(url, text)` emits the link and its underline
+together, which is what keeps the rule true at every call site. It closes with
+`[24m`, leaving a surrounding color or dim intact.
+
+```rust
+// GOOD - the helper carries the underline
+let cell = hyperlink(url, &format!(":{port}"));
+// GOOD - a caller's own style wraps the link
+format!("{style}{}{style:#}", hyperlink(url, text))
+// BAD - hand-assembled sequences, unmarked link
+format!("{}{text}{}", osc8::Hyperlink::new(url), osc8::Hyperlink::END)
+```
+
+Text that isn't a link stays plain, and whether a run of text is a link belongs
+to the render rather than to the cell emitting it: `LayoutConfig::link_style`
+answers it once for a whole row, so a CI reference and a dev-server port can't
+disagree. Two destinations carry no links, and so no underline: a terminal
+without OSC 8 support, where `wt list` prints the dev-server URL in full, and
+the picker, whose rows pass through skim.
 
 ## Design Principles
 

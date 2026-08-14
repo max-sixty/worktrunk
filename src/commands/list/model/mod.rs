@@ -24,7 +24,7 @@ pub mod statusline_segment;
 #[allow(unused_imports)]
 pub use item::{BranchScope, Collected, ItemKind, ListData, ListItem, SeededFacts, WorktreeData};
 #[allow(unused_imports)]
-pub use state::{ActiveGitOperation, Divergence, MainState, OperationState, WorktreeState};
+pub use state::{Divergence, MainState, OperationState, WorktreeState};
 #[allow(unused_imports)]
 pub use stats::{ActiveUpstream, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
 #[allow(unused_imports)]
