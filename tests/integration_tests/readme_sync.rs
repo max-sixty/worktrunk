@@ -1597,7 +1597,7 @@ fn test_codex_cloud_launchers_match_taskfile() {
         );
         assert!(
             readme.lines().any(|line| line == launcher),
-            "Codex Cloud {task} launcher is stale; replace it with:\n{launcher}"
+            "Codex Cloud {task} launcher in scripts/codex-cloud/README.md is stale; replace it with:\n{launcher}"
         );
     }
 }
