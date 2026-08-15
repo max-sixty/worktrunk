@@ -2,12 +2,20 @@ version: "3"
 
 vars:
   CODEX_REPO_ROOT: "{{.TASKFILE_DIR}}/../.."
+  TASK_VERSION: "3.52.0"
+  INSTA_VERSION: "1.48.0"
+  NEXTEST_VERSION: "0.9.143"
+  NU_VERSION: "0.114.1"
+  PWSH_VERSION: "7.6.4"
 
 tasks:
   setup-codex:
-    desc: Setup Codex Cloud environment for development
+    desc: Setup Codex Cloud universal image (root only)
     platforms: [linux]
     dir: "{{.CODEX_REPO_ROOT}}"
+    preconditions:
+      - sh: test "$(id -u)" = 0 && test "$(id -u ubuntu 2>/dev/null)" = 1000
+        msg: Codex Cloud setup requires root and the universal image's ubuntu user
     env:
       DEBIAN_FRONTEND: noninteractive
       MISE_HTTP_RETRIES: 6
@@ -22,7 +30,7 @@ tasks:
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends git zsh fish xz-utils lsof tini
 
-        mise use --global task@3.52.0
+        mise use --global task@{{.TASK_VERSION}}
         uv tool install pre-commit==4.6.1
         install -d /root/.local/bin
 
@@ -42,22 +50,23 @@ tasks:
         }
 
         install_binary \
-          https://github.com/mitsuhiko/insta/releases/download/1.48.0/cargo-insta-x86_64-unknown-linux-gnu.tar.xz \
+          https://github.com/mitsuhiko/insta/releases/download/{{.INSTA_VERSION}}/cargo-insta-x86_64-unknown-linux-gnu.tar.xz \
           1c05a480a5a7f755f0ea15b2d8e2f71ad51b9c3a270d38ac72005c57ac0a1487 \
           cargo-insta.tar.xz cargo-insta-x86_64-unknown-linux-gnu/cargo-insta \
           /root/.local/bin/cargo-insta
         install_binary \
-          https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.143/cargo-nextest-0.9.143-x86_64-unknown-linux-gnu.tar.gz \
+          https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{{.NEXTEST_VERSION}}/cargo-nextest-{{.NEXTEST_VERSION}}-x86_64-unknown-linux-gnu.tar.gz \
           66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e \
           cargo-nextest.tar.gz cargo-nextest /root/.local/bin/cargo-nextest
         install_binary \
-          https://github.com/nushell/nushell/releases/download/0.114.1/nu-0.114.1-x86_64-unknown-linux-gnu.tar.gz \
+          https://github.com/nushell/nushell/releases/download/{{.NU_VERSION}}/nu-{{.NU_VERSION}}-x86_64-unknown-linux-gnu.tar.gz \
           8802b26edcdf1a64477567b5ce909fbae3d72d731c8f0847892ea16c6fa73c53 \
-          nu.tar.gz nu-0.114.1-x86_64-unknown-linux-gnu/nu /root/.local/bin/nu
+          nu.tar.gz nu-{{.NU_VERSION}}-x86_64-unknown-linux-gnu/nu /root/.local/bin/nu
 
         pwsh_archive=powershell.tar.gz
+        # The universal image supplies libicu; the version probe below fails if that changes.
         download \
-          https://github.com/PowerShell/PowerShell/releases/download/v7.6.4/powershell-7.6.4-linux-x64.tar.gz \
+          https://github.com/PowerShell/PowerShell/releases/download/v{{.PWSH_VERSION}}/powershell-{{.PWSH_VERSION}}-linux-x64.tar.gz \
           4471b5a36bfe86ec7af8525d36bb1cacba0128e7aac22d05cc064bc00e604721 \
           "$pwsh_archive"
         install -d /opt/microsoft/powershell/7
@@ -83,7 +92,7 @@ tasks:
             fi
             cargo_path="$(/root/.cargo/bin/rustup which cargo)"
             toolchain_bin="${cargo_path%/cargo}"
-            PATH="$toolchain_bin:/root/.local/bin:/root/.local/share/mise/installs/task/3.52.0:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            PATH="$toolchain_bin:/root/.local/bin:/root/.local/share/mise/installs/task/{{.TASK_VERSION}}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
             export PATH
             exec "$cargo_path" "$@"
         fi
@@ -99,12 +108,16 @@ tasks:
         for executable in task pre-commit cargo cargo-insta cargo-nextest git lsof pwsh tini zsh fish nu; do
           command -v "$executable" >/dev/null
         done
+        test -x /root/.local/share/mise/installs/task/{{.TASK_VERSION}}/task
         pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
       - task: prepare-codex
 
   maintain-codex:
-    desc: Maintain Codex Cloud environment
+    desc: Maintain Codex Cloud universal image (root only)
     platforms: [linux]
+    preconditions:
+      - sh: test "$(id -u)" = 0 && test "$(id -u ubuntu 2>/dev/null)" = 1000
+        msg: Codex Cloud maintenance requires root and the universal image's ubuntu user
     cmds:
       - task: prepare-codex
 
