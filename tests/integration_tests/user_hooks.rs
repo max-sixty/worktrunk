@@ -2323,6 +2323,50 @@ fn test_hook_multiple_name_filters(repo: TestRepo) {
     );
 }
 
+/// A source-scoped filter must not bleed its name into another source.
+/// `wt hook pre-merge user:foo bar`, with user `foo`, project `foo`, and
+/// project `bar` defined, runs user `foo` and project `bar` — but not project
+/// `foo`, which the `user:foo` scope excludes even though the unscoped `bar`
+/// admits the project source.
+#[rstest]
+fn test_hook_source_scoped_filter_does_not_bleed_into_other_source(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-merge]
+foo = "echo USER_FOO"
+"#,
+    );
+    repo.write_project_config(
+        r#"[pre-merge]
+foo = "echo PROJECT_FOO"
+bar = "echo PROJECT_BAR"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", "user:foo", "bar", "--yes"])
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        combined.contains("USER_FOO"),
+        "user:foo should run user's foo; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("PROJECT_BAR"),
+        "unscoped bar should run project's bar; got:\n{combined}"
+    );
+    assert!(
+        !combined.contains("PROJECT_FOO"),
+        "project foo must NOT run — user:foo is scoped to user only; got:\n{combined}"
+    );
+}
+
 #[rstest]
 fn test_hook_multiple_name_filters_none_match(repo: TestRepo) {
     // Write project config with named hooks
