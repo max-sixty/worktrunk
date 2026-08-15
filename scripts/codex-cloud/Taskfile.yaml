@@ -3,6 +3,7 @@ version: "3"
 vars:
   CODEX_REPO_ROOT: "{{.TASKFILE_DIR}}/../.."
   TASK_VERSION: "3.52.0"
+  PRE_COMMIT_VERSION: "4.6.1"
   INSTA_VERSION: "1.48.0"
   NEXTEST_VERSION: "0.9.143"
   NU_VERSION: "0.114.1"
@@ -31,7 +32,7 @@ tasks:
         apt-get install -y -qq --no-install-recommends git zsh fish xz-utils lsof tini
 
         mise use --global task@{{.TASK_VERSION}}
-        uv tool install pre-commit==4.6.1
+        uv tool install pre-commit=={{.PRE_COMMIT_VERSION}}
         install -d /root/.local/bin
 
         tools_tmp="$(mktemp -d)"
@@ -128,8 +129,11 @@ tasks:
       - |
         set -euo pipefail
 
-        rustup component add rust-docs
         chown -R ubuntu:ubuntu /root/.rustup
+        /usr/sbin/runuser -u ubuntu -- \
+          /usr/bin/env HOME=/home/ubuntu USER=ubuntu LOGNAME=ubuntu \
+          RUSTUP_HOME=/root/.rustup \
+          /root/.cargo/bin/rustup component add rust-docs
         install -d -m 0755 -o ubuntu -g ubuntu target \
           /root/.cargo/registry /root/.cargo/git /root/.cache/pre-commit
         find "$PWD" -path "$PWD/target" -prune -o -exec chown -h ubuntu:ubuntu {} +
