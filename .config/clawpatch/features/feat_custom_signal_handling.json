@@ -17,7 +17,7 @@
   "ownedFiles": [
     {
       "path": "src/commands/command_executor.rs",
-      "reason": "handle_command_error: enforces signal-abort for hook and alias pipelines, foreground and concurrent groups"
+      "reason": "handle_command_error: enforces signal-abort for hook and alias pipelines, foreground and concurrent groups, before any FailureStrategy branch — FailureStrategy::Warn must not swallow signal-derived errors"
     },
     {
       "path": "src/commands/for_each.rs",
@@ -32,10 +32,6 @@
     {
       "path": "src/shell_exec.rs",
       "reason": "Cmd: spawns children into the process groups the signal handler forwards to"
-    },
-    {
-      "path": "src/commands/command_approval.rs",
-      "reason": "FailureStrategy::Warn must not swallow signal-derived errors"
     },
     {
       "path": "CLAUDE.md",
