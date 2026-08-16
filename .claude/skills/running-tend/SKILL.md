@@ -310,19 +310,22 @@ Discovery shortcut: a recent green CI run on `main` flags cargo-install drift di
 ## Weekly Maintenance: Statusline Cache-Check
 
 Detect new in-process cache-miss duplicates introduced by recent changes by
-profiling a real `wt list statusline --claude-code` trace. The render runs on
-every Claude Code prompt redraw, so duplicate git subprocesses there compound
-into measurable fseventsd / IPC load.
+profiling a real `wt list statusline --format=claude-code` trace. The render
+runs on every Claude Code prompt redraw, so duplicate git subprocesses there
+compound into measurable fseventsd / IPC load.
 
 ```bash
-# Run from any worktree of this repo
-cat > /tmp/statusline-input.json <<'EOF'
-{"hook_event_name":"Status","workspace":{"current_dir":"REPLACE_WITH_CWD"},
- "model":{"display_name":"Opus"},"context_window":{"used_percentage":42.0}}
-EOF
-sed -i '' "s|REPLACE_WITH_CWD|$PWD|" /tmp/statusline-input.json
+# Run from any worktree of this repo. `jq -n` builds the stdin JSON so the
+# recipe is portable (the weekly job runs on ubuntu-24.04, whose GNU sed
+# rejects BSD's `sed -i ''`) and so a path with a quote can't corrupt it.
+jq -n --arg cwd "$PWD" '{
+  hook_event_name: "Status",
+  workspace: {current_dir: $cwd},
+  model: {display_name: "Opus"},
+  context_window: {used_percentage: 42.0}
+}' > /tmp/statusline-input.json
 
-cargo run --release -- -vv list statusline --claude-code \
+cargo run --release -- -vv list statusline --format=claude-code \
   < /tmp/statusline-input.json > /dev/null
 cargo run --release -- config state logs profile --format=json | jq .cache
 ```
