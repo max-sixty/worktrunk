@@ -325,9 +325,15 @@ jq -n --arg cwd "$PWD" '{
   context_window: {used_percentage: 42.0}
 }' > /tmp/statusline-input.json
 
-cargo run --release -- -vv list statusline --format=claude-code \
+# Debug build on purpose. `tend-weekly` installs no `wt`, and its rust-cache
+# step is `save-if: false` under a key no workflow writes, so `--release`
+# means a cold optimized build of the whole dependency graph before the first
+# render. What this check reads — duplicate `(command, context)` pairs and the
+# subprocess count — is profile-independent; only the timing columns, which
+# this section doesn't triage, would be worth a release build.
+cargo run -- -vv list statusline --format=claude-code \
   < /tmp/statusline-input.json > /dev/null
-cargo run --release -- config state logs profile --format=json | jq .cache
+cargo run -- config state logs profile --format=json | jq .cache
 ```
 
 The `.cache` report flags commands invoked more than once with the same context.
