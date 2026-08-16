@@ -89,7 +89,7 @@ tasks:
             # rather than the tarball: pwsh aborts at startup without libicu,
             # and only the .deb declares that dependency for apt to resolve.
             if ! command -v pwsh &> /dev/null; then
-                PWSH_VERSION="7.6.4"
+                PWSH_VERSION="7.6.5"
                 URL="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell_${PWSH_VERSION}-1.deb_amd64.deb"
                 TEMP=$(mktemp -d)
                 curl -fsSL -o "$TEMP/powershell.deb" "$URL"
