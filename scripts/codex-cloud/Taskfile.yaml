@@ -3,11 +3,11 @@ version: "3"
 vars:
   CODEX_REPO_ROOT: "{{.TASKFILE_DIR}}/../.."
   TASK_VERSION: "3.52.0"
-  PRE_COMMIT_VERSION: "4.6.1"
+  PRE_COMMIT_VERSION: "4.6.2"
   INSTA_VERSION: "1.48.0"
   NEXTEST_VERSION: "0.9.143"
-  NU_VERSION: "0.114.1"
-  PWSH_VERSION: "7.6.4"
+  NU_VERSION: "0.115.0"
+  PWSH_VERSION: "7.6.5"
 
 tasks:
   setup-codex:
@@ -61,14 +61,14 @@ tasks:
           cargo-nextest.tar.gz cargo-nextest /root/.local/bin/cargo-nextest
         install_binary \
           https://github.com/nushell/nushell/releases/download/{{.NU_VERSION}}/nu-{{.NU_VERSION}}-x86_64-unknown-linux-gnu.tar.gz \
-          8802b26edcdf1a64477567b5ce909fbae3d72d731c8f0847892ea16c6fa73c53 \
+          da83cfe482060d2c34b6b9af829975a313bce6b92e0398c3b2a59cb38630c7b2 \
           nu.tar.gz nu-{{.NU_VERSION}}-x86_64-unknown-linux-gnu/nu /root/.local/bin/nu
 
         pwsh_archive=powershell.tar.gz
         # The universal image supplies libicu; the version probe below fails if that changes.
         download \
           https://github.com/PowerShell/PowerShell/releases/download/v{{.PWSH_VERSION}}/powershell-{{.PWSH_VERSION}}-linux-x64.tar.gz \
-          4471b5a36bfe86ec7af8525d36bb1cacba0128e7aac22d05cc064bc00e604721 \
+          b34ab3b19acac1d3d4d0d3cfdb02acf62f457b0b6a962ff008132033f7566844 \
           "$pwsh_archive"
         install -d /opt/microsoft/powershell/7
         tar -xzf "$tools_tmp/$pwsh_archive" -C /opt/microsoft/powershell/7
