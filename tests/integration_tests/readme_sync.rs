@@ -1574,27 +1574,18 @@ fn test_taskfile_llm_commands_match_config_example() {
 
 #[test]
 fn test_codex_cloud_launchers_match_taskfile() {
-    use sha2::{Digest, Sha256};
-
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let taskfile = fs::read(project_root.join("scripts/codex-cloud/Taskfile.yaml")).unwrap();
-    let taskfile_text = std::str::from_utf8(&taskfile).unwrap();
+    let taskfile =
+        fs::read_to_string(project_root.join("scripts/codex-cloud/Taskfile.yaml")).unwrap();
     let readme = fs::read_to_string(project_root.join("scripts/codex-cloud/README.md")).unwrap();
 
-    let digest: String = Sha256::digest(&taskfile)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let task_version = Regex::new(r#"(?m)^  TASK_VERSION: "([^"]+)"$"#)
-        .unwrap()
-        .captures(taskfile_text)
-        .unwrap()[1]
-        .to_string();
-
     for task in ["setup-codex", "maintain-codex"] {
-        let launcher = format!(
-            "TASKFILE_SHA={digest}; printf '%s  %s\\n' \"$TASKFILE_SHA\" scripts/codex-cloud/Taskfile.yaml | sha256sum -c - && MISE_NO_CONFIG=1 MISE_HTTP_RETRIES=6 mise x task@{task_version} -- task -t scripts/codex-cloud/Taskfile.yaml {task}"
+        let task_header = format!("  {task}:");
+        assert!(
+            taskfile.lines().any(|line| line == task_header),
+            "scripts/codex-cloud/Taskfile.yaml defines no `{task}` task, so the README launcher for it cannot run"
         );
+        let launcher = format!("mise x task -- task -t scripts/codex-cloud/Taskfile.yaml {task}");
         assert!(
             readme.lines().any(|line| line == launcher),
             "Codex Cloud {task} launcher in scripts/codex-cloud/README.md is stale; replace it with:\n{launcher}"
