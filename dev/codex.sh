@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Codex Cloud environment for worktrunk's test suite.
 #
+# The environment uses the `universal` image, caching, unrestricted internet,
+# and no variables or secrets. Its two settings fields hold these commands, so
+# they stay short and fixed across changes to this file:
+#
+#     bash dev/codex.sh setup
+#     bash dev/codex.sh maintain
+#
+# Validate a built environment with `cargo run -- hook pre-merge --yes`.
+#
 # The universal image is missing the shells, tools, and git version the suite
 # needs. `setup` installs them; `maintain` re-warms the toolchain and caches for
 # an environment restored from cache. Both run as root, which is how Codex Cloud
@@ -24,7 +33,7 @@ NEXTEST_VERSION=0.9.143
 NU_VERSION=0.115.0
 PWSH_VERSION=7.6.5
 
-cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 setup() {
   export DEBIAN_FRONTEND=noninteractive
