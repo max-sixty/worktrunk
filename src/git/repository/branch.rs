@@ -138,31 +138,6 @@ impl<'a> Branch<'a> {
         Ok(())
     }
 
-    /// Get the remote where this branch would be pushed.
-    ///
-    /// Uses [`@{push}` syntax][1] which resolves through:
-    /// 1. `branch.<name>.pushRemote` (branch-specific push remote)
-    /// 2. `remote.pushDefault` (default push remote for all branches)
-    /// 3. `branch.<name>.remote` (tracking remote)
-    ///
-    /// Returns `None` if no push destination is configured.
-    ///
-    /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltbraboranchgtpaboranchgtpush
-    pub fn push_remote(&self) -> Option<String> {
-        let push_ref = self
-            .repo
-            .run_command(&[
-                "rev-parse",
-                "--abbrev-ref",
-                &format!("{}@{{push}}", self.name),
-            ])
-            .ok()?;
-
-        // Returns "origin/branch", extract remote name
-        let remote = push_ref.trim().split('/').next()?;
-        (!remote.is_empty()).then(|| remote.to_string())
-    }
-
     /// Get the URL of the remote where this branch would be pushed.
     ///
     /// Uses `%(push:remotename)` which returns either a remote name or URL directly
