@@ -2,7 +2,6 @@ version: "3"
 
 vars:
   CODEX_REPO_ROOT: "{{.TASKFILE_DIR}}/../.."
-  TASK_VERSION: "3.52.0"
   PRE_COMMIT_VERSION: "4.6.2"
   INSTA_VERSION: "1.48.0"
   NEXTEST_VERSION: "0.9.143"
@@ -19,8 +18,6 @@ tasks:
         msg: Codex Cloud setup requires root and the universal image's ubuntu user
     env:
       DEBIAN_FRONTEND: noninteractive
-      MISE_HTTP_RETRIES: 6
-      MISE_NO_CONFIG: "1"
     cmds:
       - |
         set -euo pipefail
@@ -31,9 +28,10 @@ tasks:
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends git zsh fish xz-utils lsof tini
 
-        mise use --global task@{{.TASK_VERSION}}
-        uv tool install pre-commit=={{.PRE_COMMIT_VERSION}}
+        mise use --global task
         install -d /root/.local/bin
+        ln -sf "$(mise which task)" /root/.local/bin/task
+        uv tool install pre-commit=={{.PRE_COMMIT_VERSION}}
 
         tools_tmp="$(mktemp -d)"
         download() {
@@ -93,7 +91,7 @@ tasks:
             fi
             cargo_path="$(/root/.cargo/bin/rustup which cargo)"
             toolchain_bin="${cargo_path%/cargo}"
-            PATH="$toolchain_bin:/root/.local/bin:/root/.local/share/mise/installs/task/{{.TASK_VERSION}}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            PATH="$toolchain_bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
             export PATH
             exec "$cargo_path" "$@"
         fi
@@ -109,7 +107,7 @@ tasks:
         for executable in task pre-commit cargo cargo-insta cargo-nextest git lsof pwsh tini zsh fish nu; do
           command -v "$executable" >/dev/null
         done
-        test -x /root/.local/share/mise/installs/task/{{.TASK_VERSION}}/task
+        test -x /root/.local/bin/task
         pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
       - task: prepare-codex
 
