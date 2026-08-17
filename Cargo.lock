@@ -1274,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "frizbee"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a151c9ed9ab8cefc76a76b7a15292fc83575f70cf2076d238e0a3251f69738ba"
+checksum = "c0633b457eaadb5bcbee26b5b4cad3196ae4b18cfc968a353e19e7c1a944e56a"
 
 [[package]]
 name = "fs2"
@@ -1834,9 +1834,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.49.6"
+version = "0.49.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e17384278234b10419a63c93fc85695ac9fc2da0833e3c59167f9986499590c"
+checksum = "59ec8a241beed129f06114aa68007e905ca350e7baeb6e17a7631bb7978d91b2"
 dependencies = [
  "ahash",
  "bytecount",
@@ -3416,9 +3416,9 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skim"
-version = "5.6.1"
+version = "5.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e00312f8e6e0d32a5263149253f8f5049abab2cbd4661186f8f61656b56312dc"
+checksum = "2345a457acd9af56ed331e6f9b9092f2fc68eb45a78c516062264274bc030399"
 dependencies = [
  "ansi-to-tui",
  "assert_enum_variants",
@@ -4012,9 +4012,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.11"
+version = "0.26.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1c71c1c4cc0920b20d6b0f6572e7682cd07a6a2faec71067a31fa394c586df"
+checksum = "83c567a8e18ae93f20982c90370b16fd24023aeaf52f6052b96957ab253a0fec"
 dependencies = [
  "cc",
  "regex",
@@ -4036,9 +4036,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-highlight"
-version = "0.26.11"
+version = "0.26.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd7a0c48d503cf4e0a57a2453424eaef2fce4b4269f13e3579e52f0d0c9e5cc8"
+checksum = "12bf7c298789885e63e7c1c9c86976875136064d23f541007bae3a02a23a74f9"
 dependencies = [
  "regex",
  "streaming-iterator",
