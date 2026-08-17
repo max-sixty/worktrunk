@@ -13,8 +13,9 @@
 # The universal image is missing the shells, tools, and git version the suite
 # needs. `setup` installs them; `maintain` re-warms the toolchain and caches for
 # an environment restored from cache. Both run as root, which is how Codex Cloud
-# runs the agent — so the two permission tests skip, as they already do under
-# `task setup-web` (the TODO in tests/integration_tests/approval_pty.rs).
+# runs the agent — so the tests that need an unprivileged uid skip, as they
+# already do under `task setup-web`. The standing TODO is in
+# tests/integration_tests/approval_pty.rs.
 #
 # The gate runs `--all-features`, so nu and pwsh drive PTY snapshots their own
 # versions can move. cargo-insta, cargo-nextest, and nu are kept level with the
