@@ -245,9 +245,12 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 
 ### Star history
 
+<!-- `sealed_token` is a GitHub token of ours encrypted with star-history's public
+     key, produced by "Generate embed code" on star-history.com. Without one the
+     chart renders a "GitHub restricted access to star data" placeholder: GitHub
+     limits stargazer data to a repo's admins and collaborators, and their servers
+     are neither. A ciphertext rather than a credential in the clear, so it belongs
+     here rather than in a secret. -->
 <a href="https://star-history.com/#max-sixty/worktrunk&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://worktrunk.dev/star-history-dark.svg">
-    <img src="https://worktrunk.dev/star-history-light.svg" width="500" alt="Star History Chart">
-  </picture>
+  <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date&sealed_token=REPLACE_WITH_SEALED_TOKEN" width="500" alt="Star History Chart">
 </a>

@@ -8,14 +8,6 @@ on:
     paths:
       - 'docs/**'
       - 'src/cli/mod.rs'
-      # The site also carries the star-history chart this workflow fetches, so
-      # the workflow is an input to the published output too.
-      - '.github/workflows/publish-docs.yaml'
-  schedule:
-    # Weekly, Monday 06:11 UTC. Redeploys so the star-history chart refreshes
-    # even in a week nothing under docs/ changed. Off-peak minute, per
-    # nightly.yaml.
-    - cron: '11 6 * * 1'
   workflow_dispatch:
 
 concurrency:
@@ -41,48 +33,6 @@ jobs:
         run: |
           gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
           cp -r /tmp/worktrunk-assets/assets docs/static/
-
-      # star-history.com renders the chart; we fetch it once per deploy and
-      # serve the result from our own site, so a README view never reaches
-      # them. GitHub restricted stargazer data to a repo's admins and
-      # collaborators, and their servers are neither, so the request carries
-      # STAR_HISTORY_SEALED_TOKEN: a GitHub token of ours encrypted with their
-      # public key, generated through the "Generate embed code" flow on
-      # star-history.com. It is a bearer credential for their service — keep it
-      # in the secret rather than in the README the flow suggests.
-      #
-      # Two themes because their chart draws axes and text black on light and
-      # white on dark, so neither file survives the other background; the
-      # README picks between them with a <picture> element.
-      #
-      # The failure that matters is not a bad status: when their server cannot
-      # read the stars it answers 200 with a placeholder image reading "GitHub
-      # restricted access to star data", flagged by `x-chart-status:
-      # restricted`. Deploying that silently is the thing to avoid, so a
-      # restricted response fails the build and leaves the previous deployment,
-      # chart included, serving.
-      - name: ⭐ Fetch star history chart
-        env:
-          SEALED_TOKEN: ${{ secrets.STAR_HISTORY_SEALED_TOKEN }}
-        run: |
-          for theme in light dark; do
-            curl --fail --silent --show-error \
-              --retry 3 --retry-delay 5 --max-time 60 \
-              --dump-header "$RUNNER_TEMP/star-history-$theme.headers" \
-              --output "docs/static/star-history-$theme.svg" \
-              --get "https://api.star-history.com/svg" \
-              --data-urlencode "repos=$GITHUB_REPOSITORY" \
-              --data-urlencode "type=Date" \
-              --data-urlencode "theme=$theme" \
-              --data-urlencode "transparent=true" \
-              --data-urlencode "sealed_token=$SEALED_TOKEN"
-
-            if grep -qiE '^x-chart-status:[[:space:]]*restricted' \
-                "$RUNNER_TEMP/star-history-$theme.headers"; then
-              echo "::error::star-history served its placeholder instead of a chart for the $theme theme. STAR_HISTORY_SEALED_TOKEN is missing, expired, or no longer grants write access to this repo."
-              exit 1
-            fi
-          done
 
       - name: 🕷️ Build docs
         run: zola build
