@@ -21,9 +21,6 @@
 # pins in .github/actions/test-setup/action.yaml. CI has no pwsh pin — it takes
 # whatever the runner image ships — so that version answers to nothing but this
 # file.
-#
-# Both commands are typed into the Codex Cloud environment settings, so they
-# stay short and fixed across changes to this file. See README.md.
 
 set -euo pipefail
 
