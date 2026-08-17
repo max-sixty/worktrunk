@@ -15,8 +15,8 @@ tasks:
     platforms: [linux]
     dir: "{{.CODEX_REPO_ROOT}}"
     preconditions:
-      - sh: test "$(id -u)" = 0 && test "$(id -u ubuntu 2>/dev/null)" = 1000
-        msg: Codex Cloud setup requires root and the universal image's ubuntu user
+      - sh: test "$(id -u)" = 0
+        msg: Codex Cloud setup requires root
     env:
       DEBIAN_FRONTEND: noninteractive
       MISE_HTTP_RETRIES: 6
@@ -29,7 +29,7 @@ tasks:
         apt-get install -y -qq --no-install-recommends software-properties-common
         add-apt-repository -y ppa:git-core/ppa
         apt-get update -qq
-        apt-get install -y -qq --no-install-recommends git zsh fish xz-utils lsof tini
+        apt-get install -y -qq --no-install-recommends git zsh fish xz-utils lsof
 
         mise use --global task@{{.TASK_VERSION}}
         uv tool install pre-commit=={{.PRE_COMMIT_VERSION}}
@@ -78,35 +78,9 @@ tasks:
 
         git_version="$(git version | awk '{print $3}')"
         dpkg --compare-versions "$git_version" ge 2.54.0
-        chmod 0711 /root
-        chown -hR ubuntu:ubuntu "$PWD"
         git config --system --add safe.directory "$PWD"
 
-        rm /root/.cargo/bin/cargo
-        install -m 0755 /dev/stdin /root/.cargo/bin/cargo <<'CARGO_WRAPPER'
-        #!/bin/sh
-        set -eu
-
-        if [ "$(id -u)" -ne 0 ]; then
-            if [ "${CODEX_CARGO_IDENTITY_PROBE:-0}" = 1 ]; then
-                exec /usr/bin/id -u
-            fi
-            cargo_path="$(/root/.cargo/bin/rustup which cargo)"
-            toolchain_bin="${cargo_path%/cargo}"
-            PATH="$toolchain_bin:/root/.local/bin:/root/.local/share/mise/installs/task/{{.TASK_VERSION}}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-            export PATH
-            exec "$cargo_path" "$@"
-        fi
-
-        exec /usr/bin/tini -s -- /usr/sbin/runuser -u ubuntu -- \
-            /usr/bin/env HOME=/home/ubuntu USER=ubuntu LOGNAME=ubuntu \
-            CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup \
-            PRE_COMMIT_HOME=/root/.cache/pre-commit PATH="$PATH" \
-            CODEX_CARGO_IDENTITY_PROBE="${CODEX_CARGO_IDENTITY_PROBE:-0}" \
-            /root/.cargo/bin/cargo "$@"
-        CARGO_WRAPPER
-
-        for executable in task pre-commit cargo cargo-insta cargo-nextest git lsof pwsh tini zsh fish nu; do
+        for executable in task pre-commit cargo cargo-insta cargo-nextest git lsof pwsh zsh fish nu; do
           command -v "$executable" >/dev/null
         done
         test -x /root/.local/share/mise/installs/task/{{.TASK_VERSION}}/task
@@ -117,8 +91,8 @@ tasks:
     desc: Maintain Codex Cloud universal image (root only)
     platforms: [linux]
     preconditions:
-      - sh: test "$(id -u)" = 0 && test "$(id -u ubuntu 2>/dev/null)" = 1000
-        msg: Codex Cloud maintenance requires root and the universal image's ubuntu user
+      - sh: test "$(id -u)" = 0
+        msg: Codex Cloud maintenance requires root
     cmds:
       - task: prepare-codex
 
@@ -129,23 +103,8 @@ tasks:
       - |
         set -euo pipefail
 
-        chown -R ubuntu:ubuntu /root/.rustup
-        install -d -m 0755 -o ubuntu -g ubuntu target \
-          /root/.cargo/registry /root/.cargo/git /root/.cache/pre-commit
-        find "$PWD" -path "$PWD/target" -prune -o -exec chown -h ubuntu:ubuntu {} +
-        for cache_dir in /root/.cargo/registry /root/.cargo/git /root/.cache/pre-commit; do
-          [ ! -e "$cache_dir" ] || chown -R ubuntu:ubuntu "$cache_dir"
-        done
-        /usr/sbin/runuser -u ubuntu -- \
-          /usr/bin/env HOME=/home/ubuntu USER=ubuntu LOGNAME=ubuntu \
-          RUSTUP_HOME=/root/.rustup \
-          /root/.cargo/bin/rustup component add rust-docs
-        /usr/sbin/runuser -u ubuntu -- \
-          /usr/bin/env HOME=/home/ubuntu USER=ubuntu LOGNAME=ubuntu \
-          CARGO_HOME=/root/.cargo RUSTUP_HOME=/root/.rustup \
-          PRE_COMMIT_HOME=/root/.cache/pre-commit PATH="$PATH" \
-          pre-commit install-hooks
-        test "$(command -v cargo)" = /root/.cargo/bin/cargo
-        test "$(CODEX_CARGO_IDENTITY_PROBE=1 cargo)" = 1000
+        install -d target /root/.cargo/registry /root/.cargo/git /root/.cache/pre-commit
+        rustup component add rust-docs
+        pre-commit install-hooks
         cargo --version
         cargo fetch --locked
