@@ -7,9 +7,11 @@
 # runs the agent — so the two permission tests skip, as they already do under
 # `task setup-web` (the TODO in tests/integration_tests/approval_pty.rs).
 #
-# Versions are pinned because the gate runs `--all-features`, so nu and pwsh
-# drive PTY snapshots their own versions can move; keep them level with
-# .github/actions/test-setup/action.yaml.
+# The gate runs `--all-features`, so nu and pwsh drive PTY snapshots their own
+# versions can move. cargo-insta, cargo-nextest, and nu are kept level with the
+# pins in .github/actions/test-setup/action.yaml. CI has no pwsh pin — it takes
+# whatever the runner image ships — so that version answers to nothing but this
+# file.
 #
 # Both commands are typed into the Codex Cloud environment settings, so they
 # stay short and fixed across changes to this file. See README.md.
