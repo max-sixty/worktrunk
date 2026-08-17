@@ -15,8 +15,7 @@ Maintenance command:
 bash scripts/codex-cloud/codex.sh maintain
 ```
 
-Everything runs as root, which is how Codex Cloud runs the agent. Pinned
-versions and checksums live in `scripts/tool-pins.sh`, shared with `setup-web`.
+Everything runs as root, which is how Codex Cloud runs the agent.
 
 Validation:
 
