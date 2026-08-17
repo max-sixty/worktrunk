@@ -1,8 +1,8 @@
 name: star-history
-# Regenerates the README's star-history chart. GitHub restricted the stargazers
-# endpoint to a repository's admins and collaborators in June 2026, so hosted
-# chart services can no longer read the data and render an error image instead.
-# A token that can read this repo still gets it, so the chart is generated here.
+# Regenerates the README's star-history chart. GitHub restricted a repository's
+# stargazers to its admins and collaborators in mid-2026, so every hosted chart
+# service renders an error image — a service is nobody's collaborator. We can
+# still read our own, so the chart is built here from our own query.
 #
 # The chart and its underlying series are force-pushed to the orphan
 # `star-history` branch: the README points at that branch's raw URL, main stays
@@ -24,10 +24,17 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-24.04
+    # Holds STARGAZERS_TOKEN alone. Its own environment rather than an existing
+    # one because a job that joins an environment reads every secret in it, and
+    # rather than a repo-level secret because that is readable by every workflow
+    # (see .github/CLAUDE.md). `deployment: false` drops the deployment record a
+    # weekly chart refresh has no use for.
+    environment:
+      name: star-history
+      deployment: false
     permissions:
       # Pushing the orphan branch. Reading stargazers is a separate credential
-      # (STARGAZERS_TOKEN below), since GitHub limits that endpoint to the
-      # repository's admins and collaborators.
+      # (STARGAZERS_TOKEN below), which the built-in token cannot stand in for.
       contents: write
 
     steps:

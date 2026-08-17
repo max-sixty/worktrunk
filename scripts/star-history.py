@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Render the README's star-history chart from GitHub's stargazers API.
 
-GitHub restricted `/repos/{owner}/{repo}/stargazers` to a repository's admins
-and collaborators in June 2026. A hosted chart service calls that endpoint as
-itself and is nobody's collaborator, so any service reading it now renders an
-error image. This repo's own admins can still read it, so the chart is
-generated here and committed, rather than fetched from a third party every
-time someone loads the README.
+GitHub restricted who may read a repository's stargazers in mid-2026, limiting
+it to the repo's admins and collaborators, which is why every hosted chart
+service renders an error image: a service is nobody's collaborator. We can
+still read our own, so the chart is built here from our own query and
+committed, rather than fetched from a third party every time someone loads the
+README.
+
+That surface is in flux, so this fails loudly and keeps the last good chart: a
+run that cannot complete the walk publishes nothing and the previously
+committed SVG stays up.
 
 Two outputs, both published to the `star-history` branch, which each run
 replaces wholesale:
@@ -30,10 +34,12 @@ import datetime as dt
 import json
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
 REPO = "max-sixty/worktrunk"
+OWNER, NAME = REPO.split("/")
 OUT_DIR = Path(__file__).resolve().parent.parent
 CSV_PATH = OUT_DIR / "star-history.csv"
 SVG_PATH = OUT_DIR / "star-history.svg"
@@ -47,30 +53,59 @@ ACCENT = "#3b82f6"
 MUTED = "#8b949e"
 
 
-def fetch_starred_at() -> list[str]:
-    """Every current stargazer's `starred_at`, oldest first.
+# GraphQL rather than REST: GitHub restricted `GET /repos/{owner}/{repo}
+# /stargazers`, and this field returns just the timestamps the chart needs
+# instead of a full user object per stargazer. Ordering is left to the server —
+# the caller buckets by date, so page order does not matter.
+STARGAZER_PAGE = """
+query($endCursor: String) {
+  repository(owner: "%s", name: "%s") {
+    stargazers(first: 100, after: $endCursor) {
+      pageInfo { hasNextPage endCursor }
+      edges { starredAt }
+    }
+  }
+}
+""" % (OWNER, NAME)
 
-    One request per 100 stargazers, so this walks tens of pages and takes a
-    couple of minutes. A page can fail transiently; the run fails with `gh`'s
-    own message, and the next scheduled run (or `workflow_dispatch`) redoes it.
+PAGE_ATTEMPTS = 5
+
+
+def fetch_page(cursor: str | None) -> dict:
+    """One page of stargazers, retried so a blip doesn't cost the whole walk.
+
+    A full history is tens of sequential pages, and a GitHub API incident part
+    way through leaves the run with nothing to show for the pages it did fetch.
     """
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            "-H",
-            "Accept: application/vnd.github.star+json",
-            f"repos/{REPO}/stargazers?per_page=100",
-            "--jq",
-            ".[] | .starred_at",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        sys.exit(f"gh api failed fetching stargazers for {REPO}: {result.stderr.strip()}")
-    return [line for line in result.stdout.splitlines() if line]
+    args = ["gh", "api", "graphql", "-f", f"query={STARGAZER_PAGE}"]
+    if cursor:
+        args += ["-f", f"endCursor={cursor}"]
+    for attempt in range(1, PAGE_ATTEMPTS + 1):
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode == 0:
+            return json.loads(result.stdout)["data"]["repository"]["stargazers"]
+        if attempt == PAGE_ATTEMPTS:
+            sys.exit(
+                f"gh api graphql failed fetching stargazers for {REPO} after "
+                f"{PAGE_ATTEMPTS} attempts: {result.stderr.strip()}"
+            )
+        time.sleep(2**attempt)
+    raise AssertionError("unreachable")
+
+
+def fetch_starred_at() -> list[str]:
+    """Every current stargazer's `starred_at`.
+
+    Walks every page or exits nonzero — a partial history would publish a chart
+    that silently understates the repo.
+    """
+    timestamps, cursor = [], None
+    while True:
+        page = fetch_page(cursor)
+        timestamps += [edge["starredAt"] for edge in page["edges"]]
+        if not page["pageInfo"]["hasNextPage"]:
+            return timestamps
+        cursor = page["pageInfo"]["endCursor"]
 
 
 def daily_cumulative(timestamps: list[str]) -> list[tuple[dt.date, int]]:
