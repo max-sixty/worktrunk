@@ -33,7 +33,7 @@ test-results/
 /.config/clawpatch/features/*
 !/.config/clawpatch/features/feat_custom_*.json
 
-# scripts/star-history.py outputs, generated into the site during the docs
-# build and deployed with it — like docs/static/assets/ above.
-/docs/static/star-history.csv
-/docs/static/star-history.svg
+# Star-history charts, fetched into the site during the docs build and
+# deployed with it — like docs/static/assets/ above.
+/docs/static/star-history-light.svg
+/docs/static/star-history-dark.svg
