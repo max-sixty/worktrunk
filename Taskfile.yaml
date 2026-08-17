@@ -144,8 +144,7 @@ tasks:
             curl -LsSf https://astral.sh/uv/install.sh | sh
         fi
         uv tool install --force pre-commit
-        command -v cargo-insta &> /dev/null || cargo install cargo-insta --quiet
-        command -v cargo-nextest &> /dev/null || cargo install cargo-nextest --quiet
+        cargo install cargo-insta cargo-nextest --quiet
         install -D -m 0755 target/debug/wt "$HOME/.local/bin/wt"
         echo "Installed pre-commit, cargo-insta, cargo-nextest, worktrunk"
 
