@@ -24,17 +24,14 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-24.04
-    # Holds STARGAZERS_TOKEN alone. Its own environment rather than an existing
-    # one because a job that joins an environment reads every secret in it, and
-    # rather than a repo-level secret because that is readable by every workflow
-    # (see .github/CLAUDE.md). `deployment: false` drops the deployment record a
-    # weekly chart refresh has no use for.
-    environment:
-      name: star-history
-      deployment: false
     permissions:
-      # Pushing the orphan branch. Reading stargazers is a separate credential
-      # (STARGAZERS_TOKEN below), which the built-in token cannot stand in for.
+      # Covers both halves of the job, and `write` is load-bearing for each.
+      # Pushing the orphan branch needs it, and so does *reading* stargazers:
+      # write access to the repo is what GitHub accepts as proof of being a
+      # collaborator. Measured rather than assumed — the same built-in token
+      # gets 403 from both REST and GraphQL under `contents: read` and reads
+      # the full history under `contents: write`. So no PAT and no secret:
+      # dropping to `read` would break the fetch, not just the push.
       contents: write
 
     steps:
@@ -43,7 +40,7 @@ jobs:
 
       - name: 📈 Render chart
         env:
-          GH_TOKEN: ${{ secrets.STARGAZERS_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/star-history.py
 
       - name: 🚀 Publish to the star-history branch

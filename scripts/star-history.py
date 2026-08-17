@@ -25,8 +25,10 @@ replaces wholesale:
 - `star-history.svg` — rendered from that series, transparent background so it
   reads on GitHub's light and dark themes without a `<picture>` element.
 
-Requires `gh` authenticated as an admin or collaborator on the repo. No
-arguments: the repository and output paths are fixed, since one repo is charted.
+Requires `gh` authenticated with write access to the repo, which is what GitHub
+accepts as proof of being a collaborator here — read-only credentials get 403.
+No arguments: the repository and output paths are fixed, since one repo is
+charted.
 """
 
 import csv
