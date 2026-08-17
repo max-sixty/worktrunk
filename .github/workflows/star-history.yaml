@@ -1,0 +1,50 @@
+name: star-history
+# Regenerates the README's star-history chart. GitHub restricted the stargazers
+# endpoint to a repository's admins and collaborators in June 2026, so hosted
+# chart services can no longer read the data and render an error image instead.
+# A token that can read this repo still gets it, so the chart is generated here.
+#
+# The chart and its underlying series are force-pushed to the orphan
+# `star-history` branch: the README points at that branch's raw URL, main stays
+# free of weekly bot commits (ci.yaml runs the full matrix on every push to
+# main), and each run replaces the branch rather than growing it.
+#
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+on:
+  schedule:
+    # Weekly, Monday 06:11 UTC. Off-peak minute, per nightly.yaml.
+    - cron: '11 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    permissions:
+      # Pushing the orphan branch. Reading stargazers is a separate credential
+      # (STARGAZERS_TOKEN below), since GitHub limits that endpoint to the
+      # repository's admins and collaborators.
+      contents: write
+
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v7
+
+      - name: 📈 Render chart
+        env:
+          GH_TOKEN: ${{ secrets.STARGAZERS_TOKEN }}
+        run: python3 scripts/star-history.py
+
+      - name: 🚀 Publish to the star-history branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # Leaves the two ignored outputs in place, drops everything else.
+          git switch --orphan star-history
+          git add --force star-history.csv star-history.svg
+          git commit -m "Star history through $(date -u +%Y-%m-%d)"
+          git push --force origin star-history
