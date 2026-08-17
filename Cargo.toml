@@ -248,7 +248,7 @@ petname = { version = "=3.1.0", default-features = false, features = ["default-w
 # PINNED EXACT to match `petname`: its caret dependency otherwise permits a
 # different proc-macro version, but the generated code and runtime re-exports
 # require an exact match. Keep both pins in lockstep.
-petname-macros = "=3.1.0"
+petname-macros = "=3.2.0"
 
 tempfile = "3.27"
 wait-timeout = "0.2"
