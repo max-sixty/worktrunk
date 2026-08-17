@@ -245,6 +245,6 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 
 ### Star history
 
-<a href="https://star-history.com/#max-sixty/worktrunk&Date">
-  <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date" width="500" alt="Star History Chart">
+<a href="https://star-history.dera.page/#max-sixty/worktrunk&Date">
+  <img src="https://star-history.dera.page/svg?repos=max-sixty/worktrunk&type=Date" width="500" alt="Star History Chart">
 </a>
