@@ -6,17 +6,14 @@ and no variables or secrets.
 Setup command:
 
 ```bash
-mise x task -- task -t scripts/codex-cloud/Taskfile.yaml setup-codex
+bash scripts/codex-cloud/codex.sh setup
 ```
 
 Maintenance command:
 
 ```bash
-mise x task -- task -t scripts/codex-cloud/Taskfile.yaml maintain-codex
+bash scripts/codex-cloud/codex.sh maintain
 ```
-
-The image has no Task, so the launchers run it through mise; setup then installs
-Task globally for later use.
 
 The agent remains root. Toolchain-sensitive Rustup and pre-commit steps run as
 `ubuntu`; the Cargo wrapper also runs builds and tests as `ubuntu` under `tini`,

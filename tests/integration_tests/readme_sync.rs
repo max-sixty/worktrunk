@@ -1573,27 +1573,6 @@ fn test_taskfile_llm_commands_match_config_example() {
 }
 
 #[test]
-fn test_codex_cloud_launchers_match_taskfile() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let taskfile =
-        fs::read_to_string(project_root.join("scripts/codex-cloud/Taskfile.yaml")).unwrap();
-    let readme = fs::read_to_string(project_root.join("scripts/codex-cloud/README.md")).unwrap();
-
-    for task in ["setup-codex", "maintain-codex"] {
-        let task_header = format!("  {task}:");
-        assert!(
-            taskfile.lines().any(|line| line == task_header),
-            "scripts/codex-cloud/Taskfile.yaml defines no `{task}` task, so the README launcher for it cannot run"
-        );
-        let launcher = format!("mise x task -- task -t scripts/codex-cloud/Taskfile.yaml {task}");
-        assert!(
-            readme.lines().any(|line| line == launcher),
-            "Codex Cloud {task} launcher in scripts/codex-cloud/README.md is stale; replace it with:\n{launcher}"
-        );
-    }
-}
-
-#[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let llm_rs_path = project_root.join("src/llm.rs");

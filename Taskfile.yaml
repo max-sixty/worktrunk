@@ -26,16 +26,6 @@ tasks:
       - bash -c 'time "$@"' bash cargo nextest run --features shell-integration-tests {{.CLI_ARGS}}
       - echo "per-test timings in target/nextest/default/junit.xml"
 
-  setup-codex:
-    desc: Setup Codex Cloud universal image (root only)
-    platforms: [linux]
-    cmd: task --taskfile scripts/codex-cloud/Taskfile.yaml setup-codex
-
-  maintain-codex:
-    desc: Maintain Codex Cloud universal image (root only)
-    platforms: [linux]
-    cmd: task --taskfile scripts/codex-cloud/Taskfile.yaml maintain-codex
-
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]
