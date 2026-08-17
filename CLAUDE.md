@@ -7,7 +7,7 @@ cargo run -- hook pre-merge --yes   # all tests + lints (runs automatically in w
 ```
 
 Claude Code web: run `task setup-web` first. Test commands, isolation, and coverage investigation: `tests/CLAUDE.md`.
-Codex Cloud: use the checksum-gated setup in `scripts/codex-cloud/README.md`.
+Codex Cloud: use the setup in `scripts/codex-cloud/README.md`.
 
 ## Project Status
 
