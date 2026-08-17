@@ -269,7 +269,7 @@ pub fn wrap_template_syntax(text: &str) -> String {
 /// Inverse of [`wrap_template_syntax`] — recover the source form of a page.
 ///
 /// Only wrappers this module emits are recognised: a marker alone on its line,
-/// a line opened and closed by one, and the [`ENDRAW_ESCAPE`] sequence. A
+/// a line opened and closed by one, and the `ENDRAW_ESCAPE` sequence. A
 /// `{% raw %}` that appears mid-line as documented text (the docs explain
 /// minijinja's own `raw`) is left alone.
 pub fn strip_template_syntax_wrappers(text: &str) -> String {
