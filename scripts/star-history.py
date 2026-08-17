@@ -12,16 +12,17 @@ That surface is in flux, so this fails loudly and keeps the last good chart: a
 run that cannot complete the walk publishes nothing and the previously
 committed SVG stays up.
 
-Two outputs, both published to the `star-history` branch, which each run
-replaces wholesale:
+Runs during the docs build and writes into `docs/static/`, so both outputs
+deploy with the site and the README links to worktrunk.dev. Nothing is
+committed: they are build products, like the demo assets the build clones
+alongside them. A failed run therefore publishes nothing and leaves the
+previous deployment — chart included — serving.
 
-- `star-history.csv` — one `date,stars` row per day, cumulative. Every run
-  re-derives the whole series, because the endpoint lists only accounts that
-  star the repo *now*: an unstar retroactively lowers the count on the day that
-  account first starred, so the curve moves slightly under its own past. The
-  published CSV is therefore the current series rather than a running log, and
-  it is what the chart can still be drawn from if GitHub restricts the endpoint
-  further.
+- `star-history.csv` — one `date,stars` row per day, cumulative, published
+  beside the chart as the data behind it. Every run re-derives the whole
+  series, because the endpoint lists only accounts that star the repo *now*: an
+  unstar retroactively lowers the count on the day that account first starred,
+  so the curve moves slightly under its own past.
 - `star-history.svg` — rendered from that series, transparent background so it
   reads on GitHub's light and dark themes without a `<picture>` element.
 
@@ -42,7 +43,9 @@ from pathlib import Path
 
 REPO = "max-sixty/worktrunk"
 OWNER, NAME = REPO.split("/")
-OUT_DIR = Path(__file__).resolve().parent.parent
+# Zola serves `docs/static/` from the site root, so these land at
+# worktrunk.dev/star-history.{svg,csv}.
+OUT_DIR = Path(__file__).resolve().parent.parent / "docs" / "static"
 CSV_PATH = OUT_DIR / "star-history.csv"
 SVG_PATH = OUT_DIR / "star-history.svg"
 

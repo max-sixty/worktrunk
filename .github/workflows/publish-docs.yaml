@@ -8,6 +8,15 @@ on:
     paths:
       - 'docs/**'
       - 'src/cli/mod.rs'
+      # The site also carries the star-history chart, so the script that
+      # renders it and this workflow are inputs to the published output too.
+      - 'scripts/star-history.py'
+      - '.github/workflows/publish-docs.yaml'
+  schedule:
+    # Weekly, Monday 06:11 UTC. Redeploys so the star-history chart refreshes
+    # even in a week nothing under docs/ changed. Off-peak minute, per
+    # nightly.yaml.
+    - cron: '11 6 * * 1'
   workflow_dispatch:
 
 concurrency:
@@ -33,6 +42,26 @@ jobs:
         run: |
           gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
           cp -r /tmp/worktrunk-assets/assets docs/static/
+
+      # Roughly three minutes: the stargazers connection pages 100 at a time and
+      # answers in a couple of seconds, so a full history is tens of sequential
+      # requests. It lands on the deploy rather than on anyone's feedback loop.
+      #
+      # Reading stargazers needs *write* access to the repo: that is what GitHub
+      # accepts as proof of being a collaborator, measured rather than assumed —
+      # the same built-in token gets 403 from both REST and GraphQL under
+      # `contents: read` and reads the full history under `contents: write`.
+      #
+      # This job has no `permissions:` block, so it inherits the repository's
+      # default workflow permissions, currently `write`. Two ways to break the
+      # chart, both of which look like an unrelated hardening step: setting the
+      # repo default to read-only, or giving this job an explicit block that
+      # grants `contents: read`. Either one needs `contents: write` here
+      # instead. The failure is a 403 from the step below, not a build error.
+      - name: ⭐ Generate star history chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/star-history.py
 
       - name: 🕷️ Build docs
         run: zola build

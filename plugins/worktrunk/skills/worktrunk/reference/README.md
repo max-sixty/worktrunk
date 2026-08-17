@@ -245,4 +245,6 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 
 ### Star history
 
-<img src="https://raw.githubusercontent.com/max-sixty/worktrunk/star-history/star-history.svg" width="500" alt="Star history chart">
+<a href="https://worktrunk.dev/star-history.csv">
+  <img src="https://worktrunk.dev/star-history.svg" width="500" alt="Star history chart">
+</a>
