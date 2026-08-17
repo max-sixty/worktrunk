@@ -25,7 +25,7 @@ jobs:
       - name: Setup Zola
         uses: taiki-e/install-action@v2.85.13
         with:
-          tool: zola@0.22.1
+          tool: zola@0.23.3
 
       - name: Fetch assets
         env:

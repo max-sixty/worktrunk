@@ -56,13 +56,13 @@ static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex for literal bracket notation (as stored in snapshots) - used by literal_to_escape
 static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-9;]*m").unwrap());
 
-/// Regex to find snapshot-driven terminal-shortcode markers in standalone docs files
+/// Regex to find snapshot-driven `terminal` markers in standalone docs files
 /// (worktrunk.md, llm-commits.md, etc.) for in-place refresh. The `.snap` ID
-/// requirement and `{% terminal() %}` body together are specific enough to
+/// requirement and `{% <terminal> %}` body together are specific enough to
 /// exclude command-page help-region markers and other AUTO-GENERATED users.
 static DOCS_SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?s){}([^\s]+\.snap) — edit source to update -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
+        r"(?s){}([^\s]+\.snap) — edit source to update -->\n+\{{% <terminal[^>]*> %\}}\n(.*?)\{{% </terminal> %\}}\n+{}",
         regex::escape(MARKER_OPEN_PREFIX),
         regex::escape(MARKER_CLOSE),
     ))
@@ -163,10 +163,14 @@ fn assert_no_untransformed_zola_links(content: &str, surface: &str) {
     }
 }
 
-/// Regex to convert Zola rawcode shortcode to HTML pre tags
-/// Matches: {% rawcode() %}...{% end %}
-static ZOLA_RAWCODE_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)\{% rawcode\(\) %\}(.*?)\{% end %\}").unwrap());
+/// Regex matching the literal-code cells in the command-comparison table.
+/// Matches: `<code class="multiline">...</code>`
+///
+/// Zola 0.23 removed shortcodes, and this one only ever wrapped its body in a
+/// `<code>` element — so the docs now carry that element directly and this
+/// pattern reads it back out for the README and skill renderings.
+static MULTILINE_CODE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?s)<code class="multiline">(.*?)</code>"#).unwrap());
 
 /// Regex to convert Zola figure/picture elements to simple markdown images
 /// Matches: <figure class="demo">...<img src="/assets/X.gif" alt="Y"...>...</figure>
@@ -185,7 +189,7 @@ static ZOLA_FIGURE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Output format for section updates
 enum OutputFormat {
-    /// Docs: HTML with ANSI colors in {% terminal() %} shortcode
+    /// Docs: HTML with ANSI colors in a `{% <terminal> %}` component call
     DocsHtml,
     /// Unwrapped: raw markdown content (help commands, doc sections)
     Unwrapped,
@@ -346,7 +350,12 @@ fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String 
                 .captures(content)
                 .map(|c| format!(r#"cmd="{}""#, c.get(1).unwrap().as_str()))
                 .unwrap_or_default();
-            format!("{{% terminal({cmd_attr}) %}}\n{content}\n{{% end %}}")
+            let open = if cmd_attr.is_empty() {
+                "{% <terminal> %}".to_string()
+            } else {
+                format!("{{% <terminal {cmd_attr}> %}}")
+            };
+            format!("{open}\n{content}\n{{% </terminal> %}}")
         }
         OutputFormat::Unwrapped => content.to_string(),
     };
@@ -416,21 +425,21 @@ fn update_section(
 /// - ````bash``` with an optional `$ ` prompt, optionally followed by multi-line
 ///   output — this is what plain (`--help-page --plain`) output contains, and
 ///   also what `cli/mod.rs` source contains before `convert_dollar_console_to_terminal`.
-/// - `{{ terminal(cmd="...") }}` self-closing Zola shortcode — produced by
+/// - `{{ <terminal cmd="..." /> }}` self-closing component call — produced by
 ///   `convert_dollar_console_to_terminal` when the source block has only a command.
-/// - `{% terminal(cmd="...") %}…{% end %}` Zola shortcode — produced by
+/// - `{% <terminal cmd="..."> %}…{% </terminal> %}` component call — produced by
 ///   `convert_dollar_console_to_terminal` when the source block has output too.
 ///
 /// Capture groups:
 /// 1. placeholder id (e.g. `wt list (markers)`) — drives snapshot lookup
 /// 2. display command when matched in the ```bash form
-/// 3. display command when matched as `{{ terminal() }}`
-/// 4. display command when matched as `{% terminal() %}…{% end %}`
+/// 3. display command when matched as `{{ <terminal /> }}`
+/// 4. display command when matched as `{% <terminal> %}…{% </terminal> %}`
 ///
 /// Exactly one of groups 2–4 is non-None per match.
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(?s)<!-- (wt [^>\n]+) -->\n(?:```bash\n(?:\$ )?(wt [^\n]+).*?\n```|\{\{ terminal\(cmd="(wt [^"]+)"\) \}\}|\{% terminal\(cmd="(wt [^"]+)"\) %\}.*?\{% end %\})"#,
+        r#"(?s)<!-- (wt [^>\n]+) -->\n(?:```bash\n(?:\$ )?(wt [^\n]+).*?\n```|\{\{ <terminal cmd="(wt [^"]+)" /> \}\}|\{% <terminal cmd="(wt [^"]+)"> %\}.*?\{% </terminal> %\})"#,
     )
     .unwrap()
 });
@@ -469,8 +478,8 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
 
 /// Rendering mode for [`expand_command_placeholders`].
 enum ExpandMode {
-    /// HTML docs (`docs/content/*.md`): emit a `{% terminal(cmd="...") %}`
-    /// shortcode with an ANSI→HTML body, wrapped in AUTO-GENERATED markers.
+    /// HTML docs (`docs/content/*.md`): emit a `{% <terminal cmd="..."> %}`
+    /// component call with an ANSI→HTML body, wrapped in AUTO-GENERATED markers.
     Html,
     /// Skill reference (`skills/worktrunk/reference/*.md`): emit a fenced code
     /// block with a `$ <cmd>` prompt and a plain-text body.
@@ -536,7 +545,9 @@ fn expand_command_placeholders(
                 // regenerates wholesale each sync, so the wrapper is dead
                 // weight and would nest inside the outer help-page region's
                 // markers (forcing the outer regex to use a tempered match).
-                format!("{{% terminal(cmd=\"{display_cmd}\") %}}\n{normalized}\n{{% end %}}")
+                format!(
+                    "{{% <terminal cmd=\"{display_cmd}\"> %}}\n{normalized}\n{{% </terminal> %}}"
+                )
             }
             ExpandMode::Plain => {
                 let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
@@ -577,7 +588,7 @@ fn trim_lines(content: &str) -> String {
 }
 
 /// Encode leading spaces on the first line as `&#32;` HTML entities.
-/// Zola trims leading whitespace from shortcode bodies, stripping the
+/// Zola trims leading whitespace from component bodies, stripping the
 /// two-space gutter that aligns table headers with data rows in `wt list`.
 /// HTML entities survive the trim and render as spaces in `<pre>` blocks.
 fn encode_leading_spaces(content: &str) -> String {
@@ -678,10 +689,10 @@ fn clean_ansi_html(html: &str) -> String {
 static COMMAND_REF_BLOCK_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)(###? Command reference\n\n)```\n(.*?)\n```").unwrap());
 
-/// Convert command reference code blocks to terminal shortcodes with HTML
+/// Convert command reference code blocks to `terminal` calls with HTML
 ///
 /// Finds code blocks after "## Command reference" or "### Command reference" headers
-/// and converts ANSI escape codes to HTML, wrapping in {% terminal() %} shortcode.
+/// and converts ANSI escape codes to HTML, wrapping in a `{% <terminal> %}` call.
 fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
     let mut result = content.to_string();
 
@@ -705,8 +716,9 @@ fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
         let clean_html = clean_ansi_html(&html);
         let trimmed_html = trim_lines(&clean_html);
 
-        // Build terminal shortcode
-        let replacement = format!("{header}{{% terminal() %}}\n{trimmed_html}\n{{% end %}}");
+        // Build the terminal call
+        let replacement =
+            format!("{header}{{% <terminal> %}}\n{trimmed_html}\n{{% </terminal> %}}");
         result.replace_range(start..end, &replacement);
     }
 
@@ -896,14 +908,14 @@ fn heading_to_anchor(heading: &str) -> String {
         .join("-")
 }
 
-/// Regex to match terminal-shortcode AUTO-GENERATED markers in docs files,
+/// Regex to match terminal-call AUTO-GENERATED markers in docs files,
 /// for conversion to plain code blocks when extracting sections into README.
 /// Optionally consumes a preceding ```bash``` block (rendered redundant by
-/// the cmd= parameter on the shortcode).
-/// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms.
+/// the cmd= argument on the call).
+/// Matches both `{% <terminal> %}` and `{% <terminal cmd="..."> %}` forms.
 static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?s)(?:```bash\n[^\n]+\n```\n+)?{}[^\n]+ -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
+        r"(?s)(?:```bash\n[^\n]+\n```\n+)?{}[^\n]+ -->\n+\{{% <terminal[^>]*> %\}}\n(.*?)\{{% </terminal> %\}}\n+{}",
         regex::escape(MARKER_OPEN_PREFIX),
         regex::escape(MARKER_CLOSE),
     ))
@@ -934,10 +946,10 @@ fn strip_html(content: &str) -> String {
 /// Converts:
 /// - `[text](@/page.md)` → `[text](https://worktrunk.dev/page/)`
 /// - `[text](@/page.md#anchor)` → `[text](https://worktrunk.dev/page/#anchor)`
-/// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
+/// - `<code class="multiline">...</code>` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
 /// - AUTO-GENERATED terminal markers → plain code blocks
-/// - `{{ terminal(cmd="...") }}` → ```bash code blocks
+/// - `{{ <terminal cmd="..." /> }}` → ```bash code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
     let content = ZOLA_LINK_PATTERN
@@ -949,8 +961,8 @@ fn transform_zola_to_github(content: &str) -> String {
         })
         .into_owned();
 
-    // Transform rawcode shortcodes to pre tags
-    let content = ZOLA_RAWCODE_PATTERN
+    // Transform the literal-code table cells to pre tags
+    let content = MULTILINE_CODE_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
             let inner = caps.get(1).unwrap().as_str();
             format!("<pre>{}</pre>", inner)
@@ -967,8 +979,8 @@ fn transform_zola_to_github(content: &str) -> String {
         })
         .into_owned();
 
-    // Transform self-closing terminal shortcodes to bash code blocks for README
-    // These are `{{ terminal(cmd="...") }}` shortcodes without body content
+    // Transform self-closing terminal calls to bash code blocks for README
+    // These are `{{ <terminal cmd="..." /> }}` calls without body content
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
             cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
@@ -997,8 +1009,10 @@ fn docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, Stri
         .ok_or_else(|| format!("Invalid section ID (missing #): {}", id))?;
 
     let docs_path = project_root.join(path);
-    let content = fs::read_to_string(&docs_path)
-        .map_err(|e| format!("Failed to read {}: {}", docs_path.display(), e))?;
+    if !docs_path.exists() {
+        return Err(format!("Failed to read {}", docs_path.display()));
+    }
+    let content = read_docs_page(&docs_path);
 
     let section = extract_section_by_anchor(&content, anchor)
         .ok_or_else(|| format!("Section '{}' not found in {}", anchor, docs_path.display()))?;
@@ -1049,7 +1063,7 @@ fn sync_readme_markers(
     let total = matches.len();
 
     // Process in reverse order to preserve positions. README markers are always
-    // Help/Section (unwrapped); a Snapshot marker would mean a stale shortcode
+    // Help/Section (unwrapped); a Snapshot marker would mean a stale call
     // leaked through `transform_zola_to_github` and is a real bug to surface.
     for (start, end, id, current) in matches.into_iter().rev() {
         if matches!(MarkerType::from_id(&id), MarkerType::Snapshot) {
@@ -1468,7 +1482,7 @@ fn test_project_config_docs_include_all_sections() {
 fn test_llm_docs_commands_match_config_example() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
-    let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
+    let llm_docs = read_docs_page(&project_root.join("docs/content/llm-commits.md"));
 
     // Extract commands from config example: "# command = ..." lines
     let config_commands: Vec<String> = config_example
@@ -1677,8 +1691,7 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
         return Ok(0);
     }
 
-    let content = fs::read_to_string(doc_path)
-        .map_err(|e| vec![format!("Failed to read {}: {}", doc_path.display(), e)])?;
+    let content = read_docs_page(doc_path);
 
     let project_root_for_snapshots = project_root.to_path_buf();
     match update_section(
@@ -1706,7 +1719,11 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
     ) {
         Ok((new_content, updated_count, _total_count)) => {
             if updated_count > 0 {
-                fs::write(doc_path, &new_content).unwrap();
+                fs::write(
+                    doc_path,
+                    worktrunk::docs::wrap_template_syntax(&new_content),
+                )
+                .unwrap();
             }
             Ok(updated_count)
         }
@@ -1778,6 +1795,37 @@ fn write_tracked(
     updated.push(rel_path.into());
 }
 
+/// Read a `docs/content` page in the form every sync step works in.
+///
+/// The published page carries `{% raw %}` wrappers around the template syntax
+/// the docs *document* — Zola 0.23 evaluates markdown, so a `{{ branch }}`
+/// example has to be fenced off (`worktrunk::docs::wrap_template_syntax`).
+/// Those wrappers are a rendering detail, not source: stripping on read means a
+/// step compares generated content against the docs' own text and doesn't have
+/// to know the wrappers exist. Pair with [`write_docs_page`], which puts them
+/// back — a read that strips without a write that wraps re-wraps every run and
+/// leaves the sync test permanently reporting an update.
+fn read_docs_page(path: &Path) -> String {
+    let content = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+    worktrunk::docs::strip_template_syntax_wrappers(&content)
+}
+
+/// Write a `docs/content` page back in published form, if it changed.
+/// Counterpart to [`read_docs_page`]; see there for why the pair exists.
+fn write_docs_page(
+    path: &Path,
+    source_form: &str,
+    rel_path: impl Into<String>,
+    updated: &mut Vec<String>,
+) {
+    let expected = worktrunk::docs::wrap_template_syntax(source_form);
+    if fs::read_to_string(path).is_ok_and(|current| current == expected) {
+        return;
+    }
+    write_tracked(path, &expected, rel_path, updated);
+}
+
 /// Sync command pages from --help-page output to docs/content/*.md
 /// Returns (errors, updated_files)
 fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
@@ -1819,7 +1867,7 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             continue;
         }
 
-        // Expand command placeholders (wt list -> terminal shortcode with snapshot output)
+        // Expand command placeholders (wt list -> terminal call with snapshot output)
         let snapshots_dir = project_root.join("tests/snapshots");
         let generated =
             match expand_command_placeholders(&generated, &snapshots_dir, ExpandMode::Html) {
@@ -1833,7 +1881,7 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
                 }
             };
 
-        // Convert command reference code blocks to terminal shortcodes with HTML
+        // Convert command reference code blocks to terminal calls with HTML
         let generated = match convert_command_reference_to_html(&generated) {
             Ok(converted) => converted,
             Err(e) => {
@@ -1855,8 +1903,7 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             .trim()
             .to_string();
 
-        let current = fs::read_to_string(&doc_path)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", doc_path.display(), e));
+        let current = read_docs_page(&doc_path);
 
         // Update frontmatter description field
         let new_content = if !description.is_empty() {
@@ -1892,14 +1939,12 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             continue;
         };
 
-        if current != new_content {
-            write_tracked(
-                &doc_path,
-                &new_content,
-                format!("docs/content/{}.md", cmd),
-                &mut updated_files,
-            );
-        }
+        write_docs_page(
+            &doc_path,
+            &new_content,
+            format!("docs/content/{}.md", cmd),
+            &mut updated_files,
+        );
     }
 
     (errors, updated_files)
@@ -1917,18 +1962,18 @@ static ZOLA_FRONTMATTER_PATTERN: LazyLock<Regex> =
 static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"title\s*=\s*"([^"]+)""#).unwrap());
 
-/// Regex to strip body-form terminal shortcodes ({% terminal(...) %}...{% end %}).
-/// Optionally captures the cmd parameter value (group 1) and body (group 2).
+/// Regex to strip body-form terminal calls ({% <terminal …> %}…{% </terminal> %}).
+/// Optionally captures the cmd argument value (group 1) and body (group 2).
 static ZOLA_TERMINAL_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)\{%\s*terminal\((?:cmd="([^"]*)"\s*)?\)\s*%\}\n?(.*?)\{%\s*end\s*%\}"#)
+    Regex::new(r#"(?s)\{%\s*<terminal(?:\s+cmd="([^"]*)")?>\s*%\}\n?(.*?)\{%\s*</terminal>\s*%\}"#)
         .unwrap()
 });
 
-/// Regex to strip self-closing terminal shortcodes ({{ terminal(cmd="...") }}).
+/// Regex to strip self-closing terminal calls ({{ <terminal cmd="..." /> }}).
 static ZOLA_TERMINAL_SELF_CLOSING_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\{\{ terminal\(cmd="([^"]*)"\) \}\}"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"\{\{ <terminal cmd="([^"]*)" /> \}\}"#).unwrap());
 
-/// Regex to replace Zola experimental shortcode with plain text for skill files
+/// Regex to replace the legacy Zola experimental shortcode with plain text for skill files
 static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
 
@@ -1947,12 +1992,12 @@ static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 static HTML_FIGURE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
 
-/// Regex to strip `<span class="cmd">...</span>` lines from shortcode bodies.
+/// Regex to strip `<span class="cmd">...</span>` lines from component bodies.
 /// These duplicate the cmd parameter content (the template uses `clean_body` for this).
 static SPAN_CMD_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="cmd">[^<]*</span>\n?"#).unwrap());
 
-/// Regex to convert `<span class="cmd">X</span>` → `$ X` for no-cmd body shortcodes.
+/// Regex to convert `<span class="cmd">X</span>` → `$ X` for no-cmd bodies.
 static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
 
@@ -1962,6 +2007,14 @@ static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
 /// distinguish them from interleaved output. Comment-only lines (`#`) and blank
 /// lines never get the prefix.
 fn cmd_to_bash_block(cmd: &str, body: &str, with_prompt: bool) -> String {
+    // Undo the escaping the `cmd` argument needs to survive Tera (see
+    // `worktrunk::docs::convert_dollar_console_to_terminal`) — a plain fenced
+    // block wants the characters themselves.
+    let cmd = cmd
+        .replace("__WT_OPEN__", "{{")
+        .replace("__WT_CLOSE__", "}}")
+        .replace("__WT_QUOT__", "\"")
+        .replace("__WT_BSLASH__", "\\");
     let mut result = String::from("```bash\n");
     for line in cmd.split("|||") {
         if line.is_empty() {
@@ -1993,10 +2046,10 @@ fn cmd_to_bash_block(cmd: &str, body: &str, with_prompt: bool) -> String {
 ///
 /// Transforms:
 /// - Extracts title from Zola frontmatter and prepends as H1
-/// - Strips Zola terminal shortcodes ({% terminal() %}...{% end %}) - keeps inner content
+/// - Strips Zola terminal calls ({% <terminal> %}...{% </terminal> %}) - keeps inner content
 /// - Strips AUTO-GENERATED marker comments (keeps content)
 /// - Strips HTML figure elements (demo GIFs not useful for skill)
-/// - Replaces Zola shortcodes with plain text equivalents
+/// - Replaces Zola component calls with plain text equivalents
 /// - Converts Zola internal links (@/page.md) -> full URLs
 /// - Removes "See also" section (just links to other docs pages)
 fn transform_docs_for_skill(content: &str) -> String {
@@ -2011,10 +2064,10 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip frontmatter
     let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
 
-    // Strip terminal shortcodes, converting cmd parameters back to bash blocks.
-    // Commands joined by `|||` are split into separate lines. Block-form shortcodes
+    // Strip terminal calls, converting cmd arguments back to bash blocks.
+    // Commands joined by `|||` are split into separate lines. Block-form calls
     // with a body interleave command + output, so we keep the `$ ` prompt prefix
-    // there to distinguish the two; self-closing shortcodes are pure commands and
+    // there to distinguish the two; self-closing calls are pure commands and
     // get no prefix so the block stays copy-pasteable.
     let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, |caps: &regex::Captures| {
         let body = caps.get(2).map_or("", |m| m.as_str());
@@ -2035,14 +2088,15 @@ fn transform_docs_for_skill(content: &str) -> String {
             cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
         });
 
-    // Strip rawcode shortcodes (keep content)
-    let content = ZOLA_RAWCODE_PATTERN.replace_all(&content, "$1");
+    // Unwrap the literal-code table cells (keep content)
+    let content = MULTILINE_CODE_PATTERN.replace_all(&content, "$1");
 
-    // Replace placeholders used to escape Tera template syntax in cmd parameters
+    // Replace placeholders used to escape Tera template syntax in cmd arguments
     let content = content
         .replace("__WT_OPEN__", "{{")
         .replace("__WT_CLOSE__", "}}")
-        .replace("__WT_QUOT__", "\"");
+        .replace("__WT_QUOT__", "\"")
+        .replace("__WT_BSLASH__", "\\");
 
     // Strip AUTO-GENERATED marker comments (keep content)
     let content = AUTO_GENERATED_MARKER_PATTERN.replace_all(&content, "");
@@ -2093,34 +2147,29 @@ fn remove_section(content: &str, heading: &str) -> String {
     }
 }
 
-/// Convert ```console blocks with $ to terminal shortcodes in all docs files.
+/// Convert ```console blocks with $ to `terminal` calls in all docs files.
 ///
 /// Command pages already have this conversion via --help-page, but hand-written
 /// docs (faq.md, llm-commits.md, claude-code.md) can also use ```console with $
 /// and get the same treatment.
 fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<String>) {
-    let mut errors = Vec::new();
+    let errors = Vec::new();
     let mut updated_files = Vec::new();
     let docs_dir = project_root.join("docs/content");
 
     for name in docs_content_page_names(&docs_dir) {
         let path = docs_dir.join(&name);
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(format!("read {}: {e}", path.display()));
-                continue;
-            }
-        };
+        let content = read_docs_page(&path);
         let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
-        if converted != content {
-            write_tracked(
-                &path,
-                &converted,
-                format!("docs/content/{name}"),
-                &mut updated_files,
-            );
-        }
+        // Unconditional: this is also the pass that (re)applies the `{% raw %}`
+        // wrappers, so a page whose console blocks are already converted may
+        // still need its published form refreshed.
+        write_docs_page(
+            &path,
+            &converted,
+            format!("docs/content/{name}"),
+            &mut updated_files,
+        );
     }
 
     (errors, updated_files)
@@ -2165,9 +2214,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
         } else {
             // Non-command pages: read from docs, transform Zola syntax, strip residual HTML
             let docs_file = docs_dir.join(name);
-            let docs_content = fs::read_to_string(&docs_file)
-                .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
-            transform_docs_for_skill(&docs_content)
+            transform_docs_for_skill(&read_docs_page(&docs_file))
         };
         let expected = trim_lines(&expected);
 
@@ -2763,7 +2810,7 @@ fn test_docs_are_in_sync() {
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
     tag("command pages", cmd_errors, cmd_files);
 
-    // Step 1b: Convert $ console blocks to terminal shortcodes in ALL docs
+    // Step 1b: Convert $ console blocks to terminal calls in ALL docs
     // (command pages already converted via --help-page; this catches hand-written docs)
     let (console_errors, console_files) = convert_console_blocks_in_docs(project_root);
     tag("console→terminal", console_errors, console_files);
@@ -2886,8 +2933,8 @@ fn test_no_nested_auto_generated_markers() {
     );
 }
 
-/// `terminal(cmd=...)` shortcodes must use the `__WT_QUOT__` placeholder for
-/// embedded double quotes — the terminal template substitutes that back to `"`
+/// `<terminal cmd=...>` calls must use the `__WT_QUOT__` placeholder for
+/// embedded double quotes — the terminal component substitutes that back to `"`
 /// before Syntect highlighting. Raw `&quot;` HTML entities pass through Tera
 /// untouched and render literally in the docs site (see #2495).
 #[test]
@@ -2899,7 +2946,7 @@ fn test_terminal_cmd_uses_wt_quot_placeholder() {
         if path.extension().is_some_and(|e| e == "md") {
             let content = fs::read_to_string(&path).unwrap();
             for (i, line) in content.lines().enumerate() {
-                if line.contains("terminal(cmd=") && line.contains("&quot;") {
+                if line.contains("<terminal cmd=") && line.contains("&quot;") {
                     violations.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
                 }
             }
@@ -2907,7 +2954,7 @@ fn test_terminal_cmd_uses_wt_quot_placeholder() {
     }
     assert!(
         violations.is_empty(),
-        "Found `&quot;` inside terminal(cmd=...) shortcodes — these render \
+        "Found `&quot;` inside `<terminal cmd=...>` calls — these render \
          literally on the docs site. Replace with `__WT_QUOT__`.\n\n{}",
         violations.join("\n")
     );
@@ -3024,7 +3071,7 @@ fn test_template_variables_table_matches_constants() {
 }
 
 /// Verify that post_process_for_html() transforms the approval prompt code block
-/// into a styled terminal shortcode. If the source text in cli/mod.rs changes
+/// into a styled `terminal` call. If the source text in cli/mod.rs changes
 /// without updating the replacement in help.rs, the .replace() silently stops
 /// matching and the web docs fall back to a plain code block.
 #[test]

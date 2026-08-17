@@ -1,4 +1,3 @@
-{% import "macros.html" as macros %}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -74,18 +73,21 @@
     })();
     </script>
     <meta name="view-transition" content="same-origin">
-    {% set page_description = page.description | default(value=config.extra.site_description) %}
+    {# 404.html renders with no `page`, and Tera2 errors on an attribute lookup
+       through an undefined variable rather than falling through to `default`,
+       so every `page` read below goes through this guard. `default` is also no
+       longer a null fallback — a page whose front matter omits `description`
+       yields "" rather than the filter's value — hence the explicit `if`s. #}
+    {% set current = page | default(value=false) %}
+    {% if current and current.description %}{% set page_description = current.description %}{% else %}{% set page_description = config.extra.site_description %}{% endif %}
+    {% if current and current.extra.canonical %}{% set canonical_url = config.base_url | trim_end(pat='/') ~ current.extra.canonical %}{% else %}{% set canonical_url = current_url | default(value=config.base_url) %}{% endif %}
     <meta name="description" content="{{ page_description }}">
-    {% if page.extra.canonical %}
-    <link rel="canonical" href="{{ config.base_url | trim_end_matches(pat='/') }}{{ page.extra.canonical }}">
-    {% else %}
-    <link rel="canonical" href="{{ current_url | default(value=config.base_url) }}">
-    {% endif %}
+    <link rel="canonical" href="{{ canonical_url }}">
 
     <!-- OpenGraph -->
-    {% set og_title = page.title | default(value="") %}
+    {% if current and current.title %}{% set og_title = current.title %}{% else %}{% set og_title = "" %}{% endif %}
     <meta property="og:type" content="website">
-    <meta property="og:url" content="{% if page.extra.canonical %}{{ config.base_url | trim_end_matches(pat='/') }}{{ page.extra.canonical }}{% else %}{{ current_url | default(value=config.base_url) }}{% endif %}">
+    <meta property="og:url" content="{{ canonical_url }}">
     {% if og_title %}{% set og_title_full = og_title ~ " | " ~ config.title %}{% else %}{% set og_title_full = config.title ~ " — " ~ config.extra.site_description %}{% endif %}
     <meta property="og:title" content="{{ og_title_full }}">
     <meta property="og:description" content="{{ page_description }}">
@@ -100,7 +102,7 @@
     <meta name="twitter:image" content="{{ config.base_url }}assets/social/social-card.png">
 
     <!-- Structured data -->
-    {% if not page.title %}
+    {% if not og_title %}
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -233,7 +235,7 @@
     <main>
         {% block toc %}
         {% set docs_section = get_section(path="_index.md") %}
-        {{ macros::toc_nav(docs_section=docs_section) }}
+        {{ <toc_nav docs_section={docs_section} /> }}
         {% endblock toc %}
 
         <div class="content" id="{% block content_id %}{% endblock content_id %}">

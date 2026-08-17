@@ -54,27 +54,27 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
   <tbody>
     <tr>
       <td>Switch worktrees</td>
-      <td>{% rawcode() %}wt switch feat{% end %}</td>
-      <td>{% rawcode() %}cd ../repo.feat{% end %}</td>
+      <td><code class="multiline">wt switch feat</code></td>
+      <td><code class="multiline">cd ../repo.feat</code></td>
     </tr>
     <tr>
       <td>Create + start Claude</td>
-      <td>{% rawcode() %}wt switch -c -x claude feat{% end %}</td>
-      <td>{% rawcode() %}git worktree add -b feat ../repo.feat && \
+      <td><code class="multiline">wt switch -c -x claude feat</code></td>
+      <td><code class="multiline">git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
-claude{% end %}</td>
+claude</code></td>
     </tr>
     <tr>
       <td>Clean up</td>
-      <td>{% rawcode() %}wt remove{% end %}</td>
-      <td>{% rawcode() %}cd ../repo && \
+      <td><code class="multiline">wt remove</code></td>
+      <td><code class="multiline">cd ../repo && \
 git worktree remove ../repo.feat && \
-git branch -d feat{% end %}</td>
+git branch -d feat</code></td>
     </tr>
     <tr>
       <td>List with status</td>
-      <td>{% rawcode() %}wt list{% end %}</td>
-      <td>{% rawcode() %}git worktree list{% end %} (paths only)</td>
+      <td><code class="multiline">wt list</code></td>
+      <td><code class="multiline">git worktree list</code> (paths only)</td>
     </tr>
   </tbody>
 </table>
@@ -108,20 +108,20 @@ Multiple parallel agents, same simple commands:
 
 **Homebrew (macOS & Linux):**
 
-{{ terminal(cmd="brew install worktrunk && wt config shell install") }}
+{{ <terminal cmd="brew install worktrunk && wt config shell install" /> }}
 
 Shell integration allows commands to change directories.
 
 **Cargo:**
 
-{{ terminal(cmd="cargo install worktrunk && wt config shell install") }}
+{{ <terminal cmd="cargo install worktrunk && wt config shell install" /> }}
 
 <details>
 <summary><strong>Windows & other</strong></summary>
 
 **Windows.** `wt` defaults to Windows Terminal's command, so Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
-{{ terminal(cmd="winget install max-sixty.worktrunk|||git-wt config shell install") }}
+{{ <terminal cmd="winget install max-sixty.worktrunk|||git-wt config shell install" /> }}
 
 Alternatively, disable Windows Terminal's alias (Settings → Apps → Advanced app settings → App execution aliases → "Terminal"/"Terminal Preview") to use `wt` directly.
 
@@ -129,11 +129,11 @@ Alternatively, disable Windows Terminal's alias (Settings → Apps → Advanced 
 
 **Arch Linux:**
 
-{{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
+{{ <terminal cmd="sudo pacman -S worktrunk && wt config shell install" /> }}
 
 **Conda / Pixi** (community-maintained [feedstock](https://github.com/conda-forge/worktrunk-feedstock)):
 
-{{ terminal(cmd="conda install -c conda-forge worktrunk && wt config shell install") }}
+{{ <terminal cmd="conda install -c conda-forge worktrunk && wt config shell install" /> }}
 
 Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
 
@@ -145,10 +145,10 @@ Create a worktree for a new feature:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
 
-{% terminal(cmd="wt switch --create feature-auth") %}
+{% <terminal cmd="wt switch --create feature-auth"> %}
 <span class="cmd">wt switch --create feature-auth</span>
 <span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>~/repo.feature-auth</b></span>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
@@ -156,14 +156,14 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
 
-{% terminal(cmd="wt list") %}
+{% <terminal cmd="wt list"> %}
 <span class="cmd">wt list</span>
   <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>   <b>Age</b>   <b>Message</b>
 @ feature-auth  <span class=c>+</span>   <span class=d>↑</span>      <span class=g>+27</span>   <span class=r>-8</span>   <span class=g>↑1</span>       <span class=g>+31</span>                <span class=d>4bc72dc</span>  <span class=d>2h</span>    <span class=d>Add authenticati…</span>
 ^ main              <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      <span class=d>0e631ad</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden</span>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
@@ -173,13 +173,13 @@ When done, either:
 
 **PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
 
-{{ terminal(cmd="wt step commit                    # commit staged changes|||gh pr create                      # or glab mr create|||wt remove                         # after PR is merged") }}
+{{ <terminal cmd="wt step commit                    # commit staged changes|||gh pr create                      # or glab mr create|||wt remove                         # after PR is merged" /> }}
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
 
-{% terminal(cmd="wt merge main") %}
+{% <terminal cmd="wt merge main"> %}
 <span class="cmd">wt merge main</span>
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+53</span></span></span>, no squashing needed<span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>Add authentication module</b>
@@ -192,13 +192,13 @@ When done, either:
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, <span class=g>+53</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
 For parallel agents, create multiple worktrees and launch an agent in each:
 
-{{ terminal(cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'") }}
+{{ <terminal cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'" /> }}
 
 The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md#hook-types) to automate setup (install deps, start dev servers).
 

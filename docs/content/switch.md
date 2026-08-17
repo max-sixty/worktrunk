@@ -22,7 +22,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 ## Examples
 
-{{ terminal(cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch pr:123                 # Switch to PR #123's branch|||wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL") }}
+{{ <terminal cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch pr:123                 # Switch to PR #123's branch|||wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL" /> }}
 
 ## Creating a branch
 
@@ -38,7 +38,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
 5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
-{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
+{{ <terminal cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks" /> }}
 
 ## Naming a worktree
 
@@ -54,7 +54,7 @@ Worktrees are addressed by branch name, and every argument that takes one also a
 | `pr:{N}` | GitHub PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
-{{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
+{{ <terminal cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch" /> }}
 
 Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
@@ -120,7 +120,7 @@ pager = "delta --paging=never --width=$COLUMNS"
 
 The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
-{{ terminal(cmd="wt switch pr:101                                  # GitHub PR #101|||wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL|||wt switch mr:101                                  # GitLab MR !101|||wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL|||wt switch --prs                                   # Browse open PRs/MRs in the picker") }}
+{{ <terminal cmd="wt switch pr:101                                  # GitHub PR #101|||wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL|||wt switch mr:101                                  # GitLab MR !101|||wt switch https://gitlab.com/owner/repo/-/merge_requests/101  # ...the same MR, by URL|||wt switch --prs                                   # Browse open PRs/MRs in the picker" /> }}
 
 Both work anywhere a branch is accepted, including `--base`. The `--create` flag cannot be used with a PR/MR reference since the branch already exists.
 
@@ -146,7 +146,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt switch - Switch to a worktree; create if needed
 
 Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
@@ -184,8 +184,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           selected worktree — so <b>wt switch -x claude</b> picks a worktree, then launches Claude Code
           there.
 
-          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
-<b>          base }}</b> and <b>{{ base_worktree_path }}</b> describe the source: the selected base with <b>--create</b>,
+{% raw %}          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>{% endraw %}
+{% raw %}<b>          base }}</b> and <b>{{ base_worktree_path }}</b> describe the source: the selected base with <b>--create</b>,{% endraw %}
           or the invoking worktree when switching to an existing worktree.
 
           Especially useful with shell aliases:
@@ -197,8 +197,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
           starting Claude with a prompt.
 
-          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>
-<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
+{% raw %}          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>{% endraw %}
+{% raw %}<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.{% endraw %}
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
@@ -252,6 +252,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

@@ -15,15 +15,15 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 
 Commit with LLM-generated message:
 
-{% terminal(cmd="wt step commit") %}
+{% <terminal cmd="wt step commit"> %}
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
 <span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
-{% end %}
+{% </terminal> %}
 
 Manual merge workflow with review between steps:
 
-{{ terminal(cmd="wt step commit|||wt step squash|||wt step rebase|||wt step push") }}
+{{ <terminal cmd="wt step commit|||wt step squash|||wt step rebase|||wt step push" /> }}
 
 ## Operations
 
@@ -49,7 +49,7 @@ Manual merge workflow with review between steps:
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step - Run individual operations
 
 The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone utilities.
@@ -92,7 +92,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 # Subcommands
 
@@ -114,7 +114,7 @@ Controls what to stage before committing:
 | `tracked` | Stage only modified tracked files |
 | `none` | Don't stage anything, commit only what's already staged |
 
-{{ terminal(cmd="wt step commit --stage=tracked") }}
+{{ <terminal cmd="wt step commit --stage=tracked" /> }}
 
 Configure the default in user config:
 
@@ -127,13 +127,13 @@ stage = "tracked"
 
 Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
-{{ terminal(cmd="wt step commit --dry-run") }}
+{{ <terminal cmd="wt step commit --dry-run" /> }}
 
 Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step commit - Stage and commit with LLM-generated message
 
 Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
@@ -185,7 +185,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step squash
 
@@ -205,7 +205,7 @@ Controls what to stage before squashing:
 | `tracked` | Stage only modified tracked files |
 | `none` | Don't stage anything, squash only committed changes |
 
-{{ terminal(cmd="wt step squash --stage=none") }}
+{{ <terminal cmd="wt step squash --stage=none" /> }}
 
 Configure the default in user config:
 
@@ -218,13 +218,13 @@ stage = "tracked"
 
 Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
-{{ terminal(cmd="wt step squash --dry-run") }}
+{{ <terminal cmd="wt step squash --dry-run" /> }}
 
 Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step squash - Squash commits since branching
 
 Stages changes and generates message with LLM.
@@ -281,7 +281,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step rebase
 
@@ -293,7 +293,7 @@ The target is any commit: a branch, a tag, a SHA.
 
 ### Examples
 
-{{ terminal(cmd="wt step rebase            # Rebase onto default branch|||wt step rebase develop    # Rebase onto develop|||wt step rebase v1.2.0     # Rebase onto a tag") }}
+{{ <terminal cmd="wt step rebase            # Rebase onto default branch|||wt step rebase develop    # Rebase onto develop|||wt step rebase v1.2.0     # Rebase onto a tag" /> }}
 
 ### Outcomes
 
@@ -315,7 +315,7 @@ A conflicting commit leaves the rebase open rather than undoing it. The worktree
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step rebase - Rebase onto target
 
 Usage: <b><span class=c>wt step rebase</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
@@ -356,7 +356,7 @@ Usage: <b><span class=c>wt step rebase</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step push
 
@@ -368,7 +368,7 @@ The target is a branch, and must already be an ancestor of the current branch. O
 
 ### Examples
 
-{{ terminal(cmd="wt step push             # Fast-forward main to current branch|||wt step push develop     # Fast-forward develop instead|||wt step push --no-ff     # Merge commit instead of a fast-forward") }}
+{{ <terminal cmd="wt step push             # Fast-forward main to current branch|||wt step push develop     # Fast-forward develop instead|||wt step push --no-ff     # Merge commit instead of a fast-forward" /> }}
 
 ### Target worktree
 
@@ -378,7 +378,7 @@ A worktree that is still registered but whose directory is gone is refused as we
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step push - Fast-forward target to current branch
 
 Usage: <b><span class=c>wt step push</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
@@ -422,7 +422,7 @@ Usage: <b><span class=c>wt step push</span></b> <span class=c>[OPTIONS]</span> <
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step diff
 
@@ -434,7 +434,7 @@ This is what `wt merge` would include — a single diff against the merge base.
 
 `--branch` diffs another worktree's branch without leaving the current one:
 
-{{ terminal(cmd="wt step diff --branch feature") }}
+{{ <terminal cmd="wt step diff --branch feature" /> }}
 
 The branch must have a checked-out worktree.
 
@@ -442,23 +442,23 @@ The branch must have a checked-out worktree.
 
 Arguments after `--` are forwarded to `git diff`:
 
-{{ terminal(cmd="wt step diff -- --stat|||wt step diff -- --name-only|||wt step diff -- -- '*.rs'") }}
+{{ <terminal cmd="wt step diff -- --stat|||wt step diff -- --name-only|||wt step diff -- -- '*.rs'" /> }}
 
 The diff is pipeable to tools like `delta`:
 
-{{ terminal(cmd="wt step diff | delta") }}
+{{ <terminal cmd="wt step diff | delta" /> }}
 
 ### How it works
 
 Equivalent to:
 
-{{ terminal(cmd="cp __WT_QUOT__$(git rev-parse --git-dir)/index__WT_QUOT__ /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))") }}
+{{ <terminal cmd="cp __WT_QUOT__$(git rev-parse --git-dir)/index__WT_QUOT__ /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))" /> }}
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step diff - Show all changes since branching
 
 Includes committed, staged, unstaged, and untracked files.
@@ -498,7 +498,7 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step copy-ignored
 
@@ -536,7 +536,7 @@ exclude = [".cache/", ".turbo/"]
 
 To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
 
-{{ terminal(cmd="wt step copy-ignored --require-include") }}
+{{ <terminal cmd="wt step copy-ignored --require-include" /> }}
 
 Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
 
@@ -578,10 +578,12 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 
 `node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
+{% raw %}
 ```toml
 [pre-start]
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
+{% endraw %}
 
 #### Python
 
@@ -597,7 +599,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step copy-ignored - Copy gitignored files to another worktree
 
 Eliminates cold starts by copying build caches and dependencies.
@@ -653,7 +655,7 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step eval
 
@@ -667,43 +669,43 @@ All [hook template variables and filters](@/hook.md#template-variables) are avai
 
 Get the port for the current branch:
 
-{% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__'") %}
+{% <terminal cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__'"> %}
 16066
-{% end %}
+{% </terminal> %}
 
 Use in shell substitution:
 
-{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__')/health") }}
+{{ <terminal cmd="curl http://localhost:$(wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__')/health" /> }}
 
 Combine multiple values:
 
-{% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__,__WT_OPEN__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE__'") %}
+{% <terminal cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__,__WT_OPEN__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE__'"> %}
 16066,16739
-{% end %}
+{% </terminal> %}
 
 Use conditionals and filters:
 
-{% terminal(cmd="wt step eval '__WT_OPEN__ branch | sanitize_db __WT_CLOSE__'") %}
+{% <terminal cmd="wt step eval '__WT_OPEN__ branch | sanitize_db __WT_CLOSE__'"> %}
 feature_auth_oauth2_a1b
-{% end %}
+{% </terminal> %}
 
 List the available template variables with `-v` (alongside the expansion, on stderr):
 
-{% terminal(cmd="wt step eval -v '__WT_OPEN__ branch __WT_CLOSE__'") %}
+{% <terminal cmd="wt step eval -v '__WT_OPEN__ branch __WT_CLOSE__'"> %}
 ○ eval template variables:
   branch        = feature/auth-oauth2
   worktree_path = /home/user/projects/myapp-feature-auth-oauth2
 ○ eval source
-  {{ branch }}
+{% raw %}  {{ branch }}{% endraw %}
 ○ eval result
   feature/auth-oauth2
 
 feature/auth-oauth2
-{% end %}
+{% </terminal> %}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step eval - [experimental] Evaluate a template expression
 
 Prints the result to stdout for use in scripts and shell substitutions.
@@ -744,7 +746,7 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step for-each
 
@@ -752,35 +754,35 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
 
 Run command in each worktree. Executes sequentially with real-time output; continues past command failures.
 
-A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
+{% raw %}A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.{% endraw %}
 
 ### Arguments
 
 Arguments after `--` are the program and its arguments — run directly, no shell.
 
-{{ terminal(cmd="wt step for-each -- git status --short|||wt step for-each -- npm install") }}
+{{ <terminal cmd="wt step for-each -- git status --short|||wt step for-each -- npm install" /> }}
 
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
-{{ terminal(cmd="wt step for-each -- sh -c 'git status | wc -l'|||wt step for-each -- sh -c 'echo $HOME && git pull'") }}
+{{ <terminal cmd="wt step for-each -- sh -c 'git status | wc -l'|||wt step for-each -- sh -c 'echo $HOME && git pull'" /> }}
 
 ### Template variables
 
 Variables substitute into each argv element before exec. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
 
-{{ terminal(cmd="wt step for-each -- echo 'Branch: __WT_OPEN__ branch __WT_CLOSE__'") }}
+{{ <terminal cmd="wt step for-each -- echo 'Branch: __WT_OPEN__ branch __WT_CLOSE__'" /> }}
 
-Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
+{% raw %}Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.{% endraw %}
 
 ### Examples
 
 Pull updates in worktrees with upstreams (skips others):
 
-{{ terminal(cmd="git fetch --prune && wt step for-each -- sh -c '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
+{{ <terminal cmd="git fetch --prune && wt step for-each -- sh -c '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'" /> }}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step for-each - [experimental] Run command in each worktree
 
 Executes sequentially with real-time output; continues past command failures.
@@ -818,7 +820,7 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step promote
 
@@ -830,7 +832,7 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 
 ### Example
 
-{{ terminal(cmd="# from ~/project (main worktree)|||wt step promote feature") }}
+{{ <terminal cmd="# from ~/project (main worktree)|||wt step promote feature" /> }}
 
 Before:
 
@@ -865,7 +867,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step promote - [experimental] Swap a branch into the main worktree
 
 Exchanges branches and gitignored files between two worktrees.
@@ -909,7 +911,7 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step prune
 
@@ -927,7 +929,7 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
-{{ terminal(cmd="wt step prune --min-age=0s     # no age guard|||wt step prune --min-age=2d     # skip worktrees younger than 2 days") }}
+{{ <terminal cmd="wt step prune --min-age=0s     # no age guard|||wt step prune --min-age=2d     # skip worktrees younger than 2 days" /> }}
 
 ### JSON output
 
@@ -937,15 +939,15 @@ Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents r
 
 Preview what would be removed:
 
-{{ terminal(cmd="wt step prune --dry-run") }}
+{{ <terminal cmd="wt step prune --dry-run" /> }}
 
 Remove all merged worktrees:
 
-{{ terminal(cmd="wt step prune") }}
+{{ <terminal cmd="wt step prune" /> }}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step prune - [experimental] Remove worktrees merged into the default branch
 
 Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
@@ -988,7 +990,7 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step relocate
 
@@ -1000,19 +1002,19 @@ Move worktrees to expected paths. Relocates worktrees whose path doesn't match t
 
 Preview what would be moved:
 
-{{ terminal(cmd="wt step relocate --dry-run") }}
+{{ <terminal cmd="wt step relocate --dry-run" /> }}
 
 Move all mismatched worktrees:
 
-{{ terminal(cmd="wt step relocate") }}
+{{ <terminal cmd="wt step relocate" /> }}
 
 Auto-commit and clobber blockers (never fails):
 
-{{ terminal(cmd="wt step relocate --commit --clobber") }}
+{{ <terminal cmd="wt step relocate --commit --clobber" /> }}
 
 Move specific worktrees:
 
-{{ terminal(cmd="wt step relocate feature bugfix") }}
+{{ <terminal cmd="wt step relocate feature bugfix" /> }}
 
 ### Swap handling
 
@@ -1048,7 +1050,7 @@ refuses), unless `--commit` is passed.
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step relocate - [experimental] Move worktrees to expected paths
 
 Relocates worktrees whose path doesn&#39;t match the <b>worktree-path</b> template.
@@ -1101,7 +1103,7 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt step tether
 
@@ -1124,31 +1126,33 @@ worktree is gone.
 
 Arguments after `--` are the program and its arguments, run directly, no shell.
 
-{{ terminal(cmd="wt step tether -- npm run dev") }}
+{{ <terminal cmd="wt step tether -- npm run dev" /> }}
 
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
-{{ terminal(cmd="wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'") }}
+{{ <terminal cmd="wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'" /> }}
 
 To run the command from a subdirectory, pass the global `-C` flag (teardown
 still watches the worktree root, so a server launched with a relative `-C` is
 torn down with the worktree):
 
-{{ terminal(cmd="wt step tether -C frontend -- npm run dev") }}
+{{ <terminal cmd="wt step tether -C frontend -- npm run dev" /> }}
 
 ### Examples
 
 Run a dev server, torn down automatically when the worktree goes away:
 
+{% raw %}
 ```toml
 # .config/wt.toml
 [post-start]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 ```
+{% endraw %}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
 
 Teardown is automatic and needs no <b>pre-remove</b> hook; the group gets <b>SIGTERM</b> then <b>SIGKILL</b>.
@@ -1180,6 +1184,6 @@ Usage: <b><span class=c>wt step tether</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

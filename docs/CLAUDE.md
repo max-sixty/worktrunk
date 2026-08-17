@@ -44,6 +44,7 @@ The docs use a standalone "warm workbench" theme. Key files:
 | `templates/_variables.html` | CSS custom properties (colors, layout, typography) |
 | `sass/custom.scss` | All styling, organized by section |
 | `templates/base.html` | Head overrides, iOS viewport polyfill |
+| `templates/components.html` | `toc_nav` and `terminal` Tera components |
 | `templates/index.html` | Homepage hero and animations |
 | `templates/page.html` | Doc page TOC rendering |
 
@@ -198,10 +199,10 @@ This renders differently in each context:
 ```
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/<snapshot_file> — edit source to update -->
 
-{% terminal() %}
+{% <terminal> %}
 <span class="prompt">$</span> <span class="cmd">wt list</span>
 <output...>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 ```
@@ -225,7 +226,7 @@ The examples in `src/cli/mod.rs` are just command stubs — the actual output co
 
 ### Code block convention
 
-All shell commands use `$ ` prefix in `` ```console `` blocks. `convert_dollar_console_to_terminal()` (`src/docs.rs`, shared library function) converts them to terminal shortcodes. The sync test also runs this on hand-written docs.
+All shell commands use `$ ` prefix in `` ```console `` blocks. `convert_dollar_console_to_terminal()` (`src/docs.rs`, shared library function) converts them to calls to the `terminal` component defined in `docs/templates/components.html`. The sync test also runs this on hand-written docs.
 
 | Detected pattern | Web output | Highlighting |
 |------------------|------------|--------------|
@@ -234,9 +235,11 @@ All shell commands use `$ ` prefix in `` ```console `` blocks. `convert_dollar_c
 
 All `$ ` commands go through the `cmd` parameter path for consistent Syntect highlighting. Multiple commands are joined by `|||`; the template splits and highlights each individually. Commands are wrapped in `<span class="cmd">` (CSS `::before` adds `$ `). Comment lines (`#`) are highlighted but not wrapped (no prompt).
 
-**Placeholders in cmd values:** Tera (Zola's template engine) would interpret `{{ }}` in the `cmd` parameter as template expressions, and `"` would close the parameter string. Since Tera has no backslash-escape mechanism for string literals, these characters are replaced with text placeholders (`__WT_OPEN__`, `__WT_CLOSE__`, `__WT_QUOT__`) in the Rust conversion function. The terminal shortcode template replaces them back before Syntect highlighting. The sync test also strips them when generating skill reference files.
+**Placeholders in cmd values:** Tera (Zola's template engine) would interpret `{{ }}` in the `cmd` argument as template expressions, `"` would close the argument string, and `\` is Tera2's string-escape character. These characters are replaced with text placeholders (`__WT_OPEN__`, `__WT_CLOSE__`, `__WT_QUOT__`, `__WT_BSLASH__`) in the Rust conversion function. The `terminal` component replaces them back before Syntect highlighting. The sync test also strips them when generating skill reference files.
 
-Hand-written docs can use either `console` fences with `$ ` (auto-converted by the sync test) or shortcodes directly.
+**`{% raw %}` around documented template syntax:** Zola 0.23 renders every `.md` file through Tera, so a documented minijinja example like `{{ branch | hash_port }}` is otherwise read as a Zola expression and fails the build. `wrap_template_syntax()` (`src/docs.rs`) wraps the fenced blocks and lines that carry template syntax; `strip_template_syntax_wrappers()` is its exact inverse. The sync test strips on read and wraps on write (`read_docs_page` / `write_docs_page`), so `docs/content/*.md` is authored and compared without the wrappers and published with them — don't add them by hand.
+
+Hand-written docs can use either `console` fences with `$ ` (auto-converted by the sync test) or `terminal` calls directly.
 
 ### CLI and web compatibility
 
@@ -253,7 +256,7 @@ The `--help-page` generator in `src/help.rs` applies post-processing to transfor
 
 | CLI Source | Web Output |
 |------------|------------|
-| `` ```console `` with `$ ` | `terminal` shortcode with `cmd` parameter |
+| `` ```console `` with `$ ` | `terminal` component call with `cmd` argument |
 | `` ```console `` (no `$ `) | `` ```bash `` |
 | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
 | `` `●` blue `` | `<span style='color:#00a'>●</span> blue` |

@@ -4,7 +4,7 @@
 
 {% block toc %}
 {% set docs_section = get_section(path="_index.md") %}
-{{ macros::toc_nav(docs_section=docs_section, current_page=page) }}
+{{ <toc_nav docs_section={docs_section} current_permalink={page.permalink} current_toc={page.toc} /> }}
 {% endblock toc %}
 
 {% block content_id %}{{ page.slug }}{% endblock content_id %}

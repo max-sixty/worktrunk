@@ -15,19 +15,19 @@ Manage user & project configs. Includes shell integration, hooks, and saved stat
 
 Install shell integration (required for directory switching):
 
-{{ terminal(cmd="wt config shell install") }}
+{{ <terminal cmd="wt config shell install" /> }}
 
 Create user config file with documented examples:
 
-{{ terminal(cmd="wt config create") }}
+{{ <terminal cmd="wt config create" /> }}
 
 Create project config file (`.config/wt.toml`) for hooks:
 
-{{ terminal(cmd="wt config create --project") }}
+{{ <terminal cmd="wt config create --project" /> }}
 
 Show current configuration and file locations:
 
-{{ terminal(cmd="wt config show") }}
+{{ <terminal cmd="wt config show" /> }}
 
 ## Configuration files
 
@@ -40,6 +40,7 @@ Organizations can deploy a system-wide config file for shared defaults — run `
 
 **User config** — personal preferences:
 
+{% raw %}
 ```toml
 # ~/.config/worktrunk/config.toml
 worktree-path = ".worktrees/{{ branch | sanitize }}"
@@ -47,6 +48,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 [commit.generation]
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
+{% endraw %}
 
 **Project config** — shared team settings:
 
@@ -75,14 +77,14 @@ Controls where new worktrees are created.
 
 **Available template variables:**
 
-- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
-- `{{ repo }}` — repository directory name (e.g., `myproject`)
-- `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
-- `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed
-- `{{ branch }}` — raw branch name (e.g., `feature/auth`)
-- `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
-- `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
-- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
+{% raw %}- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself){% endraw %}
+{% raw %}- `{{ repo }}` — repository directory name (e.g., `myproject`){% endraw %}
+{% raw %}- `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`){% endraw %}
+{% raw %}- `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed{% endraw %}
+{% raw %}- `{{ branch }}` — raw branch name (e.g., `feature/auth`){% endraw %}
+{% raw %}- `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`){% endraw %}
+{% raw %}- `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`){% endraw %}
+{% raw %}- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`){% endraw %}
 
 This is a smaller set than [the variables hooks and aliases get](@/hook.md#template-variables).
 
@@ -90,45 +92,59 @@ This is a smaller set than [the variables hooks and aliases get](@/hook.md#templ
 
 Default — sibling directory (`~/code/myproject.feature-auth`):
 
+{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
 
+{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 Friendly branch-derived names (`~/code/myproject.malleable-opah`):
 
+{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
+{% endraw %}
 
 Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):
 
+{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
 ```
+{% endraw %}
 
 Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
 
+{% raw %}
 ```toml
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 By remote owner path (`~/development/max-sixty/myproject/feature/auth`):
 
+{% raw %}
 ```toml
 worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"
 ```
+{% endraw %}
 
 Bare repository (`~/code/myproject/feature-auth`):
 
+{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 `~` expands to the home directory. Relative paths resolve from `repo_path`.
 
@@ -238,6 +254,7 @@ Custom columns add per-branch context to the `wt list` table. Each
 `[list.custom-columns]` entry is a column: the key is the header, the template
 renders each row's cell.
 
+{% raw %}
 ```toml
 [list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"   # Required; the result is the cell text
@@ -245,17 +262,18 @@ width = 20                       # Optional max display width (default: 40)
 priority = 9                     # Optional drop order when the terminal narrows;
                                  # lower = kept longer (default: 9, the URL band)
 ```
+{% endraw %}
 
-Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
-`{{ worktree_name }}` (empty for branch-only rows), and two per-branch
+{% raw %}Templates may reference `{{ branch }}`, `{{ worktree_path }}`,{% endraw %}
+{% raw %}`{{ worktree_name }}` (empty for branch-only rows), and two per-branch{% endraw %}
 namespaces:
 
-- `{{ vars.* }}` — values stored with
+{% raw %}- `{{ vars.* }}` — values stored with{% endraw %}
   [`wt config state vars set`](@/config.md#wt-config-state-vars).
-- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,
-  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you
+{% raw %}- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,{% endraw %}
+{% raw %}  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you{% endraw %}
   set yourself, or the git-native `description`). Git lowercases config variable
-  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.
+{% raw %}  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.{% endraw %}
 
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
 where the template renders empty (e.g. a branch without the key) shows an
@@ -265,6 +283,7 @@ empty cell; a column that is empty for every row is dropped from the table.
 A `Jira` column reading a key kept in git config, and a `Summary` column
 showing just the first line of the git-native branch description:
 
+{% raw %}
 ```toml
 [list.custom-columns.Jira]
 template = "{{ git.branch.jira }}"
@@ -272,6 +291,7 @@ template = "{{ git.branch.jira }}"
 [list.custom-columns.Summary]
 template = "{{ git.branch.description | lines | first }}"
 ```
+{% endraw %}
 
 ### Commit
 
@@ -328,11 +348,13 @@ Built-in excludes (VCS metadata and tool-state directories) always apply; [the `
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
+{% raw %}
 ```toml
 [aliases]
 greet = "echo Hello from {{ branch }}"
 url = "echo http://localhost:{{ branch | hash_port }}"
 ```
+{% endraw %}
 
 Aliases defined here apply to all projects. For project-specific aliases, use the [project config](@/config.md#project-configuration) `[aliases]` section instead.
 
@@ -344,6 +366,7 @@ Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from
 
 Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See [how the layers rank](@/config.md#precedence).
 
+{% raw %}
 ```toml
 [projects."github.com/user/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
@@ -354,11 +377,13 @@ pre-start.env = "cp .env.example .env"
 step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
+{% endraw %}
 
 #### Matching several repositories with one entry
 
 A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.
 
+{% raw %}
 ```toml
 # Every repository on a self-hosted forge whose hostname carries no brand
 [projects."git.company.example/*"]
@@ -368,6 +393,7 @@ forge.platform = "gitlab"
 [projects."git.company.example/platform/*"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
 
@@ -414,14 +440,15 @@ Templates use [minijinja](https://docs.rs/minijinja/) syntax.
 
 Available variables:
 
-- `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
-- `{{ branch }}`, `{{ repo }}` — context
-- `{{ recent_commits }}` — recent commit messages
-- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](@/config.md#appending-to-the-prompt))
+{% raw %}- `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content{% endraw %}
+{% raw %}- `{{ branch }}`, `{{ repo }}` — context{% endraw %}
+{% raw %}- `{{ recent_commits }}` — recent commit messages{% endraw %}
+{% raw %}- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](@/config.md#appending-to-the-prompt)){% endraw %}
 
 Default template:
 
 <!-- DEFAULT_TEMPLATE_START -->
+{% raw %}
 ```toml
 [commit.generation]
 template = """
@@ -464,18 +491,20 @@ Branch: {{ branch }}
 
 """
 ```
+{% endraw %}
 <!-- DEFAULT_TEMPLATE_END -->
 
 #### Squash template
 
 Available variables (in addition to commit template variables):
 
-- `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`
-- `{{ target_branch }}` — merge target branch
+{% raw %}- `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`{% endraw %}
+{% raw %}- `{{ target_branch }}` — merge target branch{% endraw %}
 
 Default template:
 
 <!-- DEFAULT_SQUASH_TEMPLATE_START -->
+{% raw %}
 ```toml
 [commit.generation]
 squash-template = """
@@ -515,6 +544,7 @@ squash-template = """
 
 """
 ```
+{% endraw %}
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
 #### Appending to the prompt
@@ -557,10 +587,12 @@ pre-merge = "npm test"
 
 URL column in `wt list` (dimmed when port not listening):
 
+{% raw %}
 ```toml
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 ```
+{% endraw %}
 
 ## Forge platform
 
@@ -605,11 +637,13 @@ Built-in excludes (VCS metadata and tool-state directories) always apply; [the `
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
+{% raw %}
 ```toml
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
 url = "echo http://localhost:{{ branch | hash_port }}"
 ```
+{% endraw %}
 
 Aliases defined here are shared with teammates. For personal aliases, use the [user config](@/config.md#aliases) `[aliases]` section instead.
 <!-- PROJECT_CONFIG_END -->
@@ -618,7 +652,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the [u
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
-{{ terminal(cmd="wt config shell install") }}
+{{ <terminal cmd="wt config shell install" /> }}
 
 For manual setup, see `wt config shell init --help`.
 
@@ -650,7 +684,7 @@ For nested config sections, use double underscores to separate levels:
 
 Override the LLM command in CI to use a mock:
 
-{{ terminal(cmd="WORKTRUNK_COMMIT__GENERATION__COMMAND=__WT_QUOT__echo 'test: automated commit'__WT_QUOT__ wt merge") }}
+{{ <terminal cmd="WORKTRUNK_COMMIT__GENERATION__COMMAND=__WT_QUOT__echo 'test: automated commit'__WT_QUOT__ wt merge" /> }}
 
 ### Other environment variables
 
@@ -676,7 +710,7 @@ Override the LLM command in CI to use a mock:
 
 `--config-set <toml>` overrides any user config key for a single invocation. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
 
-{{ terminal(cmd="wt --config-set list.full=true list|||wt step copy-ignored --config-set 'step.copy-ignored.exclude=[__WT_QUOT__target__WT_QUOT__, __WT_QUOT__dist__WT_QUOT__]'") }}
+{{ <terminal cmd="wt --config-set list.full=true list|||wt step copy-ignored --config-set 'step.copy-ignored.exclude=[__WT_QUOT__target__WT_QUOT__, __WT_QUOT__dist__WT_QUOT__]'" /> }}
 
 This composes with aliases — an alias body can invoke `wt --config-set … <command>` to render a named view without changing the saved config.
 
@@ -691,13 +725,13 @@ Sources closer to the invocation rank higher (user config above system config), 
 
 A `--config-set` that names a project entry is both the highest layer and the most specific key, so it beats the same flag's global key:
 
-{{ terminal(cmd="wt --config-set 'projects.__WT_QUOT__github.com/owner/repo__WT_QUOT__.worktree-path = __WT_QUOT__/tmp/scratch__WT_QUOT__' switch --create feature") }}
+{{ <terminal cmd="wt --config-set 'projects.__WT_QUOT__github.com/owner/repo__WT_QUOT__.worktree-path = __WT_QUOT__/tmp/scratch__WT_QUOT__' switch --create feature" /> }}
 
 Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config - Manage user &amp; project configs
 
 Includes shell integration, hooks, and saved state.
@@ -735,7 +769,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 # Subcommands
 
@@ -752,7 +786,7 @@ If a config file doesn't exist, shows defaults that would be used.
 
 Use `--full` to run diagnostic checks:
 
-{{ terminal(cmd="wt config show --full") }}
+{{ <terminal cmd="wt config show --full" /> }}
 
 This tests:
 - **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
@@ -761,7 +795,7 @@ This tests:
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config show - Show configuration files &amp; locations
 
 Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
@@ -797,7 +831,7 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config approvals
 
@@ -808,25 +842,25 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 ### Examples
 
 List commands and their approval status for current project:
-{{ terminal(cmd="wt config approvals list") }}
+{{ <terminal cmd="wt config approvals list" /> }}
 
 Pre-approve all hook and alias commands for current project:
-{{ terminal(cmd="wt config approvals add") }}
+{{ <terminal cmd="wt config approvals add" /> }}
 
 Pre-approve without prompting, for a container or CI job:
-{{ terminal(cmd="wt config approvals add --yes") }}
+{{ <terminal cmd="wt config approvals add --yes" /> }}
 
 Clear approvals for current project:
-{{ terminal(cmd="wt config approvals clear") }}
+{{ <terminal cmd="wt config approvals clear" /> }}
 
 Clear only approvals for commands no longer in the project config:
-{{ terminal(cmd="wt config approvals clear --stale") }}
+{{ <terminal cmd="wt config approvals clear --stale" /> }}
 
 Clear global approvals:
-{{ terminal(cmd="wt config approvals clear --global") }}
+{{ <terminal cmd="wt config approvals clear --global" /> }}
 
 Check whether an unattended run would stop for approval:
-{{ terminal(cmd="wt config approvals list --format=json | jq -r .state") }}
+{{ <terminal cmd="wt config approvals list --format=json | jq -r .state" /> }}
 
 ### How approvals work
 
@@ -855,7 +889,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config approvals - Manage command approvals
 
 Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
@@ -886,7 +920,7 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config alias
 
@@ -897,17 +931,17 @@ Aliases are command templates configured in user (`~/.config/worktrunk/config.to
 ### Examples
 
 Show every configured alias's template:
-{{ terminal(cmd="wt config alias show") }}
+{{ <terminal cmd="wt config alias show" /> }}
 
 Show the template for `deploy`:
-{{ terminal(cmd="wt config alias show deploy") }}
+{{ <terminal cmd="wt config alias show deploy" /> }}
 
 Preview an invocation without running it:
-{{ terminal(cmd="wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
+{{ <terminal cmd="wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging" /> }}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config alias - Inspect and preview aliases
 
 Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
@@ -937,7 +971,7 @@ Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state
 
@@ -956,29 +990,29 @@ State is stored in `.git/` (config entries and log files), separate from configu
 ### Examples
 
 Get the default branch:
-{{ terminal(cmd="wt config state default-branch") }}
+{{ <terminal cmd="wt config state default-branch" /> }}
 
 Set the default branch manually:
-{{ terminal(cmd="wt config state default-branch set main") }}
+{{ <terminal cmd="wt config state default-branch set main" /> }}
 
 Set a marker for current branch:
-{{ terminal(cmd="wt config state marker set 🚧") }}
+{{ <terminal cmd="wt config state marker set 🚧" /> }}
 
 Store arbitrary data:
-{{ terminal(cmd="wt config state vars set env=staging") }}
+{{ <terminal cmd="wt config state vars set env=staging" /> }}
 
 Drop the regenerable caches:
-{{ terminal(cmd="wt config state cache clear") }}
+{{ <terminal cmd="wt config state cache clear" /> }}
 
 Show all stored state:
-{{ terminal(cmd="wt config state get") }}
+{{ <terminal cmd="wt config state get" /> }}
 
 Clear all stored state:
-{{ terminal(cmd="wt config state clear") }}
+{{ <terminal cmd="wt config state clear" /> }}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state - Manage internal data and cache
 
 Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
@@ -1013,7 +1047,7 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state cache
 
@@ -1036,14 +1070,14 @@ Without a subcommand, runs `get`.
 ### Examples
 
 Show cache contents:
-{{ terminal(cmd="wt config state cache") }}
+{{ <terminal cmd="wt config state cache" /> }}
 
 Drop all caches:
-{{ terminal(cmd="wt config state cache clear") }}
+{{ <terminal cmd="wt config state cache clear" /> }}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state cache - Regenerable caches
 
 Usage: <b><span class=c>wt config state cache</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
@@ -1077,7 +1111,7 @@ Usage: <b><span class=c>wt config state cache</span></b> <span class=c>[OPTIONS]
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state default-branch
 
@@ -1085,9 +1119,9 @@ Default branch detection and override.
 
 Useful in scripts to avoid hardcoding `main` or `master`:
 
-{{ terminal(cmd="git rebase $(wt config state default-branch)") }}
+{{ <terminal cmd="git rebase $(wt config state default-branch)" /> }}
 
-In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+{% raw %}In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.{% endraw %}
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
@@ -1116,7 +1150,7 @@ If none of these match, detection fails; set it explicitly with `wt config state
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state default-branch - Default branch detection and override
 
 Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
@@ -1147,7 +1181,7 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state logs
 
@@ -1207,23 +1241,23 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 ### Examples
 
 List all log files:
-{{ terminal(cmd="wt config state logs") }}
+{{ <terminal cmd="wt config state logs" /> }}
 
 Query the command log:
-{{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
+{{ <terminal cmd="tail -5 .git/wt/logs/commands.jsonl | jq ." /> }}
 
 Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
-{{ terminal(cmd="wt config state logs --format=json | jq -r '.hook_output[] | select(.source == __WT_QUOT__user__WT_QUOT__ and .hook_type == __WT_QUOT__post-start__WT_QUOT__ and (.name | startswith(__WT_QUOT__server__WT_QUOT__))) | .path'") }}
+{{ <terminal cmd="wt config state logs --format=json | jq -r '.hook_output[] | select(.source == __WT_QUOT__user__WT_QUOT__ and .hook_type == __WT_QUOT__post-start__WT_QUOT__ and (.name | startswith(__WT_QUOT__server__WT_QUOT__))) | .path'" /> }}
 
 Logs for a specific branch:
-{{ terminal(cmd="wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith(__WT_QUOT__feature__WT_QUOT__))'") }}
+{{ <terminal cmd="wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith(__WT_QUOT__feature__WT_QUOT__))'" /> }}
 
 Clear all logs:
-{{ terminal(cmd="wt config state logs clear") }}
+{{ <terminal cmd="wt config state logs clear" /> }}
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state logs - Operation and debug logs
 
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
@@ -1258,7 +1292,7 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state ci-status
 
@@ -1272,7 +1306,7 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state ci-status - CI status cache
 
 Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
@@ -1306,7 +1340,7 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state marker
 
@@ -1318,7 +1352,7 @@ Custom status text or emoji shown in the `wt list` Status column.
 
 Markers appear at the end of the Status column, after git symbols:
 
-{% terminal(cmd="wt list") %}
+{% <terminal cmd="wt list"> %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>   <b>Age</b>   <b>Message</b>
 @ main             <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      <span class=d>33323bc</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 + feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>        <span class=g>+1</span>                <span class=d>70343f0</span>  <span class=d>1d</span>    <span class=d>Add REST API endp…</span>
@@ -1326,7 +1360,7 @@ Markers appear at the end of the Status column, after git symbols:
 + wip-docs       <span class=c>?</span> <span class=d>–</span>                                             <span class=d>33323bc</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden</span>
-{% end %}
+{% </terminal> %}
 
 ### Use cases
 
@@ -1338,13 +1372,13 @@ Markers appear at the end of the Status column, after git symbols:
 
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
-{{ terminal(cmd="git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__🚧__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'") }}
+{{ <terminal cmd="git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__🚧__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'" /> }}
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`.
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state marker - Branch markers
 
 Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
@@ -1379,7 +1413,7 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 ## wt config state vars
 
@@ -1392,33 +1426,37 @@ Store custom variables per branch. Values are stored as-is — plain strings or 
 ### Examples
 
 Set and get values:
-{{ terminal(cmd="wt config state vars set env=staging|||wt config state vars get env") }}
+{{ <terminal cmd="wt config state vars set env=staging|||wt config state vars get env" /> }}
 
 Store JSON:
-{{ terminal(cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'") }}
+{{ <terminal cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'" /> }}
 
 List all keys:
-{{ terminal(cmd="wt config state vars list") }}
+{{ <terminal cmd="wt config state vars list" /> }}
 
 Operate on a different branch:
-{{ terminal(cmd="wt config state vars set env=production --branch=main") }}
+{{ <terminal cmd="wt config state vars set env=production --branch=main" /> }}
 
 ### Template access
 
-Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+{% raw %}Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:{% endraw %}
 
+{% raw %}
 ```toml
 [post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
 ```
+{% endraw %}
 
 JSON object and array values support dot access:
 
-{{ terminal(cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'") }}
+{{ <terminal cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'" /> }}
+{% raw %}
 ```toml
 [post-start]
 dev = "npm start -- --port {{ vars.config.port }}"
 ```
+{% endraw %}
 
 ### Storage format
 
@@ -1426,7 +1464,7 @@ Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt config state vars - [experimental] Custom variables per branch
 
 Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
@@ -1458,6 +1496,6 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

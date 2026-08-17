@@ -1,0 +1,116 @@
+{# Tera components. Zola 0.23 (Tera2) replaced both macros and shortcodes with
+   this one mechanism: a component is defined in any template file, is visible
+   everywhere without an import, and is callable from templates *and* from
+   markdown content. Components are hygienic — they see their parameters and
+   nothing else, so everything a component needs is an explicit argument. #}
+
+{# Sidebar navigation.
+
+   docs_section     — the section whose .pages become the nav entries
+   current_permalink — permalink of the page to mark active, or "" for none
+   current_toc      — that page's `toc`, expanded under the active entry
+
+   The active page arrives as its two fields rather than as the page itself: a
+   component parameter takes its type from its default, so one that has to
+   accept both a page and a "no active page" sentinel has no usable default. #}
+{% component toc_nav(docs_section, current_permalink="", current_toc=[]) %}
+<div class="toc">
+    <div class="toc-sticky">
+        {% set current_group = "" %}
+        {% for doc_page in docs_section.pages %}
+        {% if not doc_page.extra.hide_from_nav %}
+        {% set is_current = current_permalink and doc_page.permalink == current_permalink %}
+        {% set page_group = doc_page.extra.group | default(value="") %}
+
+        {# Show group label when group changes #}
+        {% if page_group != current_group and page_group != "" %}
+        <div class="toc-group-label">{{ page_group }}</div>
+        {% set_global current_group = page_group %}
+        {% endif %}
+
+        <div class="toc-item">
+            <a class="subtext {% if is_current %}active{% endif %}" href="{{ doc_page.permalink | safe }}">
+                {{ doc_page.title }}
+            </a>
+        </div>
+
+        {# Show page TOC for current page (h1s with nested h2s, or standalone h2s) #}
+        {% if is_current and current_toc %}
+        {% for h in current_toc %}
+        {% if h.level == 1 %}
+        <div class="toc-item-child toc-h1">
+            <a class="subtext" href="{{ h.permalink | safe }}">
+                <small>{{ h.title }}</small>
+            </a>
+        </div>
+        {# Show H2 children nested under this H1 #}
+        {% for child in h.children | default(value=[]) %}
+        {% if child.level == 2 %}
+        <div class="toc-item-child toc-h2-under-h1">
+            <a class="subtext" href="{{ child.permalink | safe }}">
+                <small>{{ child.title }}</small>
+            </a>
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% elif h.level == 2 %}
+        {# Standalone H2s (before any H1) #}
+        <div class="toc-item-child">
+            <a class="subtext" href="{{ h.permalink | safe }}">
+                <small>{{ h.title }}</small>
+            </a>
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endcomponent toc_nav %}
+
+{# A terminal transcript. Invoked from markdown content by `src/docs.rs`, which
+   converts `$ `-prefixed ```console blocks into these calls.
+
+   cmd  — `|||`-delimited command lines, Syntect-highlighted and prefixed with a
+          prompt. `"`, `\`, `{{` and `}}` arrive as `__WT_QUOT__` /
+          `__WT_BSLASH__` / `__WT_OPEN__` / `__WT_CLOSE__` placeholders: the
+          first would close the argument, the second is Tera2's string-escape
+          character, and the last two would be read as template syntax.
+   body — the commands' output, when the block has any. Absent on the
+          self-closing form, which is how the commands-only styling is chosen. #}
+{% component terminal(cmd="") %}
+{%- if cmd -%}
+{%- set fence = "```" -%}
+{%- set cmd_lines = cmd | split(pat="|||") -%}
+{%- if body is defined -%}
+{%- set clean_body = body | trim | regex_replace(pattern='<span class="cmd">[^<]*</span>\n?', rep="") -%}
+{%- set extra_class = "" -%}
+{%- else -%}
+{%- set clean_body = "" -%}
+{%- set extra_class = " terminal--commands" -%}
+{%- endif -%}
+<pre class="terminal{{ extra_class }}"><code>
+{%- for cmd_line in cmd_lines -%}
+{%- set cmd_line = cmd_line | replace(from="__WT_OPEN__", to="{{") | replace(from="__WT_CLOSE__", to="}}") | replace(from="__WT_QUOT__", to='"') | replace(from="__WT_BSLASH__", to="\\") -%}
+{%- if cmd_line | trim == "" -%}
+{{ "
+" }}
+{%- else -%}
+{%- set md = fence ~ "bash
+" ~ cmd_line ~ "
+" ~ fence -%}
+{%- set raw = md | markdown -%}
+{%- set hl = raw | regex_replace(pattern="(?s)<pre[^>]*><code[^>]*>(.*)</code>\\s*</pre>", rep="$1") | trim -%}
+{%- if cmd_line is starting_with(pat="#") -%}
+{{ hl | safe }}
+{% else -%}
+<span class="cmd">{{ hl | safe }}</span>
+{% endif -%}
+{%- endif -%}
+{%- endfor -%}
+{{ clean_body | safe }}</code></pre>
+{%- else -%}
+<pre class="terminal"><code>{{ body | trim | safe }}</code></pre>
+{%- endif -%}
+{% endcomponent terminal %}

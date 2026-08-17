@@ -61,7 +61,7 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap — edit source to update -->
 
-{% terminal(cmd="wt merge") %}
+{% <terminal cmd="wt merge"> %}
 <span class="cmd">wt merge</span>
 <span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
 <span class=c>◎</span> <span class=c>Generating squash commit message...</span>
@@ -81,7 +81,7 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
@@ -91,12 +91,12 @@ Stages and commits with LLM-generated message:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_step_commit_llm.snap — edit source to update -->
 
-{% terminal(cmd="wt step commit") %}
+{% <terminal cmd="wt step commit"> %}
 <span class="cmd">wt step commit</span>
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
 <span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
@@ -106,7 +106,7 @@ Squashes branch commits into one with LLM-generated message:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_step_squash_llm.snap — edit source to update -->
 
-{% terminal(cmd="wt step squash") %}
+{% <terminal cmd="wt step squash"> %}
 <span class="cmd">wt step squash</span>
 <span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
 <span class=c>◎</span> <span class=c>Generating squash commit message...</span>
@@ -115,7 +115,7 @@ Squashes branch commits into one with LLM-generated message:
 <span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
 <span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
 <span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
@@ -149,6 +149,7 @@ Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like sy
 
 Override the defaults with inline templates:
 
+{% raw %}
 ```toml
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
@@ -171,31 +172,32 @@ Diff:
 {{ git_diff }}
 """
 ```
+{% endraw %}
 
 ### Template variables
 
 | Variable | Description |
 |----------|-------------|
-| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
-| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |
-| `{{ branch }}` | Current branch name |
-| `{{ repo }}` | Repository name |
-| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
-| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |
-| `{{ target_branch }}` | Merge target branch (squash template only) |
-| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
-| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
+{% raw %}| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |{% endraw %}
+{% raw %}| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |{% endraw %}
+{% raw %}| `{{ branch }}` | Current branch name |{% endraw %}
+{% raw %}| `{{ repo }}` | Repository name |{% endraw %}
+{% raw %}| `{{ recent_commits }}` | Recent commit subjects (for style reference) |{% endraw %}
+{% raw %}| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |{% endraw %}
+{% raw %}| `{{ target_branch }}` | Merge target branch (squash template only) |{% endraw %}
+{% raw %}| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |{% endraw %}
+{% raw %}| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |{% endraw %}
 
 ### Template syntax
 
 Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
 
-- **Variables**: `{{ branch }}`, `{{ repo | upper }}`
-- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`
-- **Conditionals**: `{% if recent_commits %}...{% endif %}`
-- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`
-- **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`
-- **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
+{% raw %}- **Variables**: `{{ branch }}`, `{{ repo | upper }}`{% endraw %}
+{% raw %}- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`{% endraw %}
+{% raw %}- **Conditionals**: `{% if recent_commits %}...{% endif %}`{% endraw %}
+{% raw %}- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`{% endraw %}
+{% raw %}- **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`{% endraw %}
+{% raw %}- **Whitespace control**: `{%- ... -%}` strips surrounding whitespace{% endraw %}
 
 See `wt config create --help` for the full default templates.
 
@@ -203,7 +205,7 @@ See `wt config create --help` for the full default templates.
 
 <span class="badge-experimental"></span>
 
-`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:
+{% raw %}`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:{% endraw %}
 
 ```toml
 # .config/wt.toml
@@ -218,7 +220,7 @@ When both the user and project set `template-append`, the `<user-guidance>` bloc
 
 The user fragment needs no approval — it's the developer's own config. For the project fragment, the first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs with just the user fragment (if any).
 
-Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.
+{% raw %}Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.{% endraw %}
 
 ## Fallback behavior
 

@@ -17,7 +17,7 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
-{% terminal() %}
+{% <terminal> %}
 # Plain git worktree workflow
 <span class="cmd">git worktree add -b feature-branch ../myapp-feature main</span>
 <span class="cmd">cd ../myapp-feature</span>
@@ -26,15 +26,15 @@ Git's built-in worktree commands work but require manual lifecycle management:
 <span class="cmd">git merge feature-branch</span>
 <span class="cmd">git worktree remove ../myapp-feature</span>
 <span class="cmd">git branch -d feature-branch</span>
-{% end %}
+{% </terminal> %}
 
 Worktrunk automates the full lifecycle:
 
-{% terminal() %}
+{% <terminal> %}
 <span class="cmd">wt switch --create feature-branch  # Creates worktree, runs setup hooks</span>
 # ...work...
 <span class="cmd">wt merge                            # Merges into default branch, cleans up</span>
-{% end %}
+{% </terminal> %}
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
 
@@ -66,11 +66,11 @@ Not natively — stacked-branch workflows are a large design space, so Worktrunk
 
 Stash the changes, create the worktree, then pop:
 
-{% terminal() %}
+{% <terminal> %}
 <span class="cmd">git stash push -u           # -u also stashes untracked files</span>
 <span class="cmd">wt switch --create feature  # new branch off the default branch</span>
 <span class="cmd">git stash pop               # changes reappear in the new worktree</span>
-{% end %}
+{% </terminal> %}
 
 The stash lives in the shared `.git` directory, so it's reachable from the new worktree. The original branch is left clean.
 
@@ -183,7 +183,7 @@ Removal also refuses, `--force` included, when the directory at a registered pat
 
 To protect a worktree from removal entirely (say it holds a local database), lock it:
 
-{{ terminal(cmd="git worktree lock ../myproject.feature --reason __WT_QUOT__Contains local database__WT_QUOT__") }}
+{{ <terminal cmd="git worktree lock ../myproject.feature --reason __WT_QUOT__Contains local database__WT_QUOT__" /> }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
@@ -220,7 +220,7 @@ User hooks and user aliases don't require approval (you defined them). Commands 
 
 ### Example approval prompt
 
-{% terminal() %}
+{% <terminal> %}
 <span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
 
 <span class="d">○</span> pre-start <b>install</b>:
@@ -228,10 +228,10 @@ User hooks and user aliases don't require approval (you defined them). Commands 
 <span class="d">○</span> pre-start <b>build</b>:
 <span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
 <span class="d">○</span> pre-start <b>env</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
+{% raw %}<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>{% endraw %}
 
 <span class="c">❯</span> Allow and remember? <b>[y/N]</b>
-{% end %}
+{% </terminal> %}
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -241,13 +241,13 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
-{% terminal() %}
+{% <terminal> %}
 # Recent commands
 <span class="cmd">tail -5 .git/wt/logs/commands.jsonl | jq .</span>
 
 # Failed commands
 <span class="cmd">jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl</span>
-{% end %}
+{% </terminal> %}
 
 Clear with `wt config state logs clear`.
 
@@ -269,17 +269,17 @@ For full details on the detection mechanism, see `wt config state default-branch
 
 ## My `for-each` or `--execute` alias prints the same value in every worktree
 
-An alias body renders once at dispatch, in the invoking worktree's context, so a per-worktree variable like `{{ branch }}` is baked to that one worktree's value before the nested `wt` command iterates. Every worktree then sees the same value.
+{% raw %}An alias body renders once at dispatch, in the invoking worktree's context, so a per-worktree variable like `{{ branch }}` is baked to that one worktree's value before the nested `wt` command iterates. Every worktree then sees the same value.{% endraw %}
 
 Confirm it with `wt config alias dry-run <name>`: if the value is already substituted (e.g. `… echo branch=main`), it was baked at dispatch.
 
-To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.
+{% raw %}To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}{{ "{% endraw %}" }}{% raw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.{% endraw %}
 
 ## Installation fails with C compilation errors
 
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
 
-{{ terminal(cmd="cargo install worktrunk --no-default-features --features cli") }}
+{{ <terminal cmd="cargo install worktrunk --no-default-features --features cli" /> }}
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
@@ -287,13 +287,13 @@ This disables bash syntax highlighting in command output but keeps all core func
 
 ### Quick tests
 
-{{ terminal(cmd="cargo test") }}
+{{ <terminal cmd="cargo test" /> }}
 
 ### Full integration tests
 
 Shell integration tests require bash, zsh, fish, nushell, and pwsh, plus `jq`:
 
-{{ terminal(cmd="cargo test --test integration --features shell-integration-tests") }}
+{{ <terminal cmd="cargo test --test integration --features shell-integration-tests" /> }}
 
 ## How can I contribute?
 

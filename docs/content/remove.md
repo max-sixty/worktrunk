@@ -15,25 +15,25 @@ Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 Remove current worktree:
 
-{% terminal(cmd="wt remove") %}
+{% <terminal cmd="wt remove"> %}
 <span class=c>◎</span> <span class=c>Running pre-remove <b>project:cleanup</b></span>
 <span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>flyctl</span></span><span class=d> scale count 0</span>
 Scaling app to 0 machines
 <span class=c>◎</span> <span class=c>Removing <b>api</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
-{% end %}
+{% </terminal> %}
 
 Remove specific worktrees / branches:
 
-{{ terminal(cmd="wt remove feature-branch|||wt remove old-feature another-branch") }}
+{{ <terminal cmd="wt remove feature-branch|||wt remove old-feature another-branch" /> }}
 
 Keep the branch:
 
-{{ terminal(cmd="wt remove --no-delete-branch feature-branch") }}
+{{ <terminal cmd="wt remove --no-delete-branch feature-branch" /> }}
 
 Force-delete an unmerged branch:
 
-{{ terminal(cmd="wt remove -D experimental") }}
+{{ <terminal cmd="wt remove -D experimental" /> }}
 
 ## Branch cleanup
 
@@ -65,7 +65,7 @@ Worktrunk has two force flags for different situations:
 | `--force` (`-f`) | Worktree | Worktree has uncommitted changes |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
-{{ terminal(cmd="wt remove feature --force       # Remove dirty worktree|||wt remove feature -D            # Delete unmerged branch|||wt remove feature --force -D    # Both") }}
+{{ <terminal cmd="wt remove feature --force       # Remove dirty worktree|||wt remove feature -D            # Delete unmerged branch|||wt remove feature --force -D    # Both" /> }}
 
 Use `--no-delete-branch` to keep the branch regardless of merge status.
 
@@ -81,13 +81,13 @@ After each `wt remove`, entries in `.git/wt/trash/` older than 24 hours are swep
 
 `--reap` terminates processes left running in the worktree before it is removed — a `post-start` dev server, a file watcher, a language server — freeing the ports and file handles they hold. Processes are discovered by working directory: any process whose current directory is at or under the worktree path (`SIGTERM`, then `SIGKILL` for survivors).
 
-{% terminal(cmd="wt remove --reap feature") %}
+{% <terminal cmd="wt remove --reap feature"> %}
 ◎ Reaping 2 processes under feature worktree
    ┃ 51234 node
    ┃ 51240 esbuild
 ✓ Reaped 2 processes
 ◎ Removing feature worktree & branch in background (same commit as main, _)
-{% end %}
+{% </terminal> %}
 
 To avoid killing work the user did not mean to kill, two guards keep `--reap` conservative:
 
@@ -127,7 +127,7 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt remove - Remove worktree; delete branch if merged
 
 Defaults to the current worktree.
@@ -193,6 +193,6 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

@@ -446,16 +446,24 @@ main {
 // ============================================================================
 
 // Override syntect's background to use our theme colors
-.z-code {
+.z-l-code,
+.z-d-code {
     background-color: transparent;
 }
 
 // Quoted strings get olive color via CSS sibling selector (light mode only).
-// Giallo emits: <span class="z-punctuation z-definition z-string">'</span><span class="z-string">content</span>
-// Bare strings (subcommands like `switch`) are just <span class="z-string"> without a preceding quote span.
-// Must match punctuation.definition.string in worktrunk-light.json (#588a10).
+// Giallo emits: <span class="z-l-2">'</span><span class="z-l-5">content</span>
+// Bare strings (subcommands like `switch`) are just <span class="z-l-5"> without a preceding quote span.
+//
+// Zola 0.23 stopped emitting scope names as classes: a span now carries an
+// index into the theme's palette (`z-l-<n>` light, `z-d-<n>` dark), so the two
+// scopes are addressed by the colors they resolve to rather than by name.
+// For worktrunk-light.json that is `.z-l-2` = #588a10 (punctuation.definition.string)
+// and `.z-l-5` = #947a00 (string). Re-read the mapping off the built
+// `giallo-light.css` if the theme's palette ever changes — the indices are
+// assigned per theme, so adding a color renumbers them.
 @media (prefers-color-scheme: light) {
-    .z-punctuation.z-definition.z-string + .z-string {
+    .z-l-2 + .z-l-5 {
         color: #588a10;
     }
 }

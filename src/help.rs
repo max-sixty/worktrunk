@@ -18,7 +18,7 @@
 //! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
 //!         │
 //!         ▼
-//! convert_dollar_console_to_terminal() — ```console with $ → {% terminal() %} shortcode
+//! convert_dollar_console_to_terminal() — ```console with $ → `terminal` component call
 //! console→bash replacement             — remaining ```console → ```bash
 //!         │
 //!         ▼
@@ -42,7 +42,7 @@
 //! They use `<span class="badge-experimental"></span>` directly for badges.
 //!
 //! **Skill reference files** mirror docs/ content via `transform_docs_for_skill()`,
-//! which strips Zola syntax (terminal shortcodes, badge `<span>` → `[experimental]`)
+//! which strips Zola syntax (terminal component calls, badge `<span>` → `[experimental]`)
 //! for plain-markdown consumption.
 
 use std::ffi::OsString;
@@ -58,7 +58,7 @@ use worktrunk::styling::{ColorChoice, eprintln, print, println};
 
 use crate::cli;
 
-/// Output format for a `--help-page`. Web pages keep Zola shortcodes, HTML
+/// Output format for a `--help-page`. Web pages keep Zola component calls, HTML
 /// spans, and demo GIF figures for the docs site; plain pages strip those for
 /// skill reference files that need portable markdown.
 #[derive(Clone, Copy)]
@@ -83,8 +83,8 @@ impl PageMode {
     }
 
     /// Transform freshly-combined raw help into mode-appropriate markdown. Web
-    /// rewrites `$`-prefixed console blocks into `{% terminal() %}`
-    /// shortcodes; both modes relabel plain ``` ```console ``` fences as
+    /// rewrites `$`-prefixed console blocks into `{% <terminal> %}` component
+    /// calls; both modes relabel plain ``` ```console ``` fences as
     /// ``` ```bash ``` for syntax highlighting.
     fn transform_raw(self, text: String) -> String {
         let text = match self {
@@ -578,7 +578,7 @@ fn post_process_for_html(text: &str) -> String {
             "Open an issue at https://github.com/max-sixty/worktrunk.",
             "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
         )
-        // Approval prompt: plain code block → terminal shortcode with colored symbols
+        // Approval prompt: plain code block → `terminal` component with colored symbols
         // and gutter. CLI shows a plain ``` block; web shows styled terminal output
         // matching the actual CLI appearance (yellow ▲, dim ○, cyan ❯, gutter bar).
         .replace(
@@ -594,7 +594,7 @@ fn post_process_for_html(text: &str) -> String {
              \n\
              ❯ Allow and remember? [y/N]\n\
              ```",
-            "{% terminal() %}\n\
+            "{% <terminal> %}\n\
              <span class=\"y\">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>\n\
              \n\
              <span class=\"d\">○</span> pre-start <b>install</b>:\n\
@@ -605,7 +605,7 @@ fn post_process_for_html(text: &str) -> String {
              <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">echo</span> <span class=\"g\">'PORT={{ branch | hash_port }}'</span> <span class=\"c\">></span> .env.local</span>\n\
              \n\
              <span class=\"c\">❯</span> Allow and remember? <b>[y/N]</b>\n\
-             {% end %}",
+             {% </terminal> %}",
         )
 }
 

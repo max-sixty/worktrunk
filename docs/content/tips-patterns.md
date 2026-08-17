@@ -13,12 +13,13 @@ Practical recipes for common Worktrunk workflows.
 
 Create a worktree and launch Claude in one command:
 
-{{ terminal(cmd="alias wsc='wt switch --create --execute=claude'|||wsc new-feature                       # Creates worktree, runs hooks, launches Claude|||wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`") }}
+{{ <terminal cmd="alias wsc='wt switch --create --execute=claude'|||wsc new-feature                       # Creates worktree, runs hooks, launches Claude|||wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`" /> }}
 
 ## `wt` aliases
 
 Compose with template filters and [vars](@/tips-patterns.md#per-branch-variables):
 
+{% raw %}
 ```toml
 # .config/wt.toml
 [aliases]
@@ -31,15 +32,16 @@ test = "cargo test --features {{ vars.features | default('default') }}"
 # Switch via the interactive picker, print the chosen branch
 pick = "wt switch --format=json | jq -r '.branch'"
 ```
+{% endraw %}
 
 See [Aliases](@/extending.md#aliases) for scoping, approval, and reference.
 
 ## Per-branch variables
 
-`wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:
+{% raw %}`wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:{% endraw %}
 
 - **Coordinate state across pipeline steps** — see [Database per worktree](@/tips-patterns.md#database-per-worktree) below for a full recipe
-- **Stick a branch to an environment** — `wt config state vars set env=staging`, then `{{ vars.env | default('dev') }}` in hooks
+{% raw %}- **Stick a branch to an environment** — `wt config state vars set env=staging`, then `{{ vars.env | default('dev') }}` in hooks{% endraw %}
 - **Parametrize aliases per branch** — see [`wt` aliases above](@/tips-patterns.md#wt-aliases)
 
 See [`wt config state vars`](@/config.md#wt-config-state-vars) for storage format, JSON support, and reference.
@@ -48,6 +50,7 @@ See [`wt config state vars`](@/config.md#wt-config-state-vars) for storage forma
 
 Each worktree runs its own dev server on a deterministic port. The `hash_port` filter generates a stable port (10000-19999) from the branch name:
 
+{% raw %}
 ```toml
 # .config/wt.toml
 [post-start]
@@ -56,6 +59,7 @@ server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 ```
+{% endraw %}
 
 [`wt step tether`](@/step.md#wt-step-tether) runs the server in its own process group and tears the whole group down when the worktree is removed, so no `pre-remove` hook is needed. See the [`wt step tether`](@/step.md#wt-step-tether) docs for the full rationale and platform behavior.
 
@@ -63,7 +67,7 @@ The URL column in `wt list` shows each worktree's dev server:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap — edit source to update -->
 
-{% terminal(cmd="wt list") %}
+{% <terminal cmd="wt list"> %}
 <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>
 @ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee083</span>
@@ -72,7 +76,7 @@ The URL column in `wt list` shows each worktree's dev server:
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee083</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden</span>
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->
 
@@ -82,6 +86,7 @@ The URL column in `wt list` shows each worktree's dev server:
 
 Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](@/config.md#wt-config-state-vars), then later steps and hooks reference them:
 
+{% raw %}
 ```toml
 [[post-start]]
 set-vars = """
@@ -104,14 +109,15 @@ docker run -d --rm \
 [pre-remove]
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
+{% endraw %}
 
-The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — templates render when each step runs, so the vars are already set. `pre-remove` reads the same vars to stop the container.
+{% raw %}The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — templates render when each step runs, so the vars are already set. `pre-remove` reads the same vars to stop the container.{% endraw %}
 
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix).
 
 The connection string is accessible anywhere — not just in hooks:
 
-{{ terminal(cmd="DATABASE_URL=$(wt config state vars get db_url) npm start") }}
+{{ <terminal cmd="DATABASE_URL=$(wt config state vars get db_url) npm start" /> }}
 
 ## Per-worktree env vars
 
@@ -127,12 +133,14 @@ Run `direnv allow` once per worktree to trust the file ([getting started](https:
 
 **mise** — commit `mise.toml` at the repo root:
 
+{% raw %}
 ```toml
 [env]
 MY_PACKAGES_PATH = "{{ config_root }}/.packages"
 ```
+{% endraw %}
 
-`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.
+{% raw %}`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.{% endraw %}
 
 Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells — without the `--execute` workaround. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`); worktrunk deliberately doesn't bypass that prompt, the same safety reasoning behind [disabling `--execute` in project alias and hook bodies](https://github.com/max-sixty/worktrunk/issues/2101).
 
@@ -195,13 +203,13 @@ Custom emoji markers show agent state in `wt list`. The [Claude Code](@/claude-c
 
 Set status manually for any workflow:
 
-{{ terminal(cmd="wt config state marker set __WT_QUOT__🚧__WT_QUOT__                   # Current branch|||wt config state marker set __WT_QUOT__✅__WT_QUOT__ --branch feature  # Specific branch|||git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__💬__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'  # Direct") }}
+{{ <terminal cmd="wt config state marker set __WT_QUOT__🚧__WT_QUOT__                   # Current branch|||wt config state marker set __WT_QUOT__✅__WT_QUOT__ --branch feature  # Specific branch|||git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__💬__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'  # Direct" /> }}
 
 See [Claude Code Integration](@/claude-code.md#installation) for plugin installation.
 
 ## Monitor CI across branches
 
-{{ terminal(cmd="wt list --full --branches") }}
+{{ <terminal cmd="wt list --full --branches" /> }}
 
 Shows PR/CI status for all branches, including those without worktrees. CI indicators are clickable links to the PR page.
 
@@ -219,7 +227,7 @@ See [LLM Commits](@/llm-commits.md#branch-summaries) for details.
 
 ## JSON API
 
-{{ terminal(cmd="wt list --format=json") }}
+{{ <terminal cmd="wt list --format=json" /> }}
 
 Structured output for dashboards, statuslines, and scripts. See [`wt list`](@/list.md) for query examples.
 
@@ -227,9 +235,9 @@ Structured output for dashboards, statuslines, and scripts. See [`wt list`](@/li
 
 Default branch [detection](@/config.md#wt-config-state-default-branch) means scripts work on any repo — no need to hardcode `main` or `master`:
 
-{{ terminal(cmd="git rebase $(wt config state default-branch)") }}
+{{ <terminal cmd="git rebase $(wt config state default-branch)" /> }}
 
-In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.
+{% raw %}In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.{% endraw %}
 
 ## Task runners in hooks
 
@@ -261,8 +269,9 @@ build = "npm run build"
 
 ## Target-specific hooks
 
-Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:
+{% raw %}Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:{% endraw %}
 
+{% raw %}
 ```toml
 post-merge = """
 if [ {{ target }} = main ]; then
@@ -272,30 +281,31 @@ elif [ {{ target }} = staging ]; then
 fi
 """
 ```
+{% endraw %}
 
-`{{ target }}` is the branch being merged into. `post-merge` runs in the target's worktree (or the primary worktree if target has none), so deploy commands see the merged code.
+{% raw %}`{{ target }}` is the branch being merged into. `post-merge` runs in the target's worktree (or the primary worktree if target has none), so deploy commands see the merged code.{% endraw %}
 
 ## Shortcuts
 
 Special arguments work across all commands—see [`wt switch`](@/switch.md#shortcuts) for the full list.
 
-{{ terminal(cmd="wt switch --create hotfix --base=@       # Branch from current HEAD|||wt switch -                              # Switch to previous worktree|||wt remove @                              # Remove current worktree") }}
+{{ <terminal cmd="wt switch --create hotfix --base=@       # Branch from current HEAD|||wt switch -                              # Switch to previous worktree|||wt remove @                              # Remove current worktree" /> }}
 
 ## Stacked branches
 
 Branch from current HEAD instead of the default branch:
 
-{{ terminal(cmd="wt switch --create feature-part2 --base=@") }}
+{{ <terminal cmd="wt switch --create feature-part2 --base=@" /> }}
 
 ## Agent handoffs
 
 Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
 
 **tmux** (new detached session):
-{{ terminal(cmd="tmux new-session -d -s fix-auth-bug __WT_QUOT__wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'__WT_QUOT__") }}
+{{ <terminal cmd="tmux new-session -d -s fix-auth-bug __WT_QUOT__wt switch --create fix-auth-bug -x claude -- __WT_BSLASH__|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'__WT_QUOT__" /> }}
 
 **Zellij** (new pane in current session):
-{{ terminal(cmd="zellij run -- wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'") }}
+{{ <terminal cmd="zellij run -- wt switch --create fix-auth-bug -x claude -- __WT_BSLASH__|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'" /> }}
 
 This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
 
@@ -310,6 +320,7 @@ from the worktrunk skill.
 
 Each worktree gets its own tmux session with a multi-pane layout.
 
+{% raw %}
 ```toml
 # .config/wt.toml
 [pre-start]
@@ -335,12 +346,13 @@ echo "✓ Session '$S' — attach with: tmux attach -t $S"
 [pre-remove]
 tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 ```
+{% endraw %}
 
 To create a worktree and immediately attach:
 
-{% terminal() %}
-<span class="cmd">wt switch --create feature -x tmux -- attach -t '{{ branch | sanitize }}'</span>
-{% end %}
+{% <terminal> %}
+{% raw %}<span class="cmd">wt switch --create feature -x tmux -- attach -t '{{ branch | sanitize }}'</span>{% endraw %}
+{% </terminal> %}
 
 ## cmux workspace per worktree
 
@@ -348,6 +360,7 @@ Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktre
 
 **Prerequisites:** [jq](https://jqlang.org) (`brew install jq`)
 
+{% raw %}
 ```toml
 # ~/.config/worktrunk/config.toml
 
@@ -374,6 +387,7 @@ WS=$(cmux --json list-workspaces 2>/dev/null \\
 [ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
 """
 ```
+{% endraw %}
 
 **Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
 
@@ -381,6 +395,7 @@ WS=$(cmux --json list-workspaces 2>/dev/null \\
 
 Clean up Xcode's DerivedData when removing a worktree. Each DerivedData directory contains an `info.plist` recording its project path — grep for the worktree path to find and remove the matching build cache:
 
+{% raw %}
 ```toml
 # ~/.config/worktrunk/config.toml
 [post-remove]
@@ -394,6 +409,7 @@ clean-derived = """
     done
 """
 ```
+{% endraw %}
 
 ## Subdomain routing with Caddy
 <!-- Hand-tested 2026-03-07 -->
@@ -402,6 +418,7 @@ Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. 
 
 **Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
 
+{% raw %}
 ```toml
 # .config/wt.toml
 [post-start]
@@ -422,10 +439,11 @@ proxy = "curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | s
 [list]
 url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 ```
+{% endraw %}
 
 **How it works:**
 
-1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
+{% raw %}1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460){% endraw %}
 2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
 3. `*.localhost` resolves to `127.0.0.1` via the OS
 4. Visiting `http://feature-auth.myproject.localhost:8080`: Caddy matches the subdomain and proxies to the dev server
@@ -434,13 +452,13 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 
 Follow background hook output:
 
-{{ terminal(cmd="tail -f __WT_QUOT__$(wt config state logs get --hook=user:post-start:server)__WT_QUOT__") }}
+{{ <terminal cmd="tail -f __WT_QUOT__$(wt config state logs get --hook=user:post-start:server)__WT_QUOT__" /> }}
 
 The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
 
 Create an alias for frequent use:
 
-{{ terminal(cmd="alias wtlog='f() { tail -f __WT_QUOT__$(wt config state logs get --hook=__WT_QUOT__$1__WT_QUOT__)__WT_QUOT__; }; f'") }}
+{{ <terminal cmd="alias wtlog='f() { tail -f __WT_QUOT__$(wt config state logs get --hook=__WT_QUOT__$1__WT_QUOT__)__WT_QUOT__; }; f'" /> }}
 
 ## Bare repository layout
 
@@ -448,9 +466,9 @@ A [bare repository](https://git-scm.com/docs/gitrepository-layout) has no workin
 
 Cloning a bare repo into `<project>/.git` puts all worktrees under one directory:
 
-{{ terminal(cmd="git clone --bare <url> myproject/.git|||cd myproject") }}
+{{ <terminal cmd="git clone --bare <url> myproject/.git|||cd myproject" /> }}
 
-With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
+{% raw %}With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:{% endraw %}
 
 ```
 myproject/
@@ -471,17 +489,19 @@ On first `wt switch` in a bare repo at a hidden path (`.git`, `.bare`), worktrun
 
 Accepting writes a project-scoped entry to user config:
 
+{% raw %}
 ```toml
 # ~/.config/worktrunk/config.toml
 [projects."github.com/myorg/myrepo"]
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 Run `wt config show` from inside any worktree to find the project identifier (`Identifier: …` in the PROJECT CONFIG section). Set it globally with `worktree-path = "..."` at the top level if this layout is preferred for all bare repos.
 
 ### Create the first worktree
 
-{{ terminal(cmd="wt switch main") }}
+{{ <terminal cmd="wt switch main" /> }}
 
 For a freshly cloned bare repo the default branch already exists, so `wt switch main` (without `--create`) is enough. Use `wt switch --create <branch>` for new branches.
 
@@ -491,6 +511,6 @@ Now `wt switch --create feature` creates `myproject/feature/`.
 
 The project config (`.config/wt.toml`) must live inside a worktree — the bare `.git` directory has no tracked files. Once the first worktree exists, create it from there:
 
-{{ terminal(cmd="cd myproject/main|||wt config create --project") }}
+{{ <terminal cmd="cd myproject/main|||wt config create --project" /> }}
 
 Commit the file and it will appear in every worktree automatically.

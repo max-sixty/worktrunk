@@ -30,7 +30,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 List all worktrees:
 
-{% terminal(cmd="wt list") %}
+{% <terminal cmd="wt list"> %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Commit</b>   <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>6814f02</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee083</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: h…</span>
@@ -38,11 +38,11 @@ List all worktrees:
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>41ee083</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: h…</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
-{% end %}
+{% </terminal> %}
 
 Include CI status and LLM summaries:
 
-{% terminal(cmd="wt list --full") %}
+{% <terminal cmd="wt list --full"> %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                 <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware        <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                            <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee083</span>
@@ -50,11 +50,11 @@ Include CI status and LLM summaries:
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                              <span class=d>|</span>     <span class=g>#410</span>  <span class=d>41ee083</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden</span>
-{% end %}
+{% </terminal> %}
 
 Include branches that don't have worktrees:
 
-{% terminal(cmd="wt list --branches --full") %}
+{% <terminal cmd="wt list --branches --full"> %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                                 <b>Remote⇅</b>  <b>CI</b>    <b>Commit</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware        <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>#412</span></span>  <span class=d>6814f02</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                            <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>#</span>     <span class=d>41ee083</span>
@@ -64,11 +64,11 @@ Include branches that don't have worktrees:
 <span class=d>/ </span>wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>       Start API documentation                                                <span class=d>b40716d</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden</span>
-{% end %}
+{% </terminal> %}
 
 Output as JSON for scripting:
 
-{{ terminal(cmd="wt list --format=json") }}
+{{ <terminal cmd="wt list --format=json" /> }}
 
 ## Columns
 
@@ -137,12 +137,14 @@ Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM th
 
 <span class="badge-experimental"></span>
 
-Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](@/config.md#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
+{% raw %}Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](@/config.md#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:{% endraw %}
 
+{% raw %}
 ```toml
 [list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 ```
+{% endraw %}
 
 A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: [custom columns config](@/config.md#custom-columns).
 
@@ -292,7 +294,7 @@ Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `url_active` → `dev_server`, `statusline`/`symbols`/`columns` → `display.*`,
 and the per-item `repo` moves to the envelope's `repo.forge`.
 
-{{ terminal(cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.items[] | select(.display.state == __WT_QUOT__integrated__WT_QUOT__ or .display.state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Worktrees ahead of upstream (needs pushing)|||wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'") }}
+{{ <terminal cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.items[] | select(.display.state == __WT_QUOT__integrated__WT_QUOT__ or .display.state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Worktrees ahead of upstream (needs pushing)|||wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | .branch'" /> }}
 
 A JSON Schema for the envelope is published at
 [worktrunk.dev/schema/list-v2.json](https://worktrunk.dev/schema/list-v2.json).
@@ -303,7 +305,7 @@ optional there rather than required-and-null.
 
 The original bare-array format, and the default while unset:
 
-{{ terminal(cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.[] | select(.is_current) | .path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.[] | select(.working_tree.modified)'||||||# Worktrees with merge conflicts|||wt list --format=json | jq '.[] | select(.operation_state == __WT_QUOT__conflicts__WT_QUOT__)'||||||# Branches ahead of main (needs merging)|||wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.[] | select(.main_state == __WT_QUOT__integrated__WT_QUOT__ or .main_state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Branches without worktrees|||wt list --format=json --branches | jq '.[] | select(.kind == __WT_QUOT__branch__WT_QUOT__) | .branch'||||||# Worktrees ahead of remote (needs pushing)|||wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'||||||# Stale CI (local changes not reflected in CI)|||wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'") }}
+{{ <terminal cmd="# Current worktree path (for scripts)|||wt list --format=json | jq -r '.[] | select(.is_current) | .path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.[] | select(.working_tree.modified)'||||||# Worktrees with merge conflicts|||wt list --format=json | jq '.[] | select(.operation_state == __WT_QUOT__conflicts__WT_QUOT__)'||||||# Branches ahead of main (needs merging)|||wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.[] | select(.main_state == __WT_QUOT__integrated__WT_QUOT__ or .main_state == __WT_QUOT__empty__WT_QUOT__) | .branch'||||||# Branches without worktrees|||wt list --format=json --branches | jq '.[] | select(.kind == __WT_QUOT__branch__WT_QUOT__) | .branch'||||||# Worktrees ahead of remote (needs pushing)|||wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'||||||# Stale CI (local changes not reflected in CI)|||wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'" /> }}
 
 **Fields:**
 
@@ -440,7 +442,7 @@ Missing a field that would be generally useful? [Open an issue](https://github.c
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt list - List worktrees and their status
 
 Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
@@ -492,7 +494,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 # Subcommands
 
@@ -528,7 +530,7 @@ The pace segment appears only when usage is likely to hit a rate limit before it
 
 ### Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt list statusline - Single-line status for the current worktree
 
 Usage: <b><span class=c>wt list statusline</span></b> <span class=c>[OPTIONS]</span>
@@ -564,6 +566,6 @@ Usage: <b><span class=c>wt list statusline</span></b> <span class=c>[OPTIONS]</s
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

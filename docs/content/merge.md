@@ -24,7 +24,7 @@ Unlike `git merge`, this merges the current branch into the target branch — no
 
 Merge to the default branch:
 
-{% terminal(cmd="wt merge") %}
+{% <terminal cmd="wt merge"> %}
 <span class=c>◎</span> <span class=c>Running pre-merge <b>project:test</b></span>
 <span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> nextest run</span>
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
@@ -36,31 +36,31 @@ Merge to the default branch:
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 1 file, <span class=g>+31</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>hooks</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
-{% end %}
+{% </terminal> %}
 
 Merge to a different branch:
 
-{{ terminal(cmd="wt merge develop") }}
+{{ <terminal cmd="wt merge develop" /> }}
 
 Keep the worktree after merging:
 
-{{ terminal(cmd="wt merge --no-remove") }}
+{{ <terminal cmd="wt merge --no-remove" /> }}
 
 Preserve commit history (no squash):
 
-{{ terminal(cmd="wt merge --no-squash") }}
+{{ <terminal cmd="wt merge --no-squash" /> }}
 
 Create a merge commit — rebased semi-linear history by default:
 
-{{ terminal(cmd="wt merge --no-ff") }}
+{{ <terminal cmd="wt merge --no-ff" /> }}
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-{{ terminal(cmd="wt merge --no-commit") }}
+{{ <terminal cmd="wt merge --no-commit" /> }}
 
 Preserve the exact clean commit graph and tip:
 
-{{ terminal(cmd="wt merge --no-commit --no-rebase") }}
+{{ <terminal cmd="wt merge --no-commit --no-rebase" /> }}
 
 ## Pipeline
 
@@ -101,7 +101,7 @@ lint = "cargo clippy"
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt merge - Merge current branch into the target branch
 
 Squash &amp; rebase, fast-forward the target branch, remove the worktree.
@@ -170,6 +170,6 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

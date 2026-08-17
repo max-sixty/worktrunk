@@ -46,7 +46,7 @@ During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-m
 
 Project commands require approval on first run:
 
-{% terminal() %}
+{% <terminal> %}
 <span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
 
 <span class="d">○</span> pre-start <b>install</b>:
@@ -54,10 +54,10 @@ Project commands require approval on first run:
 <span class="d">○</span> pre-start <b>build</b>:
 <span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
 <span class="d">○</span> pre-start <b>env</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
+{% raw %}<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>{% endraw %}
 
 <span class="c">❯</span> Allow and remember? <b>[y/N]</b>
-{% end %}
+{% </terminal> %}
 
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
@@ -102,7 +102,7 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](@/config.md#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Because an earlier step can still change those values, a preview leaves them alone: `wt hook <type> --dry-run` and `wt hook show --expanded` render `{{ vars.<key> }}` as itself while every other variable expands.
+{% raw %}Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](@/config.md#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Because an earlier step can still change those values, a preview leaves them alone: `wt hook <type> --dry-run` and `wt hook show --expanded` render `{{ vars.<key> }}` as itself while every other variable expands.{% endraw %}
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
@@ -123,31 +123,31 @@ Hooks can use template variables that expand at runtime:
 
 | Kind | Variable | Description |
 |------|----------|-------------|
-| active    | `{{ branch }}`                | Branch name |
-|           | `{{ worktree_path }}`         | Worktree path |
-|           | `{{ worktree_name }}`         | Worktree directory name |
-|           | `{{ commit }}`                | Branch HEAD SHA |
-|           | `{{ short_commit }}`          | Branch HEAD SHA, abbreviated per `core.abbrev` |
-|           | `{{ upstream }}`              | Branch upstream (if tracking a remote) |
-| operation | `{{ base }}`                  | Base branch name (switch/create only) |
-|           | `{{ base_worktree_path }}`    | Base worktree path |
-|           | `{{ target }}`                | Target branch name |
-|           | `{{ target_worktree_path }}`  | Target worktree path (when target has a worktree) |
-|           | `{{ pr_number }}`             | PR/MR number (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
-|           | `{{ pr_url }}`                | PR/MR web URL (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
-| repo      | `{{ repo }}`                  | Repository directory name |
-|           | `{{ repo_path }}`             | Absolute path to repository root |
-|           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |
-|           | `{{ remote_repo }}`           | Repository name from the primary remote URL, without `.git` |
-|           | `{{ primary_worktree_path }}` | Primary worktree path |
-|           | `{{ default_branch }}`        | Default branch name |
-|           | `{{ remote }}`                | Primary remote name |
-|           | `{{ remote_url }}`            | Remote URL |
-| exec      | `{{ cwd }}`                   | Directory where the hook command runs |
-|           | `{{ hook_type }}`             | Hook type being run (e.g. `pre-start`, `pre-merge`) |
-|           | `{{ hook_name }}`             | Hook command name (if named) |
-|           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |
-| user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
+{% raw %}| active    | `{{ branch }}`                | Branch name |{% endraw %}
+{% raw %}|           | `{{ worktree_path }}`         | Worktree path |{% endraw %}
+{% raw %}|           | `{{ worktree_name }}`         | Worktree directory name |{% endraw %}
+{% raw %}|           | `{{ commit }}`                | Branch HEAD SHA |{% endraw %}
+{% raw %}|           | `{{ short_commit }}`          | Branch HEAD SHA, abbreviated per `core.abbrev` |{% endraw %}
+{% raw %}|           | `{{ upstream }}`              | Branch upstream (if tracking a remote) |{% endraw %}
+{% raw %}| operation | `{{ base }}`                  | Base branch name (switch/create only) |{% endraw %}
+{% raw %}|           | `{{ base_worktree_path }}`    | Base worktree path |{% endraw %}
+{% raw %}|           | `{{ target }}`                | Target branch name |{% endraw %}
+{% raw %}|           | `{{ target_worktree_path }}`  | Target worktree path (when target has a worktree) |{% endraw %}
+{% raw %}|           | `{{ pr_number }}`             | PR/MR number (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |{% endraw %}
+{% raw %}|           | `{{ pr_url }}`                | PR/MR web URL (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |{% endraw %}
+{% raw %}| repo      | `{{ repo }}`                  | Repository directory name |{% endraw %}
+{% raw %}|           | `{{ repo_path }}`             | Absolute path to repository root |{% endraw %}
+{% raw %}|           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |{% endraw %}
+{% raw %}|           | `{{ remote_repo }}`           | Repository name from the primary remote URL, without `.git` |{% endraw %}
+{% raw %}|           | `{{ primary_worktree_path }}` | Primary worktree path |{% endraw %}
+{% raw %}|           | `{{ default_branch }}`        | Default branch name |{% endraw %}
+{% raw %}|           | `{{ remote }}`                | Primary remote name |{% endraw %}
+{% raw %}|           | `{{ remote_url }}`            | Remote URL |{% endraw %}
+{% raw %}| exec      | `{{ cwd }}`                   | Directory where the hook command runs |{% endraw %}
+{% raw %}|           | `{{ hook_type }}`             | Hook type being run (e.g. `pre-start`, `pre-merge`) |{% endraw %}
+{% raw %}|           | `{{ hook_name }}`             | Hook command name (if named) |{% endraw %}
+{% raw %}|           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |{% endraw %}
+{% raw %}| user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |{% endraw %}
 
 The `repo` variables (`repo`, `repo_path`, `owner`, `remote_repo`, `primary_worktree_path`, `default_branch`, `remote`, `remote_url`) are constant across the whole repository — `default_branch` is the same in every worktree. The `active` variables (`branch`, `worktree_path`, `worktree_name`, `commit`, `short_commit`, `upstream`) vary per worktree.
 
@@ -160,7 +160,7 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | merge | feature being merged | = bare vars | merge target |
 | remove | branch being removed | = bare vars | where you end up |
 
-All hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`.
+{% raw %}All hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`.{% endraw %}
 
 `cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
 
@@ -170,20 +170,24 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 
 Undefined variables error — use conditionals or defaults for optional behavior:
 
+{% raw %}
 ```toml
 [pre-start]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
+{% endraw %}
 
 Run any hook-firing command with `-v` to see the resolved variables for the actual invocation — each hook prints a `template variables:` block showing every in-scope variable and its value (`(unset)` for conditional vars that didn't populate, like `target_worktree_path` during `wt switch -`). Aliases do the same under `-v`: `wt -v <alias>` prints the alias's in-scope variables before the pipeline runs.
 
-Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:
+{% raw %}Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:{% endraw %}
 
+{% raw %}
 ```toml
 [post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
+{% endraw %}
 
 ## Worktrunk filters
 
@@ -191,57 +195,69 @@ Templates support Jinja2 filters for transforming values:
 
 | Filter | Example | Description |
 |--------|---------|-------------|
-| `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |
-| `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 48 chars) |
-| `sanitize_hash` | `{{ branch \| sanitize_hash }}` | Filesystem-safe name with hash suffix for uniqueness |
-| `hash` | `{{ branch \| hash }}` | 3-character base36 digest of the input |
-| `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
-| `dirname` | `{{ repo_path \| dirname }}` | Strip the last path component (`/a/b/c` → `/a/b`) |
-| `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
-| `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
+{% raw %}| `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |{% endraw %}
+{% raw %}| `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 48 chars) |{% endraw %}
+{% raw %}| `sanitize_hash` | `{{ branch \| sanitize_hash }}` | Filesystem-safe name with hash suffix for uniqueness |{% endraw %}
+{% raw %}| `hash` | `{{ branch \| hash }}` | 3-character base36 digest of the input |{% endraw %}
+{% raw %}| `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |{% endraw %}
+{% raw %}| `dirname` | `{{ repo_path \| dirname }}` | Strip the last path component (`/a/b/c` → `/a/b`) |{% endraw %}
+{% raw %}| `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |{% endraw %}
+{% raw %}| `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |{% endraw %}
 
 The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
 
+{% raw %}
 ```toml
 # Friendly branch-derived worktree names, e.g. myproject.malleable-opah
 worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
+{% endraw %}
 
 When you want both a friendly name and the original branch identity in the path, put the branch name in a parent directory:
 
+{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
 ```
+{% endraw %}
 
 The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
 
+{% raw %}
 ```toml
 # Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
 worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}"
 ```
+{% endraw %}
 
-The `dirname` and `basename` filters traverse paths. They're useful for bare repos in a hidden directory like `myproject/.git`, where `{{ repo }}` resolves to `.git`:
+{% raw %}The `dirname` and `basename` filters traverse paths. They're useful for bare repos in a hidden directory like `myproject/.git`, where `{{ repo }}` resolves to `.git`:{% endraw %}
 
+{% raw %}
 ```toml
 # Place worktrees as siblings of the bare repo, named `<wrapper>.<branch>`
 worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}"
 ```
+{% endraw %}
 
 The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
+{% raw %}
 ```toml
 [post-start]
 dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 ```
+{% endraw %}
 
 Hash any string, including concatenations:
 
+{% raw %}
 ```toml
 # Unique port per repo+branch combination
 dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 ```
+{% endraw %}
 
-Variables are shell-escaped automatically — quotes around `{{ ... }}` are unnecessary and can cause issues with special characters.
+{% raw %}Variables are shell-escaped automatically — quotes around `{{ ... }}` are unnecessary and can cause issues with special characters.{% endraw %}
 
 ## Worktrunk functions
 
@@ -249,15 +265,17 @@ Templates also support functions for dynamic lookups:
 
 | Function | Example | Description |
 |----------|---------|-------------|
-| `worktree_path_of_branch(branch)` | `{{ worktree_path_of_branch("main") }}` | Look up the path of a branch's worktree |
+{% raw %}| `worktree_path_of_branch(branch)` | `{{ worktree_path_of_branch("main") }}` | Look up the path of a branch's worktree |{% endraw %}
 
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
+{% raw %}
 ```toml
 [pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
+{% endraw %}
 
 ## JSON context
 
@@ -288,11 +306,11 @@ copy = "wt step copy-ignored"
 
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
-{{ terminal(cmd="wt hook pre-merge              # Run all pre-merge hooks|||wt hook pre-merge test         # Run hooks named __WT_QUOT__test__WT_QUOT__ from both sources|||wt hook pre-merge test build   # Run hooks named __WT_QUOT__test__WT_QUOT__ and __WT_QUOT__build__WT_QUOT__|||wt hook pre-merge user:        # Run all user hooks|||wt hook pre-merge project:     # Run all project hooks|||wt hook pre-merge user:test    # Run only user's __WT_QUOT__test__WT_QUOT__ hook|||wt hook pre-merge --yes        # Skip approval prompts (for CI)|||wt hook pre-start --branch=feature/test    # Override a template variable|||wt hook pre-merge -- --extra args     # Forward tokens into __WT_OPEN__ args __WT_CLOSE__") }}
+{{ <terminal cmd="wt hook pre-merge              # Run all pre-merge hooks|||wt hook pre-merge test         # Run hooks named __WT_QUOT__test__WT_QUOT__ from both sources|||wt hook pre-merge test build   # Run hooks named __WT_QUOT__test__WT_QUOT__ and __WT_QUOT__build__WT_QUOT__|||wt hook pre-merge user:        # Run all user hooks|||wt hook pre-merge project:     # Run all project hooks|||wt hook pre-merge user:test    # Run only user's __WT_QUOT__test__WT_QUOT__ hook|||wt hook pre-merge --yes        # Skip approval prompts (for CI)|||wt hook pre-start --branch=feature/test    # Override a template variable|||wt hook pre-merge -- --extra args     # Forward tokens into __WT_OPEN__ args __WT_CLOSE__" /> }}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-{% terminal(cmd="wt hook pre-merge") %}
+{% <terminal cmd="wt hook pre-merge"> %}
 <span class=c>◎</span> <span class=c>Running pre-merge <b>project:test</b></span>
 <span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> test</span>
     Finished test [unoptimized + debuginfo] target(s) in 0.12s
@@ -309,19 +327,19 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 <span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> clippy</span>
     Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
-{% end %}
+{% </terminal> %}
 
-{% terminal(cmd="wt hook post-start") %}
+{% <terminal cmd="wt hook post-start"> %}
 ◎ Running post-start: project @ ~/acme
-{% end %}
+{% </terminal> %}
 
 ## Passing values
 
-`--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
+{% raw %}`--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.{% endraw %}
 
-Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.
+{% raw %}Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.{% endraw %}
 
-The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
+{% raw %}The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).{% endraw %}
 
 # Recipes
 
@@ -329,7 +347,7 @@ The long form `--var KEY=VALUE` is deprecated but still supported. It force-bind
 - [Dev server per worktree](@/tips-patterns.md#dev-server-per-worktree): `wt step tether` in `post-start` runs the dev server and kills its whole process group when the worktree is removed, with optional subdomain routing
 - [Database per worktree](@/tips-patterns.md#database-per-worktree): a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](@/config.md#wt-config-state-vars) that later hooks reference
 - [Progressive validation](@/tips-patterns.md#progressive-validation): quick lint/typecheck in `pre-commit`, expensive tests and builds in `pre-merge`
-- [Target-specific hooks](@/tips-patterns.md#target-specific-hooks): branch on `{{ target }}` in `post-merge` for per-environment deploys
+{% raw %}- [Target-specific hooks](@/tips-patterns.md#target-specific-hooks): branch on `{{ target }}` in `post-merge` for per-environment deploys{% endraw %}
 
 ## See also
 
@@ -340,7 +358,7 @@ The long form `--var KEY=VALUE` is deprecated but still supported. It force-bind
 
 ## Command reference
 
-{% terminal() %}
+{% <terminal> %}
 wt hook - Run configured hooks
 
 Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
@@ -379,6 +397,6 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
-{% end %}
+{% </terminal> %}
 
 <!-- END AUTO-GENERATED -->

@@ -81,15 +81,14 @@
 
 {% block toc %}
 {% set docs_section = get_section(path="_index.md") %}
-{{ macros::toc_nav(docs_section=docs_section) }}
+{{ <toc_nav docs_section={docs_section} /> }}
 {% endblock toc %}
 
 {% block content_id %}worktrunk{% endblock content_id %}
 
 {% block content %}
 {# Display worktrunk content directly on homepage #}
-{% set docs_section = get_section(path="_index.md") %}
-{% set worktrunk = docs_section.pages | filter(attribute="slug", value="worktrunk") | first %}
+{% set worktrunk = get_page(path="worktrunk.md") %}
 <h1 class="heading-text"><a href="#worktrunk" class="heading-anchor">{{ worktrunk.title }}</a></h1>
 {{ worktrunk.content | safe }}
 {% endblock content %}
