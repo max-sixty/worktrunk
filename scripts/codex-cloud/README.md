@@ -15,9 +15,8 @@ Maintenance command:
 bash scripts/codex-cloud/codex.sh maintain
 ```
 
-The agent remains root. Toolchain-sensitive Rustup and pre-commit steps run as
-`ubuntu`; the Cargo wrapper also runs builds and tests as `ubuntu` under `tini`,
-matching the suite's permission and child-reaping assumptions.
+Everything runs as root, which is how Codex Cloud runs the agent. Pinned
+versions and checksums live in `scripts/tool-pins.sh`, shared with `setup-web`.
 
 Validation:
 
