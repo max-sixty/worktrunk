@@ -2152,8 +2152,10 @@ fn remove_section(content: &str, heading: &str) -> String {
 /// Command pages already have this conversion via --help-page, but hand-written
 /// docs (faq.md, llm-commits.md, claude-code.md) can also use ```console with $
 /// and get the same treatment.
-fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<String>) {
-    let errors = Vec::new();
+///
+/// Returns the files it updated. There is no error channel: `read_docs_page`
+/// panics on an unreadable page, and every other step here is infallible.
+fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
     let mut updated_files = Vec::new();
     let docs_dir = project_root.join("docs/content");
 
@@ -2172,7 +2174,7 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<Stri
         );
     }
 
-    (errors, updated_files)
+    updated_files
 }
 
 /// Sorted `.md` page filenames in `docs/content/` (excluding `_index.md`
@@ -2812,8 +2814,8 @@ fn test_docs_are_in_sync() {
 
     // Step 1b: Convert $ console blocks to terminal calls in ALL docs
     // (command pages already converted via --help-page; this catches hand-written docs)
-    let (console_errors, console_files) = convert_console_blocks_in_docs(project_root);
-    tag("console→terminal", console_errors, console_files);
+    let console_files = convert_console_blocks_in_docs(project_root);
+    tag("console→terminal", Vec::new(), console_files);
 
     // Step 2: Sync standalone docs files (snapshots → docs/content/*.md).
     // README extraction in step 5 reads these, so they must be current first.
