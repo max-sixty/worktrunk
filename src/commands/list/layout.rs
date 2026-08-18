@@ -754,9 +754,14 @@ fn build_estimated_widths(
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
     //
-    // Status column: Must match PositionMask::FULL width for consistent alignment
-    // PositionMask::FULL allocates: 1+1+1+1+1+1+2 = 8 chars (7 positions)
-    let status_fixed = fit_header(ColumnKind::Status.header(), 8);
+    // Status column: every row renders all seven positions of
+    // `PositionMask::FULL`, so the column has to be at least that wide or the
+    // cell overflows it. Read the width off the mask rather than restating its
+    // arithmetic — the two can't drift.
+    let status_fixed = fit_header(
+        ColumnKind::Status.header(),
+        super::model::PositionMask::FULL.total_width(),
+    );
     let working_diff_fixed = fit_header(ColumnKind::WorkingDiff.header(), 9); // "+999 -999"
     let ahead_behind_fixed = fit_header(ColumnKind::AheadBehind.header(), 7); // "↑99 ↓99"
     let branch_diff_fixed = fit_header(ColumnKind::BranchDiff.header(), 9); // "+999 -999"
@@ -1155,7 +1160,7 @@ fn allocate_columns_with_priority(
 /// - Paths (relative to main worktree)
 ///
 /// Pre-allocated estimates (generous to minimize truncation):
-/// - Status: 8 chars (PositionMask::FULL, 7 positions)
+/// - Status: `PositionMask::FULL.total_width()` (7 positions, 8 chars today)
 /// - Working diff: 9 chars ("+999 -999")
 /// - Ahead/behind: 7 chars ("↑99 ↓99")
 /// - Branch diff: 9 chars ("+999 -999")
