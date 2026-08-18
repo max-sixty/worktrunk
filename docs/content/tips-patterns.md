@@ -19,8 +19,7 @@ Create a worktree and launch Claude in one command:
 
 Compose with template filters and [vars](@/tips-patterns.md#per-branch-variables):
 
-{% raw %}
-```toml
+{% raw %}```toml
 # .config/wt.toml
 [aliases]
 # Open this worktree's dev server
@@ -32,16 +31,15 @@ test = "cargo test --features {{ vars.features | default('default') }}"
 # Switch via the interactive picker, print the chosen branch
 pick = "wt switch --format=json | jq -r '.branch'"
 ```
-{% endraw %}
 
 See [Aliases](@/extending.md#aliases) for scoping, approval, and reference.
 
 ## Per-branch variables
 
-{% raw %}`wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:{% endraw %}
+`wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:
 
 - **Coordinate state across pipeline steps** — see [Database per worktree](@/tips-patterns.md#database-per-worktree) below for a full recipe
-{% raw %}- **Stick a branch to an environment** — `wt config state vars set env=staging`, then `{{ vars.env | default('dev') }}` in hooks{% endraw %}
+- **Stick a branch to an environment** — `wt config state vars set env=staging`, then `{{ vars.env | default('dev') }}` in hooks
 - **Parametrize aliases per branch** — see [`wt` aliases above](@/tips-patterns.md#wt-aliases)
 
 See [`wt config state vars`](@/config.md#wt-config-state-vars) for storage format, JSON support, and reference.
@@ -50,7 +48,6 @@ See [`wt config state vars`](@/config.md#wt-config-state-vars) for storage forma
 
 Each worktree runs its own dev server on a deterministic port. The `hash_port` filter generates a stable port (10000-19999) from the branch name:
 
-{% raw %}
 ```toml
 # .config/wt.toml
 [post-start]
@@ -58,8 +55,7 @@ server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-```
-{% endraw %}
+```{% endraw %}
 
 [`wt step tether`](@/step.md#wt-step-tether) runs the server in its own process group and tears the whole group down when the worktree is removed, so no `pre-remove` hook is needed. See the [`wt step tether`](@/step.md#wt-step-tether) docs for the full rationale and platform behavior.
 
@@ -86,8 +82,7 @@ The URL column in `wt list` shows each worktree's dev server:
 
 Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](@/config.md#wt-config-state-vars), then later steps and hooks reference them:
 
-{% raw %}
-```toml
+{% raw %}```toml
 [[post-start]]
 set-vars = """
 wt config state vars set \
@@ -109,9 +104,8 @@ docker run -d --rm \
 [pre-remove]
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
-{% endraw %}
 
-{% raw %}The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — templates render when each step runs, so the vars are already set. `pre-remove` reads the same vars to stop the container.{% endraw %}
+The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — templates render when each step runs, so the vars are already set. `pre-remove` reads the same vars to stop the container.{% endraw %}
 
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix).
 
@@ -133,14 +127,12 @@ Run `direnv allow` once per worktree to trust the file ([getting started](https:
 
 **mise** — commit `mise.toml` at the repo root:
 
-{% raw %}
-```toml
+{% raw %}```toml
 [env]
 MY_PACKAGES_PATH = "{{ config_root }}/.packages"
 ```
-{% endraw %}
 
-{% raw %}`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.{% endraw %}
+`{{ config_root }}` is the project root mise resolves relative paths against ([env directives](https://mise.jdx.dev/environments/)) — the worktree root, not the primary worktree. mise also covers Windows / PowerShell, which direnv doesn't natively.{% endraw %}
 
 Both set real environment variables in the shell session, so every child process inherits them — hooks, build tools, subshells — without the `--execute` workaround. Each new worktree is a new path, so it needs its own one-time trust step (`direnv allow` / `mise trust`); worktrunk deliberately doesn't bypass that prompt, the same safety reasoning behind [disabling `--execute` in project alias and hook bodies](https://github.com/max-sixty/worktrunk/issues/2101).
 
@@ -237,7 +229,7 @@ Default branch [detection](@/config.md#wt-config-state-default-branch) means scr
 
 {{ <terminal cmd="git rebase $(wt config state default-branch)" /> }}
 
-{% raw %}In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.{% endraw %}
+{% raw %}In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](@/hook.md#template-variables); reserve this command for plain shell scripts.
 
 ## Task runners in hooks
 
@@ -269,9 +261,8 @@ build = "npm run build"
 
 ## Target-specific hooks
 
-{% raw %}Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:{% endraw %}
+Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:
 
-{% raw %}
 ```toml
 post-merge = """
 if [ {{ target }} = main ]; then
@@ -281,9 +272,8 @@ elif [ {{ target }} = staging ]; then
 fi
 """
 ```
-{% endraw %}
 
-{% raw %}`{{ target }}` is the branch being merged into. `post-merge` runs in the target's worktree (or the primary worktree if target has none), so deploy commands see the merged code.{% endraw %}
+`{{ target }}` is the branch being merged into. `post-merge` runs in the target's worktree (or the primary worktree if target has none), so deploy commands see the merged code.{% endraw %}
 
 ## Shortcuts
 
@@ -320,8 +310,7 @@ from the worktrunk skill.
 
 Each worktree gets its own tmux session with a multi-pane layout.
 
-{% raw %}
-```toml
+{% raw %}```toml
 # .config/wt.toml
 [pre-start]
 tmux = """
@@ -345,8 +334,7 @@ echo "✓ Session '$S' — attach with: tmux attach -t $S"
 
 [pre-remove]
 tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
-```
-{% endraw %}
+```{% endraw %}
 
 To create a worktree and immediately attach:
 
@@ -360,8 +348,7 @@ Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktre
 
 **Prerequisites:** [jq](https://jqlang.org) (`brew install jq`)
 
-{% raw %}
-```toml
+{% raw %}```toml
 # ~/.config/worktrunk/config.toml
 
 # cmux is the navigation primitive; don't also cd the invoking shell.
@@ -387,7 +374,6 @@ WS=$(cmux --json list-workspaces 2>/dev/null \\
 [ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
 """
 ```
-{% endraw %}
 
 **Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
 
@@ -395,7 +381,6 @@ WS=$(cmux --json list-workspaces 2>/dev/null \\
 
 Clean up Xcode's DerivedData when removing a worktree. Each DerivedData directory contains an `info.plist` recording its project path — grep for the worktree path to find and remove the matching build cache:
 
-{% raw %}
 ```toml
 # ~/.config/worktrunk/config.toml
 [post-remove]
@@ -409,7 +394,6 @@ clean-derived = """
     done
 """
 ```
-{% endraw %}
 
 ## Subdomain routing with Caddy
 <!-- Hand-tested 2026-03-07 -->
@@ -418,7 +402,6 @@ Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. 
 
 **Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
 
-{% raw %}
 ```toml
 # .config/wt.toml
 [post-start]
@@ -439,11 +422,10 @@ proxy = "curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | s
 [list]
 url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 ```
-{% endraw %}
 
 **How it works:**
 
-{% raw %}1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460){% endraw %}
+1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460){% endraw %}
 2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
 3. `*.localhost` resolves to `127.0.0.1` via the OS
 4. Visiting `http://feature-auth.myproject.localhost:8080`: Caddy matches the subdomain and proxies to the dev server
@@ -468,7 +450,7 @@ Cloning a bare repo into `<project>/.git` puts all worktrees under one directory
 
 {{ <terminal cmd="git clone --bare <url> myproject/.git|||cd myproject" /> }}
 
-{% raw %}With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:{% endraw %}
+{% raw %}With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
 ```
 myproject/
@@ -489,13 +471,11 @@ On first `wt switch` in a bare repo at a hidden path (`.git`, `.bare`), worktrun
 
 Accepting writes a project-scoped entry to user config:
 
-{% raw %}
 ```toml
 # ~/.config/worktrunk/config.toml
 [projects."github.com/myorg/myrepo"]
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
-```
-{% endraw %}
+```{% endraw %}
 
 Run `wt config show` from inside any worktree to find the project identifier (`Identifier: …` in the PROJECT CONFIG section). Set it globally with `worktree-path = "..."` at the top level if this layout is preferred for all bare repos.
 

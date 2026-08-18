@@ -40,15 +40,13 @@ Organizations can deploy a system-wide config file for shared defaults — run `
 
 **User config** — personal preferences:
 
-{% raw %}
-```toml
+{% raw %}```toml
 # ~/.config/worktrunk/config.toml
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 ```
-{% endraw %}
 
 **Project config** — shared team settings:
 
@@ -77,14 +75,14 @@ Controls where new worktrees are created.
 
 **Available template variables:**
 
-{% raw %}- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself){% endraw %}
-{% raw %}- `{{ repo }}` — repository directory name (e.g., `myproject`){% endraw %}
-{% raw %}- `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`){% endraw %}
-{% raw %}- `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed{% endraw %}
-{% raw %}- `{{ branch }}` — raw branch name (e.g., `feature/auth`){% endraw %}
-{% raw %}- `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`){% endraw %}
-{% raw %}- `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`){% endraw %}
-{% raw %}- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`){% endraw %}
+- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
+- `{{ repo }}` — repository directory name (e.g., `myproject`)
+- `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
+- `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed
+- `{{ branch }}` — raw branch name (e.g., `feature/auth`)
+- `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
+- `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
+- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
 This is a smaller set than [the variables hooks and aliases get](@/hook.md#template-variables).
 
@@ -92,59 +90,45 @@ This is a smaller set than [the variables hooks and aliases get](@/hook.md#templ
 
 Default — sibling directory (`~/code/myproject.feature-auth`):
 
-{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 ```
-{% endraw %}
 
 Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
 
-{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 ```
-{% endraw %}
 
 Friendly branch-derived names (`~/code/myproject.malleable-opah`):
 
-{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
-{% endraw %}
 
 Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):
 
-{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
 ```
-{% endraw %}
 
 Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
 
-{% raw %}
 ```toml
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 ```
-{% endraw %}
 
 By remote owner path (`~/development/max-sixty/myproject/feature/auth`):
 
-{% raw %}
 ```toml
 worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"
 ```
-{% endraw %}
 
 Bare repository (`~/code/myproject/feature-auth`):
 
-{% raw %}
 ```toml
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
-{% endraw %}
 
 `~` expands to the home directory. Relative paths resolve from `repo_path`.
 
@@ -254,7 +238,6 @@ Custom columns add per-branch context to the `wt list` table. Each
 `[list.custom-columns]` entry is a column: the key is the header, the template
 renders each row's cell.
 
-{% raw %}
 ```toml
 [list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"   # Required; the result is the cell text
@@ -262,18 +245,17 @@ width = 20                       # Optional max display width (default: 40)
 priority = 9                     # Optional drop order when the terminal narrows;
                                  # lower = kept longer (default: 9, the URL band)
 ```
-{% endraw %}
 
-{% raw %}Templates may reference `{{ branch }}`, `{{ worktree_path }}`,{% endraw %}
-{% raw %}`{{ worktree_name }}` (empty for branch-only rows), and two per-branch{% endraw %}
+Templates may reference `{{ branch }}`, `{{ worktree_path }}`,
+`{{ worktree_name }}` (empty for branch-only rows), and two per-branch
 namespaces:
 
-{% raw %}- `{{ vars.* }}` — values stored with{% endraw %}
+- `{{ vars.* }}` — values stored with
   [`wt config state vars set`](@/config.md#wt-config-state-vars).
-{% raw %}- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,{% endraw %}
-{% raw %}  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you{% endraw %}
+- `{{ git.branch.* }}` — the branch's own git config under `branch.<name>.*`,
+  read straight from `git config` (e.g. `{{ git.branch.jira }}` for a key you
   set yourself, or the git-native `description`). Git lowercases config variable
-{% raw %}  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.{% endraw %}
+  names, so `branch.<name>.nvciShelf` reads as `{{ git.branch.nvcishelf }}`.
 
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
 where the template renders empty (e.g. a branch without the key) shows an
@@ -283,7 +265,6 @@ empty cell; a column that is empty for every row is dropped from the table.
 A `Jira` column reading a key kept in git config, and a `Summary` column
 showing just the first line of the git-native branch description:
 
-{% raw %}
 ```toml
 [list.custom-columns.Jira]
 template = "{{ git.branch.jira }}"
@@ -291,7 +272,6 @@ template = "{{ git.branch.jira }}"
 [list.custom-columns.Summary]
 template = "{{ git.branch.description | lines | first }}"
 ```
-{% endraw %}
 
 ### Commit
 
@@ -348,13 +328,11 @@ Built-in excludes (VCS metadata and tool-state directories) always apply; [the `
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
-{% raw %}
 ```toml
 [aliases]
 greet = "echo Hello from {{ branch }}"
 url = "echo http://localhost:{{ branch | hash_port }}"
 ```
-{% endraw %}
 
 Aliases defined here apply to all projects. For project-specific aliases, use the [project config](@/config.md#project-configuration) `[aliases]` section instead.
 
@@ -366,7 +344,6 @@ Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from
 
 Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first. See [how the layers rank](@/config.md#precedence).
 
-{% raw %}
 ```toml
 [projects."github.com/user/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
@@ -377,13 +354,11 @@ pre-start.env = "cp .env.example .env"
 step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
-{% endraw %}
 
 #### Matching several repositories with one entry
 
 A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.
 
-{% raw %}
 ```toml
 # Every repository on a self-hosted forge whose hostname carries no brand
 [projects."git.company.example/*"]
@@ -393,7 +368,6 @@ forge.platform = "gitlab"
 [projects."git.company.example/platform/*"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 ```
-{% endraw %}
 
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
 
@@ -440,15 +414,14 @@ Templates use [minijinja](https://docs.rs/minijinja/) syntax.
 
 Available variables:
 
-{% raw %}- `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content{% endraw %}
-{% raw %}- `{{ branch }}`, `{{ repo }}` — context{% endraw %}
-{% raw %}- `{{ recent_commits }}` — recent commit messages{% endraw %}
-{% raw %}- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](@/config.md#appending-to-the-prompt)){% endraw %}
+- `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
+- `{{ branch }}`, `{{ repo }}` — context
+- `{{ recent_commits }}` — recent commit messages
+- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](@/config.md#appending-to-the-prompt))
 
 Default template:
 
 <!-- DEFAULT_TEMPLATE_START -->
-{% raw %}
 ```toml
 [commit.generation]
 template = """
@@ -491,20 +464,18 @@ Branch: {{ branch }}
 
 """
 ```
-{% endraw %}
 <!-- DEFAULT_TEMPLATE_END -->
 
 #### Squash template
 
 Available variables (in addition to commit template variables):
 
-{% raw %}- `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`{% endraw %}
-{% raw %}- `{{ target_branch }}` — merge target branch{% endraw %}
+- `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`
+- `{{ target_branch }}` — merge target branch
 
 Default template:
 
 <!-- DEFAULT_SQUASH_TEMPLATE_START -->
-{% raw %}
 ```toml
 [commit.generation]
 squash-template = """
@@ -544,7 +515,6 @@ squash-template = """
 
 """
 ```
-{% endraw %}
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
 #### Appending to the prompt
@@ -587,12 +557,10 @@ pre-merge = "npm test"
 
 URL column in `wt list` (dimmed when port not listening):
 
-{% raw %}
 ```toml
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 ```
-{% endraw %}
 
 ## Forge platform
 
@@ -637,13 +605,11 @@ Built-in excludes (VCS metadata and tool-state directories) always apply; [the `
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
-{% raw %}
 ```toml
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
 url = "echo http://localhost:{{ branch | hash_port }}"
-```
-{% endraw %}
+```{% endraw %}
 
 Aliases defined here are shared with teammates. For personal aliases, use the [user config](@/config.md#aliases) `[aliases]` section instead.
 <!-- PROJECT_CONFIG_END -->
@@ -1439,24 +1405,20 @@ Operate on a different branch:
 
 ### Template access
 
-{% raw %}Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:{% endraw %}
+{% raw %}Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
-{% raw %}
 ```toml
 [post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
-```
-{% endraw %}
+```{% endraw %}
 
 JSON object and array values support dot access:
 
 {{ <terminal cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'" /> }}
-{% raw %}
-```toml
+{% raw %}```toml
 [post-start]
 dev = "npm start -- --port {{ vars.config.port }}"
-```
-{% endraw %}
+```{% endraw %}
 
 ### Storage format
 

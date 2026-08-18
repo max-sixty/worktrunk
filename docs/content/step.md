@@ -578,12 +578,10 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 
 `node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
-{% raw %}
-```toml
+{% raw %}```toml
 [pre-start]
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
-```
-{% endraw %}
+```{% endraw %}
 
 #### Python
 
@@ -1142,13 +1140,11 @@ torn down with the worktree):
 
 Run a dev server, torn down automatically when the worktree goes away:
 
-{% raw %}
-```toml
+{% raw %}```toml
 # .config/wt.toml
 [post-start]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
-```
-{% endraw %}
+```{% endraw %}
 
 ### Command reference
 

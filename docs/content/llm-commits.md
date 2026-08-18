@@ -149,8 +149,7 @@ Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like sy
 
 Override the defaults with inline templates:
 
-{% raw %}
-```toml
+{% raw %}```toml
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
 
@@ -172,32 +171,31 @@ Diff:
 {{ git_diff }}
 """
 ```
-{% endraw %}
 
 ### Template variables
 
 | Variable | Description |
 |----------|-------------|
-{% raw %}| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |{% endraw %}
-{% raw %}| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |{% endraw %}
-{% raw %}| `{{ branch }}` | Current branch name |{% endraw %}
-{% raw %}| `{{ repo }}` | Repository name |{% endraw %}
-{% raw %}| `{{ recent_commits }}` | Recent commit subjects (for style reference) |{% endraw %}
-{% raw %}| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |{% endraw %}
-{% raw %}| `{{ target_branch }}` | Merge target branch (squash template only) |{% endraw %}
-{% raw %}| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |{% endraw %}
-{% raw %}| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |{% endraw %}
+| `{{ git_diff }}` | The diff (staged changes or combined diff for squash) |
+| `{{ git_diff_stat }}` | Diff statistics (files changed, insertions, deletions) |
+| `{{ branch }}` | Current branch name |
+| `{{ repo }}` | Repository name |
+| `{{ recent_commits }}` | Recent commit subjects (for style reference) |
+| `{{ commit_details }}` | Commits being squashed (squash template only); each renders as its subject and exposes `.subject` / `.body` |
+| `{{ target_branch }}` | Merge target branch (squash template only) |
+| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
+| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
 
 ### Template syntax
 
 Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
 
-{% raw %}- **Variables**: `{{ branch }}`, `{{ repo | upper }}`{% endraw %}
-{% raw %}- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`{% endraw %}
-{% raw %}- **Conditionals**: `{% if recent_commits %}...{% endif %}`{% endraw %}
-{% raw %}- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`{% endraw %}
-{% raw %}- **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`{% endraw %}
-{% raw %}- **Whitespace control**: `{%- ... -%}` strips surrounding whitespace{% endraw %}
+- **Variables**: `{{ branch }}`, `{{ repo | upper }}`
+- **Filters**: `{{ commit_details | length }}`, `{{ repo | upper }}`
+- **Conditionals**: `{% if recent_commits %}...{% endif %}`
+- **Loops**: `{% for c in commit_details %}{{ c.subject }}{% endfor %}`
+- **Loop variables**: `{{ loop.index }}`, `{{ loop.length }}`
+- **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 
 See `wt config create --help` for the full default templates.
 
@@ -205,7 +203,7 @@ See `wt config create --help` for the full default templates.
 
 <span class="badge-experimental"></span>
 
-{% raw %}`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:{% endraw %}
+`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:
 
 ```toml
 # .config/wt.toml
@@ -220,7 +218,7 @@ When both the user and project set `template-append`, the `<user-guidance>` bloc
 
 The user fragment needs no approval — it's the developer's own config. For the project fragment, the first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs with just the user fragment (if any).
 
-{% raw %}Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.{% endraw %}
+Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.{% endraw %}
 
 ## Fallback behavior
 

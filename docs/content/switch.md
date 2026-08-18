@@ -184,8 +184,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           selected worktree — so <b>wt switch -x claude</b> picks a worktree, then launches Claude Code
           there.
 
-{% raw %}          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>{% endraw %}
-{% raw %}<b>          base }}</b> and <b>{{ base_worktree_path }}</b> describe the source: the selected base with <b>--create</b>,{% endraw %}
+{% raw %}          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
+<b>          base }}</b> and <b>{{ base_worktree_path }}</b> describe the source: the selected base with <b>--create</b>,
           or the invoking worktree when switching to an existing worktree.
 
           Especially useful with shell aliases:
@@ -197,8 +197,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
           starting Claude with a prompt.
 
-{% raw %}          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>{% endraw %}
-{% raw %}<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.{% endraw %}
+          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>
+<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.{% endraw %}
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target

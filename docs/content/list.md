@@ -137,14 +137,12 @@ Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM th
 
 <span class="badge-experimental"></span>
 
-{% raw %}Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](@/config.md#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:{% endraw %}
+{% raw %}Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](@/config.md#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
 
-{% raw %}
 ```toml
 [list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
-```
-{% endraw %}
+```{% endraw %}
 
 A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: [custom columns config](@/config.md#custom-columns).
 
