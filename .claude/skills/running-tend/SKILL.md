@@ -111,6 +111,25 @@ failure, not a broken link:
 When in doubt, post a comment on the failed run summarizing the diagnosis and
 wait — don't open a PR.
 
+## Sweep Findings: Fix the Cause, Don't Delete the Symptom
+
+A daily or nightly sweep that finds broken CI machinery — a cache that never
+restores, a step whose output nothing reads, a check that can't fail — should
+open the PR that makes it work. Deleting the broken thing and leaving a
+comment explaining what a working version would take is the wrong shape: it
+banks the analysis in a code comment and leaves the improvement unclaimed,
+and a maintainer reading it asks for the fix anyway (#3846). The
+review-runs cost gate is about not spending a maintainer's review on churn,
+not about preferring the smaller diff — a fix that is three coupled edits
+with a real payoff clears it.
+
+Fix it when the mechanism is understood well enough to predict the working
+version's behavior offline (recompute the key, replay the hash, diff the
+generated file), and when a wrong answer would be visible rather than silent
+— add the annotation or assertion that makes it visible if it isn't. Fall
+back to a comment when the cause is genuinely undiagnosed or the verification
+needs state CI can't reach (see **Don't ship fixes you can't verify**).
+
 ## Applying GitHub Suggestions
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
