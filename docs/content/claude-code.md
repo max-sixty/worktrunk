@@ -107,8 +107,8 @@ Activity tracking is not plugin-specific. The plugins above only call `wt` on th
 
 Three things to get right:
 
-- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository fails. Where the host only offers a fixed working directory, pass `--branch <branch>` instead.
-- **Don't let a failed marker call fail the session.** `wt config state marker set` exits non-zero outside a repository, and hosts differ on what a non-zero hook does. Append `|| true` (or the host's equivalent) unless you want that surfaced.
+- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository fails. Where the host pins the working directory elsewhere, pass the global `-C <worktree>`, which moves both the repository lookup and the branch resolution; `--branch <branch>` names the branch but still needs the working directory to be inside the repository.
+- **Don't let a failed marker call fail the session.** Both `set` and `clear` exit non-zero outside a repository, and hosts differ on what a non-zero hook does. Append `|| true` (or the host's equivalent) to every call unless you want that surfaced.
 - **Clear on exit.** A marker set on session start persists until something clears it, so pair every set with a clear on the host's session-end event — and expect the same stale marker as above if the process is killed first.
 
 ## Worktree isolation (Claude Code only)
