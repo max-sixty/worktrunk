@@ -319,9 +319,12 @@ pub fn wrap_template_syntax(text: &str) -> String {
 ///
 /// A region's markers only ever appear at the very start and the very end of a
 /// line, and a documented `{% raw %}` / `{% endraw %}` inside a region is
-/// carried by an escape sequence rather than literally, so neither position can
-/// hold documented text: the page's own text round-trips whatever it says about
-/// these tags.
+/// carried by an escape sequence rather than literally — so this inverts what
+/// [`wrap_template_syntax`] emits, not arbitrary text. Text that has not been
+/// through wrap can still open or close a line with a bare marker (a fenced
+/// `jinja` block documenting minijinja's own `raw`); those lines are blanked,
+/// and the re-wrapped result is a fixed point, so the sync test won't flag the
+/// loss. Document those tags mid-line, as `extending.md` and `faq.md` do.
 pub fn strip_template_syntax_wrappers(text: &str) -> String {
     let ends_with_newline = text.ends_with('\n');
     let mut out: Vec<String> = Vec::new();
