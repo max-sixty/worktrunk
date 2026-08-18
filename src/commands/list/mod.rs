@@ -46,8 +46,9 @@
 //! First run in a repo without cached default branch adds ~100-300ms for network lookup.
 //!
 //! After the skeleton appears, cells fill in progressively as git operations complete.
-//! The slowest operation (CI status) runs with `--full`, or when `[list] columns`
-//! names `ci` (which forces the column and its fetch on without `--full`).
+//! The slowest operation (CI status) runs with `--full`, or — for the table and
+//! the picker only — when `[list] columns` names `ci`, which forces the column
+//! and its fetch on without `--full`.
 //!
 //! ## Git Commands Per Worktree
 //!

@@ -242,10 +242,12 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
-                .with_context(|| {
-                    format!("copying directory {}", format_path_for_display(relative))
-                })?;
+            // A pure copy deletes no source, so the skip count has nothing to guard.
+            let _skipped =
+                copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
+                    .with_context(|| {
+                        format!("copying directory {}", format_path_for_display(relative))
+                    })?;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {

@@ -1108,6 +1108,63 @@ columns = ["branch", "age"]
     );
 }
 
+/// A listed `ci` renders the CI column in the table without `--full` (asserted
+/// in `test_list_config_listed_column_overrides_full_gate`), but `--format
+/// json` plans off `--full` alone (#3787). Asserted on schema 2's
+/// `collected.ci`, which records what the plan requested rather than what a
+/// fetch returned — so this needs no forge and no `gh` on PATH.
+#[rstest]
+fn test_list_json_columns_selection_does_not_force_ci(repo: TestRepo) {
+    let collected = |config: &str, full: bool| -> serde_json::Value {
+        fs::write(repo.test_config_path(), config).unwrap();
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--format=json"]);
+        if full {
+            cmd.arg("--full");
+        }
+        cmd.current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "exit code should be 0 for config {config:?} (full={full}): {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        json["collected"].clone()
+    };
+
+    // Control: no selection, no `--full` — nothing gated was requested.
+    assert_eq!(
+        collected(SCHEMA_2_ONLY, false)["ci"],
+        serde_json::Value::Bool(false),
+        "plain `--format json` should not request CI data"
+    );
+
+    // Listing `ci` shows the column in the table, but leaves JSON's plan alone.
+    assert_eq!(
+        collected(SCHEMA_2_WITH_CI_COLUMN, false)["ci"],
+        serde_json::Value::Bool(false),
+        "a listed `ci` column must not force the forge fetch on for `--format json`"
+    );
+
+    // `--full` is the switch that does turn it on, listed or not.
+    assert_eq!(
+        collected(SCHEMA_2_WITH_CI_COLUMN, true)["ci"],
+        serde_json::Value::Bool(true),
+        "`--full` should still request CI data for `--format json`"
+    );
+}
+
+const SCHEMA_2_ONLY: &str = r#"[list]
+json-schema = 2
+"#;
+
+const SCHEMA_2_WITH_CI_COLUMN: &str = r#"[list]
+json-schema = 2
+columns = ["branch", "ci"]
+"#;
+
 /// TODO(list-columns-env): `WORKTRUNK__LIST__COLUMNS` is not wired up yet. The
 /// env overlay can only deliver a scalar, which the `Vec<String>` field rejects,
 /// so the override is dropped — but with a warning naming the var, not silently

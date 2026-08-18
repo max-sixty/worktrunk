@@ -1385,7 +1385,11 @@ impl GitError {
 
             GitError::NotInteractive => {
                 let title = self.title();
-                let approvals_cmd = suggest_command("config", &["approvals", "add"], &[]);
+                // The pre-approval route is itself unattended, so it carries
+                // `--yes` — a hint reached in CI must name a command that runs
+                // there. Raised from `wt config approvals add` itself, that
+                // suggestion is the exact fix: append the flag.
+                let approvals_cmd = suggest_command("config approvals add", &[], &["--yes"]);
                 write!(
                     f,
                     "{}\n{}",

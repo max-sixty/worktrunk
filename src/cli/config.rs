@@ -261,7 +261,15 @@ $ wt config approvals list --format=json | jq -r .state
         after_long_help = r#"Prompts for approval of all project commands and saves them to approvals.toml.
 
 By default, shows only unapproved commands. Use `--all` to review all commands
-including previously approved ones."#
+including previously approved ones.
+
+`--yes` writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval. A caller that wants to look before granting them can list those first — see [Reading approval state](@/config.md#reading-approval-state).
+
+## Examples
+
+```console
+$ wt config approvals add --yes
+```"#
     )]
     Add {
         /// Show all commands
@@ -571,6 +579,11 @@ Pre-approve all hook and alias commands for current project:
 $ wt config approvals add
 ```
 
+Pre-approve without prompting, for a container or CI job:
+```console
+$ wt config approvals add --yes
+```
+
 Clear approvals for current project:
 ```console
 $ wt config approvals clear
@@ -593,7 +606,9 @@ $ wt config approvals list --format=json | jq -r .state
 
 ## How approvals work
 
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves.
+
+`--yes` bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On `wt config approvals add` the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
 
 ## Reading approval state
 

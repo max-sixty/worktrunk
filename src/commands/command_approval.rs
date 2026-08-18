@@ -39,6 +39,11 @@ use super::project_config::{ApprovableCommand, Phase, collect_commands_for_hooks
 /// Shows command templates to the user (what gets saved to config), not expanded values.
 /// This ensures users see exactly what they're approving.
 ///
+/// `yes` grants consent for this invocation alone: nothing is recorded, so the
+/// next run asks again. Recording without a prompt is `wt config approvals
+/// add --yes`'s job ([`crate::commands::add_approvals`]), which doesn't pass
+/// through this gate.
+///
 /// # Parameters
 /// - `commands_already_filtered`: If true, commands list is pre-filtered; skip filtering by approval status
 pub fn approve_command_batch(
@@ -70,7 +75,9 @@ pub fn approve_command_batch(
         return Ok(false);
     }
 
-    // Only save approvals when interactively approved, not when using --yes
+    // Only save approvals when interactively approved, not when using --yes.
+    // A failed save costs one more prompt next run, not the command the user
+    // actually ran, so it warns rather than errors.
     if !yes {
         let mut fresh_approvals = Approvals::load().context("Failed to load approvals")?;
         let commands: Vec<String> = needs_approval
@@ -95,30 +102,56 @@ pub fn approve_command_batch(
     Ok(true)
 }
 
-fn prompt_for_batch_approval(
-    commands: &[&ApprovableCommand],
-    project_id: &str,
-) -> anyhow::Result<bool> {
-    // Extract just the directory name for display
-    let project_name = Path::new(project_id)
+/// The project's directory name, which is what a user recognizes; the full
+/// identifier is a path or a remote URL.
+fn display_project_name(project_id: &str) -> &str {
+    Path::new(project_id)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(project_id);
-    let count = commands.len();
-    let plural = if count == 1 { "" } else { "s" };
+        .unwrap_or(project_id)
+}
 
-    eprintln!(
-        "{}",
-        cformat!(
-            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
-        )
-    );
-
+/// The batch as the user sees it: a header, then each command's label and its
+/// template. Shared by the prompt and by `--yes` on `wt config approvals add`.
+fn print_command_batch(header: &str, commands: &[&ApprovableCommand]) {
+    eprintln!("{header}");
     for cmd in commands {
         // Uses INFO_SYMBOL (○) since this is a preview, not active execution
         eprintln!("{} {}", INFO_SYMBOL, cmd.label());
         eprintln!("{}", cmd.format_template());
     }
+}
+
+/// The batch `wt config approvals add --yes` is about to trust. Nothing is
+/// being asked, but the batch still prints: it is the record of what an
+/// unattended run just approved. Lives beside [`prompt_for_batch_approval`]
+/// so the two headers stay parallel.
+pub fn announce_batch_approval(commands: &[&ApprovableCommand], project_id: &str) {
+    let project_name = display_project_name(project_id);
+    let count = commands.len();
+    let plural = if count == 1 { "" } else { "s" };
+    print_command_batch(
+        &cformat!(
+            "{WARNING_SYMBOL} <yellow>Approving <bold>{count}</> command{plural} for <bold>{project_name}</> (--yes):</>"
+        ),
+        commands,
+    );
+}
+
+pub fn prompt_for_batch_approval(
+    commands: &[&ApprovableCommand],
+    project_id: &str,
+) -> anyhow::Result<bool> {
+    let project_name = display_project_name(project_id);
+    let count = commands.len();
+    let plural = if count == 1 { "" } else { "s" };
+
+    print_command_batch(
+        &cformat!(
+            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
+        ),
+        commands,
+    );
 
     // Check if stdin is a TTY before attempting to prompt
     // This happens AFTER showing the commands so they appear in CI/CD logs

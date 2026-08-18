@@ -19,7 +19,7 @@ use worktrunk::styling::{
 };
 
 use crate::cli::SwitchFormat;
-use crate::commands::command_approval::approve_command_batch;
+use crate::commands::command_approval::{announce_batch_approval, prompt_for_batch_approval};
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
@@ -189,10 +189,17 @@ pub fn list_approvals(format: SwitchFormat) -> anyhow::Result<()> {
 }
 
 /// Handle `wt config approvals add` command - approve all hook and alias commands in the project
-pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
+///
+/// `yes` skips the review prompt, which is what makes the command usable
+/// unattended: the approvals are still written, so an orchestrator can
+/// pre-approve a project's commands before any `wt` run that would execute
+/// them. Templates edited since an earlier approval are re-approved without
+/// comment — read `wt config approvals list --format=json`'s `stale` first to
+/// see them.
+pub fn add_approvals(show_all: bool, yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
-    let approvals = Approvals::load().context("Failed to load approvals")?;
+    let mut approvals = Approvals::load().context("Failed to load approvals")?;
 
     let project_config = require_project_config(&repo)?;
     let commands = collect_approvable_commands(&project_config);
@@ -219,20 +226,33 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
         commands
     };
 
-    // Call the approval prompt (yes=false to require interactive approval and save)
-    // When show_all=true, we've already included all commands in commands_to_approve
-    // When show_all=false, we've already filtered to unapproved commands
-    // So we pass skip_approval_filter=true to prevent double-filtering
-    let approved =
-        approve_command_batch(&commands_to_approve, &project_id, &approvals, false, true)?;
-
-    // Show result
-    if approved {
-        eprintln!("{}", success_message("Commands approved & saved to config"));
+    // Unlike the execution gate (`approve_command_batch`), whose `--yes`
+    // consents to one run and records nothing, the record is this command's
+    // product: it saves on either path, and a failed save fails the command —
+    // an orchestrator that pre-approves and reads only the exit code would
+    // otherwise walk into the prompt it just paid to avoid.
+    let batch: Vec<&_> = commands_to_approve.iter().collect();
+    let approved = if yes {
+        announce_batch_approval(&batch, &project_id);
+        true
     } else {
+        prompt_for_batch_approval(&batch, &project_id)?
+    };
+
+    if !approved {
         eprintln!("{}", info_message("Commands declined"));
+        return Ok(());
     }
 
+    let templates: Vec<String> = commands_to_approve
+        .iter()
+        .map(|cmd| cmd.command.template.clone())
+        .collect();
+    approvals
+        .approve_commands(project_id, templates, &require_approvals_path()?)
+        .context("Failed to save command approval")?;
+
+    eprintln!("{}", success_message("Commands approved & saved to config"));
     Ok(())
 }
 

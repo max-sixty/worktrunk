@@ -1286,11 +1286,11 @@ pub fn collect(
     //   a listed `summary` that `Default` alone wouldn't plan (LLM command set,
     //   `[list] summary` off): without it the picker would hide a column `wt list`
     //   shows. CI is already covered — the picker is always `show_full`.
-    // - `--format json` → `all_columns` unioned with the selection's forced-on
-    //   columns: the every-field contract (`src/cli/mod.rs`) needs the full
-    //   set, never a narrowing — but a listed `ci` forces the fetch on, so
-    //   JSON reports the same data the table shows (and `collected.ci` says
-    //   so).
+    // - `--format json` → `all_columns` alone (source `Default`), so the
+    //   selection reaches it in neither direction: the every-field contract
+    //   (`src/cli/mod.rs`) rules out narrowing, and a display setting must not
+    //   decide whether a machine-readable call reaches a forge — `--full` is
+    //   the switch for that (#3787).
     //
     // So a branch/path `ls` alias over many dirty worktrees runs no `git status`
     // / diffs / ahead-behind walks (#3133), while a default column gated off by
@@ -1315,16 +1315,19 @@ pub fn collect(
             &gates,
         )
     };
-    let prune_to_selection =
-        render_table && progressive_handler.is_none() && !selected_columns.is_empty();
-    let tasks = if prune_to_selection {
-        listed_plan()
-    } else {
-        // Picker and JSON: the full set plus the selection's forced-on
-        // columns (a no-op when nothing is selected).
+    // The picker runs `collect` with a handler and no table render; JSON is the
+    // remaining handler-less non-table shape.
+    let tasks = if progressive_handler.is_some() {
+        // Picker: the full set plus the selection's forced-on columns (a no-op
+        // when nothing is selected).
         let mut tasks = full_plan();
         tasks.extend(listed_plan());
         tasks
+    } else if render_table && !selected_columns.is_empty() {
+        listed_plan()
+    } else {
+        // `wt list` with no selection, and every `--format json` run.
+        full_plan()
     };
 
     // The picker primes its CI cells from the local cache so the column paints

@@ -22,6 +22,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
 use rayon::prelude::*;
@@ -187,7 +188,7 @@ struct CopyLeaf {
 ///
 /// Walks the tree iteratively (no recursion), then copies all files and
 /// symlinks in parallel on a dedicated 4-thread pool. Non-regular files
-/// (sockets, FIFOs) are silently skipped. Existing entries at the destination
+/// (sockets, FIFOs) are skipped. Existing entries at the destination
 /// are skipped for idempotent usage.
 ///
 /// When `force` is true, existing files and symlinks at the destination are
@@ -201,6 +202,16 @@ struct CopyLeaf {
 /// of the source's. Every such skip logs at debug (`wt -vv`). The tree's own
 /// root is the exception: the caller named it, so its absence is an error.
 ///
+/// Returns how many of the entries the walk collected to copy were not copied.
+/// A pure copy ignores it; a caller that deletes the source afterwards must
+/// refuse on a non-zero count, since the source still holds content the
+/// destination never received. A non-regular file is dropped at classification
+/// rather than counted: it carries no content the destination can be short of,
+/// so refusing over one would cost a caller the whole operation to protect
+/// nothing. Zero does not prove the destination holds everything the source
+/// does — a file created after `read_dir` snapshots its directory is never seen,
+/// and copy-then-delete cannot close that without a rename.
+///
 /// Each copied leaf is recorded on `progress` —
 /// skipped entries are not counted — so a `progress` dedicated to this call
 /// reports `(files_copied, bytes_copied)` in `totals()` afterwards; a shared
@@ -209,14 +220,16 @@ struct CopyLeaf {
 /// When `root` is `Some`, refuses destination directory ancestry that resolves
 /// outside `root`. Leaves inherit the guarantee because `entry.file_name()` is
 /// a single basename and cannot escape the validated parent directory.
+#[must_use = "a caller that deletes the source must refuse on a non-zero skip count"]
 pub fn copy_dir_recursive(
     src: &Path,
     dest: &Path,
     root: Option<&Path>,
     force: bool,
     progress: &Progress,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<usize> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
+    let mut skipped = 0usize;
     let mut leaves = Vec::new();
     // The bool marks the tree's own root: the caller named it, so its absence
     // is a real error, while a subdirectory that disappears mid-walk is the
@@ -237,6 +250,7 @@ pub fn copy_dir_recursive(
             Ok(entries) => entries,
             Err(e) if e.kind() == ErrorKind::NotFound && !is_root => {
                 tracing::debug!(path = %src_dir.display(), "skipping vanished directory: {}", src_dir.display());
+                skipped += 1;
                 continue;
             }
             Err(e) => {
@@ -256,6 +270,7 @@ pub fn copy_dir_recursive(
                 // The entry was listed but is gone already — same race.
                 Err(e) if e.kind() == ErrorKind::NotFound => {
                     tracing::debug!(path = %entry.path().display(), "skipping vanished entry: {}", entry.path().display());
+                    skipped += 1;
                     continue;
                 }
                 Err(e) => {
@@ -280,16 +295,21 @@ pub fn copy_dir_recursive(
     }
 
     // Phase 2: Copy all leaves in parallel.
+    let skipped_leaves = AtomicUsize::new(0);
     COPY_POOL.install(|| {
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
-                if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, None, force)? {
-                    progress.record(bytes);
+                match copy_leaf(&leaf.src, &leaf.dest, None, force)? {
+                    Some(bytes) => progress.record(bytes),
+                    None => {
+                        skipped_leaves.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 Ok(())
             })
     })?;
+    skipped += skipped_leaves.into_inner();
 
     // Phase 3: Preserve source directory permissions AFTER copying contents.
     // Must be done after copying — if the source lacks write permission (e.g., 0o555),
@@ -303,6 +323,7 @@ pub fn copy_dir_recursive(
             // permissions rather than failing a batch that otherwise succeeded.
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 tracing::debug!(path = %src_dir.display(), "skipping permissions for vanished directory: {}", src_dir.display());
+                skipped += 1;
                 continue;
             }
             Err(e) => {
@@ -314,7 +335,7 @@ pub fn copy_dir_recursive(
             .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
     }
 
-    Ok(())
+    Ok(skipped)
 }
 
 /// Remove a file, ignoring "not found" errors. Reports whether one was removed,
@@ -442,6 +463,68 @@ mod tests {
 
         assert_eq!(result, Some(b"source content".len() as u64));
         assert_eq!(fs::read(&dest).unwrap(), b"source content");
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_counts_skipped_existing_destination() {
+        // The skipped count is what tells a caller that deletes the source
+        // whether the destination received everything. An idempotent re-run
+        // skips a leaf that is already there, and says so.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(src.join("a"), b"a").unwrap();
+        fs::write(src.join("b"), b"b").unwrap();
+        fs::write(dest.join("a"), b"pre-existing").unwrap();
+
+        let skipped = copy_dir_recursive(&src, &dest, None, false, &Progress::disabled()).unwrap();
+
+        assert_eq!(skipped, 1);
+        assert_eq!(fs::read(dest.join("a")).unwrap(), b"pre-existing");
+        assert_eq!(fs::read(dest.join("b")).unwrap(), b"b");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_dir_recursive_does_not_count_a_non_regular_file() {
+        // A socket is dropped at classification, not counted: the count exists
+        // so a caller that deletes the source can refuse, and a socket carries
+        // no content that refusal would protect.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("regular"), b"content").unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
+        drop(listener);
+        // Closing the fd doesn't unlink, so the socket is still there to
+        // classify. Asserted, so a zero count can't come from an empty fixture.
+        assert!(src.join("sock").exists());
+
+        let skipped = copy_dir_recursive(&src, &dest, None, true, &Progress::disabled()).unwrap();
+
+        assert_eq!(skipped, 0);
+        assert_eq!(fs::read(dest.join("regular")).unwrap(), b"content");
+        assert!(!dest.join("sock").exists());
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_reports_no_skips_for_a_complete_copy() {
+        // The control: a clean copy reports zero, which is what lets a move
+        // treat any non-zero count as a reason to keep the source.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        fs::create_dir_all(src.join("nested")).unwrap();
+        fs::write(src.join("a"), b"a").unwrap();
+        fs::write(src.join("nested").join("b"), b"b").unwrap();
+
+        let skipped = copy_dir_recursive(&src, &dest, None, true, &Progress::disabled()).unwrap();
+
+        assert_eq!(skipped, 0);
+        assert_eq!(fs::read(dest.join("nested").join("b")).unwrap(), b"b");
     }
 
     #[test]

@@ -56,7 +56,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.114.1'
+        version: '0.115.0'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace

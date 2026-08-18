@@ -19,10 +19,12 @@ fn branch_sha(repo: &TestRepo, branch: &str) -> String {
     repo.git_output(&["rev-parse", branch])
 }
 
-/// Set up tracking for all branches so @{push} resolves correctly.
+/// Set up tracking for all branches so `push_remote_url()` resolves a push
+/// destination.
 ///
-/// @{push} requires both tracking config AND the remote-tracking ref to exist.
-/// This is normally done by fetch/push, but in tests we create refs manually.
+/// `%(push:remotename)` reads the `branch.<name>.{remote,merge}` config. The
+/// remote-tracking ref that fetch/push would normally create is set up
+/// alongside it, so the fixture matches a real clone.
 fn setup_tracking_for_all_branches(repo: &TestRepo, remote: &str) {
     for branch in ["feature", "feature-a", "feature-b", "feature-c", "main"] {
         repo.run_git(&["config", &format!("branch.{}.remote", branch), remote]);
@@ -739,7 +741,8 @@ fn test_list_full_with_gitlab_multiple_mrs_no_project_id(mut repo: TestRepo) {
 /// - branch.<name>.pushremote = https://github.com/fork-owner/repo.git (a URL)
 /// - branch.<name>.merge = refs/pull/123/head (a PR ref)
 ///
-/// Git's @{push} syntax fails with URLs, so we fall back to reading the config directly.
+/// Git's @{push} syntax fails when the push remote is a URL, so
+/// `push_remote_url()` reads `%(push:remotename)`, which returns the URL directly.
 #[rstest]
 fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
     // Set origin URL (the upstream repo where PRs are opened)
