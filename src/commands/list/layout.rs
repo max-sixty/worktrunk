@@ -7,7 +7,7 @@
 //!
 //! ## Unified Position Grid
 //!
-//! All status indicators use position-based alignment with selective rendering.
+//! All status indicators use position-based alignment.
 //! See [`super::model::StatusSymbols`] for the complete symbol list and categories.
 //!
 //! Every row allocates every position ([`super::model::PositionMask::FULL`] is
@@ -16,11 +16,12 @@
 //! - Empty positions render as whitespace padded to the position's width
 //! - No leading spaces before the first symbol
 //!
-//! Example with working_tree, main_state, and user_marker carrying data:
+//! Example with working_tree, main_state, and user_marker carrying data. Every
+//! row is the same eight columns wide, one per allocated position:
 //! ```text
-//! Row 1: "   _🤖"   (working=space, main=_, user=🤖)
-//! Row 2: "?! _  "   (working=?!, main=_, user=space)
-//! Row 3: "    💬"   (working=space, main=space, user=💬)
+//! Row 1: "    _ 🤖"   (working=clean, main=_, user=🤖)
+//! Row 2: " !? _   "   (working=!?, main=_, user=none)
+//! Row 3: "      💬"   (working=clean, main=none, user=💬)
 //! ```
 //!
 //! ## Width Calculation
