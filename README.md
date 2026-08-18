@@ -249,8 +249,11 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
      key, produced by "Generate embed code" on star-history.com. Without one the
      chart renders a "GitHub restricted access to star data" placeholder: GitHub
      limits stargazer data to a repo's admins and collaborators, and their servers
-     are neither. A ciphertext rather than a credential in the clear, so it belongs
-     here rather than in a secret. -->
+     are neither. The token is fine-grained and reaches only this repo, which is
+     what makes the ciphertext safe here rather than in a secret; it expires
+     2027-08-16, after which the chart reverts to the placeholder with nothing
+     else to signal it. star-history reports GitHub is working on restoring
+     access, so drop this parameter once the plain URL renders a chart again. -->
 <a href="https://star-history.com/#max-sixty/worktrunk&Date">
   <img src="https://api.star-history.com/svg?repos=max-sixty/worktrunk&type=Date&sealed_token=2ySbQiVbkVrGmwgDsJya-xr4ApbVVvR0siYI46d22Xj_1kPCcgA9X0YpUGc3__aMuZ0ZAWzG4NBhJtqepYjlkoYrVwmKbgaPmGpNZTCfSyVp8EDA_IXaOOYW2whsOXDAi6g7HD9ezsnqSl58n7AqW2_4IQ4hY2p3h7tNv_3k4am5ASq1NdpbfrOUazCl" width="500" alt="Star History Chart">
 </a>
