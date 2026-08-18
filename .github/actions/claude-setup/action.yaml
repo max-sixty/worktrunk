@@ -28,9 +28,9 @@ runs:
 
     # Deliberately no rust-cache step. The one that used to sit here keyed on
     # `prefix-key: hashFiles('Cargo.lock')` with no `shared-key`, while the
-    # repo's only writer (`test` in ci.yaml, via test-setup) writes
-    # `v1-rust`/`shared` — so it never matched anything and every tend job
-    # paid ~13s to be told "No cache found."
+    # shared cache it could have restored is written as `v1-rust`/`shared` by
+    # the test-setup jobs in ci.yaml/nightly.yaml — so it never matched
+    # anything and every tend job paid ~13s to be told "No cache found."
     #
     # Adding one back takes more than those two keys. `Set build environment`
     # below would have to move *above* it (rust-cache hashes the CARGO*/RUST*
