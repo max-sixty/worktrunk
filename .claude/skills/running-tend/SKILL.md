@@ -118,10 +118,11 @@ restores, a step whose output nothing reads, a check that can't fail — should
 open the PR that makes it work. Deleting the broken thing and leaving a
 comment explaining what a working version would take is the wrong shape: it
 banks the analysis in a code comment and leaves the improvement unclaimed,
-and a maintainer reading it asks for the fix anyway (#3846). The
-review-runs cost gate is about not spending a maintainer's review on churn,
-not about preferring the smaller diff — a fix that is three coupled edits
-with a real payoff clears it.
+and a maintainer reading it asks for the fix anyway (#3846). This overrides
+**Gate 3** in the bundled review-gates reference for this repo: that gate
+classes a never-restoring cache as wasted compute and names "a cache" among
+the mechanisms that fail it at any occurrence count. Here, machinery a sweep
+has diagnosed gets the fix rather than the deletion the gate would allow.
 
 Fix it when the mechanism is understood well enough to predict the working
 version's behavior offline (recompute the key, replay the hash, diff the
