@@ -41,7 +41,7 @@ If codecov fails **locally**, investigate with `task coverage` and
 
 ### Investigating codecov failures in CI
 
-`task` and `cargo-llvm-cov` are not installed in the `claude-setup` action.
+`task` and `cargo-llvm-cov` are not installed in the `tend-setup` action.
 Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
 even `pwd` and `echo`. (Pre-built single-script installers like Determinate

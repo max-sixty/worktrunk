@@ -32,7 +32,7 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.TEND_BOT_TOKEN }}
 
-      - uses: ./.github/actions/claude-setup
+      - uses: ./.github/actions/tend-setup
 
       - uses: max-sixty/tend/claude@0.1.18
         with:

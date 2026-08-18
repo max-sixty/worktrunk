@@ -146,7 +146,7 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.TEND_BOT_TOKEN }}
 
-      - uses: ./.github/actions/claude-setup
+      - uses: ./.github/actions/tend-setup
         if: steps.check.outputs.count != '0' || github.event_name == 'workflow_dispatch'
       - uses: max-sixty/tend/claude@0.1.18
         if: steps.check.outputs.count != '0' || github.event_name == 'workflow_dispatch'
