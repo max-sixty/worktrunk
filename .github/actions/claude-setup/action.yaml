@@ -1,5 +1,5 @@
 name: Claude CI Setup
-description: Install cargo tools, Rust cache, and test shells for Claude CI workflows
+description: Install cargo tools and test shells for Claude CI workflows
 
 inputs:
   install-cargo-tools:
@@ -26,11 +26,18 @@ runs:
         crate: cargo-nextest
         version: "=0.9.143"
 
-    - name: "\U0001F4B0 Cache"
-      uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: ${{ hashFiles('Cargo.lock') }}
-        save-if: false
+    # Deliberately no rust-cache step. The one that used to sit here keyed on
+    # `prefix-key: hashFiles('Cargo.lock')` with no `shared-key`, while the
+    # repo's only writer (`test` in ci.yaml, via test-setup) writes
+    # `v1-rust`/`shared` — so it never matched anything and every tend job
+    # paid ~13s to be told "No cache found."
+    #
+    # Adding one back takes more than those two keys. `Set build environment`
+    # below would have to move *above* it (rust-cache hashes the CARGO*/RUST*
+    # vars visible at its own step — see "Build environment" in
+    # .github/CLAUDE.md) while still exporting RUSTDOCFLAGS afterwards, since
+    # no cache writer sets that one. Getting any of the three wrong reproduces
+    # the silent miss this removal cleared.
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7.6.0
