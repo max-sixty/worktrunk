@@ -300,7 +300,7 @@ impl PositionMask {
     /// The layout budgets the Status column from `FULL.total_width()` rather
     /// than a literal, so widening a position here can't leave the column one
     /// character short of what [`StatusSymbols::render_with_mask`] emits.
-    pub fn total_width(&self) -> usize {
+    pub(crate) fn total_width(&self) -> usize {
         self.widths.iter().sum()
     }
 }
@@ -450,8 +450,9 @@ impl StatusSymbols {
     /// - `Visible(s)` → styled content padded to the slot width.
     ///
     /// CRITICAL: Always use [`PositionMask::FULL`] for consistent spacing
-    /// between progressive and final rendering. The mask provides the
-    /// maximum width needed for each position across all rows.
+    /// between progressive and final rendering. The mask gives each position
+    /// its allocated width, and the cell the layout budgeted is
+    /// [`PositionMask::total_width`].
     pub fn render_with_mask(&self, mask: &PositionMask, placeholder: &str) -> String {
         use anstyle::Style;
         use worktrunk::styling::StyledLine;
@@ -809,8 +810,7 @@ mod tests {
         use ansi_str::AnsiStr;
         use unicode_width::UnicodeWidthStr;
 
-        let visible_width =
-            |rendered: &str| UnicodeWidthStr::width(rendered.ansi_strip().as_ref());
+        let visible_width = |rendered: &str| UnicodeWidthStr::width(rendered.ansi_strip().as_ref());
 
         let loading = StatusSymbols::default().render_with_mask(&PositionMask::FULL, "·");
         assert_eq!(visible_width(&loading), PositionMask::FULL.total_width());

@@ -10,12 +10,13 @@
 //! All status indicators use position-based alignment with selective rendering.
 //! See [`super::model::StatusSymbols`] for the complete symbol list and categories.
 //!
-//! Only positions used by at least one row are included (position mask):
-//! - Within those positions, symbols align vertically for scannability
-//! - Empty positions render as single space for grid alignment
+//! Every row allocates every position ([`super::model::PositionMask::FULL`] is
+//! the only mask anything constructs):
+//! - Symbols align vertically at their position for scannability
+//! - Empty positions render as whitespace padded to the position's width
 //! - No leading spaces before the first symbol
 //!
-//! Example with working_tree, main_state, and user_marker used:
+//! Example with working_tree, main_state, and user_marker carrying data:
 //! ```text
 //! Row 1: "   _🤖"   (working=space, main=_, user=🤖)
 //! Row 2: "?! _  "   (working=?!, main=_, user=space)
@@ -25,11 +26,13 @@
 //! ## Width Calculation
 //!
 //! ```text
-//! status_width = max(rendered_width_across_all_items)
+//! status_width = max(header_width, PositionMask::FULL.total_width())
 //! ```
 //!
-//! The width is calculated by rendering each item's status with the position
-//! mask and taking the maximum width.
+//! The width is not measured across items: the column's geometry is chosen at
+//! skeleton time, before any task result exists, and progressive and final
+//! renders have to agree on it. So the layout budgets the mask's total width
+//! and every render draws exactly that.
 //!
 //! ## Why This Design?
 //!
@@ -37,13 +40,9 @@
 //! - One alignment mechanism for all status indicators
 //! - User marker treated consistently with git symbols
 //!
-//! **Eliminates wasted space:**
-//! - Position mask removes columns for symbols that appear in zero rows
-//! - User marker only takes space when present
-//!
 //! **Maintains alignment:**
 //! - All symbols align vertically at their positions (vertical scannability)
-//! - Grid adapts to minimize width based on active positions
+//! - The grid never shifts as results arrive
 //!
 //! # Priority System Design
 //!
