@@ -54,7 +54,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.114.1'
+        version: '0.115.0'
 
     - name: 💰 Imported fixture cache
       uses: actions/cache@v6

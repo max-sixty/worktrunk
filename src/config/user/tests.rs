@@ -8,6 +8,24 @@ fn test_repo() -> TestRepo {
     TestRepo::new()
 }
 
+/// Whether mode bits actually restrict reads here. Root ignores them, so the
+/// permission tests below would assert an error that never arrives, and skip
+/// instead. Probing is what makes that decision on the uid rather than on
+/// `$USER`, which a container running as root can leave unset — the same shape
+/// the permission tests in `tests/` use.
+#[cfg(unix)]
+fn permissions_restrict_reads(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let probe = dir.join("permission-probe");
+    std::fs::write(&probe, b"x").unwrap();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let restricted = std::fs::read(&probe).is_err();
+    let _ = std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o644));
+    let _ = std::fs::remove_file(&probe);
+    restricted
+}
+
 #[test]
 fn test_default_config_path_returns_platform_path() {
     // default_config_path() returns the platform-specific path without
@@ -2453,8 +2471,7 @@ fn test_reload_from_permission_error() {
     }
     let _guard = RestorePerms(&config_path);
 
-    // Skip this test when running as root (common in CI containers)
-    if std::env::var("USER").as_deref() == Ok("root") {
+    if !permissions_restrict_reads(dir.path()) {
         return;
     }
 
@@ -3447,8 +3464,7 @@ fn test_save_to_existing_file_with_unreadable_file_returns_read_error() {
     }
     let _guard = RestorePerms(&config_path);
 
-    // Skip when running as root (common in CI containers)
-    if std::env::var("USER").as_deref() == Ok("root") {
+    if !permissions_restrict_reads(dir.path()) {
         return;
     }
 
@@ -4012,7 +4028,7 @@ fn test_with_locked_mutation_propagates_save_error() {
     }
     let _guard = RestorePerms(&config_path);
 
-    if std::env::var("USER").as_deref() == Ok("root") {
+    if !permissions_restrict_reads(dir.path()) {
         return;
     }
 

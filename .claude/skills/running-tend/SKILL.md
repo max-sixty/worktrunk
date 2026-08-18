@@ -301,7 +301,7 @@ For each weekly run, check upstream and bump:
 
 - **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/{affected,ci,coverage,nightly}.yaml` and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-affected`, `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. `cargo-affected` is pinned twice in `affected.yaml`; move both together. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
 - **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Four call sites: `coverage.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
-- **Codex Cloud tools** — `scripts/codex-cloud/Taskfile.yaml` pins Task through mise, pre-commit through uv, and cargo-insta, cargo-nextest, Nushell, and PowerShell archives with SHA-256 checksums. Keep overlapping versions aligned with CI and `setup-web`, update changed archive checksums, then copy the Taskfile's new digest into both README launchers.
+- **Codex Cloud tools** — `dev/codex.sh` pins pre-commit, cargo-insta, cargo-nextest, Nushell, and PowerShell; `setup-web` pins Nushell and PowerShell. Keep cargo-insta, cargo-nextest, and Nushell level with `.github/actions/test-setup/action.yaml`, which pins the same three — the gate runs `--all-features`, so Nushell's version moves PTY snapshots. Nothing under `.github/` pins PowerShell (CI runs whatever the runner image ships), so bump that one on its own.
 - **`taiki-e/install-action@v2.x`** `tool: zola@<ver>` in the `check-docs` job — latest from `gh api repos/getzola/zola/releases/latest --jq '.tag_name'`.
 - **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
 
@@ -310,21 +310,30 @@ Discovery shortcut: a recent green CI run on `main` flags cargo-install drift di
 ## Weekly Maintenance: Statusline Cache-Check
 
 Detect new in-process cache-miss duplicates introduced by recent changes by
-profiling a real `wt list statusline --claude-code` trace. The render runs on
-every Claude Code prompt redraw, so duplicate git subprocesses there compound
-into measurable fseventsd / IPC load.
+profiling a real `wt list statusline --format=claude-code` trace. The render
+runs on every Claude Code prompt redraw, so duplicate git subprocesses there
+compound into measurable fseventsd / IPC load.
 
 ```bash
-# Run from any worktree of this repo
-cat > /tmp/statusline-input.json <<'EOF'
-{"hook_event_name":"Status","workspace":{"current_dir":"REPLACE_WITH_CWD"},
- "model":{"display_name":"Opus"},"context_window":{"used_percentage":42.0}}
-EOF
-sed -i '' "s|REPLACE_WITH_CWD|$PWD|" /tmp/statusline-input.json
+# Run from any worktree of this repo. `jq -n` builds the stdin JSON so the
+# recipe is portable (the weekly job runs on ubuntu-24.04, whose GNU sed
+# rejects BSD's `sed -i ''`) and so a path with a quote can't corrupt it.
+jq -n --arg cwd "$PWD" '{
+  hook_event_name: "Status",
+  workspace: {current_dir: $cwd},
+  model: {display_name: "Opus"},
+  context_window: {used_percentage: 42.0}
+}' > /tmp/statusline-input.json
 
-cargo run --release -- -vv list statusline --claude-code \
+# Debug build on purpose. `tend-weekly` installs no `wt`, and its rust-cache
+# step is `save-if: false` under a key no workflow writes, so `--release`
+# means a cold optimized build of the whole dependency graph before the first
+# render. What this check reads — duplicate `(command, context)` pairs and the
+# subprocess count — is profile-independent; only the timing columns, which
+# this section doesn't triage, would be worth a release build.
+cargo run -- -vv list statusline --format=claude-code \
   < /tmp/statusline-input.json > /dev/null
-cargo run --release -- config state logs profile --format=json | jq .cache
+cargo run -- config state logs profile --format=json | jq .cache
 ```
 
 The `.cache` report flags commands invoked more than once with the same context.

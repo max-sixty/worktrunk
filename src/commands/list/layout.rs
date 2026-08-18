@@ -7,29 +7,33 @@
 //!
 //! ## Unified Position Grid
 //!
-//! All status indicators use position-based alignment with selective rendering.
+//! All status indicators use position-based alignment.
 //! See [`super::model::StatusSymbols`] for the complete symbol list and categories.
 //!
-//! Only positions used by at least one row are included (position mask):
-//! - Within those positions, symbols align vertically for scannability
-//! - Empty positions render as single space for grid alignment
+//! Every row allocates every position ([`super::model::PositionMask::FULL`] is
+//! the only mask anything constructs):
+//! - Symbols align vertically at their position for scannability
+//! - Empty positions render as whitespace padded to the position's width
 //! - No leading spaces before the first symbol
 //!
-//! Example with working_tree, main_state, and user_marker used:
+//! Example with working_tree, main_state, and user_marker carrying data. Every
+//! row is the same eight columns wide, one per allocated position:
 //! ```text
-//! Row 1: "   _🤖"   (working=space, main=_, user=🤖)
-//! Row 2: "?! _  "   (working=?!, main=_, user=space)
-//! Row 3: "    💬"   (working=space, main=space, user=💬)
+//! Row 1: "    _ 🤖"   (working=clean, main=_, user=🤖)
+//! Row 2: " !? _   "   (working=!?, main=_, user=none)
+//! Row 3: "      💬"   (working=clean, main=none, user=💬)
 //! ```
 //!
 //! ## Width Calculation
 //!
 //! ```text
-//! status_width = max(rendered_width_across_all_items)
+//! status_width = max(header_width, PositionMask::FULL.total_width())
 //! ```
 //!
-//! The width is calculated by rendering each item's status with the position
-//! mask and taking the maximum width.
+//! The width is not measured across items: the column's geometry is chosen at
+//! skeleton time, before any task result exists, and progressive and final
+//! renders have to agree on it. So the layout budgets the mask's total width
+//! and every render draws exactly that.
 //!
 //! ## Why This Design?
 //!
@@ -37,13 +41,9 @@
 //! - One alignment mechanism for all status indicators
 //! - User marker treated consistently with git symbols
 //!
-//! **Eliminates wasted space:**
-//! - Position mask removes columns for symbols that appear in zero rows
-//! - User marker only takes space when present
-//!
 //! **Maintains alignment:**
 //! - All symbols align vertically at their positions (vertical scannability)
-//! - Grid adapts to minimize width based on active positions
+//! - The grid never shifts as results arrive
 //!
 //! # Priority System Design
 //!
@@ -754,9 +754,14 @@ fn build_estimated_widths(
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
     //
-    // Status column: Must match PositionMask::FULL width for consistent alignment
-    // PositionMask::FULL allocates: 1+1+1+1+1+1+2 = 8 chars (7 positions)
-    let status_fixed = fit_header(ColumnKind::Status.header(), 8);
+    // Status column: every row renders all seven positions of
+    // `PositionMask::FULL`, so the column has to be at least that wide or the
+    // cell overflows it. Read the width off the mask rather than restating its
+    // arithmetic — the two can't drift.
+    let status_fixed = fit_header(
+        ColumnKind::Status.header(),
+        super::model::PositionMask::FULL.total_width(),
+    );
     let working_diff_fixed = fit_header(ColumnKind::WorkingDiff.header(), 9); // "+999 -999"
     let ahead_behind_fixed = fit_header(ColumnKind::AheadBehind.header(), 7); // "↑99 ↓99"
     let branch_diff_fixed = fit_header(ColumnKind::BranchDiff.header(), 9); // "+999 -999"
@@ -1155,7 +1160,7 @@ fn allocate_columns_with_priority(
 /// - Paths (relative to main worktree)
 ///
 /// Pre-allocated estimates (generous to minimize truncation):
-/// - Status: 8 chars (PositionMask::FULL, 7 positions)
+/// - Status: `PositionMask::FULL.total_width()` (7 positions, 8 chars today)
 /// - Working diff: 9 chars ("+999 -999")
 /// - Ahead/behind: 7 chars ("↑99 ↓99")
 /// - Branch diff: 9 chars ("+999 -999")
