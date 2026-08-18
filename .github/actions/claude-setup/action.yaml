@@ -1,5 +1,5 @@
 name: Claude CI Setup
-description: Install cargo tools and test shells for Claude CI workflows
+description: Install cargo tools, Rust cache, and test shells for Claude CI workflows
 
 inputs:
   install-cargo-tools:
@@ -12,6 +12,20 @@ inputs:
 runs:
   using: composite
   steps:
+    # Must stay above the cache step: rust-cache hashes every CARGO*/RUST* var
+    # visible at its own step into the key, so the three the shared-cache
+    # writers set have to be exported before it or the key won't match theirs
+    # (see "Build environment" in .github/CLAUDE.md). These three, with these
+    # values, are what ci.yaml's workflow `env:` block gives `test-setup` —
+    # keep them in step. RUSTDOCFLAGS is deliberately not here; it is exported
+    # below, after the cache step.
+    - name: Set build environment
+      shell: bash
+      run: |
+        echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+        echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
+
     - name: Install cargo-insta
       if: inputs.install-cargo-tools == 'true'
       uses: baptiste0928/cargo-install@v3
@@ -26,18 +40,38 @@ runs:
         crate: cargo-nextest
         version: "=0.9.143"
 
-    # Deliberately no rust-cache step. The one that used to sit here keyed on
-    # `prefix-key: hashFiles('Cargo.lock')` with no `shared-key`, while the
-    # shared cache it could have restored is written as `v1-rust`/`shared` by
-    # the test-setup jobs in ci.yaml/nightly.yaml — so it never matched
-    # anything and every tend job paid ~13s to be told "No cache found."
-    #
-    # Adding one back takes more than those two keys. `Set build environment`
-    # below would have to move *above* it (rust-cache hashes the CARGO*/RUST*
-    # vars visible at its own step — see "Build environment" in
-    # .github/CLAUDE.md) while still exporting RUSTDOCFLAGS afterwards, since
-    # no cache writer sets that one. Getting any of the three wrong reproduces
-    # the silent miss this removal cleared.
+    - name: "\U0001F4B0 Cache"
+      id: cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Restore the shared cache `test-setup`'s jobs publish from main;
+        # never save (tend jobs would deposit single-use entries against the
+        # 10 GB repo cap). Every field below has to match what those jobs
+        # compute or the restore silently misses, which is what the old
+        # `hashFiles('Cargo.lock')` prefix and job-name shared-key did.
+        cache-bin: false
+        prefix-key: v1-rust
+        shared-key: shared
+        save-if: false
+
+    # The failure mode this guards is silence: a key that matches nothing
+    # restores nothing and still succeeds. An exact-match miss here means the
+    # env above, the keys, or their `test-setup` counterparts drifted apart.
+    - name: Check the cache restored
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: >-
+        echo "::warning::rust-cache found no exact match for the shared cache.
+        Compare this job's Cache Configuration group against a ci.yaml test job's:
+        prefix v1-rust, shared-key shared, then a hash over the CARGO*/RUST*
+        env vars visible at the cache step."
+
+    - name: Set doc build environment
+      # Below the cache step on purpose: no writer of the shared cache sets
+      # RUSTDOCFLAGS, and rust-cache would hash it into a key that matches
+      # nothing.
+      shell: bash
+      run: echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7.6.0
@@ -54,11 +88,3 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y zsh fish
-
-    - name: Set build environment
-      shell: bash
-      run: |
-        echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
-        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
-        echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
-        echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"
