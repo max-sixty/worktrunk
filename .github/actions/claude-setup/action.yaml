@@ -55,16 +55,21 @@ runs:
         save-if: false
 
     # The failure mode this guards is silence: a key that matches nothing
-    # restores nothing and still succeeds. An exact-match miss here means the
-    # env above, the keys, or their `test-setup` counterparts drifted apart.
+    # restores nothing and still succeeds. `cache-hit` is true only on a full
+    # match, so this also fires on a benign partial restore — the restore key
+    # drops the trailing lockfile hash, and main's cache is republished only
+    # when a `test` run finishes there. Drift in the env above, the keys, or
+    # their `test-setup` counterparts is the other cause, and the one to chase.
     - name: Check the cache restored
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: >-
         echo "::warning::rust-cache found no exact match for the shared cache.
-        Compare this job's Cache Configuration group against a ci.yaml test job's:
-        prefix v1-rust, shared-key shared, then a hash over the CARGO*/RUST*
-        env vars visible at the cache step."
+        Expected between a Cargo.lock change landing on main and the next main
+        test run republishing: the restore key still matched, so the previous
+        entry was restored. Otherwise compare this job's Cache Configuration
+        group against a ci.yaml test job's: prefix v1-rust, shared-key shared,
+        then a hash over the CARGO*/RUST* env vars visible at the cache step."
 
     - name: Set doc build environment
       # Below the cache step on purpose: no writer of the shared cache sets
