@@ -2328,42 +2328,48 @@ fn test_hook_multiple_name_filters(repo: TestRepo) {
 /// project `bar` defined, runs user `foo` and project `bar` — but not project
 /// `foo`, which the `user:foo` scope excludes even though the unscoped `bar`
 /// admits the project source.
+///
+/// Each command writes a marker file rather than echoing. The announcement
+/// prints a command's body before running it, so asserting on stdout would
+/// pin which commands were selected rather than which ones ran.
 #[rstest]
 fn test_hook_source_scoped_filter_does_not_bleed_into_other_source(repo: TestRepo) {
     repo.write_test_config(
         r#"[pre-merge]
-foo = "echo USER_FOO"
+foo = "echo ran > user_foo.txt"
 "#,
     );
     repo.write_project_config(
         r#"[pre-merge]
-foo = "echo PROJECT_FOO"
-bar = "echo PROJECT_BAR"
+foo = "echo ran > project_foo.txt"
+bar = "echo ran > project_bar.txt"
 "#,
     );
+    repo.commit("Add pre-merge hooks");
 
     let output = repo
         .wt_command()
         .args(["hook", "pre-merge", "user:foo", "bar", "--yes"])
         .output()
-        .unwrap();
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
+        .expect("Failed to run wt hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt hook pre-merge failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
     assert!(
-        combined.contains("USER_FOO"),
-        "user:foo should run user's foo; got:\n{combined}"
+        repo.root_path().join("user_foo.txt").exists(),
+        "user:foo should run the user's foo"
     );
     assert!(
-        combined.contains("PROJECT_BAR"),
-        "unscoped bar should run project's bar; got:\n{combined}"
+        repo.root_path().join("project_bar.txt").exists(),
+        "unscoped bar should run the project's bar"
     );
     assert!(
-        !combined.contains("PROJECT_FOO"),
-        "project foo must NOT run — user:foo is scoped to user only; got:\n{combined}"
+        !repo.root_path().join("project_foo.txt").exists(),
+        "project foo must not run — user:foo is scoped to the user source"
     );
 }
 
