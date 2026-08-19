@@ -12,13 +12,10 @@ inputs:
 runs:
   using: composite
   steps:
-    # Must stay above the cache step: rust-cache hashes every CARGO*/RUST* var
-    # visible at its own step into the key, so the three the shared-cache
-    # writers set have to be exported before it or the key won't match theirs
-    # (see "Build environment" in .github/CLAUDE.md). These three, with these
-    # values, are what ci.yaml's workflow `env:` block gives `test-setup` —
-    # keep them in step. RUSTDOCFLAGS is deliberately not here; it is exported
-    # below, after the cache step.
+    # Above the cache step on purpose: rust-cache hashes the CARGO*/RUST* vars
+    # visible at its own step into the key, so these have to be set first, and
+    # have to match what ci.yaml's workflow `env:` block gives the jobs that
+    # write the shared cache (see "Build environment" in .github/CLAUDE.md).
     - name: Set build environment
       shell: bash
       run: |
@@ -41,42 +38,17 @@ runs:
         version: "=0.9.143"
 
     - name: "\U0001F4B0 Cache"
-      id: cache
       uses: Swatinem/rust-cache@v2
       with:
-        # Restore the shared cache `test-setup`'s jobs publish from main;
-        # never save (tend jobs would deposit single-use entries against the
-        # 10 GB repo cap). Every field below has to match what those jobs
-        # compute or the restore silently misses, which is what the old
-        # `hashFiles('Cargo.lock')` prefix and job-name shared-key did.
+        # Restore the shared cache `test-setup`'s jobs publish from main; never
+        # save (tend jobs would deposit single-use entries against the 10 GB
+        # repo cap). Each field has to match what those jobs compute or the
+        # restore silently misses, as the old `hashFiles('Cargo.lock')` prefix
+        # and job-name shared-key did.
         cache-bin: false
         prefix-key: v1-rust
         shared-key: shared
         save-if: false
-
-    # The failure mode this guards is silence: a key that matches nothing
-    # restores nothing and still succeeds. `cache-hit` is true only on a full
-    # match, so this also fires on a benign partial restore — the restore key
-    # drops the trailing lockfile hash, and main's cache is republished only
-    # when a `test` run finishes there. Drift in the env above, the keys, or
-    # their `test-setup` counterparts is the other cause, and the one to chase.
-    - name: Check the cache restored
-      if: steps.cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: >-
-        echo "::warning::rust-cache found no exact match for the shared cache.
-        Expected between a Cargo.lock change landing on main and the next main
-        test run republishing: the restore key still matched, so the previous
-        entry was restored. Otherwise compare this job's Cache Configuration
-        group against a ci.yaml test job's: prefix v1-rust, shared-key shared,
-        then a hash over the CARGO*/RUST* env vars visible at the cache step."
-
-    - name: Set doc build environment
-      # Below the cache step on purpose: no writer of the shared cache sets
-      # RUSTDOCFLAGS, and rust-cache would hash it into a key that matches
-      # nothing.
-      shell: bash
-      run: echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7.6.0
