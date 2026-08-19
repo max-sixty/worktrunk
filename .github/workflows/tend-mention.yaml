@@ -389,7 +389,7 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.TEND_BOT_TOKEN }}
 
-      - uses: ./.github/actions/claude-setup
+      - uses: ./.github/actions/tend-setup
 
       - name: Check out PR branch
         if: |
@@ -452,7 +452,7 @@ jobs:
       - name: Restore local setup actions for POST cleanup
         if: always()
         run: |
-          dir=.github/actions/claude-setup
+          dir=.github/actions/tend-setup
           git checkout "$GITHUB_SHA" -- "$dir" ||
             echo "::warning::could not restore $dir from $GITHUB_SHA; POST cleanup of the local action may fail"
 

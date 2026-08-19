@@ -491,10 +491,12 @@ fn spawn_detached_exec_windows(
 /// step is best-effort and additive — failures log at debug level and the
 /// `wt remove` operation proceeds regardless.
 ///
-/// It DOES delay process exit — the shell wrapper waits on it. The daemon
-/// reap enumerates fsmonitor daemons machine-wide with one sequential ~50ms
-/// `lsof` per daemon (measured: 115 daemons → ~5.8s of post-output latency;
-/// see the `internal-sweep` / `enumerate-fsmonitor-daemons` trace spans and
+/// It DOES delay process exit — the shell wrapper waits on it. Enumeration is
+/// two spawns, one `pgrep` plus one `lsof` over the whole daemon PID set, flat
+/// in the machine-wide daemon count. Any live daemon then costs a
+/// `git worktree list`, and a classified orphan a `SIGTERM`→`SIGKILL` wait
+/// bounded by `REAP_KILL_DEADLINE` — both flat in the daemon count too (see
+/// the `internal-sweep` / `enumerate-fsmonitor-daemons` trace spans and
 /// benches/CLAUDE.md § Recording `wt remove` / `wt step prune` staging).
 ///
 /// Steps:

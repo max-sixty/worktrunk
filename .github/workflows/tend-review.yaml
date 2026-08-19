@@ -117,7 +117,7 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.TEND_BOT_TOKEN }}
 
-      - uses: ./.github/actions/claude-setup
+      - uses: ./.github/actions/tend-setup
         if: steps.gate.outputs.should_run == 'true'
 
       # GitHub only materializes refs/pull/N/merge for mergeable PRs — on
@@ -162,7 +162,7 @@ jobs:
       - name: Restore local setup actions for POST cleanup
         if: always() && (steps.gate.outputs.should_run == 'true')
         run: |
-          dir=.github/actions/claude-setup
+          dir=.github/actions/tend-setup
           git checkout "$GITHUB_SHA" -- "$dir" ||
             echo "::warning::could not restore $dir from $GITHUB_SHA; POST cleanup of the local action may fail"
 

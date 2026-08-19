@@ -1,5 +1,5 @@
-name: Claude CI Setup
-description: Install cargo tools, Rust cache, and test shells for Claude CI workflows
+name: tend setup
+description: Install cargo tools, Rust cache, and test shells for the tend workflows
 
 inputs:
   install-cargo-tools:
