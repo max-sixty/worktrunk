@@ -133,15 +133,10 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
             }
             tracing::debug!(status = %status, "Pager exited with status: {}", status);
         }
-        Ok(None) => {
-            // Timed out - kill pager and clean up
-            tracing::debug!(timeout = ?PAGER_TIMEOUT, "Pager timed out after {:?}", PAGER_TIMEOUT);
-            waiter.kill();
-            let _ = waiter.wait();
-            let _ = reader_thread.join();
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "Failed to wait for pager: {}", e);
+        // Timed out, or the wait failed outright. Either way the pager owes us
+        // nothing more: kill it, reap it, and fall back to the raw text below.
+        outcome => {
+            tracing::debug!(?outcome, timeout = ?PAGER_TIMEOUT, "Pager did not exit within {:?}", PAGER_TIMEOUT);
             waiter.kill();
             let _ = waiter.wait();
             let _ = reader_thread.join();
@@ -211,6 +206,27 @@ mod tests {
         let input = "hello world";
         let result = pipe_through_pager(input, "tr 'a-z' 'A-Z'", 80);
         assert_eq!(result, "HELLO WORLD");
+    }
+
+    /// A pager that never exits must not freeze skim's event loop: it is killed at
+    /// `PAGER_TIMEOUT` and the preview falls back to the unpaged text.
+    ///
+    /// Explicit `exec`, because the kill reaches the pager and not its children:
+    /// a grandchild inherits the stdout pipe, and the reader thread this function
+    /// joins blocks until *it* exits. `sh -c "sleep 30"` forks here, so without
+    /// the `exec` the wait runs the full 30 s despite the pager being dead.
+    #[test]
+    #[cfg(unix)]
+    fn test_pipe_through_pager_times_out() {
+        let input = "line 1\nline 2";
+        let start = std::time::Instant::now();
+        let result = pipe_through_pager(input, "exec sleep 30", 80);
+        assert_eq!(result, input);
+        assert!(
+            start.elapsed() < PAGER_TIMEOUT * 4,
+            "the timeout did not bound the wait: {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
