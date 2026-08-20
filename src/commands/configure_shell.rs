@@ -1809,7 +1809,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_config_file_preserves_changed_preimage() {
+    fn test_remove_config_file_requires_matching_preimage() {
         let dir = tempfile::TempDir::new().unwrap();
         let wrapper = dir.path().join("wt.fish");
         let previewed = b"# worktrunk shell integration for fish\n";
@@ -1819,6 +1819,88 @@ mod tests {
 
         assert!(error.contains("changed after preview"), "{error}");
         assert_eq!(fs::read(&wrapper).unwrap(), b"# user replacement\n");
+
+        fs::write(&wrapper, previewed).unwrap();
+        remove_config_file(&wrapper, previewed).unwrap();
+        assert!(!wrapper.exists());
+        remove_config_file(&wrapper, previewed).unwrap();
+    }
+
+    #[test]
+    fn test_preimage_verification_rejects_directories() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let integration_error = remove_config_file(dir.path(), b"").unwrap_err();
+        let completion_error = verify_completion_preimage(dir.path(), None).unwrap_err();
+
+        assert!(
+            integration_error.contains("Failed to verify shell integration"),
+            "{integration_error}"
+        );
+        assert!(
+            completion_error.contains("Failed to verify shell completions"),
+            "{completion_error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_preimage_writes_leave_files_intact_on_io_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let wrapper = dir.path().join("wt.fish");
+        let completion = dir.path().join("completions.fish");
+        let wrapper_content = b"# worktrunk shell integration for fish\n";
+        let completion_content = b"# previewed completion\n";
+        fs::write(&wrapper, wrapper_content).unwrap();
+        fs::write(&completion, completion_content).unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
+
+        let remove_result = remove_config_file(&wrapper, wrapper_content);
+        let completion_result = apply_shell_completions(
+            vec![CompletionResult {
+                shell: Shell::Fish,
+                path: completion.clone(),
+                action: ConfigAction::WouldAdd,
+                preimage: Some(completion_content.to_vec()),
+            }],
+            &[ConfigureResult {
+                shell: Shell::Fish,
+                path: dir.path().join("functions/wt.fish"),
+                action: ConfigAction::Created,
+                config_line: String::new(),
+            }],
+            "wt",
+        );
+
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let remove_error = remove_result.unwrap_err();
+        let completion_error = completion_result
+            .err()
+            .expect("read-only completion directory should reject the write");
+        assert!(remove_error.contains("Failed to remove"), "{remove_error}");
+        assert!(
+            completion_error.contains("Failed to write"),
+            "{completion_error}"
+        );
+        assert_eq!(fs::read(wrapper).unwrap(), wrapper_content);
+        assert_eq!(fs::read(completion).unwrap(), completion_content);
+    }
+
+    #[test]
+    fn test_configure_shell_rejects_invalid_utf8_before_modifying_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".zshrc");
+        let content = b"# non-UTF-8: \xff\n";
+        fs::write(&rc, content).unwrap();
+
+        let error = configure_shell_file(Shell::Zsh, &rc, false, false, "wt")
+            .err()
+            .expect("invalid UTF-8 should be rejected");
+
+        assert!(error.contains("Failed to read line"), "{error}");
+        assert_eq!(fs::read(rc).unwrap(), content);
     }
 
     #[test]

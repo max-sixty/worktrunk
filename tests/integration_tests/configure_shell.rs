@@ -268,6 +268,31 @@ fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+#[rstest]
+#[cfg(unix)]
+fn test_configure_shell_rejects_completion_directory(repo: TestRepo, temp_home: TempDir) {
+    let completion = temp_home.path().join(".config/fish/completions/wt.fish");
+    fs::create_dir_all(&completion).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "shell", "install", "fish", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @"
+        success: false
+        exit_code: 1
+        ----- stdout -----
+
+        ----- stderr -----
+        [31m✗[39m [31mFailed to read ~/.config/fish/completions/wt.fish: Is a directory (os error 21)[39m
+        ");
+    });
+}
+
 /// Test install dry-run shows preview with gutter-formatted config content
 #[rstest]
 fn test_configure_shell_fish_dry_run(repo: TestRepo, temp_home: TempDir) {
