@@ -1124,6 +1124,12 @@ impl ChildWaiter {
 /// pid is the pgid and the TERM → KILL escalation reaches every member. SIGTERM
 /// first for the same reason [`signal_background_pid`] uses it: git's lockfile
 /// handlers run on TERM, so an interrupted git cleans up after itself.
+///
+/// The caller passes [`ChildWaiter::pid`], so this inherits the staleness window
+/// [`ChildWaiter::kill`] documents, widened by one step: a reused pid names a
+/// process group here, not a single process. Same bound — the child has to exit,
+/// be reaped by the waiter thread, and have its pid recycled within the few
+/// microseconds between the expired deadline and this call.
 #[cfg(unix)]
 fn kill_timed_out_tree(pid: u32) {
     forward_signal_with_escalation(pid as i32, signal_hook::consts::SIGTERM);
