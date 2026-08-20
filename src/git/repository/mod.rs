@@ -1202,16 +1202,6 @@ impl Repository {
         })
     }
 
-    /// Check if this repository shares its cache with another.
-    ///
-    /// Returns true if both repositories point to the same underlying cache.
-    /// This is primarily useful for testing that cloned repositories share
-    /// cached data.
-    #[doc(hidden)]
-    pub fn shares_cache_with(&self, other: &Repository) -> bool {
-        Arc::ptr_eq(&self.cache, &other.cache)
-    }
-
     /// Resolve the git common directory for a path.
     ///
     /// Always returns a canonicalized absolute path to ensure consistent

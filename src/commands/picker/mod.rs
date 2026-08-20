@@ -3863,7 +3863,7 @@ pub mod tests {
         let approvals_path = approvals_dir.path().join("approvals.toml");
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(pid, "false".to_string(), &approvals_path)
+            .approve_commands(pid, vec!["false".to_string()], &approvals_path)
             .unwrap();
 
         // Build the row from the git-reported worktree path, not the raw temp

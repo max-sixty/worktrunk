@@ -205,11 +205,11 @@ What the hole cost before this: any key in the developer's config applied to fix
 in-process unit test that calls library functions directly gets no such
 isolation: it runs in the test process, which inherits the real environment.
 
-The `Approvals` and `UserConfig` mutation methods take an explicit `&Path`, so
-a unit test passes a tempdir-backed path and the write stays isolated. The
-global resolvers do not isolate: `Approvals::load()`, `approvals_path()`,
-`config_path()`, and `system_config_path()` all fall back to the real
-`~/.config/worktrunk/`.
+`Approvals::approve_commands` and the `UserConfig` mutation methods take an
+explicit `&Path`, so a unit test passes a tempdir-backed path and the write stays
+isolated. The global resolvers do not isolate: `Approvals::load()`,
+`approvals_path()`, `config_path()`, and `system_config_path()` all fall back to
+the real `~/.config/worktrunk/`.
 
 <example>
 <bad reason="Approvals::load() reads the real ~/.config/worktrunk/approvals.toml">
@@ -218,7 +218,7 @@ Bad:
 
 ```rust
 let mut approvals = Approvals::load().unwrap();
-approvals.approve_command(project, command, &approvals_path).unwrap();
+approvals.approve_commands(project, vec![command], &approvals_path).unwrap();
 ```
 
 </bad>
@@ -230,7 +230,7 @@ Good:
 let temp_dir = tempfile::tempdir().unwrap();
 let approvals_path = temp_dir.path().join("approvals.toml");
 let mut approvals = Approvals::default();
-approvals.approve_command(project, command, &approvals_path).unwrap();
+approvals.approve_commands(project, vec![command], &approvals_path).unwrap();
 ```
 
 </good>

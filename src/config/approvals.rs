@@ -357,16 +357,6 @@ impl Approvals {
         Ok(approvals)
     }
 
-    /// Add an approved command and save. See [`Self::approve_commands`].
-    pub fn approve_command(
-        &mut self,
-        project: String,
-        command: String,
-        approvals_path: &Path,
-    ) -> Result<(), ConfigError> {
-        self.approve_commands(project, vec![command], approvals_path)
-    }
-
     /// Add multiple approved commands in a single locked operation.
     ///
     /// Refuses a `project` containing `*`: reads treat such a key as a pattern
@@ -624,9 +614,9 @@ approved-commands = ["npm install"]
         approvals.save_to(&path).unwrap();
 
         approvals
-            .approve_command(
+            .approve_commands(
                 "git.company.example/owner/repo".to_string(),
-                "npm test".to_string(),
+                vec!["npm test".to_string()],
                 &path,
             )
             .unwrap();
@@ -673,9 +663,9 @@ approved-commands = ["npm test"]
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo".to_string(),
-                "npm install".to_string(),
+                vec!["npm install".to_string()],
                 &path,
             )
             .unwrap();
@@ -691,16 +681,16 @@ approved-commands = ["npm test"]
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo".to_string(),
-                "npm install".to_string(),
+                vec!["npm install".to_string()],
                 &path,
             )
             .unwrap();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo".to_string(),
-                "npm install".to_string(),
+                vec!["npm install".to_string()],
                 &path,
             )
             .unwrap();
@@ -744,9 +734,9 @@ approved-commands = ["npm test"]
             )
             .unwrap();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo2".to_string(),
-                "cargo build".to_string(),
+                vec!["cargo build".to_string()],
                 &path,
             )
             .unwrap();
@@ -764,16 +754,16 @@ approved-commands = ["npm test"]
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo1".to_string(),
-                "npm install".to_string(),
+                vec!["npm install".to_string()],
                 &path,
             )
             .unwrap();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo2".to_string(),
-                "cargo build".to_string(),
+                vec!["cargo build".to_string()],
                 &path,
             )
             .unwrap();
@@ -879,9 +869,9 @@ approved-commands = ["npm test"]
         let mut approvals = Approvals::default();
         // Approve with deprecated variable name
         approvals
-            .approve_command(
+            .approve_commands(
                 "project".to_string(),
-                "echo {{ repo_root }}".to_string(),
+                vec!["echo {{ repo_root }}".to_string()],
                 &path,
             )
             .unwrap();
@@ -896,7 +886,11 @@ approved-commands = ["npm test"]
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project".to_string(), "echo repo_root".to_string(), &path)
+            .approve_commands(
+                "project".to_string(),
+                vec!["echo repo_root".to_string()],
+                &path,
+            )
             .unwrap();
 
         assert!(!approvals.is_command_approved("project", "echo repo_path"));
@@ -921,9 +915,9 @@ approved-commands = ["npm test"]
                     let mut approvals = Approvals::default();
                     barrier.wait();
                     approvals
-                        .approve_command(
+                        .approve_commands(
                             "github.com/user/repo".to_string(),
-                            format!("command_{i}"),
+                            vec![format!("command_{i}")],
                             &config_path,
                         )
                         .unwrap();
@@ -990,9 +984,9 @@ approved-commands = ["npm install"]
         // Approve a new command — reload_from should pick up config.toml fallback
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(
+            .approve_commands(
                 "github.com/user/repo".to_string(),
-                "npm test".to_string(),
+                vec!["npm test".to_string()],
                 &approvals_path,
             )
             .unwrap();
@@ -1086,7 +1080,7 @@ approved-command = ["npm test"]
         let (_temp_dir, path) = test_dir();
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project-a".to_string(), "cmd1".to_string(), &path)
+            .approve_commands("project-a".to_string(), vec!["cmd1".to_string()], &path)
             .unwrap();
         // Revoke a project that doesn't exist — should be a no-op
         approvals.revoke_project("nonexistent", &path).unwrap();
@@ -1132,7 +1126,7 @@ approved-command = ["npm test"]
         let (_temp_dir, path) = test_dir();
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project-a".to_string(), "cmd1".to_string(), &path)
+            .approve_commands("project-a".to_string(), vec!["cmd1".to_string()], &path)
             .unwrap();
         // Manually clear the commands (without removing the project entry)
         approvals
@@ -1222,10 +1216,10 @@ approved-command = ["npm test"]
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project1".to_string(), "cmd1".to_string(), &path)
+            .approve_commands("project1".to_string(), vec!["cmd1".to_string()], &path)
             .unwrap();
         approvals
-            .approve_command("project2".to_string(), "cmd2".to_string(), &path)
+            .approve_commands("project2".to_string(), vec!["cmd2".to_string()], &path)
             .unwrap();
 
         let projects: Vec<_> = approvals.projects().collect();

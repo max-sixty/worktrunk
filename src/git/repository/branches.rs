@@ -223,21 +223,6 @@ impl Repository {
             .collect())
     }
 
-    /// Get branches that don't have worktrees (available for switch).
-    pub fn available_branches(&self) -> anyhow::Result<Vec<String>> {
-        let worktrees = self.list_worktrees()?;
-        let branches_with_worktrees: HashSet<String> = worktrees
-            .iter()
-            .filter_map(|wt| wt.branch.clone())
-            .collect();
-        Ok(self
-            .local_branches()?
-            .iter()
-            .filter(|b| !branches_with_worktrees.contains(&b.name))
-            .map(|b| b.name.clone())
-            .collect())
-    }
-
     /// Get branches with metadata for shell completions.
     ///
     /// Returns branches in completion order: worktrees first, then local branches,
@@ -593,6 +578,8 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
 
         let before = repo.default_branch_sha().expect("main resolves");
+        let cloned_repo = repo.clone();
+        assert!(std::sync::Arc::ptr_eq(&repo.cache, &cloned_repo.cache));
 
         // Move main forward outside `repo`'s knowledge.
         std::fs::write(test.root_path().join("after.txt"), "after\n").unwrap();
@@ -601,8 +588,8 @@ mod tests {
         let real_after = test.git_output(&["rev-parse", "main"]);
         assert_ne!(before, real_after, "test setup: main should have moved");
 
-        // Same `repo`: the cached inventory still serves the pre-move SHA.
-        assert_eq!(repo.default_branch_sha(), Some(before));
+        // A clone shares the cached inventory and still serves the pre-move SHA.
+        assert_eq!(cloned_repo.default_branch_sha(), Some(before));
 
         // A fresh `Repository::at` scans again and sees the new SHA.
         let repo2 = Repository::at(test.root_path()).unwrap();

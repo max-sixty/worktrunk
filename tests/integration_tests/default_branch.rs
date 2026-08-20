@@ -686,7 +686,7 @@ fn test_push_remote_url_returns_non_github_url(repo: TestRepo) {
         .expect("push_remote_url resolves the configured remote regardless of host");
     let parsed = GitRemoteUrl::parse(&url).unwrap();
     assert!(!parsed.is_github());
-    assert!(parsed.is_gitlab());
+    assert_eq!(parsed.host(), "gitlab.com");
 }
 
 /// `push_remote_url`: result is cached on the Repository.
@@ -738,7 +738,7 @@ fn test_push_remote_url_insteadof_resolves_to_non_github(repo: TestRepo) {
         .push_remote_url()
         .expect("push_remote_url resolves through insteadOf regardless of host");
     let parsed = GitRemoteUrl::parse(&url).unwrap();
-    assert!(parsed.is_gitlab());
+    assert_eq!(parsed.host(), "gitlab.com");
     assert!(!parsed.is_github());
 }
 

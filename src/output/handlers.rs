@@ -178,7 +178,7 @@ fn spawn_background_removal(
             main_path,
             &remove_command,
             log_label,
-            &HookLog::internal(InternalOp::Remove),
+            &HookLog::Internal(InternalOp::Remove),
             None,
         )?;
     }

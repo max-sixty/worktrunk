@@ -5,7 +5,7 @@ use worktrunk::config::Approvals;
 use worktrunk::config::UserConfig;
 
 ///
-/// This test uses `approve_command()` to ensure it never writes to the user's config
+/// This test uses `approve_commands()` to ensure it never writes to the user's config
 #[test]
 fn test_approval_saves_to_disk() {
     let temp_dir = TempDir::new().unwrap();
@@ -16,9 +16,9 @@ fn test_approval_saves_to_disk() {
 
     // Add an approval to the explicit path
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/test/repo".to_string(),
-            "test command".to_string(),
+            vec!["test command".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -52,16 +52,16 @@ fn test_duplicate_approvals_not_saved_twice() {
 
     // Add same approval twice
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/test/repo".to_string(),
-            "test".to_string(),
+            vec!["test".to_string()],
             &approvals_path,
         )
         .ok();
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/test/repo".to_string(),
-            "test".to_string(),
+            vec!["test".to_string()],
             &approvals_path,
         )
         .ok();
@@ -85,23 +85,23 @@ fn test_multiple_project_approvals() {
 
     // Add approvals for different projects
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/user1/repo1".to_string(),
-            "npm install".to_string(),
+            vec!["npm install".to_string()],
             &approvals_path,
         )
         .unwrap();
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/user2/repo2".to_string(),
-            "cargo build".to_string(),
+            vec!["cargo build".to_string()],
             &approvals_path,
         )
         .unwrap();
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/user1/repo1".to_string(),
-            "npm test".to_string(),
+            vec!["npm test".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -156,9 +156,9 @@ fn test_isolated_config_safety() {
     // Create isolated approvals and make changes
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/safety-test/repo".to_string(),
-            "THIS SHOULD NOT APPEAR IN USER APPROVALS".to_string(),
+            vec!["THIS SHOULD NOT APPEAR IN USER APPROVALS".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -214,9 +214,9 @@ fn test_approval_saves_to_new_approvals_file() {
     // Create approvals and save
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             "github.com/test/nested".to_string(),
-            "test command".to_string(),
+            vec!["test command".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -307,9 +307,9 @@ fn test_concurrent_approve_preserves_all_approvals() {
 
     // Process A approves and saves "npm install"
     approvals_a
-        .approve_command(
+        .approve_commands(
             "github.com/user/repo".to_string(),
-            "npm install".to_string(),
+            vec!["npm install".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -324,9 +324,9 @@ fn test_concurrent_approve_preserves_all_approvals() {
     // Process B (which loaded BEFORE Process A saved) now approves and saves "npm test"
     // The save method should merge with what's on disk, not overwrite
     approvals_b
-        .approve_command(
+        .approve_commands(
             "github.com/user/repo".to_string(),
-            "npm test".to_string(),
+            vec!["npm test".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -359,16 +359,16 @@ fn test_concurrent_revoke_preserves_all_changes() {
     // Setup: approvals file has two commands approved
     let mut setup_approvals = Approvals::default();
     setup_approvals
-        .approve_command(
+        .approve_commands(
             "github.com/user/repo".to_string(),
-            "npm install".to_string(),
+            vec!["npm install".to_string()],
             &approvals_path,
         )
         .unwrap();
     setup_approvals
-        .approve_command(
+        .approve_commands(
             "github.com/user/repo".to_string(),
-            "npm test".to_string(),
+            vec!["npm test".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -411,9 +411,9 @@ fn test_concurrent_approve_different_projects() {
 
     // Process A approves for project1
     approvals_a
-        .approve_command(
+        .approve_commands(
             "github.com/user/project1".to_string(),
-            "npm install".to_string(),
+            vec!["npm install".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -421,9 +421,9 @@ fn test_concurrent_approve_different_projects() {
     // Process B approves for project2
     // Should preserve project1's approval
     approvals_b
-        .approve_command(
+        .approve_commands(
             "github.com/user/project2".to_string(),
-            "cargo build".to_string(),
+            vec!["cargo build".to_string()],
             &approvals_path,
         )
         .unwrap();
@@ -479,9 +479,9 @@ fn test_truly_concurrent_approve_with_threads() {
 
                 // All threads try to approve at the same time
                 approvals
-                    .approve_command(
+                    .approve_commands(
                         "github.com/user/repo".to_string(),
-                        format!("command_{i}"),
+                        vec![format!("command_{i}")],
                         &approvals_path,
                     )
                     .unwrap();
@@ -508,7 +508,7 @@ fn test_truly_concurrent_approve_with_threads() {
 }
 
 ///
-/// This tests the lower-level `approve_command()` method fails when permissions
+/// This tests the lower-level `approve_commands()` method fails when permissions
 /// are denied. On an execution path the higher-level `approve_command_batch()`
 /// catches this error and displays a warning, allowing commands to execute even
 /// when the approval can't be saved; `wt config approvals add` instead
@@ -557,9 +557,9 @@ fn test_permission_error_prevents_save() {
 
     // Try to save a new approval - this should fail
     let mut approvals = Approvals::default();
-    let result = approvals.approve_command(
+    let result = approvals.approve_commands(
         "github.com/test/readonly".to_string(),
-        "test command".to_string(),
+        vec!["test command".to_string()],
         &approvals_path,
     );
 

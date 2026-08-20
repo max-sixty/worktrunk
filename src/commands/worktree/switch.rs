@@ -166,30 +166,6 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRe
     }
 }
 
-fn resolve_pr_target(
-    repo: &Repository,
-    number: u32,
-    create: bool,
-    base: Option<&str>,
-) -> anyhow::Result<ResolvedTarget> {
-    if base.is_some() {
-        return Err(GitError::RefBaseConflict {
-            ref_type: RefType::Pr,
-            number,
-        }
-        .into());
-    }
-
-    resolve_remote_ref(repo, choose_pr_provider(repo)?, number, create, base)
-}
-
-fn resolve_pr_base(
-    repo: &Repository,
-    number: u32,
-) -> anyhow::Result<(String, Option<(String, String)>)> {
-    resolve_remote_ref_as_base(repo, choose_pr_provider(repo)?, number)
-}
-
 /// Fetch PR/MR info while showing a "still waiting" status.
 ///
 /// The host lookup (`gh`/`glab` API) captures its output and can stall on a slow
@@ -215,15 +191,9 @@ fn resolve_remote_ref(
     provider: &dyn RemoteRefProvider,
     number: u32,
     create: bool,
-    base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = provider.ref_type();
     let symbol = ref_type.symbol();
-
-    // --base is invalid with pr:/mr: syntax (check early, no network needed)
-    if base.is_some() {
-        return Err(GitError::RefBaseConflict { ref_type, number }.into());
-    }
 
     // Fetch ref info (network call via gh/glab CLI)
     eprintln!(
@@ -251,7 +221,15 @@ fn resolve_remote_ref(
     }
 
     // Same-repo ref: fetch the branch to ensure remote tracking refs exist
-    resolve_same_repo_ref(repo, &info)
+    fetch_same_repo_branch(repo, &info)?;
+    Ok(ResolvedTarget {
+        selector: Selector::rewritten_to(info.source_branch),
+        method: CreationMethod::Regular {
+            create_branch: false,
+            base_branch: None,
+            base_pr_upstream: None,
+        },
+    })
 }
 
 /// Resolve a fork (cross-repo) PR/MR.
@@ -263,7 +241,7 @@ fn resolve_fork_ref(
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = provider.ref_type();
     let repo_root = repo.repo_path()?;
-    let local_branch = remote_ref::local_branch_name(info);
+    let local_branch = info.source_branch.clone();
     let expected_remote = match remote_ref::find_remote(repo, info) {
         Ok(remote) => Some(remote),
         Err(e) => {
@@ -411,23 +389,6 @@ fn resolve_fork_ref(
     })
 }
 
-/// Resolve a same-repo (non-fork) PR/MR.
-fn resolve_same_repo_ref(
-    repo: &Repository,
-    info: &RemoteRefInfo,
-) -> anyhow::Result<ResolvedTarget> {
-    fetch_same_repo_branch(repo, info)?;
-
-    Ok(ResolvedTarget {
-        selector: Selector::rewritten_to(info.source_branch.clone()),
-        method: CreationMethod::Regular {
-            create_branch: false,
-            base_branch: None,
-            base_pr_upstream: None,
-        },
-    })
-}
-
 /// Fetch a same-repo PR/MR's source branch with an explicit refspec so the
 /// remote-tracking ref exists locally even in repos with limited fetch
 /// refspecs (single-branch clones, bare repos).
@@ -485,12 +446,12 @@ fn resolve_base_ref(
     repo: &Repository,
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
-    match parse_ref_shortcut(base) {
-        Some((RefType::Pr, number)) => return resolve_pr_base(repo, number),
-        Some((RefType::Mr, number)) => {
-            return resolve_remote_ref_as_base(repo, &GitLabProvider, number);
-        }
-        None => {}
+    if let Some((ref_type, number)) = parse_ref_shortcut(base) {
+        let provider: &dyn RemoteRefProvider = match ref_type {
+            RefType::Pr => choose_pr_provider(repo)?,
+            RefType::Mr => &GitLabProvider,
+        };
+        return resolve_remote_ref_as_base(repo, provider, number);
     }
 
     let selector = repo.expand_selector(base)?;
@@ -569,12 +530,17 @@ fn resolve_switch_target(
 ) -> anyhow::Result<ResolvedTarget> {
     // `pr:N` dispatches to GitHub, Gitea, or Azure DevOps based on remotes;
     // `mr:N` to GitLab. Forge PR/MR web URLs normalise to the same shortcuts.
-    match parse_ref_shortcut(branch) {
-        Some((RefType::Pr, number)) => return resolve_pr_target(repo, number, create, base),
-        Some((RefType::Mr, number)) => {
-            return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
+    if let Some((ref_type, number)) = parse_ref_shortcut(branch) {
+        // --base is invalid with pr:/mr: syntax (check before provider selection,
+        // which may invoke a forge CLI to inspect authentication).
+        if base.is_some() {
+            return Err(GitError::RefBaseConflict { ref_type, number }.into());
         }
-        None => {}
+        let provider: &dyn RemoteRefProvider = match ref_type {
+            RefType::Pr => choose_pr_provider(repo)?,
+            RefType::Mr => &GitLabProvider,
+        };
+        return resolve_remote_ref(repo, provider, number, create);
     }
 
     // Regular branch switch. `expand_selector` normalizes the token and

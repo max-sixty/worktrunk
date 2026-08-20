@@ -106,9 +106,9 @@ fn test_list_approvals_all_approved(repo: TestRepo) {
 
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "cargo test".to_string(),
+            vec!["cargo test".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -125,9 +125,9 @@ fn test_list_approvals_stale_only(repo: TestRepo) {
 
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "orphan command".to_string(),
+            vec!["orphan command".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -282,9 +282,9 @@ fn test_clear_approvals_with_approvals(repo: TestRepo) {
     // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "echo 'test'".to_string(),
+            vec!["echo 'test'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -310,9 +310,9 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "echo 'test'".to_string(),
+            vec!["echo 'test'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -367,9 +367,9 @@ fn test_clear_approvals_exact_cleared_pattern_remains(repo: TestRepo) {
     // under the lock, so the pattern entry survives alongside.
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "echo 'test'".to_string(),
+            vec!["echo 'test'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -389,9 +389,9 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
     // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "echo 'test'".to_string(),
+            vec!["echo 'test'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -440,9 +440,9 @@ fn test_clear_approvals_stale_none(repo: TestRepo) {
 
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "cargo test".to_string(),
+            vec!["cargo test".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -460,9 +460,9 @@ fn test_clear_approvals_stale_no_config(repo: TestRepo) {
 
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "orphan command".to_string(),
+            vec!["orphan command".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -543,23 +543,23 @@ lint = "echo 'third'"
     let project_id = repo.project_id();
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             project_id.clone(),
-            "echo 'first'".to_string(),
+            vec!["echo 'first'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
     approvals
-        .approve_command(
+        .approve_commands(
             project_id.clone(),
-            "echo 'second'".to_string(),
+            vec!["echo 'second'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
     approvals
-        .approve_command(
+        .approve_commands(
             project_id,
-            "echo 'third'".to_string(),
+            vec!["echo 'third'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();
@@ -584,9 +584,9 @@ fn test_add_approvals_all_already_approved(repo: TestRepo) {
     // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
-        .approve_command(
+        .approve_commands(
             repo.project_id(),
-            "echo 'test'".to_string(),
+            vec!["echo 'test'".to_string()],
             repo.test_approvals_path(),
         )
         .unwrap();

@@ -176,42 +176,6 @@ fn test_operation_in_progress_reads_the_queued_sequencer() {
 }
 
 // =============================================================================
-// available_branches() tests
-// =============================================================================
-
-#[test]
-fn test_available_branches_all_have_worktrees() {
-    let mut repo = TestRepo::new();
-    // main branch already has a worktree (the main repo)
-    // Create feature branch with worktree
-    repo.add_worktree("feature");
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let available = repository.available_branches().unwrap();
-
-    // Both main and feature have worktrees, so nothing should be available
-    assert!(available.is_empty());
-}
-
-#[test]
-fn test_available_branches_some_without_worktrees() {
-    let repo = TestRepo::with_initial_commit();
-    // Create a branch without a worktree
-    repo.git_command()
-        .args(["branch", "orphan-branch"])
-        .run()
-        .unwrap();
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let available = repository.available_branches().unwrap();
-
-    // orphan-branch has no worktree, so it should be available
-    assert!(available.contains(&"orphan-branch".to_string()));
-    // main has a worktree, so it should not be available
-    assert!(!available.contains(&"main".to_string()));
-}
-
-// =============================================================================
 // all_branches() tests
 // =============================================================================
 

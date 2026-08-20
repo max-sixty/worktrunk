@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anstyle::Style;
@@ -25,7 +25,6 @@ pub struct ConfigureResult {
 pub struct UninstallResult {
     pub shell: Shell,
     pub path: PathBuf,
-    pub action: UninstallAction,
     /// Path that replaces this one (for deprecated location cleanup)
     pub superseded_by: Option<PathBuf>,
     /// The lines the action applies to, for a file worktrunk edits in place
@@ -36,21 +35,60 @@ pub struct UninstallResult {
     /// one command that acts on it destructively. Empty for the fish/nushell
     /// wrappers, whole files worktrunk owns and the path already names.
     pub matched_lines: Vec<String>,
+    preimage: UninstallPreimage,
 }
 
 pub struct UninstallScanResult {
     pub results: Vec<UninstallResult>,
-    pub completion_results: Vec<CompletionUninstallResult>,
+    pub completion_results: Vec<UninstallResult>,
     /// Shell extensions not found (bash/zsh show as "integration", fish as "shell extension")
     pub not_found: Vec<(Shell, PathBuf)>,
     /// Completion files not found (only fish has separate completion files)
     pub completion_not_found: Vec<(Shell, PathBuf)>,
 }
 
-pub struct CompletionUninstallResult {
-    pub shell: Shell,
-    pub path: PathBuf,
-    pub action: UninstallAction,
+enum UninstallPreimage {
+    WholeFile(Vec<u8>),
+    RcLines(Vec<String>),
+}
+
+impl UninstallScanResult {
+    fn apply(self) -> Result<Self, String> {
+        for result in self.results.iter().chain(&self.completion_results) {
+            match &result.preimage {
+                UninstallPreimage::WholeFile(expected) => {
+                    remove_config_file(&result.path, expected)?;
+                }
+                UninstallPreimage::RcLines(lines) => {
+                    uninstall_previewed_lines(&result.path, lines)?;
+                }
+            }
+        }
+
+        Ok(self)
+    }
+}
+
+fn remove_config_file(path: &Path, expected: &[u8]) -> Result<(), String> {
+    match fs::read(path) {
+        Ok(current) if current != expected => Err(format!(
+            "Shell integration changed after preview @ {}; run the command again",
+            format_path_for_display(path)
+        )),
+        Ok(_) => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!(
+                "Failed to remove {}: {error}",
+                format_path_for_display(path)
+            )),
+        },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to verify shell integration @ {}: {error}",
+            format_path_for_display(path)
+        )),
+    }
 }
 
 pub struct ScanResult {
@@ -71,28 +109,8 @@ pub struct CompletionResult {
     pub shell: Shell,
     pub path: PathBuf,
     pub action: ConfigAction,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum UninstallAction {
-    Removed,
-    WouldRemove,
-}
-
-impl UninstallAction {
-    pub fn description(&self) -> &str {
-        match self {
-            UninstallAction::Removed => "Removed",
-            UninstallAction::WouldRemove => "Will remove",
-        }
-    }
-
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            UninstallAction::Removed => SUCCESS_SYMBOL,
-            UninstallAction::WouldRemove => INFO_SYMBOL,
-        }
-    }
+    /// Exact preview-time contents; `None` means the file did not exist.
+    preimage: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -319,31 +337,14 @@ pub fn handle_configure_shell(
     shell::validate_shell_command_name(&cmd)?;
 
     // First, do a dry-run to see what would be changed
-    let preview = scan_shell_configs(shell_filter, true, &cmd)?;
-
-    // Preview completions that would be written
-    let shells: Vec<_> = preview.configured.iter().map(|r| r.shell).collect();
-    let completion_preview = process_shell_completions(&shells, true, &cmd)?;
+    let mut preview = scan_shell_configs(shell_filter, true, &cmd)?;
 
     // If nothing to do, return early
     if preview.configured.is_empty() {
-        return Ok(ScanResult {
-            configured: preview.configured,
-            completion_results: completion_preview,
-            skipped: preview.skipped,
-            zsh_needs_compinit: false,
-            legacy_cleanups: Vec::new(),
-        });
+        return Ok(preview);
     }
 
-    // Check if any changes are needed (not all are AlreadyExists)
-    let needs_shell_changes = preview
-        .configured
-        .iter()
-        .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
-    let needs_completion_changes = completion_preview
-        .iter()
-        .any(|r| !matches!(r.action, ConfigAction::AlreadyExists));
+    let needs_changes = install_changes_needed(&preview);
 
     // Detect (without removing) the legacy files a real install would delete, so
     // both the --dry-run preview and the confirmation prompt can name them before
@@ -355,75 +356,65 @@ pub fn handle_configure_shell(
     if dry_run {
         let preview_text = show_install_preview(
             &preview.configured,
-            &completion_preview,
+            &preview.completion_results,
             &legacy_preview,
             &cmd,
         );
         if !preview_text.is_empty() {
             println!("{preview_text}");
         }
-        return Ok(ScanResult {
-            configured: preview.configured,
-            completion_results: completion_preview,
-            skipped: preview.skipped,
-            zsh_needs_compinit: false,
-            legacy_cleanups: legacy_preview,
-        });
+        preview.legacy_cleanups = legacy_preview;
+        return Ok(preview);
     }
 
-    // If nothing needs to be changed, there may still be legacy files to clean up
-    // (a user who upgraded and has both functions/wt.fish and conf.d/wt.fish). That
-    // removal is destructive, so gate it behind the same confirmation as an install
-    // — never delete a hand-written file as a silent side effect (issue #3644).
-    if !needs_shell_changes && !needs_completion_changes {
-        if legacy_preview.is_empty() {
-            return Ok(ScanResult {
-                configured: preview.configured,
-                completion_results: completion_preview,
-                skipped: preview.skipped,
-                zsh_needs_compinit: false,
-                legacy_cleanups: Vec::new(),
-            });
-        }
-
-        if !skip_confirmation
-            && !prompt_for_install(
-                &preview.configured,
-                &completion_preview,
-                &legacy_preview,
-                &cmd,
-                "Remove deprecated shell integration files?",
-            )?
-        {
-            return Err("Cancelled by user".to_string());
-        }
-
-        let legacy_cleanups = collect_legacy_cleanups(&preview.configured, &cmd, false);
-        return Ok(ScanResult {
-            configured: preview.configured,
-            completion_results: completion_preview,
-            skipped: preview.skipped,
-            zsh_needs_compinit: false,
-            legacy_cleanups,
-        });
+    if !needs_changes && legacy_preview.is_empty() {
+        return Ok(preview);
     }
 
-    // Show what will be done and ask for confirmation (unless --yes flag is used)
+    let prompt = if needs_changes {
+        "Install shell integration?"
+    } else {
+        "Remove deprecated shell integration files?"
+    };
     if !skip_confirmation
         && !prompt_for_install(
             &preview.configured,
-            &completion_preview,
+            &preview.completion_results,
             &legacy_preview,
             &cmd,
-            "Install shell integration?",
+            prompt,
         )?
     {
         return Err("Cancelled by user".to_string());
     }
 
-    // User confirmed (or --yes flag was used), now actually apply the changes
-    let result = scan_shell_configs(shell_filter, false, &cmd)?;
-    let completion_results = process_shell_completions(&shells, false, &cmd)?;
+    apply_confirmed_shell_config(preview, shell_filter, &cmd)
+}
+
+fn install_changes_needed(scan: &ScanResult) -> bool {
+    scan.configured
+        .iter()
+        .any(|result| !matches!(result.action, ConfigAction::AlreadyExists))
+        || scan
+            .completion_results
+            .iter()
+            .any(|result| !matches!(result.action, ConfigAction::AlreadyExists))
+}
+
+/// Apply a shell configuration plan that has already been confirmed.
+pub(crate) fn apply_confirmed_shell_config(
+    mut preview: ScanResult,
+    shell_filter: Option<Shell>,
+    cmd: &str,
+) -> Result<ScanResult, String> {
+    if !install_changes_needed(&preview) {
+        preview.legacy_cleanups = collect_legacy_cleanups(&preview.configured, cmd, false);
+        return Ok(preview);
+    }
+
+    let mut result = scan_shell_configs(shell_filter, false, cmd)?;
+    result.completion_results =
+        apply_shell_completions(preview.completion_results, &result.configured, cmd)?;
 
     // Zsh completions require compinit to be enabled. Unlike bash/fish, zsh doesn't
     // enable its completion system by default - users must explicitly call compinit.
@@ -462,15 +453,9 @@ pub fn handle_configure_shell(
     // (issue #566), plus any nushell wrapper stranded at a legacy autoload
     // location (issue #2878). The confirmation above listed these removals
     // (issue #3644).
-    let legacy_cleanups = collect_legacy_cleanups(&result.configured, &cmd, false);
-
-    Ok(ScanResult {
-        configured: result.configured,
-        completion_results,
-        skipped: result.skipped,
-        zsh_needs_compinit,
-        legacy_cleanups,
-    })
+    result.zsh_needs_compinit = zsh_needs_compinit;
+    result.legacy_cleanups = collect_legacy_cleanups(&result.configured, cmd, false);
+    Ok(result)
 }
 
 /// Check if we should auto-configure PowerShell profiles.
@@ -606,9 +591,16 @@ pub fn scan_shell_configs(
         }
     }
 
+    let completion_results = if dry_run {
+        let configured_shells: Vec<_> = results.iter().map(|result| result.shell).collect();
+        preview_shell_completions(&configured_shells, cmd)?
+    } else {
+        Vec::new()
+    };
+
     Ok(ScanResult {
         configured: results,
-        completion_results: Vec::new(), // Completions handled separately in handle_configure_shell
+        completion_results,
         skipped,
         zsh_needs_compinit: false,   // Caller handles compinit detection
         legacy_cleanups: Vec::new(), // Caller handles legacy cleanup
@@ -643,30 +635,28 @@ fn configure_shell_file(
     // For other shells, check if file exists
     if path.exists() {
         // Read the file and check if our integration already exists
-        let file = fs::File::open(path)
+        let content = fs::read(path)
             .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
 
-        let reader = BufReader::new(file);
-
         // Check for the canonical line and older/manual forms for this shell.
-        for line in reader.lines() {
-            let line = line.map_err(|e| {
+        for line in content.split(|byte| *byte == b'\n') {
+            let line = std::str::from_utf8(line).map_err(|e| {
                 format!(
-                    "Failed to read line from {}: {}",
-                    format_path_for_display(path),
-                    e
+                    "Failed to read line from {}: {e}",
+                    format_path_for_display(path)
                 )
             })?;
-
-            if is_install_shell_integration_line(&line, shell, cmd) {
+            if is_install_shell_integration_line(line.trim_end_matches('\r'), shell, cmd) {
                 return Ok(Some(ConfigureResult {
                     shell,
                     path: path.to_path_buf(),
                     action: ConfigAction::AlreadyExists,
-                    config_line: config_line.clone(),
+                    config_line,
                 }));
             }
         }
+        let mut content = String::from_utf8(content)
+            .map_err(|e| format!("Failed to read {}: {e}", format_path_for_display(path)))?;
 
         // Line doesn't exist, add it
         if dry_run {
@@ -674,21 +664,15 @@ fn configure_shell_file(
                 shell,
                 path: path.to_path_buf(),
                 action: ConfigAction::WouldAdd,
-                config_line: config_line.clone(),
+                config_line,
             }));
         }
 
-        // Append the line with proper spacing
-        let mut file = OpenOptions::new().append(true).open(path).map_err(|e| {
-            format!(
-                "Failed to open {} for writing: {}",
-                format_path_for_display(path),
-                e
-            )
-        })?;
-
         // Add blank line before config, then the config line with its own newline
-        write!(file, "\n{}\n", config_line).map_err(|e| {
+        content.push('\n');
+        content.push_str(&config_line);
+        content.push('\n');
+        write_atomically(path, &content).map_err(|e| {
             format!(
                 "Failed to write to {}: {}",
                 format_path_for_display(path),
@@ -700,7 +684,7 @@ fn configure_shell_file(
             shell,
             path: path.to_path_buf(),
             action: ConfigAction::Added,
-            config_line: config_line.clone(),
+            config_line,
         }))
     } else {
         // File doesn't exist
@@ -711,7 +695,7 @@ fn configure_shell_file(
                     shell,
                     path: path.to_path_buf(),
                     action: ConfigAction::WouldCreate,
-                    config_line: config_line.clone(),
+                    config_line,
                 }));
             }
 
@@ -739,7 +723,7 @@ fn configure_shell_file(
                 shell,
                 path: path.to_path_buf(),
                 action: ConfigAction::Created,
-                config_line: config_line.clone(),
+                config_line,
             }))
         } else {
             // Don't create config files for shells the user might not use
@@ -957,7 +941,7 @@ pub fn show_install_preview(
 /// narration and goes to stderr. See /writing-user-outputs.
 pub fn show_uninstall_preview(
     results: &[UninstallResult],
-    completion_results: &[CompletionUninstallResult],
+    completion_results: &[UninstallResult],
 ) -> String {
     let bold = Style::new().bold();
     let mut lines: Vec<String> = Vec::new();
@@ -970,16 +954,13 @@ pub fn show_uninstall_preview(
         if let Some(canonical) = &result.superseded_by {
             let canonical_path = format_path_for_display(canonical);
             lines.push(format!(
-                "{INFO_SYMBOL} {} {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
-                result.action.description(),
+                "{INFO_SYMBOL} Will remove {bold}{path}{bold:#} (deprecated; now using {bold}{canonical_path}{bold:#})",
             ));
         } else {
             let what = shell_extension_label(shell);
 
             lines.push(format!(
-                "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}{}",
-                result.action.symbol(),
-                result.action.description(),
+                "{INFO_SYMBOL} Will remove {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}{}",
                 format_matched_lines(&result.matched_lines),
             ));
         }
@@ -990,9 +971,7 @@ pub fn show_uninstall_preview(
         let path = format_path_for_display(&result.path);
 
         lines.push(format!(
-            "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
-            result.action.symbol(),
-            result.action.description(),
+            "{INFO_SYMBOL} Will remove completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
         ));
     }
 
@@ -1062,16 +1041,12 @@ complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORK
     )
 }
 
-/// Process shell completions - either preview or write based on dry_run flag
+/// Preview the shell completion files authorized by the install prompt.
 ///
 /// Note: Bash and Zsh use inline lazy completions in the init script.
 /// Fish uses a separate completion file at ~/.config/fish/completions/{cmd}.fish
 /// that finds the command in PATH (with WORKTRUNK_BIN as optional override) to bypass the shell wrapper.
-pub fn process_shell_completions(
-    shells: &[Shell],
-    dry_run: bool,
-    cmd: &str,
-) -> Result<Vec<CompletionResult>, String> {
+fn preview_shell_completions(shells: &[Shell], cmd: &str) -> Result<Vec<CompletionResult>, String> {
     let mut results = Vec::new();
     let fish_completion = fish_completion_content(cmd);
 
@@ -1085,35 +1060,61 @@ pub fn process_shell_completions(
             .completion_path(cmd)
             .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
-        // Check if completions already exist with correct content
-        // Read errors (including not-found) fall through to "not configured"
-        if let Ok(existing) = fs::read_to_string(&completion_path)
-            && existing == fish_completion
-        {
-            results.push(CompletionResult {
-                shell,
-                path: completion_path,
-                action: ConfigAction::AlreadyExists,
-            });
+        let (action, preimage) = match fs::read(&completion_path) {
+            Ok(existing) => {
+                let action = if existing == fish_completion.as_bytes() {
+                    ConfigAction::AlreadyExists
+                } else {
+                    ConfigAction::WouldAdd
+                };
+                (action, Some(existing))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                (ConfigAction::WouldCreate, None)
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed to read {}: {error}",
+                    format_path_for_display(&completion_path)
+                ));
+            }
+        };
+
+        results.push(CompletionResult {
+            shell,
+            path: completion_path,
+            action,
+            preimage,
+        });
+    }
+
+    Ok(results)
+}
+
+/// Apply only completion writes authorized by the preview and still paired
+/// with a shell extension in the apply-time scan.
+fn apply_shell_completions(
+    preview: Vec<CompletionResult>,
+    configured: &[ConfigureResult],
+    cmd: &str,
+) -> Result<Vec<CompletionResult>, String> {
+    let mut results = Vec::new();
+    let fish_completion = fish_completion_content(cmd);
+
+    for mut result in preview {
+        if !configured.iter().any(|entry| entry.shell == result.shell) {
+            continue;
+        }
+        if matches!(result.action, ConfigAction::AlreadyExists) {
+            // No write was previewed, so concurrent changes win without validation.
+            results.push(result);
             continue;
         }
 
-        if dry_run {
-            let action = if completion_path.exists() {
-                ConfigAction::WouldAdd
-            } else {
-                ConfigAction::WouldCreate
-            };
-            results.push(CompletionResult {
-                shell,
-                path: completion_path,
-                action,
-            });
-            continue;
-        }
+        verify_completion_preimage(&result.path, result.preimage.as_deref())?;
 
         // Create parent directory if needed
-        if let Some(parent) = completion_path.parent() {
+        if let Some(parent) = result.path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
                 format!(
                     "Failed to create directory {}: {e}",
@@ -1121,23 +1122,42 @@ pub fn process_shell_completions(
                 )
             })?;
         }
+        verify_completion_preimage(&result.path, result.preimage.as_deref())?;
 
         // Write the completion file
-        write_atomically(&completion_path, &fish_completion).map_err(|e| {
+        write_atomically(&result.path, &fish_completion).map_err(|e| {
             format!(
                 "Failed to write {}: {e}",
-                format_path_for_display(&completion_path)
+                format_path_for_display(&result.path)
             )
         })?;
 
-        results.push(CompletionResult {
-            shell,
-            path: completion_path,
-            action: ConfigAction::Created,
-        });
+        result.action = ConfigAction::Created;
+        results.push(result);
     }
 
     Ok(results)
+}
+
+fn verify_completion_preimage(path: &Path, expected: Option<&[u8]>) -> Result<(), String> {
+    let current = match fs::read(path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "Failed to verify shell completions @ {}: {error}",
+                format_path_for_display(path)
+            ));
+        }
+    };
+    if current.as_deref() == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "Shell completions changed after preview @ {}; run the command again",
+            format_path_for_display(path)
+        ))
+    }
 }
 
 pub fn handle_unconfigure_shell(
@@ -1145,8 +1165,7 @@ pub fn handle_unconfigure_shell(
     skip_confirmation: bool,
     dry_run: bool,
 ) -> Result<UninstallScanResult, String> {
-    // First, do a dry-run to see what would be changed
-    let preview = scan_for_uninstall(shell_filter, true)?;
+    let preview = scan_for_uninstall(shell_filter)?;
 
     // If nothing to do, return early
     if preview.results.is_empty() && preview.completion_results.is_empty() {
@@ -1174,14 +1193,9 @@ pub fn handle_unconfigure_shell(
         return Err("Cancelled by user".to_string());
     }
 
-    // User confirmed (or --yes flag was used), now actually apply the changes
-    scan_for_uninstall(shell_filter, false)
-}
-
-/// Remove a config file with a context-rich error message.
-fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
-    fs::remove_file(path)
-        .map_err(|e| format!("Failed to remove {}: {e}", format_path_for_display(path)))
+    // User confirmed (or --yes flag was used), so apply exactly the paths and
+    // rc-line multiplicities represented by the preview above.
+    preview.apply()
 }
 
 /// Uninstall scans the shell-owned directories and removes every worktrunk-managed
@@ -1193,10 +1207,7 @@ fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
 /// completion header for `completions/`). For Bash/Zsh/PowerShell (line-based),
 /// it scans the rc/profile files and uses `is_shell_integration_line_for_uninstall_any_cmd`.
 /// No `--cmd` is needed because the marker is the content, not the file name.
-fn scan_for_uninstall(
-    shell_filter: Option<Shell>,
-    dry_run: bool,
-) -> Result<UninstallScanResult, String> {
+fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult, String> {
     // For uninstall, scan every shell (Shell::all includes PowerShell) to clean
     // up any existing profiles.
     let default_shells = Shell::all();
@@ -1220,36 +1231,24 @@ fn scan_for_uninstall(
                 let legacy = scan_managed_files(&confd_dir, "fish", is_worktrunk_managed_content)?;
                 let found_any = !canonical.is_empty() || !legacy.is_empty();
 
-                for path in &canonical {
-                    let action = if dry_run {
-                        UninstallAction::WouldRemove
-                    } else {
-                        remove_config_file(path)?;
-                        UninstallAction::Removed
-                    };
+                for (path, content) in &canonical {
                     results.push(UninstallResult {
                         shell,
                         path: path.clone(),
-                        action,
                         superseded_by: None,
                         matched_lines: Vec::new(),
+                        preimage: UninstallPreimage::WholeFile(content.clone()),
                     });
                 }
 
-                for path in &legacy {
+                for (path, content) in &legacy {
                     let superseded_by = path.file_name().map(|n| functions_dir.join(n));
-                    let action = if dry_run {
-                        UninstallAction::WouldRemove
-                    } else {
-                        remove_config_file(path)?;
-                        UninstallAction::Removed
-                    };
                     results.push(UninstallResult {
                         shell,
                         path: path.clone(),
-                        action,
                         superseded_by,
                         matched_lines: Vec::new(),
+                        preimage: UninstallPreimage::WholeFile(content.clone()),
                     });
                 }
 
@@ -1264,20 +1263,14 @@ fn scan_for_uninstall(
                 for autoload_dir in &candidates {
                     let nu_files =
                         scan_managed_files(autoload_dir, "nu", is_worktrunk_managed_content)?;
-                    for path in &nu_files {
+                    for (path, content) in &nu_files {
                         found_any = true;
-                        let action = if dry_run {
-                            UninstallAction::WouldRemove
-                        } else {
-                            remove_config_file(path)?;
-                            UninstallAction::Removed
-                        };
                         results.push(UninstallResult {
                             shell,
                             path: path.clone(),
-                            action,
                             superseded_by: None,
                             matched_lines: Vec::new(),
+                            preimage: UninstallPreimage::WholeFile(content.clone()),
                         });
                     }
                 }
@@ -1298,7 +1291,7 @@ fn scan_for_uninstall(
                         continue;
                     }
 
-                    if let Some(result) = uninstall_from_file(shell, path, dry_run)? {
+                    if let Some(result) = scan_rc_file_for_uninstall(shell, path)? {
                         results.push(result);
                         found = true;
                     }
@@ -1323,17 +1316,13 @@ fn scan_for_uninstall(
         if completions.is_empty() {
             completion_not_found.push((Shell::Fish, completions_dir));
         }
-        for path in completions {
-            let action = if dry_run {
-                UninstallAction::WouldRemove
-            } else {
-                remove_config_file(&path)?;
-                UninstallAction::Removed
-            };
-            completion_results.push(CompletionUninstallResult {
+        for (path, content) in completions {
+            completion_results.push(UninstallResult {
                 shell: Shell::Fish,
                 path,
-                action,
+                superseded_by: None,
+                matched_lines: Vec::new(),
+                preimage: UninstallPreimage::WholeFile(content),
             });
         }
     }
@@ -1352,7 +1341,7 @@ fn scan_managed_files(
     dir: &Path,
     extension: &str,
     is_managed: fn(&str) -> bool,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -1369,22 +1358,21 @@ fn scan_managed_files(
         if !path.is_file() {
             continue;
         }
-        let content = match fs::read_to_string(&path) {
-            Ok(s) => s,
+        let content = match fs::read(&path) {
+            Ok(content) => content,
             Err(_) => continue, // unreadable file: skip, don't fail the whole uninstall
         };
-        if is_managed(&content) {
-            out.push(path);
+        if std::str::from_utf8(&content).is_ok_and(is_managed) {
+            out.push((path, content));
         }
     }
-    out.sort();
+    out.sort_by(|(left, _), (right, _)| left.cmp(right));
     Ok(out)
 }
 
-fn uninstall_from_file(
+fn scan_rc_file_for_uninstall(
     shell: Shell,
     path: &Path,
-    dry_run: bool,
 ) -> Result<Option<UninstallResult>, String> {
     let content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
@@ -1401,54 +1389,56 @@ fn uninstall_from_file(
         return Ok(None);
     }
 
-    let matched_lines: Vec<String> = integration_lines
+    let raw_lines: Vec<String> = integration_lines
         .iter()
-        .map(|(_, line)| line.trim().to_string())
+        .map(|(_, line)| (*line).to_string())
+        .collect();
+    let matched_lines = raw_lines
+        .iter()
+        .map(|line| line.trim().to_string())
         .collect();
 
-    if dry_run {
-        return Ok(Some(UninstallResult {
-            shell,
-            path: path.to_path_buf(),
-            action: UninstallAction::WouldRemove,
-            superseded_by: None,
-            matched_lines,
-        }));
-    }
+    Ok(Some(UninstallResult {
+        shell,
+        path: path.to_path_buf(),
+        superseded_by: None,
+        matched_lines,
+        preimage: UninstallPreimage::RcLines(raw_lines),
+    }))
+}
+
+fn uninstall_previewed_lines(path: &Path, previewed_lines: &[String]) -> Result<(), String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let mut remaining = previewed_lines.to_vec();
 
     // Remove matching lines and any immediately preceding blank line
     // (install adds "\n{line}\n", so we remove both the blank and the integration line)
-    let mut indices_to_remove: HashSet<usize> = integration_lines.iter().map(|(i, _)| *i).collect();
-    for &(i, _) in &integration_lines {
-        if i > 0 && lines[i - 1].trim().is_empty() {
-            indices_to_remove.insert(i - 1);
+    let mut indices_to_remove = HashSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        let line = line.trim_end_matches(['\r', '\n']);
+        if let Some(position) = remaining.iter().position(|candidate| candidate == line) {
+            remaining.remove(position);
+            indices_to_remove.insert(index);
+            if index > 0 && lines[index - 1].trim().is_empty() {
+                indices_to_remove.insert(index - 1);
+            }
         }
     }
-    let new_lines: Vec<&str> = lines
+    if indices_to_remove.is_empty() {
+        return Ok(());
+    }
+    let new_content: String = lines
         .iter()
         .enumerate()
         .filter(|(i, _)| !indices_to_remove.contains(i))
         .map(|(_, line)| *line)
         .collect();
 
-    let new_content = new_lines.join("\n");
-    // Preserve trailing newline if original had one
-    let new_content = if content.ends_with('\n') {
-        format!("{}\n", new_content)
-    } else {
-        new_content
-    };
-
     write_atomically(path, &new_content)
         .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
-
-    Ok(Some(UninstallResult {
-        shell,
-        path: path.to_path_buf(),
-        action: UninstallAction::Removed,
-        superseded_by: None,
-        matched_lines,
-    }))
+    Ok(())
 }
 
 /// Show what uninstall would take, then ask.
@@ -1459,7 +1449,7 @@ fn uninstall_from_file(
 /// the `--dry-run` answer on stdout. See /writing-user-outputs.
 fn prompt_for_uninstall_confirmation(
     results: &[UninstallResult],
-    completion_results: &[CompletionUninstallResult],
+    completion_results: &[UninstallResult],
 ) -> Result<bool, String> {
     eprintln!("{}", show_uninstall_preview(results, completion_results));
 
@@ -1609,18 +1599,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uninstall_action_description() {
-        assert_eq!(UninstallAction::Removed.description(), "Removed");
-        assert_eq!(UninstallAction::WouldRemove.description(), "Will remove");
-    }
-
-    #[test]
-    fn test_uninstall_action_emoji() {
-        assert_eq!(UninstallAction::Removed.symbol(), SUCCESS_SYMBOL);
-        assert_eq!(UninstallAction::WouldRemove.symbol(), INFO_SYMBOL);
-    }
-
-    #[test]
     fn test_config_action_description() {
         assert_eq!(ConfigAction::Added.description(), "Added");
         assert_eq!(
@@ -1698,6 +1676,65 @@ mod tests {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 
+    #[test]
+    fn test_verify_completion_preimage_rejects_changed_state() {
+        let previewed = b"# previewed completion\n".as_slice();
+        for (name, expected, current) in [
+            ("created", None, Some(b"# user completion\r\n".as_slice())),
+            ("replaced", Some(previewed), Some(b"user\r\n".as_slice())),
+            ("deleted", Some(previewed), None),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let completion = dir.path().join("wt.fish");
+            if let Some(content) = current {
+                fs::write(&completion, content).unwrap();
+            }
+
+            let error = verify_completion_preimage(&completion, expected).unwrap_err();
+            assert!(error.contains("changed after preview"), "{name}: {error}");
+            assert_eq!(fs::read(&completion).ok().as_deref(), current, "{name}");
+        }
+    }
+
+    #[test]
+    fn test_apply_shell_completions_verifies_before_creating_parent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let completion = dir.path().join("removed/wt.fish");
+        let preview = CompletionResult {
+            shell: Shell::Fish,
+            path: completion.clone(),
+            action: ConfigAction::WouldAdd,
+            preimage: Some(b"# previewed completion\n".to_vec()),
+        };
+        let configured = ConfigureResult {
+            shell: Shell::Fish,
+            path: dir.path().join("functions/wt.fish"),
+            action: ConfigAction::Created,
+            config_line: String::new(),
+        };
+
+        let result = apply_shell_completions(vec![preview], &[configured], "wt");
+
+        assert!(result.is_err(), "missing preimage should be rejected");
+        assert!(!completion.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn test_apply_shell_completions_skips_shell_missing_from_apply_scan() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let completion = dir.path().join("wt.fish");
+        let preview = CompletionResult {
+            shell: Shell::Fish,
+            path: completion.clone(),
+            action: ConfigAction::WouldCreate,
+            preimage: None,
+        };
+
+        apply_shell_completions(vec![preview], &[], "wt").unwrap();
+
+        assert!(!completion.exists());
+    }
+
     // Note: should_auto_configure_powershell() is tested via WORKTRUNK_TEST_POWERSHELL_ENV
     // override in tests/integration_tests/configure_shell.rs.
 
@@ -1771,20 +1808,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_remove_config_file_preserves_changed_preimage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let wrapper = dir.path().join("wt.fish");
+        let previewed = b"# worktrunk shell integration for fish\n";
+        fs::write(&wrapper, "# user replacement\n").unwrap();
+
+        let error = remove_config_file(&wrapper, previewed).unwrap_err();
+
+        assert!(error.contains("changed after preview"), "{error}");
+        assert_eq!(fs::read(&wrapper).unwrap(), b"# user replacement\n");
+    }
+
+    #[test]
+    fn test_configure_shell_already_exists_before_invalid_utf8() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".zshrc");
+        let content = b"eval \"$(wt config shell init zsh)\"\n# non-UTF-8: \xff\n";
+        fs::write(&rc, content).unwrap();
+
+        let result = configure_shell_file(Shell::Zsh, &rc, false, false, "wt").unwrap();
+
+        assert_eq!(result.unwrap().action, ConfigAction::AlreadyExists);
+        assert_eq!(fs::read(&rc).unwrap(), content);
+    }
+
+    #[test]
+    fn test_uninstall_previewed_lines_preserves_mixed_line_endings() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join("profile.ps1");
+        let integration = "Invoke-Expression (& wt config shell init powershell)";
+        fs::write(
+            &rc,
+            format!(
+                "$env:EDITOR = 'hx'\r\n{integration}\nSet-Alias ll Get-ChildItem\r\n$env:PAGER = 'less'\n"
+            ),
+        )
+        .unwrap();
+
+        uninstall_previewed_lines(&rc, &[integration.to_owned()]).unwrap();
+
+        assert_eq!(
+            fs::read(&rc).unwrap(),
+            b"$env:EDITOR = 'hx'\r\nSet-Alias ll Get-ChildItem\r\n$env:PAGER = 'less'\n"
+        );
+    }
+
     /// An rc file with one integration line and content the user owns on either
     /// side of it. Unix-only, like the atomic-rewrite tests that use it: mode
     /// and symlink semantics have no Windows equivalent.
     #[cfg(unix)]
+    const RC_INTEGRATION: &str = "eval \"$(wt config shell init bash)\"";
+    #[cfg(unix)]
+    const RC_AFTER_UNINSTALL: &str = "export EDITOR=hx\nalias ll='ls -l'\n";
+
+    #[cfg(unix)]
     fn write_rc(path: &Path) {
         fs::write(
             path,
-            "export EDITOR=hx\n\neval \"$(wt config shell init bash)\"\nalias ll='ls -l'\n",
+            format!("export EDITOR=hx\n\n{RC_INTEGRATION}\nalias ll='ls -l'\n"),
         )
         .unwrap();
     }
 
     #[cfg(unix)]
-    const RC_AFTER_UNINSTALL: &str = "export EDITOR=hx\nalias ll='ls -l'\n";
+    fn uninstall_rc(path: &Path) -> Result<(), String> {
+        uninstall_previewed_lines(path, &[RC_INTEGRATION.to_owned()])
+    }
 
     #[cfg(unix)]
     #[test]
@@ -1797,9 +1888,7 @@ mod tests {
         // is created with, so an uncopied mode shows up as a diff.
         fs::set_permissions(&rc, fs::Permissions::from_mode(0o644)).unwrap();
 
-        uninstall_from_file(Shell::Bash, &rc, false)
-            .unwrap()
-            .unwrap();
+        uninstall_rc(&rc).unwrap();
 
         assert_eq!(fs::read_to_string(&rc).unwrap(), RC_AFTER_UNINSTALL);
         assert_eq!(
@@ -1826,9 +1915,7 @@ mod tests {
         write_rc(&real);
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        uninstall_from_file(Shell::Bash, &link, false)
-            .unwrap()
-            .unwrap();
+        uninstall_rc(&link).unwrap();
 
         assert!(
             fs::symlink_metadata(&link)
@@ -1855,7 +1942,7 @@ mod tests {
         // would already have emptied the file.
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
 
-        let result = uninstall_from_file(Shell::Bash, &rc, false);
+        let result = uninstall_rc(&rc);
 
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
         assert!(

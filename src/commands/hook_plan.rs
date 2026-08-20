@@ -503,9 +503,9 @@ mod tests {
         let approvals_path = temp_dir.path().join("approvals.toml");
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(
+            .approve_commands(
                 "proj".to_string(),
-                "echo project-hook".to_string(),
+                vec!["echo project-hook".to_string()],
                 &approvals_path,
             )
             .unwrap();

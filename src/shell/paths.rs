@@ -236,7 +236,7 @@ pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> V
 ///
 /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).
 /// Returns paths in order of preference. The first existing file should be used.
-pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std::io::Error> {
+pub(super) fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std::io::Error> {
     let home = home_dir_required()?;
 
     Ok(match shell {
@@ -275,7 +275,7 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
 /// This caused issues with Homebrew PATH setup (see issue #566). We now install to
 /// `functions/{cmd}.fish` instead. This method returns the legacy path so install/uninstall
 /// can clean it up.
-pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
+pub(super) fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
     let home = home_dir_required()?;
     Ok(home
         .join(".config")
@@ -292,7 +292,7 @@ pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
 /// Only Fish uses a separate completion file at ~/.config/fish/completions/
 /// (installed by `wt config shell install`) that uses $WORKTRUNK_BIN to bypass
 /// the shell function wrapper.
-pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::io::Error> {
+pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::io::Error> {
     let home = home_dir_required()?;
 
     // Use etcetera for XDG-compliant paths when available

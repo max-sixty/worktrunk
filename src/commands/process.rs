@@ -78,16 +78,6 @@ impl HookLog {
         }
     }
 
-    /// Create a per-branch internal operation log specification.
-    pub fn internal(op: InternalOp) -> Self {
-        Self::Internal(op)
-    }
-
-    /// Create a repo-wide (branch-agnostic) internal operation log specification.
-    pub fn shared(op: InternalOp) -> Self {
-        Self::Shared(op)
-    }
-
     /// Generate the full log path for a branch in the given log directory.
     ///
     /// Builds the nested path under `{log_dir}/{sanitized-branch}/...` for
@@ -547,7 +537,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
         &repo.wt_dir(),
         &command,
         "",
-        &HookLog::shared(InternalOp::TrashSweep),
+        &HookLog::Shared(InternalOp::TrashSweep),
         None,
     ) {
         tracing::debug!(error = %e, "Failed to spawn stale trash sweep: {e}");
@@ -1015,18 +1005,18 @@ mod tests {
 
         // Per-branch internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
         assert_snapshot!(
-            HookLog::internal(InternalOp::Remove).path(log_dir, "main").to_slash_lossy(),
+            HookLog::Internal(InternalOp::Remove)
+                .path(log_dir, "main")
+                .to_slash_lossy(),
             @"/repo/.git/wt/logs/main/internal/remove.log"
         );
 
         // Repo-wide (branch-agnostic) internal operation path:
         // {log_dir}/internal-{op}.log — the branch argument is ignored.
         assert_snapshot!(
-            HookLog::shared(InternalOp::TrashSweep).path(log_dir, "anything").to_slash_lossy(),
-            @"/repo/.git/wt/logs/internal-trash-sweep.log"
-        );
-        assert_snapshot!(
-            HookLog::shared(InternalOp::TrashSweep).path(log_dir, "").to_slash_lossy(),
+            HookLog::Shared(InternalOp::TrashSweep)
+                .path(log_dir, "anything")
+                .to_slash_lossy(),
             @"/repo/.git/wt/logs/internal-trash-sweep.log"
         );
     }
