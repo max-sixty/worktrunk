@@ -1802,7 +1802,7 @@ A hook running in the foreground inherits wt's stdin, so it can ask before conti
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
 
-That covers `pre-*` hooks and any type under `wt hook <type> --foreground`. Everything else reads EOF: a detached `post-*` hook has no terminal, and the children of a concurrent group would race for one. Nothing is ever piped in — a hook reads its context through template variables, whatever form it runs in.
+That covers `pre-*` hooks and any type under `wt hook <type> --foreground`, except where the hook is a concurrent group — a table with two or more keys, whose children would race for the terminal, so each reads EOF instead. A detached `post-*` hook reads EOF too, having no terminal at all. Nothing is ever piped in — a hook reads its context through template variables, whatever form it runs in.
 
 Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat`, a `read` — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
