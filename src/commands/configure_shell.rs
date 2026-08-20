@@ -68,13 +68,23 @@ impl UninstallResult {
 impl UninstallScanResult {
     fn apply(mut self) -> Result<Self, String> {
         let apply = |results: Vec<UninstallResult>| {
-            results
-                .into_iter()
-                .filter_map(|result| result.apply().transpose())
-                .collect::<Result<Vec<_>, _>>()
+            let mut applied = Vec::new();
+            let mut not_found = Vec::new();
+            for result in results {
+                let missing = (result.shell, result.path.clone());
+                match result.apply()? {
+                    Some(result) => applied.push(result),
+                    None => not_found.push(missing),
+                }
+            }
+            Ok::<_, String>((applied, not_found))
         };
-        self.results = apply(self.results)?;
-        self.completion_results = apply(self.completion_results)?;
+        let (results, not_found) = apply(self.results)?;
+        self.results = results;
+        self.not_found.extend(not_found);
+        let (completion_results, completion_not_found) = apply(self.completion_results)?;
+        self.completion_results = completion_results;
+        self.completion_not_found.extend(completion_not_found);
 
         Ok(self)
     }
@@ -1933,6 +1943,22 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn make_directory_unwritable(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o500)).unwrap();
+        let probe = path.join("__probe");
+        if fs::write(&probe, "").is_err() {
+            true
+        } else {
+            fs::remove_file(probe).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+            std::eprintln!("Skipping - running with elevated privileges");
+            false
+        }
+    }
+
+    #[cfg(unix)]
     #[test]
     fn test_uninstall_from_file_preserves_mode_and_leaves_no_temp_file() {
         use std::os::unix::fs::PermissionsExt;
@@ -1995,7 +2021,9 @@ mod tests {
         // Read and traverse still work, so the rewrite gets as far as creating
         // its temp file and fails there — the point a truncate-in-place write
         // would already have emptied the file.
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
+        if !make_directory_unwritable(dir.path()) {
+            return;
+        }
 
         let result = uninstall_rc(&rc);
 
@@ -2009,6 +2037,53 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn test_preimage_writes_leave_files_intact_on_io_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let wrapper = dir.path().join("wt.fish");
+        let completion = dir.path().join("completions.fish");
+        let wrapper_content = b"# worktrunk shell integration for fish\n";
+        let completion_content = b"# previewed completion\n";
+        fs::write(&wrapper, wrapper_content).unwrap();
+        fs::write(&completion, completion_content).unwrap();
+        if !make_directory_unwritable(dir.path()) {
+            return;
+        }
+
+        let remove_result = remove_config_file(&wrapper, wrapper_content);
+        let completion_result = apply_shell_completions(
+            vec![CompletionResult {
+                shell: Shell::Fish,
+                path: completion.clone(),
+                action: ConfigAction::WouldAdd,
+                preimage: Some(completion_content.to_vec()),
+            }],
+            &[ConfigureResult {
+                shell: Shell::Fish,
+                path: dir.path().join("functions/wt.fish"),
+                action: ConfigAction::Created,
+                config_line: String::new(),
+            }],
+            "wt",
+        );
+
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let remove_error = remove_result.unwrap_err();
+        let completion_error = completion_result
+            .err()
+            .expect("read-only completion directory should reject the write");
+        assert!(remove_error.contains("Failed to remove"), "{remove_error}");
+        assert!(
+            completion_error.contains("Failed to write"),
+            "{completion_error}"
+        );
+        assert_eq!(fs::read(wrapper).unwrap(), wrapper_content);
+        assert_eq!(fs::read(completion).unwrap(), completion_content);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_scan_managed_files_skips_unreadable_file() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::TempDir::new().unwrap();
@@ -2016,6 +2091,11 @@ mod tests {
         let unreadable = root.join("locked.fish");
         fs::write(&unreadable, "function wt\nend\n").unwrap();
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&unreadable).is_ok() {
+            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+            std::eprintln!("Skipping - running with elevated privileges");
+            return;
+        }
         // An unreadable wrapper file is skipped, not surfaced as an error.
         let found = scan_managed_files(root, "fish", is_worktrunk_managed_content);
         // Restore perms so TempDir cleanup can remove the file.
