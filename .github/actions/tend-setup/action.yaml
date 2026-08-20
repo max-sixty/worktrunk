@@ -68,8 +68,11 @@ runs:
       # GitHub's 360-minute job cap killed them, one of them the only review
       # #3843 was ever going to get. `timeout-minutes` isn't accepted on a
       # composite-action step, hence `timeout(1)`. A healthy update takes
-      # ~15 s, so 5 min is headroom, not a budget; expiry exits 124 and fails
-      # the job in minutes instead of hours.
+      # ~15 s, so 5 min is headroom, not a budget. `-k 30` escalates to
+      # SIGKILL, so an apt — or one of the acquire-method children it spawns —
+      # that ignores the initial SIGTERM can't run the step back out to the
+      # cap; expiry fails the step in minutes instead of hours either way
+      # (124 when SIGTERM lands it, 137 after the kill).
       run: |
-        sudo timeout 300 apt-get update
-        sudo timeout 300 apt-get install -y zsh fish
+        sudo timeout -k 30 300 apt-get update
+        sudo timeout -k 30 300 apt-get install -y zsh fish
