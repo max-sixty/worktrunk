@@ -62,6 +62,14 @@ runs:
     - name: Install shells (zsh, fish)
       if: inputs.install-shells == 'true'
       shell: bash
+      # Bounded on purpose: an unreachable mirror leaves apt in a retry loop
+      # that never terminates, and this step runs before the tend action, so
+      # nothing else caps it — five jobs on 2026-08-18/19 sat here until
+      # GitHub's 360-minute job cap killed them, one of them the only review
+      # #3843 was ever going to get. `timeout-minutes` isn't accepted on a
+      # composite-action step, hence `timeout(1)`. A healthy update takes
+      # ~15 s, so 5 min is headroom, not a budget; expiry exits 124 and fails
+      # the job in minutes instead of hours.
       run: |
-        sudo apt-get update
-        sudo apt-get install -y zsh fish
+        sudo timeout 300 apt-get update
+        sudo timeout 300 apt-get install -y zsh fish
