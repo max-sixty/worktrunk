@@ -7,10 +7,9 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use wait_timeout::ChildExt;
-
 use worktrunk::config::UserConfig;
 use worktrunk::shell::extract_filename_from_path;
+use worktrunk::shell_exec::ChildWaiter;
 
 use crate::pager::{git_config_pager, parse_pager_value};
 
@@ -121,7 +120,8 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     });
 
     // Wait for pager with timeout
-    match child.wait_timeout(PAGER_TIMEOUT) {
+    let waiter = ChildWaiter::new(child);
+    match waiter.wait_timeout(PAGER_TIMEOUT) {
         Ok(Some(status)) => {
             // Pager exited within timeout
             let _ = writer_thread.join();
@@ -136,14 +136,14 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         Ok(None) => {
             // Timed out - kill pager and clean up
             tracing::debug!(timeout = ?PAGER_TIMEOUT, "Pager timed out after {:?}", PAGER_TIMEOUT);
-            let _ = child.kill();
-            let _ = child.wait();
+            waiter.kill();
+            let _ = waiter.wait();
             let _ = reader_thread.join();
         }
         Err(e) => {
             tracing::debug!(error = %e, "Failed to wait for pager: {}", e);
-            let _ = child.kill();
-            let _ = child.wait();
+            waiter.kill();
+            let _ = waiter.wait();
             let _ = reader_thread.join();
         }
     }

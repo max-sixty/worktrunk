@@ -58,7 +58,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use wait_timeout::ChildExt;
 
 use crate::git::{GitError, WorktrunkError};
 use crate::sync::Semaphore;
@@ -977,6 +976,7 @@ fn run_with_timeout_impl(
 
     let mut child_stdout = child.stdout.take();
     let mut child_stderr = child.stderr.take();
+    let waiter = ChildWaiter::new(child);
 
     std::thread::scope(|s| {
         let stdout_thread = s.spawn(|| {
@@ -996,7 +996,7 @@ fn run_with_timeout_impl(
             Ok::<_, std::io::Error>(buf)
         });
 
-        match child.wait_timeout(timeout)? {
+        match waiter.wait_timeout(timeout)? {
             Some(status) => {
                 let stdout = stdout_thread.join().unwrap()?;
                 let stderr = stderr_thread.join().unwrap()?;
@@ -1007,9 +1007,9 @@ fn run_with_timeout_impl(
                 })
             }
             None => {
-                kill_timed_out_tree(child.id());
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_timed_out_tree(waiter.pid());
+                waiter.kill();
+                let _ = waiter.wait();
                 Err(std::io::Error::new(
                     ErrorKind::TimedOut,
                     "command timed out",
@@ -1017,6 +1017,100 @@ fn run_with_timeout_impl(
             }
         }
     })
+}
+
+/// Waits for a child process with a deadline, without touching signal dispositions.
+///
+/// A dedicated thread owns the child and blocks in [`std::process::Child::wait`];
+/// the exit status comes back over a channel, so [`ChildWaiter::wait_timeout`] is
+/// just a `recv_timeout`. A child that exits early is observed the moment it does
+/// (no polling loop, so no latency added to the fast path), and nothing
+/// process-global is installed.
+///
+/// **Why not the `wait-timeout` crate.** It reaps through a process-global
+/// `SIGCHLD` handler that pokes a self-pipe, and its `notify()` panics on any
+/// write error other than `WouldBlock`. The handler is `extern "C"`, so that
+/// panic cannot unwind — it goes straight to `abort()`. Under a sandbox that
+/// denies the send (the Codex CLI's `workspace-write` mode), every timed wait in
+/// `wt` became an uncatchable `SIGABRT` with no diagnostic for the user (#3856).
+/// Failing to poke an internal wakeup socket must never kill the process, and the
+/// cheapest way to guarantee that is to own no signal handler at all.
+///
+/// The waiter thread lives until the child exits, so a caller whose deadline
+/// expires owns the teardown: kill the child ([`ChildWaiter::kill`], or
+/// [`kill_timed_out_tree`] for a process-group leader), then [`ChildWaiter::wait`]
+/// to reap it and retire the thread.
+pub struct ChildWaiter {
+    pid: u32,
+    rx: std::sync::mpsc::Receiver<std::io::Result<std::process::ExitStatus>>,
+}
+
+impl ChildWaiter {
+    /// Take ownership of `child` and start waiting for it on a dedicated thread.
+    pub fn new(child: std::process::Child) -> Self {
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut child = child;
+            let _ = tx.send(child.wait());
+        });
+        Self { pid, rx }
+    }
+
+    /// The child's pid, for teardown that outlives our handle on the child.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Wait up to `timeout` for the child to exit; `Ok(None)` if it is still running.
+    pub fn wait_timeout(
+        &self,
+        timeout: Duration,
+    ) -> std::io::Result<Option<std::process::ExitStatus>> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(result) => result.map(Some),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(Self::waiter_gone()),
+        }
+    }
+
+    /// Block until the child exits.
+    pub fn wait(&self) -> std::io::Result<std::process::ExitStatus> {
+        self.rx.recv().unwrap_or_else(|_| Err(Self::waiter_gone()))
+    }
+
+    /// Best-effort kill of the child itself — not its process group, which for a
+    /// child that is *not* a group leader would signal whatever group it inherited
+    /// (wt's own, under a shared pgroup). Group teardown is [`kill_timed_out_tree`].
+    ///
+    /// Signals by pid, because the waiter thread holds the [`std::process::Child`].
+    /// That leaves a window a `Child::kill` would not have: the child can exit and
+    /// be reaped between a caller's expired deadline and this call, so in principle
+    /// the pid could name a different process by the time the signal lands. It is
+    /// bounded by the few microseconds between `wait_timeout` returning `None` and
+    /// the syscall, and closing it would mean holding the zombie — which is the
+    /// blocking `wait` this type exists to avoid.
+    #[cfg(unix)]
+    pub fn kill(&self) {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(self.pid as i32),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+
+    /// `/F` forces; no `/T`, matching the Unix arm's "this child only".
+    #[cfg(windows)]
+    pub fn kill(&self) {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &self.pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    fn waiter_gone() -> std::io::Error {
+        std::io::Error::other("the thread waiting on this child terminated unexpectedly")
+    }
 }
 
 /// Tear down the process tree of a child that outlived its timeout.
@@ -2162,6 +2256,7 @@ impl Cmd {
 
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
+        let waiter = ChildWaiter::new(child);
 
         // Shared state: when true, output streams directly; when false, buffers.
         let streaming = Arc::new(AtomicBool::new(false));
@@ -2180,7 +2275,7 @@ impl Cmd {
 
             // Zero delay means "stream immediately", not "try a zero-timeout reap".
             if !remaining.is_zero() {
-                match child.wait_timeout(remaining) {
+                match waiter.wait_timeout(remaining) {
                     Ok(Some(status)) => {
                         let _ = stdout_handle.join();
                         let _ = stderr_handle.join();
@@ -2210,7 +2305,7 @@ impl Cmd {
         }
 
         // Phase 2: Block until the child exits (no polling).
-        let wait_result = child.wait();
+        let wait_result = waiter.wait();
         let _ = stdout_handle.join();
         let _ = stderr_handle.join();
         let status = match wait_result {
@@ -2642,6 +2737,58 @@ mod tests {
             .run();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    /// A [`ChildWaiter`] delivers its status once. Both accessors take `&self`, so
+    /// a caller can ask again after the deadline path already reaped the child —
+    /// that has to report a spent waiter, not block forever on an empty channel.
+    #[test]
+    #[cfg(unix)]
+    fn test_child_waiter_reports_a_spent_waiter() {
+        let child = Command::new("true").spawn().expect("spawn true");
+        let waiter = ChildWaiter::new(child);
+
+        assert!(waiter.wait().expect("waited on the child").success());
+        assert!(waiter.wait().is_err());
+        assert!(waiter.wait_timeout(Duration::from_secs(5)).is_err());
+    }
+
+    /// A timed wait must not install a process-global `SIGCHLD` handler.
+    ///
+    /// The `wait-timeout` crate reaped through one, and its `notify()` `panic!`s
+    /// on any self-pipe write error other than `WouldBlock`. That handler is
+    /// `extern "C"`, so the panic cannot unwind — it goes straight to `abort()`.
+    /// Under a sandbox that denies the send (the Codex CLI's `workspace-write`
+    /// mode), every timed wait became an uncatchable `SIGABRT` with no
+    /// diagnostic. See #3856; [`ChildWaiter`] blocks a thread in `Child::wait`
+    /// instead.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_timed_wait_installs_no_sigchld_handler() {
+        // Exercise both deadline paths, so the assertion below is made about a
+        // process that really has waited on a child with a timeout.
+        let _ = Cmd::new("echo")
+            .arg("hello")
+            .timeout(Duration::from_secs(5))
+            .run();
+        let _ = Cmd::new("echo").arg("hello").delayed_stream(5_000, None);
+
+        // `SigCgt` is the caught-signal mask, one bit per signal at `signum - 1`.
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let caught = status
+            .lines()
+            .find_map(|line| line.strip_prefix("SigCgt:"))
+            .expect("/proc/self/status carries a SigCgt line")
+            .trim();
+        let mask = u64::from_str_radix(caught, 16).expect("SigCgt is a hex mask");
+        let sigchld_bit = 1u64 << (nix::libc::SIGCHLD as u64 - 1);
+
+        assert_eq!(
+            mask & sigchld_bit,
+            0,
+            "a timed wait installed a SIGCHLD handler (SigCgt={caught}); a panic \
+             inside one aborts wt with no diagnostic (#3856)"
+        );
     }
 
     /// The timeout has to bound wall-clock, not just signal the direct child.

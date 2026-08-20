@@ -251,7 +251,6 @@ petname = { version = "=3.1.0", default-features = false, features = ["default-w
 petname-macros = "=3.2.0"
 
 tempfile = "3.27"
-wait-timeout = "0.2"
 
 # Interactive picker (`wt switch`) TUI stack, pulled in only by the `cli`
 # feature's `dep:` entries. These are platform-neutral (skim 4.x is the
