@@ -52,38 +52,49 @@ enum UninstallPreimage {
     RcLines(Vec<String>),
 }
 
-impl UninstallScanResult {
-    fn apply(self) -> Result<Self, String> {
-        for result in self.results.iter().chain(&self.completion_results) {
-            match &result.preimage {
-                UninstallPreimage::WholeFile(expected) => {
-                    remove_config_file(&result.path, expected)?;
-                }
-                UninstallPreimage::RcLines(lines) => {
-                    uninstall_previewed_lines(&result.path, lines)?;
-                }
+impl UninstallResult {
+    fn apply(mut self) -> Result<Option<Self>, String> {
+        let changed = match &self.preimage {
+            UninstallPreimage::WholeFile(expected) => remove_config_file(&self.path, expected)?,
+            UninstallPreimage::RcLines(lines) => {
+                self.matched_lines = uninstall_previewed_lines(&self.path, lines)?;
+                !self.matched_lines.is_empty()
             }
-        }
+        };
+        Ok(changed.then_some(self))
+    }
+}
+
+impl UninstallScanResult {
+    fn apply(mut self) -> Result<Self, String> {
+        let apply = |results: Vec<UninstallResult>| {
+            results
+                .into_iter()
+                .filter_map(|result| result.apply().transpose())
+                .collect::<Result<Vec<_>, _>>()
+        };
+        self.results = apply(self.results)?;
+        self.completion_results = apply(self.completion_results)?;
 
         Ok(self)
     }
 }
 
-fn remove_config_file(path: &Path, expected: &[u8]) -> Result<(), String> {
+fn remove_config_file(path: &Path, expected: &[u8]) -> Result<bool, String> {
     match fs::read(path) {
         Ok(current) if current != expected => Err(format!(
             "Shell integration changed after preview @ {}; run the command again",
             format_path_for_display(path)
         )),
         Ok(_) => match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(format!(
                 "Failed to remove {}: {error}",
                 format_path_for_display(path)
             )),
         },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!(
             "Failed to verify shell integration @ {}: {error}",
             format_path_for_display(path)
@@ -1407,11 +1418,15 @@ fn scan_rc_file_for_uninstall(
     }))
 }
 
-fn uninstall_previewed_lines(path: &Path, previewed_lines: &[String]) -> Result<(), String> {
+fn uninstall_previewed_lines(
+    path: &Path,
+    previewed_lines: &[String],
+) -> Result<Vec<String>, String> {
     let content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
     let lines: Vec<&str> = content.split_inclusive('\n').collect();
     let mut remaining = previewed_lines.to_vec();
+    let mut removed = Vec::new();
 
     // Remove matching lines and any immediately preceding blank line
     // (install adds "\n{line}\n", so we remove both the blank and the integration line)
@@ -1419,7 +1434,7 @@ fn uninstall_previewed_lines(path: &Path, previewed_lines: &[String]) -> Result<
     for (index, line) in lines.iter().enumerate() {
         let line = line.trim_end_matches(['\r', '\n']);
         if let Some(position) = remaining.iter().position(|candidate| candidate == line) {
-            remaining.remove(position);
+            removed.push(remaining.remove(position).trim().to_string());
             indices_to_remove.insert(index);
             if index > 0 && lines[index - 1].trim().is_empty() {
                 indices_to_remove.insert(index - 1);
@@ -1427,7 +1442,7 @@ fn uninstall_previewed_lines(path: &Path, previewed_lines: &[String]) -> Result<
         }
     }
     if indices_to_remove.is_empty() {
-        return Ok(());
+        return Ok(removed);
     }
     let new_content: String = lines
         .iter()
@@ -1438,7 +1453,7 @@ fn uninstall_previewed_lines(path: &Path, previewed_lines: &[String]) -> Result<
 
     write_atomically(path, &new_content)
         .map_err(|e| format!("Failed to write {}: {e}", format_path_for_display(path)))?;
-    Ok(())
+    Ok(removed)
 }
 
 /// Show what uninstall would take, then ask.
@@ -1821,9 +1836,9 @@ mod tests {
         assert_eq!(fs::read(&wrapper).unwrap(), b"# user replacement\n");
 
         fs::write(&wrapper, previewed).unwrap();
-        remove_config_file(&wrapper, previewed).unwrap();
+        assert!(remove_config_file(&wrapper, previewed).unwrap());
         assert!(!wrapper.exists());
-        remove_config_file(&wrapper, previewed).unwrap();
+        assert!(!remove_config_file(&wrapper, previewed).unwrap());
     }
 
     #[test]
@@ -1884,8 +1899,11 @@ mod tests {
         )
         .unwrap();
 
-        uninstall_previewed_lines(&rc, &[integration.to_owned()]).unwrap();
+        let removed =
+            uninstall_previewed_lines(&rc, &[integration.to_owned(), integration.to_owned()])
+                .unwrap();
 
+        assert_eq!(removed, [integration]);
         assert_eq!(
             fs::read(&rc).unwrap(),
             b"$env:EDITOR = 'hx'\r\nSet-Alias ll Get-ChildItem\r\n$env:PAGER = 'less'\n"
@@ -1911,7 +1929,7 @@ mod tests {
 
     #[cfg(unix)]
     fn uninstall_rc(path: &Path) -> Result<(), String> {
-        uninstall_previewed_lines(path, &[RC_INTEGRATION.to_owned()])
+        uninstall_previewed_lines(path, &[RC_INTEGRATION.to_owned()]).map(|_| ())
     }
 
     #[cfg(unix)]
