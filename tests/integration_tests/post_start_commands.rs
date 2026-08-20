@@ -2,7 +2,6 @@ use crate::common::{
     SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags,
     repo, repo_with_remote, resolve_git_common_dir, set_temp_home_env, setup_snapshot_settings,
     wait_for_file, wait_for_file_content, wait_for_file_count, wait_for_file_lines,
-    wait_for_valid_json,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -549,10 +548,8 @@ fn test_pre_start_inherits_stdin(repo: TestRepo) {
     use std::process::Stdio;
 
     // Foreground (`pre-*`) hooks inherit the parent's stdin — same as aliases —
-    // so an interactive child keeps the controlling terminal. The legacy
-    // JSON-context-on-stdin contract no longer applies here (it survives only
-    // for concurrent and background `post-*` hooks). Capture whatever the hook
-    // sees on stdin to a file and verify it's the parent's raw stdin, not JSON.
+    // so an interactive child keeps the controlling terminal. Capture whatever
+    // the hook sees on stdin to a file and verify it's the parent's raw stdin.
     repo.write_project_config(r#"pre-start = "cat > captured.txt""#);
 
     repo.commit("Add config");
@@ -607,21 +604,18 @@ approved-commands = ["cat > captured.txt"]
     let contents = fs::read_to_string(&captured).unwrap();
     assert_eq!(
         contents, "sentinel-from-parent-stdin\n",
-        "Foreground hook should receive the parent's raw stdin, not the JSON context"
-    );
-    assert!(
-        !contents.contains("\"branch\""),
-        "The JSON context must not be piped to a foreground hook: {contents}"
+        "Foreground hook should receive the parent's raw stdin"
     );
 }
 
 #[rstest]
 #[cfg(unix)]
-fn test_post_start_script_reads_json(repo: TestRepo) {
+fn test_post_start_script_reads_template_args(repo: TestRepo) {
     use crate::common::wt_command;
     use std::os::unix::fs::PermissionsExt;
 
-    // Create a scripts directory and a Python script that reads JSON from stdin
+    // Create a scripts directory and a Python script that reads its context
+    // from argv — the channel every hook has, whatever form it runs in.
     let scripts_dir = repo.root_path().join("scripts");
     fs::create_dir_all(&scripts_dir).unwrap();
 
@@ -631,15 +625,14 @@ fn test_post_start_script_reads_json(repo: TestRepo) {
     // path, so shebang resolution can't piggyback on PATH directly.
     let python = which::which("python3").expect("python3 in PATH for test");
     let script_body = r#"
-import json
 import sys
 
-ctx = json.load(sys.stdin)
+repo, branch, hook_type, hook_name = sys.argv[1:5]
 with open('hook_output.txt', 'w') as f:
-    f.write(f"repo={ctx['repo']}\n")
-    f.write(f"branch={ctx['branch']}\n")
-    f.write(f"hook_type={ctx['hook_type']}\n")
-    f.write(f"hook_name={ctx.get('hook_name', 'unnamed')}\n")
+    f.write(f"repo={repo}\n")
+    f.write(f"branch={branch}\n")
+    f.write(f"hook_type={hook_type}\n")
+    f.write(f"hook_name={hook_name}\n")
 "#;
     let script_content = format!("#!{}{}", python.display(), script_body);
     let script_path = scripts_dir.join("setup.py");
@@ -647,23 +640,23 @@ with open('hook_output.txt', 'w') as f:
     fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
 
     // Create project config that runs the script. Background (`post-*`) hooks
-    // run detached and still receive the JSON context on stdin — that's the
-    // path this script exercises. (Foreground `pre-*` hooks now inherit the
-    // terminal instead; see `test_pre_start_inherits_stdin`.)
-    repo.write_project_config(
+    // run detached with a closed stdin, so the template variables in the
+    // command line are how the script receives its context.
+    let command = "./scripts/setup.py {{ repo }} {{ branch }} {{ hook_type }} {{ hook_name }}";
+    repo.write_project_config(&format!(
         r#"[post-start]
-setup = "./scripts/setup.py"
-"#,
-    );
+setup = "{command}"
+"#
+    ));
 
     repo.commit("Add setup script and config");
 
     // Pre-approve the command
-    repo.write_test_approvals(
+    repo.write_test_approvals(&format!(
         r#"[projects."../origin"]
-approved-commands = ["./scripts/setup.py"]
-"#,
-    );
+approved-commands = ["{command}"]
+"#
+    ));
 
     // Create worktree
     let temp_home = TempDir::new().unwrap();
@@ -715,25 +708,28 @@ approved-commands = ["./scripts/setup.py"]
 }
 
 #[rstest]
-fn test_post_start_json_stdin(repo: TestRepo) {
+fn test_post_start_detached_hook_gets_no_stdin(repo: TestRepo) {
     use crate::common::wt_command;
 
-    // Create project config with a background command that reads JSON from stdin
-    repo.write_project_config(r#"post-start = "cat > context.json""#);
+    // A detached hook has no terminal to inherit and receives no piped payload,
+    // so a command that reads stdin sees EOF straight away. The `&& echo` marks
+    // completion, since the captured file itself is expected to stay empty.
+    let command = "cat > captured.txt && echo done > done.txt";
+    repo.write_project_config(&format!(r#"post-start = "{command}""#));
 
     repo.commit("Add config");
 
     // Pre-approve the command
-    repo.write_test_approvals(
+    repo.write_test_approvals(&format!(
         r#"[projects."../origin"]
-approved-commands = ["cat > context.json"]
-"#,
-    );
+approved-commands = ["{command}"]
+"#
+    ));
 
     // Create worktree
     let temp_home = TempDir::new().unwrap();
     let mut cmd = wt_command();
-    cmd.args(["switch", "--create", "bg-json"])
+    cmd.args(["switch", "--create", "bg-stdin"])
         .current_dir(repo.root_path())
         .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
         .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
@@ -746,24 +742,14 @@ approved-commands = ["cat > context.json"]
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Find the worktree and wait for valid JSON (polls until cat finishes writing)
-    let worktree_path = repo.root_path().parent().unwrap().join("repo.bg-json");
-    let json_file = worktree_path.join("context.json");
-    let json = wait_for_valid_json(&json_file);
+    // The hook is detached, so wait for its completion marker before reading.
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.bg-stdin");
+    wait_for_file_content(&worktree_path.join("done.txt"));
 
+    let captured = fs::read_to_string(worktree_path.join("captured.txt")).unwrap();
     assert_eq!(
-        json["branch"].as_str(),
-        Some("bg-json"),
-        "Background hook should receive JSON with branch"
-    );
-    assert!(
-        json.get("repo").is_some(),
-        "Background hook should receive JSON with repo"
-    );
-    assert_eq!(
-        json["hook_type"].as_str(),
-        Some("post-start"),
-        "Background hook should receive hook_type"
+        captured, "",
+        "a detached hook should read EOF — no JSON context, no inherited stdin"
     );
 }
 

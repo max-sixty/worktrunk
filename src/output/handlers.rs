@@ -179,7 +179,6 @@ fn spawn_background_removal(
             &remove_command,
             log_label,
             &HookLog::internal(InternalOp::Remove),
-            None,
         )?;
     }
     Ok(fate)
@@ -2055,9 +2054,10 @@ fn remove_removed_worktree_silently(
 /// the "Process groups and signal handling" module docs in
 /// [`worktrunk::shell_exec`] for what a shared pgroup costs on teardown.
 ///
-/// The JSON context reaches the two forms that can't be interactive by other
-/// spawn paths, not this one: concurrent groups write a per-child pipe in
-/// `output/concurrent.rs`, and detached `post-*` pipelines write theirs in
+/// Nothing is ever written to that stdin — a hook reads its context through
+/// template variables, whatever form it runs in. The two forms that can't be
+/// interactive close stdin instead, in their own spawn paths: concurrent groups
+/// in `output/concurrent.rs`, detached `post-*` pipelines in
 /// `commands/run_pipeline.rs`.
 ///
 /// ## Directive files

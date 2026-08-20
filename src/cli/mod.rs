@@ -1793,36 +1793,32 @@ The `worktree_path_of_branch` function returns the filesystem path of a worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
 
-## Interactive hooks and JSON context
+## Interactive hooks
 
-A hook's stdin carries the terminal when the hook runs in the foreground, and the JSON context when it can't.
-
-A `pre-*` hook gets the terminal, so it can ask before continuing:
+A hook running in the foreground inherits wt's stdin, so it can ask before continuing:
 
 ```toml
 [pre-start]
 trust = "gum confirm 'trust this worktree?' && mise trust"
 ```
 
-Two forms receive all template variables as JSON on stdin instead: detached `post-*` hooks, which have no terminal, and concurrent groups, whose children would otherwise race for one. A table of two or more keys *is* a concurrent group, so adding a second key takes the terminal away from `gum confirm` — keep a hook that prompts in a table of its own. `wt hook <type> --foreground` runs a hook in the foreground whatever its type, so `post-*` follows the same rule there.
+That covers `pre-*` hooks and any type under `wt hook <type> --foreground`. Everything else reads EOF: a detached `post-*` hook has no terminal, and the children of a concurrent group would race for one. Nothing is ever piped in — a hook reads its context through template variables, whatever form it runs in.
 
-Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat`, a `json.load(sys.stdin)` — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
+Foreground steps run in order and share one stdin, so a step that drains it to EOF — a `cat`, a `read` — leaves nothing for the steps behind it when that stdin is a pipe or a file. Under a terminal each step can prompt in turn. Steps accumulate across config files, so a user `[pre-start]` and a project `[pre-start]` form one pipeline.
 
-The JSON context enables logic that templates can't express:
+Logic that templates can't express belongs in a script, with the values it needs passed as arguments:
 
 ```toml
 [post-start]
-setup = "python3 scripts/post-start-setup.py"
+setup = "python3 scripts/post-start-setup.py {{ branch }} {{ repo }}"
 ```
 
 ```python
-import json, sys, subprocess
-ctx = json.load(sys.stdin)
-if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
+import subprocess, sys
+branch, repo = sys.argv[1], sys.argv[2]
+if branch.startswith('feature/') and 'backend' in repo:
     subprocess.run(['make', 'seed-db'])
 ```
-
-Every hook also receives its template variables through `{{ }}` substitution, regardless of form.
 
 ## Copying untracked files
 

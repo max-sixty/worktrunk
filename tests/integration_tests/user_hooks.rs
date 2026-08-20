@@ -1862,9 +1862,9 @@ fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
     use std::process::Stdio;
 
     // `--foreground` routes a `post-*` hook through the single-step foreground
-    // path, which inherits wt's stdin rather than piping the JSON context — so
-    // the hook can prompt in the mode that exists to debug it. (The detached
-    // default still gets the JSON; see `test_post_start_json_stdin`.)
+    // path, which inherits wt's stdin — so the hook can prompt in the mode that
+    // exists to debug it. (The detached default reads EOF; see
+    // `test_post_start_detached_hook_gets_no_stdin`.)
     repo.write_project_config(r#"post-start = "cat > captured.txt""#);
 
     let mut cmd = crate::common::wt_command();
@@ -1899,7 +1899,7 @@ fn test_standalone_hook_post_start_foreground_inherits_stdin(repo: TestRepo) {
     let contents = fs::read_to_string(&captured).unwrap();
     assert_eq!(
         contents, "sentinel-from-parent-stdin\n",
-        "`--foreground` should hand the hook the parent's raw stdin, not the JSON context"
+        "`--foreground` should hand the hook the parent's raw stdin"
     );
 }
 
@@ -1951,14 +1951,14 @@ fn test_foreground_pipeline_steps_share_one_stdin(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_concurrent_group_keeps_json_under_foreground(repo: TestRepo) {
+fn test_standalone_hook_concurrent_group_gets_no_stdin_under_foreground(repo: TestRepo) {
     use std::io::Write;
     use std::process::Stdio;
 
-    // A multi-key table parses as `HookStep::Concurrent`, whose children each
-    // get their own JSON pipe — so the terminal `--foreground` hands a lone
-    // step never reaches them. This is the shape that silently takes the tty
-    // away from a `gum confirm`, so pin it rather than leaving it to the docs.
+    // A multi-key table parses as `HookStep::Concurrent`, whose children run at
+    // the same time and so can't share one terminal — each gets a closed stdin
+    // instead. This is the shape that silently takes the tty away from a
+    // `gum confirm`, so pin it rather than leaving it to the docs.
     repo.write_project_config(
         r#"[post-start]
 a = "cat > cap_a.txt"
@@ -1989,17 +1989,10 @@ b = "true"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let captured = repo.root_path().join("cap_a.txt");
-    let contents = fs::read_to_string(&captured).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&contents).unwrap_or_else(|e| {
-        panic!(
-            "a concurrent child should still receive the JSON context: {e}\nContents: {contents}"
-        )
-    });
+    let contents = fs::read_to_string(repo.root_path().join("cap_a.txt")).unwrap();
     assert_eq!(
-        json["hook_type"].as_str(),
-        Some("post-start"),
-        "the JSON context should name the hook type"
+        contents, "",
+        "a concurrent child should read EOF — neither the parent's stdin nor a JSON context"
     );
 }
 

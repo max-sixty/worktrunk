@@ -17,10 +17,10 @@
 //! ## Execution model
 //!
 //! For each command:
-//! 1. Spawn a shell child with stdout+stderr piped and (on Unix) its own
-//!    process group so SIGINT/SIGTERM can be delivered to the whole tree.
-//! 2. Pipe `context_json` to stdin if provided, then close.
-//! 3. Launch two reader threads that read lines and send labeled lines on
+//! 1. Spawn a shell child with stdout+stderr piped, stdin closed, and (on
+//!    Unix) its own process group so SIGINT/SIGTERM can be delivered to the
+//!    whole tree.
+//! 2. Launch two reader threads that read lines and send labeled lines on
 //!    a shared channel. A single consumer writes to stderr — one writer
 //!    preserves line atomicity so readers never mix bytes mid-line.
 //!
@@ -64,9 +64,6 @@ pub struct ConcurrentCommand<'a> {
     pub expanded: &'a str,
     /// Child's working directory.
     pub working_dir: &'a Path,
-    /// JSON blob written to the child's stdin and closed. Callers that have
-    /// no context to pass should supply `"{}"`.
-    pub context_json: &'a str,
     /// Optional label for `commands.jsonl` tracing.
     pub log_label: Option<&'a str>,
     /// Directive file env vars to pass through to the child. See
@@ -289,10 +286,14 @@ fn spawn_child(
     index: usize,
     cmd: &ConcurrentCommand<'_>,
 ) -> anyhow::Result<SpawnedChild> {
+    // Each child gets a closed stdin: it can't have the terminal (siblings run
+    // at the same time and would race for it), and each runs in its own process
+    // group, where a read from the controlling terminal earns SIGTTIN and stops
+    // the child rather than returning. A closed stdin reads EOF immediately.
     let mut command = shell.command(cmd.expanded);
     command
         .current_dir(cmd.working_dir)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -327,10 +328,8 @@ fn spawn_child(
 
     // Start the trace just before spawning so its duration brackets the real
     // spawn → wait span (the child keeps running while we drain its output).
-    // Each child is fed its own `context_json` on stdin, so mark it stdin-reading
-    // — the same command across worktrees isn't a duplicate (different input).
-    let mut trace = CommandTrace::new(None, cmd.expanded).reads_stdin(true);
-    let mut child = match command.spawn() {
+    let mut trace = CommandTrace::new(None, cmd.expanded);
+    let child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
@@ -338,11 +337,6 @@ fn spawn_child(
                 .with_context(|| format!("failed to spawn concurrent command '{}'", cmd.label));
         }
     };
-
-    if let Some(mut stdin) = child.stdin.take() {
-        // Ignore BrokenPipe — child may exit or close stdin early.
-        let _ = stdin.write_all(cmd.context_json.as_bytes());
-    }
 
     Ok(SpawnedChild {
         child,
@@ -498,7 +492,6 @@ mod tests {
             label,
             expanded: script,
             working_dir: &wd,
-            context_json: "{}",
             log_label,
             directives,
             scrub_git_discovery: false,

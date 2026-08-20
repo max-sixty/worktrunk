@@ -3345,30 +3345,6 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize) {
     );
 }
 
-/// Wait for a file to contain valid JSON, polling with exponential backoff.
-/// Use when a background process writes JSON that may be partially written.
-pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
-    let start = std::time::Instant::now();
-    let mut attempt = 0;
-    let mut last_error = String::new();
-    while start.elapsed() < BG_TIMEOUT {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            match serde_json::from_str(&content) {
-                Ok(json) => return json,
-                Err(e) => last_error = format!("{e} (content: {content})"),
-            }
-        }
-        exponential_sleep(attempt);
-        attempt += 1;
-    }
-    panic!(
-        "File did not contain valid JSON within {:?}: {}\nLast error: {}",
-        BG_TIMEOUT,
-        path.display(),
-        last_error
-    );
-}
-
 /// Poll until a condition is met, with exponential backoff.
 ///
 /// Use this instead of fixed sleeps for any condition that may take time to become true.

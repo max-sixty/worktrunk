@@ -124,25 +124,6 @@ fn posix_command_separator(command: &str) -> &'static str {
     }
 }
 
-/// Build the POSIX-shell payload for a detached spawn that pipes optional
-/// `context_json` into `command`'s stdin. With a JSON context, wraps the
-/// command in a `printf '%s' '…' | { …; }` group so the inner command receives
-/// the JSON verbatim and pipeline parsing isn't perturbed by `&&`/`||` inside
-/// `command`. Without one, returns `command` unchanged. Shared by the Unix
-/// path and the Windows Git-Bash branch — both feed POSIX shells, so the JSON
-/// is POSIX-single-quote-escaped regardless of host.
-fn build_printf_pipe_command(command: &str, context_json: Option<&str>) -> String {
-    match context_json {
-        Some(json) => format!(
-            "printf '%s' {} | {{ {}{} }}",
-            shell_escape::unix::escape(json.into()),
-            command,
-            posix_command_separator(command)
-        ),
-        None => command.to_string(),
-    }
-}
-
 /// Create the log directory and file for a detached process.
 ///
 /// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
@@ -195,7 +176,6 @@ pub fn spawn_detached(
     command: &str,
     branch: &str,
     hook_log: &HookLog,
-    context_json: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
     let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
 
@@ -209,12 +189,12 @@ pub fn spawn_detached(
     #[cfg(unix)]
     {
         let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
-        spawn_detached_unix(worktree_path, command, log_file, context_json, low_priority)?;
+        spawn_detached_unix(worktree_path, command, log_file, low_priority)?;
     }
 
     #[cfg(windows)]
     {
-        spawn_detached_windows(worktree_path, command, log_file, context_json)?;
+        spawn_detached_windows(worktree_path, command, log_file)?;
     }
 
     Ok(log_path)
@@ -225,22 +205,15 @@ fn spawn_detached_unix(
     worktree_path: &Path,
     command: &str,
     log_file: fs::File,
-    context_json: Option<&str>,
     low_priority: bool,
 ) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
-
-    let full_command = build_printf_pipe_command(command, context_json);
 
     // Wrap in braces so `&` backgrounds the entire compound command.
     // Without braces, `cmd1 && cmd2; cmd3 &` parses as two statements:
     // `cmd1 && cmd2` (foreground) then `cmd3 &` (background) — the semicolon
     // has lower precedence than `&`, so only the last segment is backgrounded.
-    let shell_cmd = format!(
-        "{{ {}{} }} &",
-        full_command,
-        posix_command_separator(&full_command)
-    );
+    let shell_cmd = format!("{{ {}{} }} &", command, posix_command_separator(command));
 
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
@@ -278,7 +251,6 @@ fn spawn_detached_windows(
     worktree_path: &Path,
     command: &str,
     log_file: fs::File,
-    context_json: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
     use worktrunk::shell_exec::ShellConfig;
@@ -290,28 +262,9 @@ fn spawn_detached_windows(
 
     let shell = ShellConfig::get()?;
 
-    // Build the command based on shell type
-    let mut cmd = if shell.is_posix {
-        // Git Bash available - use same syntax as Unix
-        let full_command = build_printf_pipe_command(command, context_json);
-        shell.command(&full_command)
-    } else {
-        // PowerShell fallback
-        let full_command = match context_json {
-            Some(json) => {
-                // PowerShell single-quote escaping:
-                // - Single quotes prevent variable expansion ($) and are literal
-                // - Backticks are literal in single quotes (NOT escape characters)
-                // - Only single quotes need doubling (`'` → `''`)
-                // See: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_quoting_rules
-                let escaped_json = json.replace('\'', "''");
-                // Pipe JSON to the command via PowerShell script block
-                format!("'{}' | & {{ {} }}", escaped_json, command)
-            }
-            None => command.to_string(),
-        };
-        shell.command(&full_command)
-    };
+    // Git Bash and the PowerShell fallback both run the command as written —
+    // nothing is piped in, so neither needs a wrapper around it.
+    let mut cmd = shell.command(command);
 
     cmd.current_dir(worktree_path)
         .stdin(Stdio::null())
@@ -546,7 +499,6 @@ pub fn sweep_stale_trash(repo: &Repository) {
         &command,
         "",
         &HookLog::shared(InternalOp::TrashSweep),
-        None,
     ) {
         tracing::debug!(error = %e, "Failed to spawn stale trash sweep: {e}");
     }
@@ -916,39 +868,6 @@ mod tests {
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
         assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
-    }
-
-    #[test]
-    fn test_build_printf_pipe_command() {
-        // No JSON context: command passes through unchanged.
-        assert_snapshot!(
-            build_printf_pipe_command("echo hi", None),
-            @"echo hi"
-        );
-
-        // With JSON: command wrapped in a printf-pipe group. The JSON is
-        // POSIX-single-quote-escaped, the closing `}` is preceded by `;`
-        // because the command doesn't already end with one.
-        assert_snapshot!(
-            build_printf_pipe_command("jq .", Some(r#"{"branch":"main"}"#)),
-            @r#"printf '%s' '{"branch":"main"}' | { jq .; }"#
-        );
-
-        // Command that already ends in a semicolon: separator suppressed.
-        assert_snapshot!(
-            build_printf_pipe_command("jq .;", Some(r#"{"k":"v"}"#)),
-            @r#"printf '%s' '{"k":"v"}' | { jq .; }"#
-        );
-
-        // JSON containing characters POSIX shells treat specially must end up
-        // inside single quotes so command substitution doesn't fire inside the
-        // detached `sh -c` wrapping the spawn. The embedded single quote uses
-        // the standard `'\''` idiom. Regression guard for
-        // shell_escape::escape vs unix::escape on Windows.
-        assert_snapshot!(
-            build_printf_pipe_command("jq .", Some(r#"{"x":"$(echo pwned)","y":"a'b"}"#)),
-            @r#"printf '%s' '{"x":"$(echo pwned)","y":"a'\''b"}' | { jq .; }"#
-        );
     }
 
     #[test]
