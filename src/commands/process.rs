@@ -106,6 +106,10 @@ impl HookLog {
 
 /// Get the separator needed before closing brace in POSIX shell command grouping.
 /// Returns empty string if command already ends with newline or semicolon.
+///
+/// Unix-only: the `{ …; } &` grouping it feeds is `spawn_detached_unix`'s
+/// backgrounding wrapper, which the Windows spawn has no counterpart for.
+#[cfg(unix)]
 fn posix_command_separator(command: &str) -> &'static str {
     if command.ends_with('\n') || command.ends_with(';') {
         ""
@@ -803,6 +807,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_posix_command_separator() {
         // Commands ending with newline don't need separator
         assert_eq!(posix_command_separator("echo hello\n"), "");
