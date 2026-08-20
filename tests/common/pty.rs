@@ -1,10 +1,11 @@
 //! PTY execution helpers for integration tests.
 //!
-//! Three public functions — compose `build_pty_command` with a runner:
+//! Compose `build_pty_command` with a runner:
 //!
 //! - **`build_pty_command`** — builds a `CommandBuilder` with env isolation
 //! - **`exec_cmd_in_pty`** — pre-buffers input, for non-interactive commands
 //! - **`exec_cmd_in_pty_prompted`** — waits for prompt marker before each input
+//! - **`exec_cmd_in_pty_prompted_with`** — also changes test state at a prompt
 //!
 //! ```ignore
 //! use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
@@ -350,6 +351,20 @@ pub fn exec_cmd_in_pty_prompted(
     inputs: &[&str],
     prompt_marker: &str,
 ) -> (String, i32) {
+    exec_cmd_in_pty_prompted_with(cmd, inputs, prompt_marker, |_| {})
+}
+
+/// Execute a command in a PTY, running an action after each prompt appears and
+/// immediately before its input is sent.
+///
+/// This synchronizes tests that need to change external state inside the
+/// preview/confirmation window without sleeps or timing assumptions.
+pub fn exec_cmd_in_pty_prompted_with(
+    cmd: CommandBuilder,
+    inputs: &[&str],
+    prompt_marker: &str,
+    before_input: impl FnMut(usize),
+) -> (String, i32) {
     let pair = super::open_pty();
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
@@ -358,7 +373,14 @@ pub fn exec_cmd_in_pty_prompted(
     let reader = pair.master.try_clone_reader().unwrap();
     let writer = pair.master.take_writer().unwrap();
 
-    prompted_pty_interaction(reader, writer, &mut child, inputs, prompt_marker)
+    prompted_pty_interaction(
+        reader,
+        writer,
+        &mut child,
+        inputs,
+        prompt_marker,
+        before_input,
+    )
 }
 
 /// Core prompt-waiting logic shared by all `_prompted` variants.
@@ -372,6 +394,7 @@ fn prompted_pty_interaction(
     child: &mut Box<dyn portable_pty::Child + Send + Sync>,
     inputs: &[&str],
     prompt_marker: &str,
+    mut before_input: impl FnMut(usize),
 ) -> (String, i32) {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -403,7 +426,7 @@ fn prompted_pty_interaction(
 
     // For each input, wait for a NEW prompt marker to appear, then send
     let mut markers_seen: usize = 0;
-    for input in inputs {
+    for (input_index, input) in inputs.iter().enumerate() {
         let target = markers_seen + 1;
         let start = Instant::now();
 
@@ -451,6 +474,7 @@ fn prompted_pty_interaction(
             std::thread::sleep(poll);
         }
 
+        before_input(input_index);
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
     }

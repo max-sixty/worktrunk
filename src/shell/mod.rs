@@ -18,10 +18,7 @@ pub use detection::{
     BypassAlias, DetectedLine, FileDetectionResult, is_shell_integration_line,
     is_shell_integration_line_for_uninstall_any_cmd, scan_for_detection_details,
 };
-pub use paths::{
-    completion_path, config_paths, home_dir_required, legacy_fish_conf_d_path,
-    line_based_config_paths, nushell_autoload_candidates,
-};
+pub use paths::{home_dir_required, line_based_config_paths, nushell_autoload_candidates};
 pub use utils::{
     AncestorShell, ZshStartupScope, ancestor_shell, current_shell, current_shell_name,
     extract_filename_from_path, probe_zsh_compdef,

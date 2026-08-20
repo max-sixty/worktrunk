@@ -32,6 +32,7 @@ tasks:
     cmds:
       - |
         set -e
+        export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
         echo "========================================"
         echo "Claude Code Web - Worktrunk Setup"
         echo "========================================"
@@ -71,15 +72,16 @@ tasks:
             # installs: apt resolves the PowerShell .deb's dependencies from
             # these lists too.
             if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null \
-                || ! command -v jq &> /dev/null || ! command -v pwsh &> /dev/null; then
+                || ! command -v jq &> /dev/null || ! command -v lsof &> /dev/null \
+                || ! command -v pwsh &> /dev/null; then
                 apt-get update -qq
-                apt-get install -y -qq zsh fish jq
+                apt-get install -y -qq zsh fish jq lsof
             fi
             # PowerShell isn't in Debian's repos. Install the release .deb
             # rather than the tarball: pwsh aborts at startup without libicu,
             # and only the .deb declares that dependency for apt to resolve.
             if ! command -v pwsh &> /dev/null; then
-                PWSH_VERSION="7.6.4"
+                PWSH_VERSION="7.6.5"
                 URL="https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell_${PWSH_VERSION}-1.deb_amd64.deb"
                 TEMP=$(mktemp -d)
                 curl -fsSL -o "$TEMP/powershell.deb" "$URL"
@@ -87,6 +89,19 @@ tasks:
                 rm -rf "$TEMP"
                 echo "pwsh installed"
             fi
+        fi
+
+        # Nushell isn't in every web image, and the shell-integration suite
+        # drives it directly.
+        if ! command -v nu &> /dev/null; then
+            NU_VERSION="0.115.0"
+            DIR="nu-${NU_VERSION}-x86_64-unknown-linux-gnu"
+            TEMP=$(mktemp -d)
+            curl -fsSL "https://github.com/nushell/nushell/releases/download/${NU_VERSION}/${DIR}.tar.gz" \
+                | tar -xz -C "$TEMP"
+            install -D -m 0755 "$TEMP/$DIR/nu" "$HOME/.local/bin/nu"
+            rm -rf "$TEMP"
+            echo "nu installed"
         fi
         # The shells the feature drives, plus the `jq` its Claude-hook tests
         # pipe the hook payload through. Run each rather than looking for it
@@ -125,9 +140,13 @@ tasks:
         # Install dev tools
         echo ""
         echo "Installing development tools..."
+        if ! command -v uv &> /dev/null; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+        fi
+        uv tool install --force pre-commit
         cargo install cargo-insta cargo-nextest --quiet
-        cargo install --path . --quiet
-        echo "Installed cargo-insta, cargo-nextest, worktrunk"
+        install -D -m 0755 target/debug/wt "$HOME/.local/bin/wt"
+        echo "Installed pre-commit, cargo-insta, cargo-nextest, worktrunk"
 
         echo ""
         echo "Setup complete! Run 'wt --help' to get started."

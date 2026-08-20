@@ -2580,6 +2580,14 @@ fn test_vars_clear_single_key(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_vars_clear_requires_key_or_all(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "clear", &[]).output().unwrap();
+
+    assert!(!output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mSpecify a key to clear, or use --all to clear all keys[39m");
+}
+
+#[rstest]
 fn test_vars_clear_all(repo: TestRepo) {
     // Set multiple values
     wt_state_cmd(&repo, "vars", "set", &["env=staging"])

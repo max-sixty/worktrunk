@@ -49,7 +49,7 @@ filterset = "test(/readme_sync/)"
 
 [package]
 name = "worktrunk"
-version = "0.73.0"
+version = "0.74.0"
 edition = "2024"
 rust-version = "1.96"
 build = "build.rs"
@@ -248,7 +248,7 @@ petname = { version = "=3.1.0", default-features = false, features = ["default-w
 # PINNED EXACT to match `petname`: its caret dependency otherwise permits a
 # different proc-macro version, but the generated code and runtime re-exports
 # require an exact match. Keep both pins in lockstep.
-petname-macros = "=3.1.0"
+petname-macros = "=3.2.0"
 
 tempfile = "3.27"
 wait-timeout = "0.2"
@@ -279,7 +279,7 @@ wait-timeout = "0.2"
 # not panic on push/pop keyboard enhancement flags failure") and is
 # Windows-green again. Kept as an exact pin; it can relax to a range now that
 # the keyboard-enhancement path no longer regresses the legacy console.
-skim = { version = "=5.6.1", optional = true, default-features = false, features = ["frizbee"] }
+skim = { version = "=5.6.4", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
 # Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`

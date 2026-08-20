@@ -84,3 +84,10 @@ running in that same `release` environment.
 `Swatinem/rust-cache` hashes `CARGO*` and `RUST*` env vars into the cache key.
 All workflows sharing a cache must set the same env vars, or they'll get
 different keys and miss each other's caches.
+
+It hashes the vars **visible at its own step**, so a var exported by a later
+step is invisible and a var the writers don't set poisons the key. ci.yaml and
+nightly.yaml carry theirs in a workflow-level `env:` block, always in place
+first; the generated `tend-*.yaml` files can't, so `tend-setup` sets the same
+three vars in a step above its cache step. A miss is silent — the step
+succeeds having restored nothing — so drift here shows up only as slow jobs.

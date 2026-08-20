@@ -436,7 +436,7 @@ fn setup_insteadof(repo: &TestRepo, remote: &str, custom_url: &str, real_prefix:
     ]);
 }
 
-/// Set up push tracking so `branch.push_remote()` and `github_push_url()` work.
+/// Set up push tracking so `branch.push_remote_url()` resolves a push destination.
 fn setup_push_tracking(repo: &TestRepo, branch: &str, remote: &str) {
     repo.run_git(&["config", &format!("branch.{branch}.remote"), remote]);
     repo.run_git(&[
@@ -686,7 +686,7 @@ fn test_push_remote_url_returns_non_github_url(repo: TestRepo) {
         .expect("push_remote_url resolves the configured remote regardless of host");
     let parsed = GitRemoteUrl::parse(&url).unwrap();
     assert!(!parsed.is_github());
-    assert!(parsed.is_gitlab());
+    assert_eq!(parsed.host(), "gitlab.com");
 }
 
 /// `push_remote_url`: result is cached on the Repository.
@@ -738,7 +738,7 @@ fn test_push_remote_url_insteadof_resolves_to_non_github(repo: TestRepo) {
         .push_remote_url()
         .expect("push_remote_url resolves through insteadOf regardless of host");
     let parsed = GitRemoteUrl::parse(&url).unwrap();
-    assert!(parsed.is_gitlab());
+    assert_eq!(parsed.host(), "gitlab.com");
     assert!(!parsed.is_github());
 }
 

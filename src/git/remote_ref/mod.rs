@@ -309,15 +309,6 @@ pub fn branch_tracks_ref(
     crate::git::branch_tracks_ref(repo_root, branch, &expected_ref, expected_remote)
 }
 
-/// Generate the local branch name for a remote ref.
-///
-/// Uses the source branch name directly. This ensures the local branch name
-/// matches the remote branch name, which is required for `git push` to work
-/// correctly with `push.default = current`.
-pub fn local_branch_name(info: &RemoteRefInfo) -> String {
-    info.source_branch.clone()
-}
-
 /// A forge PR/MR web URL decomposed into its parts.
 ///
 /// Detection is shape-based, not host-based: the URL must use `http(s)://`
@@ -344,7 +335,7 @@ struct RefUrlParts<'a> {
 /// (GitHub including Enterprise, GitLab, Gitea, Azure DevOps).
 ///
 /// Shared by [`parse_ref_url`] (which formats the `pr:`/`mr:` shortcut) and
-/// [`repo_url_from_ref_url`] (which keeps the path up to the marker).
+/// [`repo_info_from_ref_url_with_provider`] (which keeps the path up to the marker).
 fn parse_ref_url_parts(input: &str) -> Option<RefUrlParts<'_>> {
     let trimmed = input.trim();
     let scheme_end = trimmed.find("://")?;
@@ -401,33 +392,14 @@ pub fn parse_ref_url(input: &str) -> Option<String> {
     Some(format!("{}:{}", parts.kind, parts.number))
 }
 
-/// Derive the repository web URL from a PR/MR URL.
-///
-/// Truncates the PR/MR path (`/pull/N`, `/pulls/N`, `/pullrequest/N`, or
-/// `/-/merge_requests/N`) to leave the repository's web URL. The result names
-/// the **target** repository: for a fork PR it is the upstream repo the PR was
-/// opened against, not the contributor's fork. `wt list --format=json` uses
-/// this to align `repo_url` with the PR/MR link in `ci.url`, since the primary
-/// remote in a fork checkout points at the fork (the source).
-///
-/// Detection is shape-based and host-agnostic (see `parse_ref_url_parts`).
-/// Returns `None` when the input isn't a recognized PR/MR link.
-pub fn repo_url_from_ref_url(input: &str) -> Option<String> {
-    repo_info_from_ref_url(input).map(|info| info.url)
-}
-
-/// Derive repository metadata from a PR/MR URL.
-///
-/// The returned URL is identical to [`repo_url_from_ref_url`]. Provider and
-/// owner/name fields are derived from the PR/MR URL shape: GitHub `/pull/N`,
-/// Gitea `/pulls/N`, GitLab `/-/merge_requests/N`, and Azure DevOps
-/// `/pullrequest/N`.
-pub fn repo_info_from_ref_url(input: &str) -> Option<GitRepoInfo> {
-    repo_info_from_ref_url_with_provider(input, None)
-}
-
 /// Derive repository metadata from a PR/MR URL with an optional configured
 /// `[forge].platform` override.
+///
+/// The repository URL truncates the PR/MR path (`/pull/N`, `/pulls/N`,
+/// `/pullrequest/N`, or `/-/merge_requests/N`). Provider and owner/name fields
+/// are derived from the same shape. The URL names the **target** repository:
+/// for a fork PR it is the upstream repo the PR was opened against, not the
+/// contributor's fork.
 pub fn repo_info_from_ref_url_with_provider(
     input: &str,
     provider_override: Option<&str>,
@@ -688,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_url_from_ref_url_per_forge() {
+    fn repo_info_url_per_forge() {
         let cases = [
             // GitHub, including a fork PR (target repo = the upstream owner).
             (
@@ -731,27 +703,23 @@ mod tests {
             ),
         ];
         for (input, expected) in cases {
-            assert_eq!(
-                repo_url_from_ref_url(input).as_deref(),
-                Some(expected),
-                "input: {input}"
-            );
+            let info = repo_info_from_ref_url_with_provider(input, None)
+                .expect("ref URL should produce repo info");
+            assert_eq!(info.url, expected, "input: {input}");
         }
     }
 
     #[test]
-    fn repo_url_from_ref_url_rejects_non_pr_urls() {
-        // Not a PR/MR link.
-        assert_eq!(repo_url_from_ref_url("https://github.com/owner/repo"), None);
-        assert_eq!(
-            repo_url_from_ref_url("https://github.com/o/r/issues/5"),
-            None
-        );
-        // Too shallow.
-        assert_eq!(repo_url_from_ref_url("https://example.com/pull/1"), None);
-        // Not a URL.
-        assert_eq!(repo_url_from_ref_url("pr:123"), None);
-        assert_eq!(repo_url_from_ref_url(""), None);
+    fn repo_info_rejects_non_pr_urls() {
+        for input in [
+            "https://github.com/owner/repo",   // Not a PR/MR link.
+            "https://github.com/o/r/issues/5", // Not a PR/MR link.
+            "https://example.com/pull/1",      // Too shallow.
+            "pr:123",                          // Not a URL.
+            "",
+        ] {
+            assert_eq!(repo_info_from_ref_url_with_provider(input, None), None);
+        }
     }
 
     #[test]
@@ -814,9 +782,9 @@ mod tests {
         ];
 
         for (input, url, provider, host, owner, name, project) in cases {
-            let info = repo_info_from_ref_url(input).expect("ref URL should produce repo info");
+            let info = repo_info_from_ref_url_with_provider(input, None)
+                .expect("ref URL should produce repo info");
             assert_eq!(info.url, url, "input: {input}");
-            assert_eq!(repo_url_from_ref_url(input).as_deref(), Some(url));
             assert_eq!(info.provider, provider, "input: {input}");
             assert_eq!(info.host, host, "input: {input}");
             assert_eq!(info.owner, owner, "input: {input}");
@@ -827,8 +795,9 @@ mod tests {
 
     #[test]
     fn repo_info_from_ref_url_unknown_pull_host() {
-        let info = repo_info_from_ref_url("https://git.example.com/owner/repo/pull/1")
-            .expect("shape is still parseable");
+        let info =
+            repo_info_from_ref_url_with_provider("https://git.example.com/owner/repo/pull/1", None)
+                .expect("shape is still parseable");
         assert_eq!(info.url, "https://git.example.com/owner/repo");
         assert_eq!(info.provider, GitRepoProvider::Unknown);
         assert_eq!(info.host, "git.example.com");
@@ -839,20 +808,23 @@ mod tests {
 
     #[test]
     fn repo_info_from_ref_url_respects_host_boundaries_and_ports() {
-        let github = repo_info_from_ref_url("https://github.com:8443/owner/repo/pull/1")
-            .expect("GitHub PR URL");
+        let github =
+            repo_info_from_ref_url_with_provider("https://github.com:8443/owner/repo/pull/1", None)
+                .expect("GitHub PR URL");
         assert_eq!(github.provider, GitRepoProvider::GitHub);
 
-        let azure = repo_info_from_ref_url(
+        let azure = repo_info_from_ref_url_with_provider(
             "https://dev.azure.com:8443/org/project/_git/repo/pullrequest/9",
+            None,
         )
         .expect("Azure DevOps PR URL");
         assert_eq!(azure.provider, GitRepoProvider::AzureDevOps);
         assert_eq!(azure.owner, "org");
         assert_eq!(azure.project.as_deref(), Some("project"));
 
-        let azure_with_forge_label = repo_info_from_ref_url(
+        let azure_with_forge_label = repo_info_from_ref_url_with_provider(
             "https://github.dev.azure.com/org/project/_git/repo/pullrequest/9",
+            None,
         )
         .expect("Azure DevOps PR URL");
         assert_eq!(
@@ -860,16 +832,21 @@ mod tests {
             GitRepoProvider::AzureDevOps
         );
 
-        let hostile_userinfo =
-            repo_info_from_ref_url("https://github.com@attacker.example/owner/repo/pull/1")
-                .expect("ref URL is structurally valid");
+        let hostile_userinfo = repo_info_from_ref_url_with_provider(
+            "https://github.com@attacker.example/owner/repo/pull/1",
+            None,
+        )
+        .expect("ref URL is structurally valid");
         assert_eq!(hostile_userinfo.provider, GitRepoProvider::Unknown);
         assert_eq!(hostile_userinfo.host, "attacker.example");
         assert_eq!(hostile_userinfo.url, "https://attacker.example/owner/repo");
 
         // A brand anywhere in the host classifies here too.
-        let branded = repo_info_from_ref_url("https://github-mirror.example/owner/repo/pull/1")
-            .expect("ref URL is structurally valid");
+        let branded = repo_info_from_ref_url_with_provider(
+            "https://github-mirror.example/owner/repo/pull/1",
+            None,
+        )
+        .expect("ref URL is structurally valid");
         assert_eq!(branded.provider, GitRepoProvider::GitHub);
 
         // The Azure service domains stay bounded by suffix, and a host outside
@@ -878,7 +855,8 @@ mod tests {
             "https://dev.azure.com.attacker.example/org/project/_git/repo/pullrequest/9",
             "https://evil-visualstudio.com/org/project/_git/repo/pullrequest/9",
         ] {
-            let info = repo_info_from_ref_url(input).expect("ref URL is structurally valid");
+            let info = repo_info_from_ref_url_with_provider(input, None)
+                .expect("ref URL is structurally valid");
             assert_eq!(info.provider, GitRepoProvider::Unknown, "{input}");
         }
     }
@@ -888,10 +866,6 @@ mod tests {
         let input = "https://git.example.com/owner/repo/pull/1";
         let info = repo_info_from_ref_url_with_provider(input, Some("github"))
             .expect("shape is still parseable");
-        assert_eq!(
-            repo_url_from_ref_url(input).as_deref(),
-            Some(info.url.as_str())
-        );
         assert_eq!(info.url, "https://git.example.com/owner/repo");
         assert_eq!(info.provider, GitRepoProvider::GitHub);
         assert_eq!(info.host, "git.example.com");
@@ -905,10 +879,6 @@ mod tests {
         let input = "https://git.example.com/org/project/_git/repo/pullrequest/9";
         let info = repo_info_from_ref_url_with_provider(input, Some("azure-devops"))
             .expect("shape is still parseable");
-        assert_eq!(
-            repo_url_from_ref_url(input).as_deref(),
-            Some(info.url.as_str())
-        );
         assert_eq!(info.url, "https://git.example.com/org/project/_git/repo");
         assert_eq!(info.provider, GitRepoProvider::AzureDevOps);
         assert_eq!(info.host, "git.example.com");
@@ -920,11 +890,8 @@ mod tests {
     #[test]
     fn repo_info_from_ref_url_malformed_azure_is_unknown() {
         let input = "https://dev.azure.com/org/repo/pullrequest/9";
-        let info = repo_info_from_ref_url(input).expect("shape is still parseable");
-        assert_eq!(
-            repo_url_from_ref_url(input).as_deref(),
-            Some(info.url.as_str())
-        );
+        let info =
+            repo_info_from_ref_url_with_provider(input, None).expect("shape is still parseable");
         assert_eq!(info.url, "https://dev.azure.com/org/repo");
         assert_eq!(info.provider, GitRepoProvider::Unknown);
         assert_eq!(info.host, "dev.azure.com");

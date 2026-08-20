@@ -606,6 +606,29 @@ mod tests {
         assert!(daemons_from_batched_lsof("").is_empty());
     }
 
+    /// Socket lines with no parsable `p` line above them — leading output, or
+    /// output under a `p` line that isn't a number — belong to no record.
+    /// Attaching them to a neighbour would fabricate a class-1 orphan out of
+    /// pid 301, whose own record holds only a socket-pair endpoint. Parsing
+    /// resumes at the next valid `p` line, so pid 400 still classifies.
+    #[cfg(unix)]
+    #[test]
+    fn batched_lsof_drops_lines_outside_a_parsable_record() {
+        let batched = concat!(
+            "nfsmonitor--daemon.ipc\n",
+            "p301\n",
+            "f21\n",
+            "n->0x1\n",
+            "pBAD\n",
+            "nfsmonitor--daemon.ipc\n",
+            "p400\n",
+            "n/repo/.git/worktrees/b/fsmonitor--daemon.ipc\n",
+        );
+        let daemons = daemons_from_batched_lsof(batched);
+        assert_eq!(daemons.len(), 1);
+        assert_eq!(daemons[0].pid, 400);
+    }
+
     #[cfg(unix)]
     #[test]
     fn canonicalize_socket_resolves_symlinked_git_dir_and_falls_back_when_gone() {

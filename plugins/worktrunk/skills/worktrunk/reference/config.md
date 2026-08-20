@@ -193,11 +193,13 @@ columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — b
 timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
-`columns` selects and orders the columns to render; omit it for the default set.
-It is meant to drive a per-invocation [alias](https://worktrunk.dev/extending/#aliases)
-(`wt --config-set 'list.columns=[…]' list`), giving a named view without
-disturbing the default `wt list`. A static setting works but pins one layout
-over a table that otherwise adapts to `--full` and terminal width.
+`columns` selects and orders the columns the `wt list` table and the `wt switch`
+picker render; `--format json` ignores it and always emits every field. Omit it
+for the default set. It is meant to drive a per-invocation
+[alias](https://worktrunk.dev/extending/#aliases) (`wt --config-set 'list.columns=[…]' list`),
+giving a named view without disturbing the default `wt list`. A static setting
+works but pins one layout over a table that otherwise adapts to `--full` and
+terminal width.
 
 Valid built-in names:
 
@@ -226,11 +228,6 @@ since `--full` only bundles columns into the default table rather than gating a
 named one. A column whose data source is missing still stays hidden — `summary`
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
-
-The selection drives the table and the `wt switch` picker. `wt list --format
-json` always emits every field, but a listed gated column (`ci`, `summary`)
-still forces its data collection on, so the JSON carries the same data the
-table shows.
 
 #### Custom columns [experimental]
 

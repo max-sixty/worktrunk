@@ -32,8 +32,6 @@
 
 use std::collections::HashMap;
 
-use anyhow::bail;
-
 use super::branches::LocalBranchInventory;
 use super::{LocalBranch, RemoteBranch, Repository};
 
@@ -76,14 +74,6 @@ impl RefSnapshot {
     /// to handle those should fall back to `git rev-parse` (uncached).
     pub fn resolve(&self, name: &str) -> Option<&str> {
         self.commits.get(name).map(String::as_str)
-    }
-
-    /// Resolve a ref name to its commit SHA, erroring when absent.
-    pub fn must_resolve(&self, name: &str) -> anyhow::Result<&str> {
-        match self.resolve(name) {
-            Some(sha) => Ok(sha),
-            None => bail!("ref not present in snapshot: {name}"),
-        }
     }
 
     /// Look up the configured upstream short name for a local branch.
@@ -619,12 +609,12 @@ mod tests {
     }
 
     #[test]
-    fn must_resolve_errors_on_missing_ref() {
+    fn resolve_returns_none_for_uncaptured_refs() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
         let snap = repo.capture_refs().unwrap();
 
-        assert!(snap.must_resolve("does-not-exist").is_err());
+        assert_eq!(snap.resolve("does-not-exist"), None);
         // HEAD is intentionally absent — callers fall back to rev-parse.
         assert_eq!(snap.resolve("HEAD"), None);
     }

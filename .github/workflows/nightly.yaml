@@ -127,7 +127,7 @@ jobs:
         save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.85.11
+      uses: taiki-e/install-action@v2.86.2
       with:
         tool: cargo-hack
 
@@ -140,7 +140,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.114.1'
+        version: '0.115.0'
 
     - run: cargo hack check --feature-powerset --no-dev-deps
 
@@ -182,7 +182,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.72.0"
+        version: "=0.74.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -284,7 +284,7 @@ jobs:
         crate: cargo-udeps
         version: "=0.1.61"
 
-    - uses: clechasseur/rs-cargo@v5.0.7
+    - uses: clechasseur/rs-cargo@v5.0.8
       with:
         command: udeps
         args: --all-targets

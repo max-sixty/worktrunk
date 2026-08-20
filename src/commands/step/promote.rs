@@ -4,11 +4,12 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::progress::Progress;
 use worktrunk::styling::{eprintln, hint_message, info_message, success_message, warning_message};
 
@@ -34,13 +35,27 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 }
 
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
+///
+/// Refuses to delete when the copy reports a skip, since the source still holds
+/// content the destination never received. A socket or FIFO is not a skip and
+/// goes with the rest of the source: it carries no content to lose, and
+/// refusing over one would abort a promote after the branch exchange.
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
+    let skipped = if is_dir {
+        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?
+    } else {
+        usize::from(copy_leaf(src, dest, None, true)?.is_none())
+    };
+    if skipped > 0 {
+        bail!(
+            "{} was not fully copied, so the source is left in place; run with -vv to list what was skipped",
+            format_path_for_display(src)
+        );
+    }
+
     if is_dir {
-        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        copy_leaf(src, dest, None, true)?;
-
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
@@ -508,5 +523,53 @@ mod tests {
             "nested"
         );
         assert_eq!(fs::read_to_string(dest.join("root.txt")).unwrap(), "root");
+    }
+
+    #[test]
+    fn test_copy_and_remove_keeps_a_source_that_was_not_fully_copied() {
+        // The move copies then deletes, so an entry the copy skipped would be
+        // destroyed rather than moved. A source that is already gone is the
+        // deterministic case: `copy_leaf` reports the skip, and the delete —
+        // which would take a file recreated since — must not be reached.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("gone.txt");
+        let dest = tmp.path().join("dest.txt");
+
+        let err = copy_and_remove(&src, &dest, false).unwrap_err();
+
+        assert!(
+            err.to_string().contains("was not fully copied"),
+            "unexpected error: {err}"
+        );
+        assert!(!dest.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_and_remove_drops_a_non_regular_file() {
+        // A socket has no content the destination can be short of, so it does
+        // not hold up the move. Refusing over one would strand real content:
+        // `distribute_staged` runs after the branch exchange, and a promote
+        // that dies there leaves the staged files behind a `check_leftover_
+        // staging` refusal whose remedy deletes them.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("srcdir");
+        let dest = tmp.path().join("destdir");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("regular.txt"), "content").unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(src.join("sock")).unwrap();
+        drop(listener);
+        // Closing the fd doesn't unlink, so the socket is still there to
+        // classify. Asserted, so the test can't pass on a fixture that made none.
+        assert!(src.join("sock").exists());
+
+        copy_and_remove(&src, &dest, true).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(dest.join("regular.txt")).unwrap(),
+            "content"
+        );
+        assert!(!dest.join("sock").exists());
     }
 }

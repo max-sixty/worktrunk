@@ -250,13 +250,6 @@ impl GitRemoteUrl {
         self.forge_kind() == Some(ForgeKind::GitHub)
     }
 
-    /// Check if this URL points to a GitLab host.
-    ///
-    /// Matches gitlab.com and self-hosted GitLab instances (e.g., gitlab.example.com).
-    pub fn is_gitlab(&self) -> bool {
-        self.forge_kind() == Some(ForgeKind::GitLab)
-    }
-
     /// Check if this URL points to a Gitea host.
     ///
     /// Matches gitea.com and self-hosted Gitea instances (e.g., gitea.example.com).
@@ -576,7 +569,7 @@ mod tests {
         assert!(url.is_github());
 
         let url = GitRemoteUrl::parse("git://gitlab.example.com/owner/repo.git").unwrap();
-        assert!(url.is_gitlab());
+        assert_eq!(url.forge_kind(), Some(ForgeKind::GitLab));
     }
 
     /// URL-scheme authorities use the final `@` as the userinfo boundary, so
@@ -778,40 +771,6 @@ mod tests {
             !GitRemoteUrl::parse("https://bitbucket.org/owner/repo.git")
                 .unwrap()
                 .is_github()
-        );
-    }
-
-    #[test]
-    fn test_is_gitlab() {
-        // GitLab.com
-        assert!(
-            GitRemoteUrl::parse("https://gitlab.com/owner/repo.git")
-                .unwrap()
-                .is_gitlab()
-        );
-        assert!(
-            GitRemoteUrl::parse("git@gitlab.com:owner/repo.git")
-                .unwrap()
-                .is_gitlab()
-        );
-
-        // Self-hosted GitLab
-        assert!(
-            GitRemoteUrl::parse("https://gitlab.example.com/owner/repo.git")
-                .unwrap()
-                .is_gitlab()
-        );
-
-        // Not GitLab
-        assert!(
-            !GitRemoteUrl::parse("https://github.com/owner/repo.git")
-                .unwrap()
-                .is_gitlab()
-        );
-        assert!(
-            !GitRemoteUrl::parse("https://bitbucket.org/owner/repo.git")
-                .unwrap()
-                .is_gitlab()
         );
     }
 
@@ -1455,7 +1414,6 @@ mod tests {
         let url = GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
         assert!(url.is_azure_devops());
         assert!(!url.is_github());
-        assert!(!url.is_gitlab());
 
         // SSH ssh.dev.azure.com
         let url = GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();

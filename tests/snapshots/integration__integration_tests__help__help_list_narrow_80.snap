@@ -35,6 +35,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -428,14 +429,14 @@ Item fields:
  [2mupstrea[0m Tracking branch: [2m{remote, branch, ahead, behind}[0m; absent when none is  
  [2mm[0m       configured                                                             
  [2mpr[0m      Open PR/MR: [2m{number, url, review, mergeable, repo}[0m; collected with     
-         [2m--full[0m or a listed [2mci[0m column. [2mreview[0m uses the schema 1 [2mci.review_state[0m 
-         vocabulary; [2mmergeable[0m is false when the forge reports conflicts, null  
-         otherwise                                                              
- [2mchecks[0m  CI pipeline: [2m{status, source, stale}[0m; [2mstatus[0m is [2mpassed[0m, [2mrunning[0m, or    
-         [2mfailed[0m — null when a conflicts report masks it                         
+         [2m--full[0m. [2mreview[0m uses the schema 1 [2mci.review_state[0m vocabulary; [2mmergeable[0m 
+         is false when the forge reports conflicts, null otherwise              
+ [2mchecks[0m  CI pipeline: [2m{status, source, stale}[0m; collected with [2m--full[0m. [2mstatus[0m is 
+         [2mpassed[0m, [2mrunning[0m, or [2mfailed[0m — null when a conflicts report masks it     
  [2mdev_ser[0m [2m{url, listening}[0m from the project's [2mlist.url[0m template                  
  [2mver[0m                                                                            
- [2msummary[0m LLM branch summary (requires [2m[list] summary = true[0m)                    
+ [2msummary[0m LLM branch summary; needs [2m--full[0m, [2m[list] summary = true[0m, and a         
+         [2m[commit.generation][0m command                                            
  [2mvars[0m    Per-branch variables from [2mwt config state vars[0m                         
  [2mdisplay[0m Rendered strings: [2mstate[0m (schema 1's [2mmain_state[0m vocabulary), [2msymbols[0m,   
          [2mstatusline[0m (with ANSI colors and OSC 8 hyperlinks), [2mcolumns[0m            

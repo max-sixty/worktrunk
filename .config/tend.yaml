@@ -1,6 +1,6 @@
 bot_name: worktrunk-bot
 setup:
-- uses: ./.github/actions/claude-setup
+- uses: ./.github/actions/tend-setup
 secrets:
   allowed:
   - CODECOV_TOKEN

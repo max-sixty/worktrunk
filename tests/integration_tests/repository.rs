@@ -175,40 +175,41 @@ fn test_operation_in_progress_reads_the_queued_sequencer() {
     assert_eq!(repository.operation_in_progress().unwrap(), None);
 }
 
-// =============================================================================
-// available_branches() tests
-// =============================================================================
-
+/// `wt list` clones one repository into parallel tasks, so hot cache entries
+/// must remain usable across both the clone and thread boundaries.
 #[test]
-fn test_available_branches_all_have_worktrees() {
-    let mut repo = TestRepo::new();
-    // main branch already has a worktree (the main repo)
-    // Create feature branch with worktree
-    repo.add_worktree("feature");
+fn test_cloned_repository_shares_cached_queries_across_threads() {
+    let mut test = TestRepo::with_initial_commit();
+    test.add_worktree("feature");
+    let feature_path = test.worktree_path("feature");
+    test.commit_in_worktree(feature_path, "feature.txt", "content", "feature commit");
 
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let available = repository.available_branches().unwrap();
+    let repository = Repository::at(test.root_path()).unwrap();
+    let main_head = test.head_sha();
+    let feature_head = test.head_sha_in(feature_path);
+    let expected_base = repository.merge_base(&main_head, &feature_head).unwrap();
+    assert_eq!(expected_base, Some(main_head.clone()));
 
-    // Both main and feature have worktrees, so nothing should be available
-    assert!(available.is_empty());
-}
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let repository = repository.clone();
+            let main_head = main_head.clone();
+            let feature_head = feature_head.clone();
+            std::thread::spawn(move || {
+                (
+                    repository.default_branch(),
+                    repository.merge_base(&main_head, &feature_head).unwrap(),
+                )
+            })
+        })
+        .collect();
 
-#[test]
-fn test_available_branches_some_without_worktrees() {
-    let repo = TestRepo::with_initial_commit();
-    // Create a branch without a worktree
-    repo.git_command()
-        .args(["branch", "orphan-branch"])
-        .run()
-        .unwrap();
-
-    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let available = repository.available_branches().unwrap();
-
-    // orphan-branch has no worktree, so it should be available
-    assert!(available.contains(&"orphan-branch".to_string()));
-    // main has a worktree, so it should not be available
-    assert!(!available.contains(&"main".to_string()));
+    for handle in handles {
+        assert_eq!(
+            handle.join().unwrap(),
+            (Some("main".into()), expected_base.clone())
+        );
+    }
 }
 
 // =============================================================================

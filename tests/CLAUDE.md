@@ -14,7 +14,7 @@ cargo test --test integration --features shell-integration-tests   # + shell tes
 
 Every binary the suite spawns is `wt` itself — the mock commands are the same binary linked under other names, dispatching on argv[0] (`testing::mock_stub`) — so no run can spawn missing or stale code: cargo rebuilds a package's own binaries whenever its integration tests build, under every runner and filter, and `wt_bin()` resolves `CARGO_BIN_EXE_wt` — naming that just-built binary — into a hardlink pinned under `target/debug/wt-test-bin/`, which a concurrent `cargo build`'s uplift can't unlink mid-run (see No Retries); outside a cargo runner the suite panics ("CARGO_BIN_EXE_wt not set") rather than guessing a path. `cargo build --bin wt` recompiling right after a test run is the bin-only build being a separate cached unit (a different feature graph), not evidence the tests ran stale code.
 
-**Claude Code web:** `task setup-web` installs zsh, fish, `jq`, PowerShell, `gh`, and dev tools, and checks that nushell is already there. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
+**Claude Code web:** `task setup-web` installs zsh, fish, Nushell, PowerShell, `jq`, `lsof`, `gh`, pre-commit, and the Cargo dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. Tests that need an unprivileged uid skip automatically when running as root, which both this environment and Codex Cloud do; that covers the permission tests and the `wt remove` stuck-directory pair, the only automated coverage of that path.
 
 **Shell/PTY tests** (`shell-integration-tests` feature): approval prompts, picker, progressive rendering, shell wrappers.
 
@@ -205,11 +205,11 @@ What the hole cost before this: any key in the developer's config applied to fix
 in-process unit test that calls library functions directly gets no such
 isolation: it runs in the test process, which inherits the real environment.
 
-The `Approvals` and `UserConfig` mutation methods take an explicit `&Path`, so
-a unit test passes a tempdir-backed path and the write stays isolated. The
-global resolvers do not isolate: `Approvals::load()`, `approvals_path()`,
-`config_path()`, and `system_config_path()` all fall back to the real
-`~/.config/worktrunk/`.
+`Approvals::approve_commands` and the `UserConfig` mutation methods take an
+explicit `&Path`, so a unit test passes a tempdir-backed path and the write stays
+isolated. The global resolvers do not isolate: `Approvals::load()`,
+`approvals_path()`, `config_path()`, and `system_config_path()` all fall back to
+the real `~/.config/worktrunk/`.
 
 <example>
 <bad reason="Approvals::load() reads the real ~/.config/worktrunk/approvals.toml">
@@ -218,7 +218,7 @@ Bad:
 
 ```rust
 let mut approvals = Approvals::load().unwrap();
-approvals.approve_command(project, command, &approvals_path).unwrap();
+approvals.approve_commands(project, vec![command], &approvals_path).unwrap();
 ```
 
 </bad>
@@ -230,7 +230,7 @@ Good:
 let temp_dir = tempfile::tempdir().unwrap();
 let approvals_path = temp_dir.path().join("approvals.toml");
 let mut approvals = Approvals::default();
-approvals.approve_command(project, command, &approvals_path).unwrap();
+approvals.approve_commands(project, vec![command], &approvals_path).unwrap();
 ```
 
 </good>

@@ -41,7 +41,7 @@ pub(super) fn detect_github(
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Get the owner of the branch's push remote for filtering PRs by source repository.
-    // For local branches: uses @{push} which resolves through pushRemote → remote.pushDefault → tracking remote.
+    // For local branches: resolves through pushRemote → remote.pushDefault → tracking remote.
     // For remote branches: use the remote's effective URL (handles insteadOf aliases).
     let branch_owner = branch_owner_repo(repo, branch).map(|(owner, _)| owner);
 

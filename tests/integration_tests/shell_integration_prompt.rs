@@ -305,7 +305,9 @@ fn test_process_tree_unsupported_shell_overrides_shell_env(repo: TestRepo) {
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
     use super::*;
-    use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+    use crate::common::pty::{
+        build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
+    };
     use crate::common::{add_pty_filters, setup_snapshot_settings, wt_bin};
     use insta::assert_snapshot;
     use std::path::Path;
@@ -493,6 +495,34 @@ mod pty_tests {
         });
     }
 
+    #[rstest]
+    fn test_first_run_preserves_completion_created_after_preview(repo: TestRepo) {
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".bashrc"), "# empty bashrc\n").unwrap();
+        fs::create_dir_all(temp_home.path().join(".config/fish/functions")).unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let completion = temp_home.path().join(".config/fish/completions/wt.fish");
+        let callback_path = completion.clone();
+        let user_content = b"# user completion\r\n";
+
+        let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", move |_| {
+            fs::create_dir_all(callback_path.parent().unwrap()).unwrap();
+            fs::write(&callback_path, user_content).unwrap();
+        });
+
+        assert_eq!(exit_code, 0, "switch should still succeed:\n{output}");
+        assert_eq!(fs::read(completion).unwrap(), user_content);
+    }
+
     /// Test: User requests preview with ? then declines
     #[rstest]
     fn test_user_requests_preview_then_declines(repo: TestRepo) {
@@ -605,6 +635,10 @@ mod pty_tests {
         assert!(
             output.contains("Will remove") && output.contains("conf.d/wt.fish"),
             "First-run offer preview must name the legacy fish removal: {output}"
+        );
+        assert!(
+            output.contains("Will create completions") && output.contains("completions/wt.fish"),
+            "First-run offer preview must name the fish completion write: {output}"
         );
 
         // Declining leaves the legacy file in place — the preview did not delete it.

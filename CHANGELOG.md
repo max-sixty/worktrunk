@@ -1,14 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.74.0
 
 ### Improved
 
-- **`wt config approvals add --yes` records approvals without a terminal**: the command refused every non-interactive run, so a container that had just cloned a project could only pre-approve it by hand-writing `approvals.toml` from `wt config approvals list --format=json`. `--yes` now lists what it trusts and writes it. A save it cannot make fails the command rather than warning and exiting 0, since the record is all `add` produces — a change that applies to the interactive run too.
+- **A JSON bool or null nested in a `vars` value renders as `True`, `False`, or `None`**: minijinja 2.22 adopted Jinja2's spelling for all three, so `{{ vars.<key>.<field> }}` into an object set by `wt config state vars set` prints those words. A var whose whole value is `true` stays a string. (Breaking: the old spellings were `true`, `false`, and `none`.) ([#3795](https://github.com/max-sixty/worktrunk/pull/3795))
+
+- **`wt config approvals add --yes` records approvals without a terminal**: the command refused every non-interactive run, so a container or CI job could not pre-approve a project it had just cloned. `--yes` now lists what it trusts and writes it, and a save it cannot make fails the command rather than warning and exiting 0. ([#3819](https://github.com/max-sixty/worktrunk/pull/3819))
 
 - **A foreground hook keeps the terminal, so it can ask before continuing**: A `pre-*` hook now inherits wt's stdin exactly as an alias body already did, so `trust = "gum confirm 'trust this worktree?' && mise trust"` gets a prompt instead of an immediate EOF. That covers every type under `wt hook <type> --foreground` too. (Breaking: hooks no longer receive the JSON context on stdin at all — a hook that ran `json.load(sys.stdin)` must take the values it needs as template variables instead, e.g. `setup = "python3 setup.py {{ branch }} {{ repo }}"`, which every hook has always had. The forms that can't hold a terminal — detached `post-*` hooks, and the children of a concurrent group, who would race for one — now read EOF rather than JSON. Foreground steps share one stdin, so a step that drains it to EOF starves the steps behind it when that stdin is a pipe or a file.) Fixes [#3093](https://github.com/max-sixty/worktrunk/issues/3093). ([#3129](https://github.com/max-sixty/worktrunk/pull/3129))
 
 - **`remote_repo` names the repository as the remote spells it**: `repo` is the directory on disk, so a renamed clone reports the new name. `{{ remote_repo }}` takes it from the primary remote's URL, available everywhere `owner` is and unset when no remote parses. ([#3745](https://github.com/max-sixty/worktrunk/pull/3745), thanks @canac)
+
+### Fixed
+
+- **`wt remove --force` deleted a live worktree moved onto another's registered path**: the ownership gate asked which *repository* the occupant belonged to, which a sibling worktree of this repo satisfies, so the directory went to trash with its uncommitted work. The directory and the registration must now name each other, as `git worktree remove` requires. Also reaches `wt merge`, `wt step prune`, and picker removal, and refuses a bare repository's path that `--force` previously deleted. ([#3808](https://github.com/max-sixty/worktrunk/pull/3808))
+
+- **`wt step copy-ignored` skips a source file that vanishes mid-copy**: the walk collects leaves, then copies them in parallel, so a file removed in between — a concurrent build rewriting `target/`, say — aborted the batch, under `--force` after deleting the destination. The source is stat'd before anything is removed now. ([#3744](https://github.com/max-sixty/worktrunk/pull/3744), fixes [#3743](https://github.com/max-sixty/worktrunk/issues/3743), thanks @dataders for reporting and fixing)
+
+- **`wt step promote` refuses to delete a source it did not fully copy**: across filesystems the move copies then deletes, and an entry with no copy — a socket or FIFO, or a file a concurrent build rewrote mid-walk — was deleted anyway. The copy now reports what it skipped, and a non-zero count fails the move. ([#3820](https://github.com/max-sixty/worktrunk/pull/3820))
+
+- **An `ssh://` remote's host comes from the authority, not a later path segment**: the search for the userinfo `@` covered the whole remainder, so `ssh://git@attacker.example/owner/repo@github.com/org/repo.git` resolved to `github.com` and borrowed that repository's approvals while git dialed the attacker. Every URL form now splits the authority first, so `@` in a namespace parses instead of being rejected. ([#3813](https://github.com/max-sixty/worktrunk/pull/3813))
+
+- **`WORKTRUNK_*` env vars and `--config-set` outrank a `[projects."…"]` entry**: layer and specificity resolved separately, so a project entry answered for the global key whichever layer set it — `WORKTRUNK_WORKTREE_PATH` could not override a project's `worktree-path`. Both invocation layers now apply at either scope, and the help text gained a precedence section. ([#3790](https://github.com/max-sixty/worktrunk/pull/3790), fixes [#3788](https://github.com/max-sixty/worktrunk/issues/3788), thanks @jeremy0dell for reporting)
+
+- **Shell completions register under the `--cmd` name**: `wt config shell init zsh --cmd wot` renamed the wrapper, but clap emitted the registration under `wt`. Bash and zsh completed nothing and regenerated the script on every TAB, PowerShell registered the wrong command, and zsh's `compdef` handed worktrunk's completer to the other `wt`. ([#3817](https://github.com/max-sixty/worktrunk/pull/3817), fixes [#3816](https://github.com/max-sixty/worktrunk/issues/3816), thanks @sbarre for reporting)
+
+### Documentation
+
+- **The picker's `Alt-x` never forces**: the keybinding table read `Remove selected worktree/branch`, which sent a reader looking for a force-remove that isn't there. ([#3811](https://github.com/max-sixty/worktrunk/pull/3811), raised in [#3809](https://github.com/max-sixty/worktrunk/issues/3809), thanks @josh-burton)
+
+### Internal
+
+- **Library API rework** (Breaking library API): `GitError::WorktreePathNotOurs` gained an `occupant_registered_at` field, and `WorkingTree::ensure_belongs_to_repo` is now `ensure_holds_this_worktree`. ([#3808](https://github.com/max-sixty/worktrunk/pull/3808))
 
 ## 0.73.0
 

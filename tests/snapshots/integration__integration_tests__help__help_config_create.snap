@@ -182,11 +182,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# `columns` selects and orders the columns to render; omit it for the default set.[0m
-[107m [0m [2m# It is meant to drive a per-invocation alias (https://worktrunk.dev/extending/#aliases)[0m
-[107m [0m [2m# (`wt --config-set 'list.columns=[…]' list`), giving a named view without[0m
-[107m [0m [2m# disturbing the default `wt list`. A static setting works but pins one layout[0m
-[107m [0m [2m# over a table that otherwise adapts to `--full` and terminal width.[0m
+[107m [0m [2m# `columns` selects and orders the columns the `wt list` table and the `wt switch`[0m
+[107m [0m [2m# picker render; `--format json` ignores it and always emits every field. Omit it[0m
+[107m [0m [2m# for the default set. It is meant to drive a per-invocation[0m
+[107m [0m [2m# alias (https://worktrunk.dev/extending/#aliases) (`wt --config-set 'list.columns=[…]' list`),[0m
+[107m [0m [2m# giving a named view without disturbing the default `wt list`. A static setting[0m
+[107m [0m [2m# works but pins one layout over a table that otherwise adapts to `--full` and[0m
+[107m [0m [2m# terminal width.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Valid built-in names:[0m
 [107m [0m [2m#[0m
@@ -215,11 +217,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
 [107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
 [107m [0m [2m# template — since listing can't supply the data.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# The selection drives the table and the `wt switch` picker. `wt list --format[0m
-[107m [0m [2m# json` always emits every field, but a listed gated column (`ci`, `summary`)[0m
-[107m [0m [2m# still forces its data collection on, so the JSON carries the same data the[0m
-[107m [0m [2m# table shows.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

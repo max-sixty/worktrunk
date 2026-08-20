@@ -75,8 +75,8 @@ use worktrunk::styling::{
 };
 
 use crate::commands::configure_shell::{
-    ConfigAction, UninstallScanResult, collect_legacy_cleanups, format_matched_lines,
-    handle_configure_shell, prompt_for_install, scan_shell_configs,
+    ConfigAction, UninstallScanResult, apply_confirmed_shell_config, collect_legacy_cleanups,
+    format_matched_lines, prompt_for_install, scan_shell_configs,
 };
 
 /// Git config key tracking how many times the shell-integration install hint
@@ -482,12 +482,10 @@ pub fn prompt_shell_integration(
 
     // TTY + first time: Show interactive prompt
     // Accepting installs for all shells with config files (same as `wt config shell install`)
-    // Detect (without removing) the legacy files the subsequent handle_configure_shell
-    // would delete, so this offer names them before the user consents — the removal is
-    // destructive and must not happen unpreviewed, exactly as `wt config shell install`
-    // now previews it (issue #3644). The list is computed from the same dry-run scan
-    // handle_configure_shell re-derives internally, so the prompt names precisely what
-    // the install removes.
+    // Detect (without removing) the legacy files the confirmed plan will delete,
+    // so this offer names them before the user consents — the removal is destructive
+    // and must not happen unpreviewed, exactly as `wt config shell install` previews it
+    // (issue #3644).
     let legacy_preview = collect_legacy_cleanups(&scan.configured, binary_name, true);
     let confirmed = prompt_for_install(
         &scan.configured,
@@ -506,8 +504,9 @@ pub fn prompt_shell_integration(
         return Ok(false);
     }
 
-    // Install for all shells with config files (same as `wt config shell install`)
-    let install_result = handle_configure_shell(None, true, false, binary_name.to_string())
+    // Apply the exact plan confirmed above; deriving another preview here would
+    // authorize filesystem changes made while the prompt was waiting.
+    let install_result = apply_confirmed_shell_config(scan, None, binary_name)
         .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
 
     print_shell_install_result(&install_result);
@@ -538,8 +537,7 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         eprintln!(
             "{}{}",
             success_message(cformat!(
-                "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
-                result.action.description(),
+                "Removed {what} for <bold>{shell}</> @ <bold>{path}</>",
             )),
             format_matched_lines(&result.matched_lines),
         );
@@ -553,8 +551,7 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         eprintln!(
             "{}",
             success_message(cformat!(
-                "{} completions for <bold>{shell}</> @ <bold>{path}</>",
-                result.action.description(),
+                "Removed completions for <bold>{shell}</> @ <bold>{path}</>",
             ))
         );
     }
