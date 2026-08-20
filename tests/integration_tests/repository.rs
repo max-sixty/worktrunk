@@ -188,6 +188,7 @@ fn test_cloned_repository_shares_cached_queries_across_threads() {
     let main_head = test.head_sha();
     let feature_head = test.head_sha_in(feature_path);
     let expected_base = repository.merge_base(&main_head, &feature_head).unwrap();
+    assert_eq!(expected_base, Some(main_head.clone()));
 
     let handles: Vec<_> = (0..4)
         .map(|_| {
