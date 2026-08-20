@@ -1038,7 +1038,7 @@ fn run_with_timeout_impl(
 ///
 /// The waiter thread lives until the child exits, so a caller whose deadline
 /// expires owns the teardown: kill the child ([`ChildWaiter::kill`], or
-/// [`kill_timed_out_tree`] for a process-group leader), then [`ChildWaiter::wait`]
+/// `kill_timed_out_tree` for a process-group leader), then [`ChildWaiter::wait`]
 /// to reap it and retire the thread.
 pub struct ChildWaiter {
     pid: u32,
@@ -1081,7 +1081,7 @@ impl ChildWaiter {
 
     /// Best-effort kill of the child itself — not its process group, which for a
     /// child that is *not* a group leader would signal whatever group it inherited
-    /// (wt's own, under a shared pgroup). Group teardown is [`kill_timed_out_tree`].
+    /// (wt's own, under a shared pgroup). Group teardown is `kill_timed_out_tree`.
     ///
     /// Signals by pid, because the waiter thread holds the [`std::process::Child`].
     /// That leaves a window a `Child::kill` would not have: the child can exit and
@@ -1108,8 +1108,13 @@ impl ChildWaiter {
             .status();
     }
 
+    /// Every arm that reaches this has an empty *and* disconnected channel, which
+    /// covers two cases: the status was already delivered to an earlier call, or
+    /// the waiter thread died without sending one.
     fn waiter_gone() -> std::io::Error {
-        std::io::Error::other("the thread waiting on this child terminated unexpectedly")
+        std::io::Error::other(
+            "the child's exit status was already taken, or the thread waiting on it died",
+        )
     }
 }
 
