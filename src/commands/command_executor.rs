@@ -238,6 +238,15 @@ impl<'a> CommandContext<'a> {
 ///   body happens to reference: `wt step eval -v`, and the hook pipeline's own
 ///   `format_hook_variables` table.
 ///
+/// The hook pipeline's reader is conditional, so its `All` in [`prepare_steps`]
+/// buys nothing at default verbosity — `format_hook_variables` renders only at
+/// `verbosity() >= 1`. A hook whose templates name nothing but `{{ branch }}`
+/// still pays for `rev-parse --verify`, `primary_worktree()`,
+/// `primary_remote()`, and `default_branch()`, whose first call per repo may
+/// reach `git ls-remote`. Narrowing it wants a scope that varies with
+/// verbosity, or a separate entry point for the paths that list or preview;
+/// neither belongs in the change that removed the JSON reader.
+///
 /// The template-preview paths (`render_hook_commands`, `wt config alias`) fit
 /// neither case and still pass `All`: they expand and print one line per
 /// configured command, so filtering would be correct but saves nothing an
