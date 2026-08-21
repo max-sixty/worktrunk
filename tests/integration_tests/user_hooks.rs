@@ -703,6 +703,110 @@ push = "echo PUSHED > pushed.txt"
     );
 }
 
+/// A list-form hook has no name, so the report falls back to what the user
+/// wrote. The fallback has to be the template itself: the label the runner
+/// carries for expansion errors is already `"{source} {hook_type} hook"`, and
+/// the report prefixes the source again — reporting `user:user post-merge
+/// hook`.
+#[rstest]
+fn test_background_failure_names_an_unnamed_step_by_its_command(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    repo.write_test_config(
+        r#"post-merge = ["echo {{ vars.never_set }}", "echo AFTER > after.txt"]
+"#,
+    );
+
+    let mut merge = make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+    assert!(merge.status().unwrap().success());
+
+    wait_for_file_content(
+        &resolve_git_common_dir(repo.root_path())
+            .join("wt")
+            .join("hook-failures.jsonl"),
+    );
+
+    let output = make_snapshot_cmd(&repo, "list", &[], None)
+        .output()
+        .unwrap();
+    let stderr = anstream::adapter::strip_str(&String::from_utf8_lossy(&output.stderr)).to_string();
+    assert!(
+        stderr.contains("user:echo {{ vars.never_set }} did not run"),
+        "the unnamed step must be named by its own command, got:\n{stderr}"
+    );
+}
+
+/// A concurrent group whose command fails to *start* takes its siblings down
+/// two ways — the ones already running are killed, the ones after it never
+/// spawn — and neither is visible from the group's step index alone. The
+/// deferred report has to name both, or the abort is as silent inside a group
+/// as it was before #3858 across steps.
+///
+/// Unix-only for the `sleep`: killing the group leaves the shell's own child
+/// running on Windows, where it would hold the worktree open past the test.
+#[cfg(unix)]
+#[rstest]
+fn test_background_concurrent_group_failure_names_what_it_cut_short(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    // `broken` fails at expansion — `vars.*` are read fresh per command, so a
+    // reference to one nothing set errors in the runner, after `slow` has
+    // already been spawned and before `later` is.
+    repo.write_test_config(
+        r#"post-merge = [
+    { slow = "sleep 30", broken = "echo {{ vars.never_set }}", later = "echo LATER > later.txt" },
+    "echo AFTER > after.txt"
+]
+"#,
+    );
+
+    let mut merge = make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+    assert!(merge.status().unwrap().success());
+
+    let pending = resolve_git_common_dir(repo.root_path())
+        .join("wt")
+        .join("hook-failures.jsonl");
+    // The record landing at all means the group was torn down rather than left
+    // waiting on `slow`.
+    wait_for_file_content(&pending);
+
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    for never_ran in ["later.txt", "after.txt"] {
+        assert!(
+            !repo.root_path().join(never_ran).exists(),
+            "{never_ran} must not be written: neither the rest of the group nor the step after it runs"
+        );
+    }
+
+    let output = make_snapshot_cmd(&repo, "list", &[], None)
+        .output()
+        .unwrap();
+    // Stripped: each name is bolded, so the clauses only read whole in plain text.
+    let stderr = anstream::adapter::strip_str(&String::from_utf8_lossy(&output.stderr)).to_string();
+    for expected in [
+        "user:broken did not run",
+        "stopped slow",
+        "skipped later, echo AFTER > after.txt",
+    ] {
+        assert!(
+            stderr.contains(expected),
+            "expected {expected:?} in the deferred failure report, got:\n{stderr}"
+        );
+    }
+}
+
 // ============================================================================
 // User Pre-Remove Hook Tests
 // ============================================================================

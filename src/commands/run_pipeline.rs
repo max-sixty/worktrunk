@@ -27,7 +27,9 @@
 //!
 //! **Concurrent groups** spawn each child as soon as its own template is
 //! expanded, then wait for every child before proceeding. If any child fails,
-//! the group is reported as failed, but all children are allowed to finish.
+//! the group is reported as failed, but all children are allowed to finish —
+//! unless a command fails *before* spawning (expansion, log creation, spawn),
+//! which kills the siblings already running and leaves the rest unspawned.
 //! Expansion runs in a single sequential loop in command order — each command
 //! is expanded immediately before its own child is spawned (expansion may read
 //! git config, so order matters for `vars.*`), so a later command's expansion
@@ -129,6 +131,13 @@ struct StepFailure {
     /// Log-file stem for that command (`name`, or `cmd-{index}`), used to point
     /// the report at its output. `None` when no log file was created.
     log_name: Option<String>,
+    /// Commands of the same concurrent group that were still running when this
+    /// one failed to start, and so were killed. Empty for a serial step, and
+    /// for a group whose commands all spawned (those are waited out).
+    stopped: Vec<String>,
+    /// Commands of the same concurrent group that never started because of the
+    /// abort. The steps *after* the group are added by [`record_failure`].
+    skipped: Vec<String>,
     error: anyhow::Error,
 }
 
@@ -137,6 +146,8 @@ impl StepFailure {
         Self {
             label: label.into(),
             log_name: log_name.map(str::to_owned),
+            stopped: Vec::new(),
+            skipped: Vec::new(),
             error,
         }
     }
@@ -203,10 +214,10 @@ fn record_failure(
     step_index: usize,
     failure: &StepFailure,
 ) {
-    let skipped: Vec<String> = spec.steps[step_index + 1..]
-        .iter()
-        .flat_map(step_labels)
-        .collect();
+    // A concurrent-group abort skips the rest of its own group before it skips
+    // the steps that follow, so the group's members lead the list.
+    let mut skipped = failure.skipped.clone();
+    skipped.extend(spec.steps[step_index + 1..].iter().flat_map(step_labels));
     let log = failure.log_name.as_ref().map(|name| {
         HookLog::hook(spec.source, spec.hook_type, name).path(&spec.log_dir, &spec.branch)
     });
@@ -218,6 +229,7 @@ fn record_failure(
             branch: spec.branch.clone(),
             failed: failure.label.clone(),
             exit: failure.error.exit_code(),
+            stopped: failure.stopped.clone(),
             skipped,
             log,
         },
@@ -346,11 +358,48 @@ fn wait_resolving(
     }
 }
 
+/// A running command of a concurrent group: its hook name, log stem, expanded
+/// template, child, and the trace guard the waiter resolves.
+type SpawnedCommand = (Option<String>, String, String, Child, CommandTrace);
+
+/// Expand one concurrent-group command and spawn its child.
+///
+/// Split out of [`run_concurrent_group`] so every setup failure — log creation,
+/// expansion, spawn — is one `?` there, leaving the loop free to attribute the
+/// error to the command's position in the group.
+fn spawn_group_command(
+    cmd: &super::pipeline_spec::PipelineCommandSpec,
+    spec: &PipelineSpec,
+    repo: &Repository,
+    cmd_index: &mut usize,
+) -> Result<SpawnedCommand, StepFailure> {
+    let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
+    // Before expansion the raw template is what the user wrote, so it stands in
+    // for a command with no name (as `step_labels` does for a skipped one).
+    let label = cmd.name.as_deref().unwrap_or(&cmd.template).to_string();
+    let log_file =
+        create_command_log(spec, &log_name).map_err(|e| StepFailure::new(e, &label, None))?;
+    let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
+    let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)
+        .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+    let label = cmd.name.as_deref().unwrap_or(&expanded).to_string();
+    let cmd_json = cmd_ctx.to_json();
+    let (child, trace) = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)
+        .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+    *cmd_index += 1;
+    Ok((cmd.name.clone(), log_name, expanded, child, trace))
+}
+
 /// Spawn all commands in a concurrent group, then wait for all.
 ///
 /// Waits every spawned child before returning. If any failed, the first
 /// failure (in spawn order) is returned, matching the serial-step bail
 /// format. Per-command output already lives in each command's log file.
+///
+/// A command that fails to *start* is the exception: the group can't run as
+/// specified, so the siblings already running are killed and the ones after it
+/// never spawn. The returned failure carries both sets, since the step index
+/// [`record_failure`] works from can't see inside the group.
 ///
 /// When `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` is set, each command's child is
 /// awaited before the next is spawned so output ordering is deterministic for
@@ -364,53 +413,61 @@ fn run_concurrent_group(
     cmd_index: &mut usize,
 ) -> Result<(), StepFailure> {
     let serial = super::force_serial_concurrent();
-    let mut children: Vec<(Option<String>, String, String, Child, CommandTrace)> =
+    let mut children: Vec<SpawnedCommand> =
         Vec::with_capacity(if serial { 0 } else { commands.len() });
 
     // Spawn (and, in serial mode, run) each command. Wrapped so that a mid-loop
     // error — a setup `?` or a spawn failure for a later command — tears down
     // the children already spawned this group rather than dropping them with
-    // unresolved trace guards (and as unreaped orphans).
-    let spawn_result = (|| -> Result<(), StepFailure> {
-        for cmd in commands {
-            let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-            let label = cmd.name.as_deref().unwrap_or(&cmd.template).to_string();
-            let log_file = create_command_log(spec, &log_name)
-                .map_err(|e| StepFailure::new(e, &label, None))?;
-            let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
-            let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)
-                .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
-            let label = cmd.name.as_deref().unwrap_or(&expanded).to_string();
-            let cmd_json = cmd_ctx.to_json();
-            let (mut child, mut trace) =
-                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)
-                    .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
-            *cmd_index += 1;
+    // unresolved trace guards (and as unreaped orphans). The error carries the
+    // failing command's position in the group, which is what lets the teardown
+    // name the siblings it cut short and the ones that never started.
+    let spawn_result = (|| -> Result<(), (usize, StepFailure)> {
+        for (group_index, cmd) in commands.iter().enumerate() {
+            let (name, log_name, expanded, mut child, mut trace) =
+                spawn_group_command(cmd, spec, repo, cmd_index)
+                    .map_err(|failure| (group_index, failure))?;
 
             if serial {
+                let label = name.as_deref().unwrap_or(&expanded).to_string();
                 let status = wait_resolving(&mut child, &mut trace, &expanded)
-                    .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+                    .map_err(|e| (group_index, StepFailure::new(e, &label, Some(&log_name))))?;
                 if !status.success() {
-                    return Err(StepFailure::new(
-                        failure_error(&status, &label),
-                        &label,
-                        Some(&log_name),
+                    return Err((
+                        group_index,
+                        StepFailure::new(failure_error(&status, &label), &label, Some(&log_name)),
                     ));
                 }
             } else {
-                children.push((cmd.name.clone(), log_name, expanded, child, trace));
+                children.push((name, log_name, expanded, child, trace));
             }
         }
         Ok(())
     })();
 
-    if let Err(e) = spawn_result {
-        for (_, _, _, mut child, mut trace) in children {
-            let _ = child.kill();
-            let _ = child.wait();
-            trace.complete(false);
+    if let Err((group_index, mut failure)) = spawn_result {
+        // Nothing else reports these: the killed siblings ran only partway and
+        // the later commands never spawned, while the group's own step index is
+        // all `record_failure` can see. Both go on the failure so the deferred
+        // notice names them.
+        for (name, _, expanded, mut child, mut trace) in children {
+            match child.try_wait() {
+                // Finished on its own before the abort reached it, so it ran to
+                // completion and isn't something the abort cut short.
+                Ok(Some(status)) => trace.complete(status.success()),
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    trace.complete(false);
+                    failure.stopped.push(name.unwrap_or(expanded));
+                }
+            }
         }
-        return Err(e);
+        failure.skipped = commands[group_index + 1..]
+            .iter()
+            .map(|cmd| cmd.name.clone().unwrap_or_else(|| cmd.template.clone()))
+            .collect();
+        return Err(failure);
     }
 
     wait_first_error(children.into_iter().map(

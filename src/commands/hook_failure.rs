@@ -12,8 +12,9 @@
 //! This module is the channel that closes that gap. The runner appends one JSON
 //! line per aborted pipeline to `.git/wt/hook-failures.jsonl`; the next
 //! foreground `wt` invocation in that repo drains the file and prints one
-//! warning per record, naming the step that failed and the steps its abort
-//! skipped, before the command's own output.
+//! warning per record, naming the step that failed, the steps its abort
+//! skipped, and any concurrent-group sibling it cut short, before the command's
+//! own output.
 //!
 //! # Contracts
 //!
@@ -76,6 +77,13 @@ pub struct HookFailure {
     /// Exit code of the failed step. `None` when the pipeline aborted before
     /// running it (template expansion, log creation, spawn).
     pub exit: Option<i32>,
+    /// Display names of the commands the abort cut short — the concurrent-group
+    /// siblings that were already running when this command failed to start.
+    /// Kept apart from `skipped` because these ran partway and may have had
+    /// side effects. Defaulted so a record written by an older `wt` still
+    /// reports.
+    #[serde(default)]
+    pub stopped: Vec<String>,
     /// Display names of the steps the abort skipped, in pipeline order.
     pub skipped: Vec<String>,
     /// Absolute path to the failed step's own output log, when it got far
@@ -94,19 +102,21 @@ impl HookFailure {
             Some(code) => format!("exited {code}"),
             None => "did not run".to_string(),
         };
-        let skipped = if self.skipped.is_empty() {
-            String::new()
-        } else {
-            let names = self
-                .skipped
+        let clause = |verb: &str, labels: &[String]| {
+            if labels.is_empty() {
+                return String::new();
+            }
+            let names = labels
                 .iter()
                 .map(|n| cformat!("<bold>{n}</>"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("; skipped {names}")
+            format!("; {verb} {names}")
         };
+        let stopped = clause("stopped", &self.stopped);
+        let skipped = clause("skipped", &self.skipped);
         cformat!(
-            "Background <bold>{hook_type}</> hook for <bold>{branch}</> failed: <bold>{source}:{failed}</> {outcome}{skipped}"
+            "Background <bold>{hook_type}</> hook for <bold>{branch}</> failed: <bold>{source}:{failed}</> {outcome}{stopped}{skipped}"
         )
     }
 }
@@ -222,6 +232,7 @@ mod tests {
             branch: "main".to_string(),
             failed: "sync".to_string(),
             exit: Some(1),
+            stopped: Vec::new(),
             skipped: vec!["push".to_string()],
             log: None,
         }
@@ -297,6 +308,24 @@ mod tests {
                 .last()
                 .unwrap()
                 .contains("2 earlier background hook failures")
+        );
+    }
+
+    /// A command that fails to start takes its concurrent-group siblings with
+    /// it two ways: the ones already running are killed, the ones after it
+    /// never start. Reporting both as "skipped" would say a half-run command
+    /// never ran, so they get their own clause.
+    #[test]
+    fn headline_separates_the_commands_it_cut_short_from_the_ones_that_never_ran() {
+        let mut f = failure();
+        f.failed = "b".to_string();
+        f.exit = None;
+        f.stopped = vec!["a".to_string()];
+        f.skipped = vec!["c".to_string(), "push".to_string()];
+        let plain = anstream::adapter::strip_str(&f.headline()).to_string();
+        assert_eq!(
+            plain,
+            "Background post-merge hook for main failed: user:b did not run; stopped a; skipped c, push"
         );
     }
 
