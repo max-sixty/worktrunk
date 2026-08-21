@@ -158,6 +158,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/wt/logs/trace.jsonl` | Machine trace (one JSON object per record) | Running with `-vv` |
 | `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting (leads with the performance profile) | Running with `-vv` |
+| `.git/wt/hook-failures.jsonl` | Pending `post-*` pipeline failures, drained and warned about by the next `wt` command | Background hooks that abort |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.

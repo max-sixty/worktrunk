@@ -16,6 +16,13 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](https://worktrunk.dev/config/#wt-config-state-logs) to find and manage log files). Use `-v` to see the template variables for background hooks; `wt hook <type> --dry-run` previews the commands.
 
+A `post-*` step that fails aborts the rest of its pipeline. The command that spawned it has already exited by then, so the failure is reported on the next `wt` command in that repository, naming the step that failed, the steps its abort skipped, and the log to read:
+
+```bash
+▲ Background post-merge hook for main failed: user:sync exited 1; skipped push
+↳ Output @ ~/code/myproject/.git/wt/logs/main/user/post-merge/sync.log
+```
+
 The most common creation hook is `post-start` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-start` over `pre-start` unless a later step needs the work completed first.
 
 | Hook | Purpose |

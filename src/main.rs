@@ -871,12 +871,16 @@ fn parse_early_globals() -> EarlyGlobals {
     }
 }
 
-fn init_command_log(command_line: &str) {
-    // Initialize command log for always-on logging of hooks and LLM commands.
-    // Directory and file are created lazily on first log_command() call.
-    if let Ok(repo) = worktrunk::git::Repository::current() {
-        worktrunk::command_log::init(&repo.wt_logs_dir(), command_line);
-    }
+/// Initialize the always-on command log for hooks and LLM commands. Directory
+/// and file are created lazily on first `log_command()` call.
+///
+/// Returns the repository it was scoped to (`None` outside a repo) so the
+/// caller can reuse it — opening one costs a `git rev-parse`, and this runs on
+/// every invocation.
+fn init_command_log(command_line: &str) -> Option<Repository> {
+    let repo = worktrunk::git::Repository::current().ok()?;
+    worktrunk::command_log::init(&repo.wt_logs_dir(), command_line);
+    Some(repo)
 }
 
 fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
@@ -1184,9 +1188,18 @@ fn main() {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ");
-    {
+    let repo = {
         let _span = worktrunk::trace::Span::new("init_command_log");
-        init_command_log(&command_line);
+        init_command_log(&command_line)
+    };
+
+    // A `post-*` pipeline that aborted since the last command logged the
+    // failure to a file nobody is watching, and the command that spawned it had
+    // already exited 0. This invocation's stderr is the first terminal that
+    // failure can reach, so report it before the command's own output —
+    // warnings about discovered state precede the action that follows.
+    if let Some(repo) = &repo {
+        commands::hook_failure::report(repo);
     }
 
     let Some(command) = command else {

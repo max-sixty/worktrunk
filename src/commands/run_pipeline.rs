@@ -12,7 +12,9 @@
 //! 2. Open a [`Repository`] from the worktree path in the spec.
 //! 3. Walk steps in order. For each step, expand templates and spawn shell
 //!    children (see Execution model). Abort on the first serial step failure.
-//! 4. Exit. Log files in `.git/wt/logs/` are the only artifacts.
+//! 4. On abort, record the failure for the next foreground `wt` to report
+//!    (see [`super::hook_failure`]) — nobody is watching this process's stderr.
+//! 5. Exit. Log files in `.git/wt/logs/` are the only artifacts.
 //!
 //! ## Execution model
 //!
@@ -63,11 +65,12 @@ use std::process::{Child, ExitStatus, Stdio};
 use anyhow::Context;
 
 use worktrunk::config::TemplateContext;
-use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::git::{ErrorExt as _, Repository, WorktrunkError};
 use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
+use super::hook_failure;
 use super::pipeline_spec::{PipelineSpec, PipelineStepSpec};
 use super::process::HookLog;
 
@@ -97,33 +100,162 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 
     let mut cmd_index = 0usize;
 
-    for step in &spec.steps {
-        match step {
-            PipelineStepSpec::Single {
-                template,
-                template_name,
-                name,
-            } => {
-                let log_name = command_log_name(name.as_deref(), cmd_index);
-                let log_file = create_command_log(&spec, &log_name)?;
-                let step_ctx = step_context(&spec.context, name.as_deref());
-                let expanded = expand_shell_template(template, &step_ctx, &repo, template_name)?;
-                let step_json = step_ctx.to_json();
-                let (mut child, mut trace) =
-                    spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
-                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
-                if !status.success() {
-                    return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
-                }
-                cmd_index += 1;
-            }
-            PipelineStepSpec::Concurrent { commands } => {
-                run_concurrent_group(commands, &spec, &repo, &mut cmd_index)?;
-            }
+    for (step_index, step) in spec.steps.iter().enumerate() {
+        if let Err(failure) = run_step(step, &spec, &repo, &mut cmd_index) {
+            record_failure(&spec, &repo, step_index, &failure);
+            return Err(failure.error);
         }
     }
 
     Ok(())
+}
+
+/// A pipeline abort, carrying what the deferred report needs to name the
+/// command responsible.
+///
+/// Setup failures — template expansion, log creation, spawn — carry no exit
+/// code, which is how the report tells "the step ran and exited 1" from "the
+/// step never ran".
+struct StepFailure {
+    /// Display label of the command that aborted the pipeline: its hook name,
+    /// or the command itself when the step is unnamed.
+    label: String,
+    /// Log-file stem for that command (`name`, or `cmd-{index}`), used to point
+    /// the report at its output. `None` when no log file was created.
+    log_name: Option<String>,
+    error: anyhow::Error,
+}
+
+impl StepFailure {
+    fn new(error: anyhow::Error, label: impl Into<String>, log_name: Option<&str>) -> Self {
+        Self {
+            label: label.into(),
+            log_name: log_name.map(str::to_owned),
+            error,
+        }
+    }
+}
+
+/// Run one pipeline step to completion.
+///
+/// Split out of [`run_pipeline`] so every exit from a step — including the
+/// setup `?`s — funnels through one `Err` the caller can record before
+/// propagating.
+fn run_step(
+    step: &PipelineStepSpec,
+    spec: &PipelineSpec,
+    repo: &Repository,
+    cmd_index: &mut usize,
+) -> Result<(), StepFailure> {
+    match step {
+        PipelineStepSpec::Single {
+            template,
+            template_name,
+            name,
+        } => {
+            let log_name = command_log_name(name.as_deref(), *cmd_index);
+            // Before the log file exists there is nothing to point at, so
+            // setup failures up to that point report `log_name: None`.
+            let label = name.as_deref().unwrap_or(template_name).to_string();
+            let log_file = create_command_log(spec, &log_name)
+                .map_err(|e| StepFailure::new(e, &label, None))?;
+            let step_ctx = step_context(&spec.context, name.as_deref());
+            let expanded = expand_shell_template(template, &step_ctx, repo, template_name)
+                .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+            let label = name.as_deref().unwrap_or(&expanded).to_string();
+            let step_json = step_ctx.to_json();
+            let (mut child, mut trace) =
+                spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)
+                    .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+            let status = wait_resolving(&mut child, &mut trace, &expanded)
+                .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+            if !status.success() {
+                return Err(StepFailure::new(
+                    failure_error(&status, &label),
+                    &label,
+                    Some(&log_name),
+                ));
+            }
+            *cmd_index += 1;
+            Ok(())
+        }
+        PipelineStepSpec::Concurrent { commands } => {
+            run_concurrent_group(commands, spec, repo, cmd_index)
+        }
+    }
+}
+
+/// Record an aborted pipeline for the next foreground `wt` to report.
+///
+/// Nobody is watching this process's stderr — it is a log file — so without
+/// this the abort and the steps it skipped are invisible until someone reads
+/// `runner.log`. See [`super::hook_failure`].
+fn record_failure(
+    spec: &PipelineSpec,
+    repo: &Repository,
+    step_index: usize,
+    failure: &StepFailure,
+) {
+    if is_cancellation(&failure.error) {
+        return;
+    }
+    let skipped: Vec<String> = spec.steps[step_index + 1..]
+        .iter()
+        .flat_map(step_labels)
+        .collect();
+    let log = failure.log_name.as_ref().map(|name| {
+        HookLog::hook(spec.source, spec.hook_type, name).path(&spec.log_dir, &spec.branch)
+    });
+    hook_failure::record(
+        &repo.wt_dir(),
+        &hook_failure::HookFailure {
+            hook_type: spec.hook_type.to_string(),
+            source: spec.source.to_string(),
+            branch: spec.branch.clone(),
+            failed: failure.label.clone(),
+            exit: failure.error.exit_code(),
+            skipped,
+            log,
+        },
+    );
+}
+
+/// Whether the abort was a user-initiated cancellation rather than a hook
+/// failure.
+///
+/// Only SIGINT and SIGTERM qualify — the two signals the project's Ctrl-C
+/// policy treats as "the user asked for this", which exit quietly rather than
+/// reporting. Any other signal (a crash, an OOM kill) is a real failure the
+/// user should hear about, even though `interrupt_signal()` also names it.
+#[cfg(unix)]
+fn is_cancellation(error: &anyhow::Error) -> bool {
+    use nix::sys::signal::Signal;
+    matches!(
+        error.interrupt_signal(),
+        Some(sig) if sig == Signal::SIGINT as i32 || sig == Signal::SIGTERM as i32
+    )
+}
+
+#[cfg(not(unix))]
+fn is_cancellation(_error: &anyhow::Error) -> bool {
+    false
+}
+
+/// Display labels for every command in a step, in order.
+///
+/// Used to name the steps an abort skipped. Unnamed commands (list-form hooks)
+/// have no name to show, so the raw template stands in — that is what the user
+/// wrote in their config.
+fn step_labels(step: &PipelineStepSpec) -> Vec<String> {
+    match step {
+        PipelineStepSpec::Single { name, template, .. } => {
+            vec![name.clone().unwrap_or_else(|| template.clone())]
+        }
+        PipelineStepSpec::Concurrent { commands } => commands
+            .iter()
+            .map(|c| c.name.clone().unwrap_or_else(|| c.template.clone()))
+            .collect(),
+    }
 }
 
 /// Build a per-step context, injecting `hook_name` when the step has a name.
@@ -226,44 +358,54 @@ fn run_concurrent_group(
     spec: &PipelineSpec,
     repo: &Repository,
     cmd_index: &mut usize,
-) -> anyhow::Result<()> {
+) -> Result<(), StepFailure> {
     let serial = super::force_serial_concurrent();
-    let mut children: Vec<(Option<String>, String, Child, CommandTrace)> =
+    let mut children: Vec<(Option<String>, String, String, Child, CommandTrace)> =
         Vec::with_capacity(if serial { 0 } else { commands.len() });
 
     // Spawn (and, in serial mode, run) each command. Wrapped so that a mid-loop
     // error — a setup `?` or a spawn failure for a later command — tears down
     // the children already spawned this group rather than dropping them with
     // unresolved trace guards (and as unreaped orphans).
-    let spawn_result = (|| -> anyhow::Result<()> {
+    let spawn_result = (|| -> Result<(), StepFailure> {
         for cmd in commands {
             let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-            let log_file = create_command_log(spec, &log_name)?;
+            let label = cmd
+                .name
+                .as_deref()
+                .unwrap_or(&cmd.template_name)
+                .to_string();
+            let log_file = create_command_log(spec, &log_name)
+                .map_err(|e| StepFailure::new(e, &label, None))?;
             let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
-            let expanded =
-                expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
+            let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)
+                .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
+            let label = cmd.name.as_deref().unwrap_or(&expanded).to_string();
             let cmd_json = cmd_ctx.to_json();
             let (mut child, mut trace) =
-                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
+                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)
+                    .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
             *cmd_index += 1;
 
             if serial {
-                let status = wait_resolving(&mut child, &mut trace, &expanded)?;
+                let status = wait_resolving(&mut child, &mut trace, &expanded)
+                    .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
                 if !status.success() {
-                    return Err(failure_error(
-                        &status,
-                        cmd.name.as_deref().unwrap_or(&expanded),
+                    return Err(StepFailure::new(
+                        failure_error(&status, &label),
+                        &label,
+                        Some(&log_name),
                     ));
                 }
             } else {
-                children.push((cmd.name.clone(), expanded, child, trace));
+                children.push((cmd.name.clone(), log_name, expanded, child, trace));
             }
         }
         Ok(())
     })();
 
     if let Err(e) = spawn_result {
-        for (_, _, mut child, mut trace) in children {
+        for (_, _, _, mut child, mut trace) in children {
             let _ = child.kill();
             let _ = child.wait();
             trace.complete(false);
@@ -272,10 +414,16 @@ fn run_concurrent_group(
     }
 
     wait_first_error(children.into_iter().map(
-        |(name, expanded, mut child, mut trace)| -> anyhow::Result<()> {
-            let status = wait_resolving(&mut child, &mut trace, &expanded)?;
+        |(name, log_name, expanded, mut child, mut trace)| -> Result<(), StepFailure> {
+            let label = name.as_deref().unwrap_or(&expanded).to_string();
+            let status = wait_resolving(&mut child, &mut trace, &expanded)
+                .map_err(|e| StepFailure::new(e, &label, Some(&log_name)))?;
             if !status.success() {
-                return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
+                return Err(StepFailure::new(
+                    failure_error(&status, &label),
+                    &label,
+                    Some(&log_name),
+                ));
             }
             Ok(())
         },

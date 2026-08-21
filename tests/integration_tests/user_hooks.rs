@@ -594,6 +594,73 @@ sync = "echo 'USER_RAN' > user_postmerge.txt"
     wait_for_file(&main_worktree.join("project_postmerge.txt"));
 }
 
+/// Regression for #3858: a `post-*` pipeline step that fails aborts the rest of
+/// the pipeline, but the command that spawned it has already exited 0 and the
+/// runner's stderr goes to a log file. The failure must surface on the next
+/// `wt` command in the repo, naming the failed step and the ones it skipped.
+#[rstest]
+fn test_background_pipeline_failure_reported_on_next_command(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    repo.write_test_config(
+        r#"[[post-merge]]
+sync = "exit 3"
+
+[[post-merge]]
+push = "echo PUSHED > pushed.txt"
+"#,
+    );
+
+    let mut merge = make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+    assert!(
+        merge.status().unwrap().success(),
+        "the merge itself succeeds — the hook failure is what goes unreported"
+    );
+
+    // The runner records the abort under `.git/wt/`, alongside `logs/`.
+    let pending = resolve_git_common_dir(repo.root_path())
+        .join("wt")
+        .join("hook-failures.jsonl");
+    wait_for_file_content(&pending);
+
+    // The abort really did skip the later step.
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert!(
+        !repo.root_path().join("pushed.txt").exists(),
+        "the second step must not run after the first fails"
+    );
+
+    // The next `wt` command reports it — and drains it, so it reports once.
+    let output = make_snapshot_cmd(&repo, "list", &[], None)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for expected in ["post-merge", "user:sync", " exited 3; skipped ", "push"] {
+        assert!(
+            stderr.contains(expected),
+            "expected {expected:?} in the deferred failure report, got:\n{stderr}"
+        );
+    }
+    assert!(
+        !pending.exists(),
+        "reporting drains the pending record so it isn't repeated"
+    );
+
+    let second = make_snapshot_cmd(&repo, "list", &[], None)
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&second.stderr).contains("user:sync"),
+        "the failure must be reported once, not on every subsequent command"
+    );
+}
+
 // ============================================================================
 // User Pre-Remove Hook Tests
 // ============================================================================
