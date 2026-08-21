@@ -102,7 +102,9 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 
     for (step_index, step) in spec.steps.iter().enumerate() {
         if let Err(failure) = run_step(step, &spec, &repo, &mut cmd_index) {
-            record_failure(&spec, &repo, step_index, &failure);
+            if !is_cancellation(&failure.error) {
+                record_failure(&spec, &repo, step_index, &failure);
+            }
             return Err(failure.error);
         }
     }
@@ -189,16 +191,14 @@ fn run_step(
 ///
 /// Nobody is watching this process's stderr — it is a log file — so without
 /// this the abort and the steps it skipped are invisible until someone reads
-/// `runner.log`. See [`super::hook_failure`].
+/// `runner.log`. See [`super::hook_failure`]. The caller filters cancellations
+/// out first ([`is_cancellation`]).
 fn record_failure(
     spec: &PipelineSpec,
     repo: &Repository,
     step_index: usize,
     failure: &StepFailure,
 ) {
-    if is_cancellation(&failure.error) {
-        return;
-    }
     let skipped: Vec<String> = spec.steps[step_index + 1..]
         .iter()
         .flat_map(step_labels)
@@ -508,6 +508,56 @@ mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
     use worktrunk::git::ErrorExt;
+
+    use super::super::pipeline_spec::PipelineCommandSpec;
+
+    fn single(name: Option<&str>, template: &str) -> PipelineStepSpec {
+        PipelineStepSpec::Single {
+            name: name.map(str::to_owned),
+            template_name: "user:step".to_string(),
+            template: template.to_string(),
+        }
+    }
+
+    /// The skipped-steps list names every command an abort passed over,
+    /// including each member of a concurrent group. An unnamed command (a
+    /// list-form hook) has no name to show, so its template stands in.
+    #[test]
+    fn step_labels_name_every_command_in_a_step() {
+        assert_eq!(step_labels(&single(Some("push"), "git push")), ["push"]);
+        assert_eq!(step_labels(&single(None, "git push")), ["git push"]);
+        let group = PipelineStepSpec::Concurrent {
+            commands: vec![
+                PipelineCommandSpec {
+                    name: Some("lint".to_string()),
+                    template_name: "user:lint".to_string(),
+                    template: "cargo clippy".to_string(),
+                },
+                PipelineCommandSpec {
+                    name: None,
+                    template_name: "user:cmd-1".to_string(),
+                    template: "cargo test".to_string(),
+                },
+            ],
+        };
+        assert_eq!(step_labels(&group), ["lint", "cargo test"]);
+    }
+
+    /// SIGINT and SIGTERM are the user asking for this, so they record
+    /// nothing. Any other signal — a crash, an OOM kill — is a real failure
+    /// the next command should report, even though `interrupt_signal()` names
+    /// it too.
+    #[test]
+    fn only_sigint_and_sigterm_count_as_cancellation() {
+        let cases = [(2, true), (15, true), (9, false), (6, false)];
+        for (sig, expected) in cases {
+            let status = ExitStatus::from_raw(sig);
+            let err = failure_error(&status, "my-step");
+            assert_eq!(is_cancellation(&err), expected, "signal {sig}");
+        }
+        let exited = failure_error(&ExitStatus::from_raw(1 << 8), "my-step");
+        assert!(!is_cancellation(&exited), "a plain non-zero exit");
+    }
 
     fn downcast_child_exit(err: &anyhow::Error) -> (i32, Option<i32>, String) {
         match err.downcast_ref::<WorktrunkError>() {

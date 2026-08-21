@@ -115,23 +115,25 @@ impl HookFailure {
 ///
 /// Best-effort by contract (see module docs): every error is swallowed, since
 /// the caller is already on its way to exiting non-zero with the real error.
-/// The append is a single `writeln!` of one line, matching `command_log`'s
-/// reliance on O_APPEND atomicity for concurrent writers.
 pub fn record(wt_dir: &Path, failure: &HookFailure) {
-    let Ok(mut line) = serde_json::to_string(failure) else {
-        return;
-    };
+    let _ = append_record(wt_dir, failure);
+}
+
+/// The fallible half of [`record`], so its error paths are `?` rather than
+/// branches nothing can reach a test through.
+///
+/// The append is a single `write_all` of one whole line, matching
+/// `command_log`'s reliance on O_APPEND atomicity for concurrent writers.
+fn append_record(wt_dir: &Path, failure: &HookFailure) -> anyhow::Result<()> {
+    let mut line = serde_json::to_string(failure)?;
     line.push('\n');
-    if fs::create_dir_all(wt_dir).is_err() {
-        return;
-    }
-    if let Ok(mut file) = OpenOptions::new()
+    fs::create_dir_all(wt_dir)?;
+    let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(wt_dir.join(FAILURES_FILE))
-    {
-        let _ = file.write_all(line.as_bytes());
-    }
+        .open(wt_dir.join(FAILURES_FILE))?;
+    file.write_all(line.as_bytes())?;
+    Ok(())
 }
 
 /// Drain pending records and warn about each, newest last.
@@ -143,28 +145,40 @@ pub fn report(repo: &Repository) {
     if worktrunk::config::warnings_suppressed() || worktrunk::priority::in_background_hook() {
         return;
     }
-    let failures = take_pending(&repo.wt_dir());
-    let skipped_count = failures.len().saturating_sub(MAX_REPORTED);
-    for failure in failures.iter().skip(skipped_count) {
-        eprintln!("{}", warning_message(failure.headline()));
+    for line in render(&take_pending(&repo.wt_dir())) {
+        eprintln!("{line}");
+    }
+}
+
+/// Render the warning block for a drained batch, oldest first.
+///
+/// Split from [`report`] so the batch shapes that are awkward to provoke
+/// through a repository — a record with no log file, a backlog past the cap —
+/// are reachable from a unit test.
+fn render(failures: &[HookFailure]) -> Vec<String> {
+    let hidden = failures.len().saturating_sub(MAX_REPORTED);
+    let mut lines = Vec::new();
+    for failure in failures.iter().skip(hidden) {
+        lines.push(warning_message(failure.headline()).to_string());
         if let Some(log) = &failure.log {
-            eprintln!(
-                "{}",
+            lines.push(
                 hint_message(cformat!(
                     "Output @ <underline>{}</>",
                     format_path_for_display(log)
                 ))
+                .to_string(),
             );
         }
     }
-    if skipped_count > 0 {
-        eprintln!(
-            "{}",
+    if hidden > 0 {
+        lines.push(
             hint_message(format!(
-                "{skipped_count} earlier background hook failures not shown"
+                "{hidden} earlier background hook failures not shown"
             ))
+            .to_string(),
         );
     }
+    lines
 }
 
 /// Claim the pending records, leaving the repo with none.
@@ -243,6 +257,46 @@ mod tests {
         assert_eq!(
             plain,
             "Background post-merge hook for main failed: user:sync did not run; skipped push"
+        );
+    }
+
+    fn plain(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| anstream::adapter::strip_str(l).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn render_pairs_each_warning_with_its_log_and_omits_the_hint_without_one() {
+        let mut with_log = failure();
+        with_log.log = Some(PathBuf::from(
+            "/repo/.git/wt/logs/main/user/post-merge/sync.log",
+        ));
+        let rendered = plain(&render(&[with_log, failure()]));
+        assert_eq!(rendered.len(), 3);
+        assert!(rendered[0].contains("user:sync exited 1"));
+        assert!(rendered[1].ends_with("/repo/.git/wt/logs/main/user/post-merge/sync.log"));
+        assert!(rendered[2].contains("user:sync exited 1"));
+    }
+
+    #[test]
+    fn render_is_empty_when_nothing_is_pending() {
+        assert!(render(&[]).is_empty());
+    }
+
+    /// A repo whose hooks fail on every merge shouldn't bury the command the
+    /// user actually ran — the oldest records collapse into a count.
+    #[test]
+    fn render_caps_the_batch_and_counts_the_rest() {
+        let batch: Vec<HookFailure> = (0..MAX_REPORTED + 2).map(|_| failure()).collect();
+        let rendered = plain(&render(&batch));
+        assert_eq!(rendered.len(), MAX_REPORTED + 1);
+        assert!(
+            rendered
+                .last()
+                .unwrap()
+                .contains("2 earlier background hook failures")
         );
     }
 

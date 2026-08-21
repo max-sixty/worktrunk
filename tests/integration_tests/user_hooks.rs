@@ -661,6 +661,48 @@ push = "echo PUSHED > pushed.txt"
     );
 }
 
+/// A pipeline killed by SIGTERM — the shell exiting out from under a detached
+/// hook — is a cancellation, not a hook failure, so it records nothing to
+/// report. The project's Ctrl-C convention exits quietly for the same reason.
+#[cfg(unix)]
+#[rstest]
+fn test_signal_killed_background_pipeline_records_nothing(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    repo.write_test_config(
+        r#"[[post-merge]]
+cancel = "echo CANCELLED > cancelled.txt; kill -TERM $$"
+
+[[post-merge]]
+push = "echo PUSHED > pushed.txt"
+"#,
+    );
+
+    let mut merge = make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+    assert!(merge.status().unwrap().success());
+
+    // The first step ran, so the two absences below mean something.
+    wait_for_file_content(&repo.root_path().join("cancelled.txt"));
+
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert!(
+        !repo.root_path().join("pushed.txt").exists(),
+        "the signal must abort the pipeline, so the later step is skipped"
+    );
+    assert!(
+        !resolve_git_common_dir(repo.root_path())
+            .join("wt/hook-failures.jsonl")
+            .exists(),
+        "a signal-cancelled pipeline must not queue a failure report"
+    );
+}
+
 // ============================================================================
 // User Pre-Remove Hook Tests
 // ============================================================================
