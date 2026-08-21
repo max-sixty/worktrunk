@@ -120,7 +120,11 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 /// step never ran".
 struct StepFailure {
     /// Display label of the command that aborted the pipeline: its hook name,
-    /// or the command itself when the step is unnamed.
+    /// or the command itself when the step is unnamed — the raw template
+    /// before expansion (matching [`step_labels`]), the expanded command
+    /// after. Never `template_name`: it already carries the source, so the
+    /// report's own `{source}:{failed}` would render it as
+    /// `user:user post-merge hook`.
     label: String,
     /// Log-file stem for that command (`name`, or `cmd-{index}`), used to point
     /// the report at its output. `None` when no log file was created.
@@ -158,7 +162,7 @@ fn run_step(
             let log_name = command_log_name(name.as_deref(), *cmd_index);
             // Before the log file exists there is nothing to point at, so
             // setup failures up to that point report `log_name: None`.
-            let label = name.as_deref().unwrap_or(template_name).to_string();
+            let label = name.as_deref().unwrap_or(template).to_string();
             let log_file = create_command_log(spec, &log_name)
                 .map_err(|e| StepFailure::new(e, &label, None))?;
             let step_ctx = step_context(&spec.context, name.as_deref());
@@ -370,11 +374,7 @@ fn run_concurrent_group(
     let spawn_result = (|| -> Result<(), StepFailure> {
         for cmd in commands {
             let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-            let label = cmd
-                .name
-                .as_deref()
-                .unwrap_or(&cmd.template_name)
-                .to_string();
+            let label = cmd.name.as_deref().unwrap_or(&cmd.template).to_string();
             let log_file = create_command_log(spec, &log_name)
                 .map_err(|e| StepFailure::new(e, &label, None))?;
             let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
