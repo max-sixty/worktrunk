@@ -161,7 +161,7 @@ Three of those steps are less obvious than they look:
 
 Together these keep `wt up` at exit 0 whenever every worktree rebased, skipped, or had its conflict aborted. That matters when the alias is a hook step, since a non-zero step stops the rest of the pipeline.
 
-`--no-autostash` is deliberate: a sweep that stashes and pops across every worktree can leave you with conflicts in several at once. If you would rather have `rebase.autostash` decide, drop both `--no-autostash` and the `git diff-index` line.
+`--no-autostash` is deliberate: a sweep that stashes and pops across every worktree can leave you with conflicts in several at once. If you have `rebase.autostash = true` set and would rather let it decide, drop both `--no-autostash` and the `git diff-index` line — without that setting, dropping them puts the sweep back to failing on any worktree with a modified tracked file.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
