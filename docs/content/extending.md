@@ -136,16 +136,28 @@ A repo-level variable like `{{ default_branch }}` needs no deferral: it is ident
 ```toml
 [aliases]
 up = '''
-git fetch --all --prune && wt step for-each -- sh -c '
+git fetch --all --prune; wt step for-each -- sh -c '
   git rev-parse --verify -q @{u} >/dev/null || exit 0
   g=$(git rev-parse --git-dir)
   test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
   git update-index --refresh -q >/dev/null || true
-  git rebase @{u} --no-autostash || git rebase --abort
+  git diff-index --quiet HEAD -- || { echo "uncommitted changes; skipping"; exit 0; }
+  git rebase @{u} --no-autostash && exit 0
+  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && git rebase --abort
 ''''
 ```
 
-`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, refresh the index to drop stale stat entries, then rebase and auto-abort on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
+`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, refresh the index to drop stale stat entries, skip if a tracked file is modified, then rebase and auto-abort on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
+
+Three of those steps are less obvious than they look:
+
+- **The `git diff-index` guard.** `git rebase --no-autostash` *refuses* to start when a tracked file is modified or staged, whether or not that worktree has anything to rebase — so without the guard, a worktree you are simply editing fails the sweep. `git diff-index --quiet HEAD --` is exactly that predicate: untracked files don't trigger the refusal, so a worktree carrying only new files still sweeps.
+- **`git rebase --abort` runs only when a rebase is in progress.** A refusal leaves nothing to abort, and an unconditional `git rebase --abort` would answer it with `fatal: no rebase in progress` — a message naming neither the worktree's state nor anything you can act on, and an exit code of 128 that hides git's real explanation one line above.
+- **`;` rather than `&&` after the fetch.** `git fetch --all` exits non-zero if any single remote fails, so `&&` would let one remote with lapsed credentials skip the sweep entirely — leaving every worktree unrebased, including those whose refs fetched fine. With `;` the error stays visible and the sweep runs on what did fetch.
+
+Together these keep `wt up` at exit 0 whenever every worktree rebased, skipped, or had its conflict aborted. That matters when the alias is a hook step, since a non-zero step stops the rest of the pipeline.
+
+`--no-autostash` is deliberate: a sweep that stashes and pops across every worktree can leave you with conflicts in several at once. If you have `rebase.autostash = true` set and would rather let it decide, drop both `--no-autostash` and the `git diff-index` line — without that setting, dropping them puts the sweep back to failing on any worktree with a modified tracked file.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
