@@ -116,8 +116,10 @@ Setting `WORKTRUNK_PREVIEW_BENCH=1` runs `wt switch`'s interactive picker prelud
 end-to-end — collect, speculative spawn, skeleton, initial pre-compute, deferred
 pre-compute — and exits immediately after `PreviewOrchestrator::wait_for_idle()`,
 before skim launches and before any JSON serialization or stderr drain. Used by
-`picker_preview` benchmarks to measure the preview pool workload without standing
-up a PTY. Bypasses the picker's TTY check, like `WORKTRUNK_PICKER_DRY_RUN=1`.
+`picker_preview` benchmarks to measure the skeleton-time preview pool workload
+without standing up a PTY. Off-screen worktrees are demand-loaded only after skim
+starts and are intentionally outside this benchmark. Bypasses the picker's TTY
+check, like `WORKTRUNK_PICKER_DRY_RUN=1`.
 
 The hot path inside the env-gated block is identical to the dry-run path; only the
 post-drain output (cache JSON dump + stashed-warning drain) is conditional. Keep new

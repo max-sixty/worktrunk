@@ -111,12 +111,12 @@
 //! choke point: it inserts into the cache and pokes [`super::preview_notify`] so a
 //! compute that lands after skim already drew the pane repaints without a
 //! keystroke. Precompute is tiered — [`PreviewOrchestrator::spawn_initial_precompute`]
-//! at skeleton time (item 0 × the five local modes + summary, plus every row's
-//! default tab) and [`PreviewOrchestrator::spawn_deferred_summaries`] after the
-//! row drain (summaries for the remaining rows). Subsidiary local-git panes for
-//! off-screen rows are demand-loaded instead of speculatively duplicating live
-//! worktree I/O; Pr and Comments are never precomputed. Both tiers re-run on
-//! every spawn, including a refresh (after its clear). `spawn_preview` and
+//! at skeleton time (item 0 × the five local modes + summary, plus the default
+//! tab for cheap branch-only rows) and [`PreviewOrchestrator::spawn_deferred_summaries`]
+//! after the row drain (summaries for the remaining rows). Off-screen worktree
+//! panes are demand-loaded instead of speculatively duplicating live worktree
+//! I/O; Pr and Comments are never precomputed. Both tiers re-run on every spawn,
+//! including a refresh (after its clear). `spawn_preview` and
 //! `spawn_compute` short-circuit on an in-memory hit, so a refresh must clear
 //! first or their recompute is a no-op; `spawn_summary` has no such guard and
 //! always recomputes — cheap, since `crate::summary` is gated by its own
@@ -163,11 +163,11 @@ use super::summary;
 use crate::commands::list::collect::COLLECT_POOL;
 use crate::commands::list::model::ListItem;
 
-/// The picker's initial preview tab — `UnifiedDiff`, shown when the
-/// picker opens. Pre-computed for every row at skeleton time so j/k
-/// navigation lands on warm content without paying the four subsidiary-mode
-/// costs for every unseen row. For the landing row, every local mode fires at
-/// skeleton time so tab-cycling is responsive immediately.
+/// The picker's initial preview tab — `UnifiedDiff`, shown when the picker
+/// opens. Precomputed for the landing row and cheap branch-only rows; off-screen
+/// worktrees use the dedicated demand worker when selected so an untracked-heavy
+/// tree cannot compete with initial row collection. For the landing row, every
+/// local mode fires at skeleton time so tab-cycling is responsive immediately.
 const INITIAL_MODE: PreviewMode = PreviewMode::UnifiedDiff;
 
 struct PendingGuard(Arc<AtomicUsize>);
@@ -705,12 +705,13 @@ impl PreviewOrchestrator {
 
     /// Spawn the skeleton-time pre-compute tier.
     ///
-    /// Fires at `on_skeleton`. Two layers of priority:
+    /// Fires at `on_skeleton`. Two layers of work:
     /// - First item × all 5 modes + first item summary — the user lands on
     ///   row 0 and frequently tab-cycles modes there.
-    /// - Items 1..N × [`INITIAL_MODE`] only — pre-warms the default tab
-    ///   for every row so quick j/k navigation hits cached content,
-    ///   bounded contention with the row pipeline (~N tasks).
+    /// - Branch-only items 1..N × [`INITIAL_MODE`] — pre-warms the committed
+    ///   diff they can serve cheaply from the SHA-keyed cache. Off-screen
+    ///   worktrees are demand-loaded when selected: their untracked-inclusive
+    ///   default can require an index copy and full `git add -N` walk.
     ///
     /// Summaries for items 1..N are deferred to
     /// [`Self::spawn_deferred_summaries`], which fires after the row pipeline
@@ -732,8 +733,13 @@ impl PreviewOrchestrator {
             self.spawn_summary(spawn_gen, Arc::clone(first), llm.to_string());
         }
 
-        // Items 1..N: default tab only. Other local modes are demand-loaded.
-        for item in items.iter().skip(1) {
+        // Branch-only items 1..N: default tab only. Worktree-backed rows and
+        // all other local modes are demand-loaded.
+        for item in items
+            .iter()
+            .skip(1)
+            .filter(|item| item.worktree_data().is_none())
+        {
             self.spawn_preview(spawn_gen, Arc::clone(item), INITIAL_MODE, preview_dims);
         }
     }
@@ -1203,6 +1209,42 @@ mod tests {
         assert!(
             served.contains("README"),
             "demand-computed complete diff served: {served:?}"
+        );
+    }
+
+    #[test]
+    fn initial_precompute_skips_offscreen_worktrees_but_warms_branches() {
+        let (t, first) = dirty_worktree_item();
+        let head = first.head().to_string();
+        t.repo.run_command(&["branch", "branch-only"]).unwrap();
+
+        let mut offscreen = ListItem::new_branch(head.clone(), "offscreen".to_string());
+        offscreen.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: t.path().to_path_buf(),
+            ..Default::default()
+        }));
+        let offscreen = Arc::new(offscreen);
+        let branch = Arc::new(ListItem::new_branch(head, "branch-only".to_string()));
+
+        let orch = orch_for(&t);
+        orch.spawn_initial_precompute(
+            &orch.generation(),
+            &[first, Arc::clone(&offscreen), Arc::clone(&branch)],
+            (80, 24),
+            None,
+        );
+        orch.wait_for_idle();
+
+        assert!(
+            !orch
+                .cache
+                .contains_key(&("offscreen".to_string(), PreviewMode::UnifiedDiff)),
+            "off-screen worktree should wait for selected-row demand"
+        );
+        assert!(
+            orch.cache
+                .contains_key(&("branch-only".to_string(), PreviewMode::UnifiedDiff)),
+            "branch-only default should be prewarmed from the committed diff"
         );
     }
 
