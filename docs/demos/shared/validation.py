@@ -50,7 +50,7 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         Checkpoint(
             start=360,
             end=455,
-            expected=["Claude Code", "Opus", "acme.dashboard"],
+            expected=["Claude Code", "acme.dashboard"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
@@ -63,7 +63,7 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         Checkpoint(
             start=280,
             end=410,
-            expected=["Claude Code", "Opus", "acme.alpha"],
+            expected=["Claude Code", "acme.alpha"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
@@ -73,14 +73,14 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         ),
     ],
     "wt-zellij-omnibus": [
-        # Claude UI visible on TAB 1 (api) — shows model name and task.
+        # Claude UI visible on TAB 1 (api) — shows the app heading and task.
         # Range covers the window where Claude's UI is rendered and stable.
-        # Patterns kept minimal (just "Opus" + "acme") since Claude's UI
-        # layout shifts across versions — task text may wrap or truncate.
+        # The model name is intentionally dim and unreliable under OCR once
+        # ANSI colors are enabled, so match the bright app heading instead.
         Checkpoint(
             start=150,
             end=450,
-            expected=["Opus", "acme"],
+            expected=["Claude Code", "add function"],
             forbidden=[
                 "command not found",
                 "Unknown command",
@@ -89,11 +89,13 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Tackle your toughest",
             ],
         ),
-        # Claude UI visible on TAB 2 (billing), without referral or model ads.
+        # Claude UI visible on TAB 2 with the billing task, without referral
+        # or model ads. Match the bright task text because the worktree name
+        # is dim and unreliable under OCR once ANSI colors are enabled.
         Checkpoint(
             start=550,
             end=700,
-            expected=["Opus", "billing"],
+            expected=["Claude Code", "currency-formatting"],
             forbidden=[
                 "Not logged in",
                 "Share Claude Code",

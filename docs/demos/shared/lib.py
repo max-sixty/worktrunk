@@ -356,6 +356,9 @@ def record_vhs(
     """Record a demo GIF using VHS."""
     env = os.environ.copy()
     env.pop("CLAUDE_CONFIG_DIR", None)
+    # GIF assets include ANSI styling independent of the recorder's shell.
+    env.pop("NO_COLOR", None)
+    env["CLICOLOR_FORCE"] = "1"
     run([vhs_binary, str(tape_path)], check=True, env=env)
 
     if expected_output and not expected_output.exists():
