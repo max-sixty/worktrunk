@@ -4,8 +4,10 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
+import tempfile
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -106,6 +108,83 @@ def _ensure_claude_binary() -> Path:
     return claude_binary
 
 
+def claude_auth_available() -> bool:
+    """Return whether a Claude demo can authenticate without interactive login."""
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get(
+        "CLAUDE_CODE_OAUTH_TOKEN"
+    ):
+        return True
+    if platform.system() != "Darwin":
+        return False
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="wt-claude-auth-") as auth_dir:
+            auth_home = Path(auth_dir)
+            _forward_macos_keychains(auth_home)
+            result = subprocess.run(
+                [str(_ensure_claude_binary()), "auth", "status", "--json"],
+                env=_isolated_claude_env(auth_home),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        if result.returncode != 0:
+            return False
+        return bool(json.loads(result.stdout).get("loggedIn"))
+    except (
+        OSError,
+        RuntimeError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        return False
+
+
+def _forward_macos_keychains(home: Path) -> None:
+    """Make the user's Keychain search list visible from an isolated HOME."""
+    if (
+        platform.system() != "Darwin"
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+    ):
+        return
+
+    real_home_env = {**os.environ, "HOME": str(REAL_HOME)}
+    result = subprocess.run(
+        ["security", "list-keychains", "-d", "user"],
+        env=real_home_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to read the macOS Keychain search list: {result.stderr}"
+        )
+
+    # `security` has no structured output for the search list. Its output is a
+    # shell-like sequence of quoted paths, one per line.
+    keychains = [path for path in shlex.split(result.stdout) if Path(path).exists()]
+    if not keychains:
+        raise RuntimeError("The macOS user Keychain search list is empty")
+
+    (home / "Library" / "Preferences").mkdir(parents=True, exist_ok=True)
+    run(
+        ["security", "list-keychains", "-d", "user", "-s", *keychains],
+        env=_isolated_claude_env(home),
+    )
+
+
+def _isolated_claude_env(home: Path) -> dict[str, str]:
+    """Build an environment whose Claude state stays under an isolated HOME."""
+    env = os.environ.copy()
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    return env
+
+
 def _ensure_zellij_plugin() -> Path:
     """Ensure Zellij tab-name plugin is downloaded, return path."""
     plugin_path = DEPS_DIR / "zellij-tab-name.wasm"
@@ -113,7 +192,7 @@ def _ensure_zellij_plugin() -> Path:
         return plugin_path
 
     _download_file(_ZELLIJ_PLUGIN_URL, plugin_path)
-    print(f"✓ Zellij plugin ready")
+    print("✓ Zellij plugin ready")
     return plugin_path
 
 
@@ -137,7 +216,7 @@ def ensure_vhs_binary() -> Path:
 
     # Clone if needed
     if not vhs_dir.exists():
-        print(f"Cloning VHS fork...")
+        print("Cloning VHS fork...")
         DEPS_DIR.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "clone", "-b", _VHS_FORK_BRANCH, "--depth=1", _VHS_FORK_REPO, str(vhs_dir)],
@@ -148,7 +227,7 @@ def ensure_vhs_binary() -> Path:
             raise RuntimeError(f"Failed to clone VHS fork: {result.stderr}")
 
     # Build
-    print(f"Building VHS...")
+    print("Building VHS...")
     result = subprocess.run(
         ["go", "build", "-o", "vhs", "."],
         cwd=vhs_dir,
@@ -168,7 +247,7 @@ def ensure_vhs_binary() -> Path:
     if result.returncode != 0:
         raise RuntimeError(f"VHS built but --version failed: {result.stderr}")
 
-    print(f"✓ VHS ready")
+    print("✓ VHS ready")
     return vhs_binary
 
 
@@ -275,7 +354,9 @@ def record_vhs(
     tape_path: Path, vhs_binary: str = "vhs", expected_output: Path = None
 ):
     """Record a demo GIF using VHS."""
-    run([vhs_binary, str(tape_path)], check=True)
+    env = os.environ.copy()
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    run([vhs_binary, str(tape_path)], check=True, env=env)
 
     if expected_output and not expected_output.exists():
         raise RuntimeError(
@@ -492,9 +573,17 @@ def setup_claude_code_config(
                 "hasShownOpus46Notice": {},
                 "opusProMigrationComplete": True,
                 "opus46FeedSeenCount": 100,
+                "unpinFable5LaunchEffort": True,
                 "sonnet1m45MigrationComplete": True,
                 "lastReleaseNotesSeen": "99.0.0",
                 "lastOnboardingVersion": "99.0.0",
+                "announcementImpressions": {
+                    "fable-5-promo-2": 100,
+                    "fable-5-promo-2-2": 100,
+                    "fable-5-promo-2-3": 100,
+                    "fable-5-promo-2-4-max": 100,
+                    "opus-5-launch": 100,
+                },
                 "oauthAccount": {
                     "displayName": "wt",
                     "emailAddress": "demo@example.com",
@@ -506,6 +595,9 @@ def setup_claude_code_config(
                 "officialMarketplaceAutoInstalled": True,
                 "effortCalloutDismissed": True,
                 "lspRecommendationDisabled": True,
+                "passesUpsellSeenCount": 100,
+                "passesLastSeenRemaining": 999,
+                "hasVisitedPasses": True,
                 "tipsHistory": {
                     "new-user-warmup": 100,
                     "terminal-setup": 100,
@@ -522,6 +614,7 @@ def setup_claude_code_config(
                     "custom-agents": 100,
                     "permissions": 100,
                     "git-worktrees": 100,
+                    "guest-passes": 100,
                 },
                 "projects": projects_config,
             },
@@ -548,6 +641,7 @@ def setup_claude_code_config(
         },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+    _forward_macos_keychains(env.home)
 
 
 def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
@@ -679,6 +773,9 @@ def setup_fish_config(env: DemoEnv, wsl_create: bool = False) -> None:
     fish_config.write_text(f"""# Demo fish config
 # wsl abbreviation: switch to worktree and launch Claude
 abbr --add wsl '{wsl_cmd}'
+# New Zellij tabs start new fish processes, so disable suggestions here rather
+# than only in the tape's initial shell.
+set -g fish_autosuggestion_enabled 0
 starship init fish | source
 # Pre-load wt completions (VHS doesn't trigger lazy loading reliably)
 source ~/.config/fish/completions/wt.fish 2>/dev/null
@@ -781,9 +878,15 @@ if echo "$input" | grep -qi "summary"; then
 else
     # Commit message generation
     sleep 0.5
-    echo "feat: add user settings module"
-    echo ""
-    echo "Add placeholder module for user profile settings."
+    if echo "$input" | grep -q "test_add"; then
+        echo "test: expand add coverage"
+        echo ""
+        echo "Add another test case for the add function."
+    else
+        echo "feat: add user settings module"
+        echo ""
+        echo "Add placeholder module for user profile settings."
+    fi
 fi
 """)
     llm_mock.chmod(0o755)
@@ -983,7 +1086,8 @@ def check_ffmpeg_libass():
     if not shutil.which("ffmpeg"):
         raise SystemExit(
             "Missing dependency: ffmpeg\n"
-            "Install with: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ffmpeg"
+            "Install with: brew install ffmpeg-full\n"
+            'Then add it to PATH: export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
         )
     result = subprocess.run(
         ["ffmpeg", "-filters"],
@@ -993,7 +1097,8 @@ def check_ffmpeg_libass():
     if " ass " not in result.stdout:
         raise SystemExit(
             "ffmpeg missing libass support (required for keystroke overlay).\n"
-            "Install with: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ffmpeg"
+            "Install with: brew install ffmpeg-full\n"
+            'Then add it to PATH: export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"'
         )
 
 
@@ -1055,7 +1160,11 @@ def record_text(
     tape_rendered = (demo_env.out_dir / ".text-rendered.tape").resolve()
     tape_rendered.write_text(rendered)
     try:
-        run([vhs_binary, str(tape_rendered)], check=True)
+        run(
+            [vhs_binary, str(tape_rendered)],
+            check=True,
+            env=_isolated_claude_env(demo_env.home),
+        )
     finally:
         tape_rendered.unlink(missing_ok=True)
 
@@ -1165,11 +1274,9 @@ def record_snapshot(
         raise RuntimeError(f"No snapshotable commands found in {tape_path.name}")
 
     # Build environment matching the GIF demos
-    env = os.environ.copy()
+    env = _isolated_claude_env(demo_env.home)
     env.update(
         {
-            "HOME": str(demo_env.home),
-            "XDG_CONFIG_HOME": str(demo_env.home / ".config"),
             "PATH": f"{repo_root / 'target' / 'debug'}:{demo_env.home / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
             "TERM": "xterm-256color",
             "LANG": "en_US.UTF-8",
@@ -1256,24 +1363,27 @@ def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
         "STARSHIP_CONFIG": starship_config,
         "TARGET_DEBUG": (repo_root / "target" / "debug").resolve(),
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
-        "GIT_PAGER": "",  # Overridden per-theme in record_all_themes
+        "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),
+        "GIT_PAGER": "",  # Overridden by record_theme
     }
 
 
-def record_all_themes(
+def record_theme(
     demo_env: "DemoEnv",
     tape_template: Path,
-    output_gifs: dict[str, Path],
+    theme_name: str,
+    output_gif: Path,
     repo_root: Path,
     vhs_binary: str = "vhs",
     size: DemoSize = None,
 ):
-    """Record demo GIFs for all themes.
+    """Record one demo GIF in a prepared environment.
 
     Args:
         demo_env: Demo environment with repo and home paths
         tape_template: Path to the .tape template file
-        output_gifs: Dict of theme_name -> output GIF path (e.g., {"light": path, "dark": path})
+        theme_name: Name of the VHS theme to use
+        output_gif: Output GIF path
         repo_root: Path to worktrunk repo root (for target/debug)
         vhs_binary: VHS binary to use (default "vhs", can be path to custom build)
         size: Canvas and font size (default SIZE_DOCS)
@@ -1282,29 +1392,26 @@ def record_all_themes(
         size = SIZE_DOCS
 
     tape_rendered = demo_env.out_dir / ".rendered.tape"
-    base_replacements = build_tape_replacements(demo_env, repo_root)
+    theme = THEMES[theme_name]
+    delta_flags = "delta --paging=never"
+    if theme_name == "light":
+        delta_flags += " --light"
+    replacements = {
+        **build_tape_replacements(demo_env, repo_root),
+        "OUTPUT_GIF": output_gif,
+        "THEME": format_theme_for_vhs(theme),
+        "WIDTH": size.width,
+        "HEIGHT": size.height,
+        "FONTSIZE": size.fontsize,
+        "GIT_PAGER": delta_flags,
+    }
 
-    for theme_name, output_gif in output_gifs.items():
-        theme = THEMES[theme_name]
-        delta_flags = "delta --paging=never"
-        if theme_name == "light":
-            delta_flags += " --light"
-        replacements = {
-            **base_replacements,
-            "OUTPUT_GIF": output_gif,
-            "THEME": format_theme_for_vhs(theme),
-            "WIDTH": size.width,
-            "HEIGHT": size.height,
-            "FONTSIZE": size.fontsize,
-            "GIT_PAGER": delta_flags,
-        }
+    rendered = render_tape(tape_template, replacements, repo_root)
+    if not rendered:
+        return
 
-        rendered = render_tape(tape_template, replacements, repo_root)
-        if not rendered:
-            continue
-
-        tape_rendered.write_text(rendered)
-        print(f"\nRecording {theme_name} GIF...")
-        record_vhs(tape_rendered, vhs_binary, expected_output=output_gif)
-        tape_rendered.unlink(missing_ok=True)
-        print(f"GIF saved to {output_gif}")
+    tape_rendered.write_text(rendered)
+    print(f"\nRecording {theme_name} GIF...")
+    record_vhs(tape_rendered, vhs_binary, expected_output=output_gif)
+    tape_rendered.unlink(missing_ok=True)
+    print(f"GIF saved to {output_gif}")

@@ -79,7 +79,7 @@ Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation 
 1. Identify key frame numbers by examining the GIF (30fps, so frame 90 = 3 seconds)
 2. Define checkpoint patterns in `validation.py` with frame numbers, expected patterns, and forbidden patterns
 
-Currently `wt-zellij-omnibus` has checkpoints; other TUI demos are skipped until checkpoints are added.
+`wt-switch`, `wt-statusline`, and `wt-zellij-omnibus` have checkpoints. Other TUI demos are skipped until checkpoints are added.
 
 **Prerequisites for TUI validation:** `ffmpeg` and `tesseract` must be installed.
 
@@ -92,10 +92,11 @@ Currently `wt-zellij-omnibus` has checkpoints; other TUI demos are skipped until
 
 **Requires Go** — The VHS fork is built from source ([install Go](https://go.dev/dl/)).
 
-**Requires ffmpeg with libass** — The keystroke overlay uses ASS subtitles. The build script checks for this and exits with install instructions if missing. Homebrew's API-sourced bottle omits `libass`; install from the tap formula instead:
+**Requires ffmpeg with libass** — The keystroke overlay uses ASS subtitles. The build script checks for this and exits with install instructions if missing. Homebrew's regular `ffmpeg` formula omits `libass`; use the keg-only full build instead:
 
 ```bash
-HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ffmpeg
+brew install ffmpeg-full
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 ```
 
 External dependencies are downloaded/built automatically on first run:
@@ -103,13 +104,15 @@ External dependencies are downloaded/built automatically on first run:
 - **Claude Code binary** — Downloaded from Anthropic's release bucket
 - **Zellij plugin** — Downloaded from GitHub releases
 
-Demos that launch Claude Code (wt-switch, wt-statusline, wt-zellij-omnibus) require `ANTHROPIC_API_KEY` in your environment:
+Demos that launch Claude Code (`wt-switch`, `wt-statusline`, `wt-zellij-omnibus) require authentication. On macOS, the recorder reuses the current `claude auth login` credential from the user's Keychain. Other environments can provide an OAuth token or API key:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+export CLAUDE_CODE_OAUTH_TOKEN=...
+# or
+export ANTHROPIC_API_KEY=...
 ```
 
-This uses a small amount of API credits per recording (Claude starts, renders its UI, then exits).
+Recording uses the authenticated account's Claude usage.
 
 ## Publishing demos
 
@@ -199,6 +202,8 @@ The docs build generates both light and dark GIF variants in separate directorie
 - `docs/light/wt-merge.gif` / `docs/dark/wt-merge.gif`
 - `docs/light/wt-switch-picker.gif` / `docs/dark/wt-switch-picker.gif`
 
+Each theme starts from a freshly prepared demo environment because recording a tape changes its repository and worktrees.
+
 Social build generates light only (social media doesn't support theme-switching media queries).
 
 Theme definitions are in `docs/demos/shared/themes.py`, matching the CSS variables in `_variables.html`.
@@ -264,6 +269,8 @@ Key fields in `.claude.json` for suppressing notifications:
 - `officialMarketplaceAutoInstalled: true` - should suppress marketplace auto-install
 - `numStartups: 100` - makes Claude think it's been run many times
 - `hasCompletedOnboarding: true` - skips onboarding
+- `announcementImpressions` - suppresses launch promotions
+- `passesUpsellSeenCount`, `passesLastSeenRemaining`, and `hasVisitedPasses` - suppress the guest-pass promotion, including after eligibility refresh
 
 ## Viewing GIF results
 

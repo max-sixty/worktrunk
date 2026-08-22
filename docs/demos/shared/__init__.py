@@ -15,6 +15,7 @@ from .lib import (
     build_wt,
     commit_dated,
     prepare_base_repo,
+    claude_auth_available,
     setup_claude_code_config,
     setup_zellij_config,
     setup_fish_config,
@@ -24,7 +25,7 @@ from .lib import (
     check_dependencies,
     check_ffmpeg_libass,
     setup_demo_output,
-    record_all_themes,
+    record_theme,
     # Text output recording
     record_text,
     build_tape_replacements,
@@ -51,6 +52,7 @@ __all__ = [
     "build_wt",
     "commit_dated",
     "prepare_base_repo",
+    "claude_auth_available",
     "setup_claude_code_config",
     "setup_zellij_config",
     "setup_fish_config",
@@ -62,7 +64,7 @@ __all__ = [
     "check_dependencies",
     "check_ffmpeg_libass",
     "setup_demo_output",
-    "record_all_themes",
+    "record_theme",
     # Text output recording
     "record_text",
     "build_tape_replacements",

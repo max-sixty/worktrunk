@@ -5,11 +5,8 @@ Output "{{OUTPUT_GIF}}"
 Source docs/demos/tapes/shared-commands.tape
 
 Env ANTHROPIC_API_KEY "{{ANTHROPIC_API_KEY}}"
+Env CLAUDE_CODE_OAUTH_TOKEN "{{CLAUDE_CODE_OAUTH_TOKEN}}"
 
-# Pre-install marketplace plugin before recording
-Type "claude plugin marketplace add anthropics/claude-plugins-official"
-Enter
-Sleep 5s
 Type "clear"
 Enter
 Sleep 1s

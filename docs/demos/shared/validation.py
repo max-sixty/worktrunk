@@ -45,6 +45,32 @@ class Checkpoint:
 # frame within the range. Forbidden patterns must ALL be absent.
 
 TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
+    "wt-switch": [
+        Checkpoint(
+            start=360,
+            end=455,
+            expected=["Claude Code", "Opus", "acme.dashboard"],
+            forbidden=[
+                "Not logged in",
+                "Unknown command",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+    ],
+    "wt-statusline": [
+        Checkpoint(
+            start=280,
+            end=410,
+            expected=["Claude Code", "Opus", "acme.alpha"],
+            forbidden=[
+                "Not logged in",
+                "Unknown command",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+    ],
     "wt-zellij-omnibus": [
         # Claude UI visible on TAB 1 (api) — shows model name and task.
         # Range covers the window where Claude's UI is rendered and stable.
@@ -52,9 +78,43 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         # layout shifts across versions — task text may wrap or truncate.
         Checkpoint(
             start=150,
-            end=350,
+            end=450,
             expected=["Opus", "acme"],
-            forbidden=["command not found", "Unknown command"],
+            forbidden=[
+                "command not found",
+                "Unknown command",
+                "Not logged in",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+        # Claude UI visible on TAB 2 (billing), without referral or model ads.
+        Checkpoint(
+            start=550,
+            end=700,
+            expected=["Opus", "billing"],
+            forbidden=[
+                "Not logged in",
+                "Share Claude Code",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+        # The API agent adds a test. Commit generation should describe that
+        # diff rather than replaying the feature-tab fixture's message.
+        Checkpoint(
+            start=1400,
+            end=1750,
+            expected=["expand", "coverage"],
+            forbidden=["user settings module", "script -q"],
+        ),
+        # The feature push uses a local demo remote internally, but its
+        # disposable filesystem path must never appear in the recording.
+        Checkpoint(
+            start=1000,
+            end=1350,
+            expected=["Removing feature"],
+            forbidden=["/var/folders/", "wt-demo-"],
         ),
         # Near end — wt list --full showing all worktrees.
         # "billing" omitted: depends on timing of when the branch appears
@@ -63,7 +123,14 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
             start=1650,
             end=1850,
             expected=["Branch", "main"],
-            forbidden=["CONFLICT", "error:", "failed"],
+            forbidden=[
+                "CONFLICT",
+                "error:",
+                "failed",
+                "cargo test 2>&1",
+                "cargo test -- --list",
+                "script -q",
+            ],
         ),
     ],
 }
@@ -101,7 +168,7 @@ def extract_frames(
             "-loglevel", "error",
             "-i", str(gif_path),
             "-vf", f"select='{select_expr}'",
-            "-vsync", "vfr",
+            "-fps_mode", "vfr",
             str(pattern),
         ],
         capture_output=True,
@@ -165,8 +232,9 @@ def validate_checkpoint(
 ) -> tuple[bool, str]:
     """Validate a checkpoint by scanning its frame range.
 
-    Extracts all sampled frames in one ffmpeg call, then OCRs each
-    sequentially until one matches (early return on success).
+    Extracts all sampled frames in one ffmpeg call, then OCRs each. Expected
+    patterns must share a frame; forbidden patterns must be absent throughout
+    the range.
 
     Returns (passed, detail_message).
     """
@@ -179,6 +247,7 @@ def validate_checkpoint(
 
     best_errors: list[str] = []
     frames_checked = 0
+    matched_frame: int | None = None
 
     for frame in frame_numbers:
         frame_path = frame_paths.get(frame)
@@ -190,15 +259,22 @@ def validate_checkpoint(
         if not text:
             continue
 
-        passed, errors = _check_patterns(text, checkpoint.expected, checkpoint.forbidden)
-        if passed:
-            return True, f"matched at frame {frame} ({frames_checked} checked)"
+        text_lower = text.lower()
+        for pattern in checkpoint.forbidden:
+            if pattern.lower() in text_lower:
+                return False, f"forbidden '{pattern}' present at frame {frame}"
+
+        passed, errors = _check_patterns(text, checkpoint.expected, [])
+        if passed and matched_frame is None:
+            matched_frame = frame
         if not best_errors or len(errors) < len(best_errors):
             best_errors = errors
 
     label = f"frames {checkpoint.start}-{checkpoint.end}"
     if not frames_checked:
         return False, f"no readable frames in {label}"
+    if matched_frame is not None:
+        return True, f"matched at frame {matched_frame} ({frames_checked} checked)"
     return False, f"no match in {label} ({frames_checked} checked): {'; '.join(best_errors)}"
 
 

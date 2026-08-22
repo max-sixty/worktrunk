@@ -33,11 +33,8 @@ Require zellij
 Source docs/demos/tapes/shared-commands.tape
 
 Env ANTHROPIC_API_KEY "{{ANTHROPIC_API_KEY}}"
+Env CLAUDE_CODE_OAUTH_TOKEN "{{CLAUDE_CODE_OAUTH_TOKEN}}"
 
-# Pre-install marketplace plugin before recording
-Type "claude plugin marketplace add anthropics/claude-plugins-official"
-Enter
-Sleep 10s
 # Start Zellij before showing
 Type "zellij"
 Enter
@@ -69,9 +66,9 @@ Sleep 1s
 Enter
 Sleep 1.5s
 
-# Launch Claude agent on api (simple task that completes during demo)
-# Note: lib.rs has an add() function, so this will definitely produce changes
-Type "claude 'Add a test for the add function'"
+# Launch Claude agent on api (one edit that completes during the demo).
+# Skip test-running here; the merge's pre-merge hook demonstrates the tests.
+Type "claude 'Add one test for the add function in src/lib.rs. Do not run commands or tests.'"
 Enter
 Sleep 5.5s
 
@@ -88,7 +85,7 @@ Sleep 2s
 Type "ws"
 Type "l"
 Sleep 200ms
-Type " billing -- 'Format billing amounts with currency symbols'"
+Type " billing -- 'Make one small currency-formatting edit in src/lib.rs. Do not run commands or tests.'"
 Sleep 500ms
 Enter
 Sleep 6s
@@ -118,8 +115,16 @@ Sleep 4s
 
 # Push to origin (feature branch is now ready)
 Type "git push -u origin feature"
+Sleep 500ms
+Hide
 Enter
 Sleep 2s
+# The demo remote is a local bare repository. Clear its temporary filesystem
+# path before resuming the visible recording.
+Type "clear"
+Enter
+Sleep 300ms
+Show
 
 # wt remove - done with feature, clean up
 Type "wt remove"
@@ -132,11 +137,16 @@ Enter
 Sleep 3.5s
 
 # ==== Back to TAB 1: Merge Claude's completed work ====
-# Agent finished - open new pane to show changes and merge
+# Agent finished - open new pane to show changes and merge. Hide the tab
+# transition while clearing the agent transcript so background tool output
+# does not compete visually with the diff and merge.
+Hide
 Ctrl+Space
 Sleep 200ms
 Type "t1"
 Sleep 2s
+Ctrl+l
+Sleep 500ms
 
 # Open new pane for git diff and merge (like original zellij demo)
 # Use session manager (Ctrl+Space → pane mode → new) since Ctrl+n is
@@ -145,6 +155,7 @@ Ctrl+Space
 Sleep 200ms
 Type "on"
 Sleep 1.2s
+Show
 
 # Show what Claude changed
 Type "git diff"
@@ -161,16 +172,23 @@ Sleep 11s
 
 # ==== Cycle through all tabs to show parallel work ====
 # TAB 2: billing agent working
+Hide
 Ctrl+Space
 Sleep 200ms
 Type "t2"
+Sleep 1s
+Ctrl+l
+Sleep 500ms
+Show
 Sleep 1.5s
 
 # TAB 3: show final state with wt list --full
+Hide
 Ctrl+Space
 Sleep 200ms
 Type "t3"
 Sleep 1s
+Show
 
 # Show comprehensive list of all worktrees (post-merge state)
 Type "wt list --full"
