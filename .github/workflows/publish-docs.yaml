@@ -8,6 +8,8 @@ on:
     paths:
       - 'docs/**'
       - 'src/cli/mod.rs'
+      - '.github/actions/docs-build/**'
+      - '.github/workflows/publish-docs.yaml'
   workflow_dispatch:
 
 concurrency:
@@ -22,27 +24,8 @@ jobs:
       - name: 📂 Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: docs/package-lock.json
-
-      - name: Install docs dependencies
-        run: npm ci
-        working-directory: docs
-
-      - name: Fetch assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
-          cp -r /tmp/worktrunk-assets/assets docs/public/
-
-      - name: 🕷️ Build docs
-        run: npm run check && npm test && npm run build && npm run test:site
-        working-directory: docs
+      - name: 🕷️ Check and build docs
+        uses: ./.github/actions/docs-build
 
       - uses: actions/upload-pages-artifact@v5
         with:
