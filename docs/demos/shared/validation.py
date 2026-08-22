@@ -219,7 +219,7 @@ def ocr_low_contrast_text(image_path: Path) -> str:
             "-i",
             str(image_path),
             "-vf",
-            "scale=1:1,format=gray",
+            "format=gray,scale=40:30:flags=area,scale=1:1:flags=area",
             "-frames:v",
             "1",
             "-f",
@@ -319,24 +319,20 @@ def validate_checkpoint(
         if not text:
             continue
 
+        passed, errors = _check_patterns(text, checkpoint.expected, [])
+        if not passed and matched_frame is None:
+            low_contrast_text = ocr_low_contrast_text(frame_path)
+            if low_contrast_text:
+                text = f"{text}\n{low_contrast_text}"
+                passed, errors = _check_patterns(
+                    text, checkpoint.expected, []
+                )
+
         text_lower = text.lower()
         for pattern in checkpoint.forbidden:
             if pattern.lower() in text_lower:
                 return False, f"forbidden '{pattern}' present at frame {frame}"
 
-        passed, errors = _check_patterns(text, checkpoint.expected, [])
-        if not passed and matched_frame is None:
-            low_contrast_text = ocr_low_contrast_text(frame_path)
-            if low_contrast_text:
-                combined_text = f"{text}\n{low_contrast_text}"
-                for pattern in checkpoint.forbidden:
-                    if pattern.lower() in combined_text.lower():
-                        return False, (
-                            f"forbidden '{pattern}' present at frame {frame}"
-                        )
-                passed, errors = _check_patterns(
-                    combined_text, checkpoint.expected, []
-                )
         if passed and matched_frame is None:
             matched_frame = frame
         if not best_errors or len(errors) < len(best_errors):
