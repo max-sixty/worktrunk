@@ -13,8 +13,8 @@
 // its rayon pool. Off-screen worktrees are demand-loaded when selected so their
 // untracked-inclusive diff cannot delay row collection. The user-visible
 // quantity to optimize here is the skeleton-time preview workload before skim
-// launches. The cost this change moves onto the demand path is not measured
-// anywhere: `preview_miss_is_served_by_demand_worker` asserts that path is
+// launches. The demand path this defers work onto is not measured anywhere:
+// `preview_miss_is_served_by_demand_worker` asserts that path is
 // correct, not that it is fast, and no bench covers selected-row latency.
 //
 // We measure that wall clock headlessly by spawning `wt` with

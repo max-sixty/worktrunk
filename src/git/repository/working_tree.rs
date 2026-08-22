@@ -973,7 +973,8 @@ impl<'a> WorkingTree<'a> {
 /// untracked, used by `wt list --full` / `wt statusline`),
 /// `WorkingTreeConflictsTask` (write-tree of dirty + untracked, for
 /// merge-conflict probing), `wt step diff` (diff vs target merge-base with
-/// untracked), and the `wt switch` unified/working preview tabs.
+/// untracked), `wt step commit --dry-run` (mirror its `--stage` mode without
+/// changing the user's index), and the `wt switch` unified/working preview tabs.
 pub struct TempIndex {
     temp: tempfile::TempPath,
     worktree_root: PathBuf,
