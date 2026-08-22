@@ -2236,9 +2236,8 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut updated = Vec::new();
 
     let docs_dir = project_root.join("docs/src/content/docs");
-    let site_title = "Worktrunk";
-    let site_description =
-        "CLI for Git worktree management, designed for parallel AI agent workflows.";
+    let mut site_title = None;
+    let mut site_description = None;
     let base_url = "https://worktrunk.dev";
 
     let mut home_intro = String::new();
@@ -2286,6 +2285,8 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
         };
 
         if slug == "worktrunk" {
+            site_title = Some(fm.title);
+            site_description = fm.description;
             home_intro = extract_intro_prose(body);
             continue;
         }
@@ -2305,6 +2306,17 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
     if !errors.is_empty() {
         return (errors, updated);
     }
+
+    let Some(site_title) = site_title else {
+        errors.push("docs content has no worktrunk.md homepage".to_string());
+        return (errors, updated);
+    };
+    let Some(site_description) =
+        site_description.filter(|description| !description.trim().is_empty())
+    else {
+        errors.push("worktrunk.md frontmatter has no description".to_string());
+        return (errors, updated);
+    };
 
     for pages in groups.values_mut() {
         pages.sort_by_key(|(_, fm)| fm.order);

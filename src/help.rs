@@ -64,18 +64,6 @@ enum PageMode {
 }
 
 impl PageMode {
-    /// Help pages are portable Markdown, so terminal color escapes never enter
-    /// the generated source. The website adds syntax and prompt styling when
-    /// it renders fenced blocks.
-    fn color(self) -> ColorChoice {
-        ColorChoice::Never
-    }
-
-    /// Freshly-combined help is already portable Markdown.
-    fn transform_raw(self, text: String) -> String {
-        text
-    }
-
     /// Transform the body (everything before subdoc placeholders). Web expands
     /// demo GIFs into `<picture>` figures and converts CLI markers into HTML
     /// spans; plain strips demo placeholders so they don't leak as comments.
@@ -455,9 +443,10 @@ Commands with schemas: list"
 ///
 /// This is used to generate docs/src/content/docs/merge.md etc from the source.
 fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
-    // This page's stdout is a pipe to a generator rather than a tty, so the
-    // mode decides its color.
-    mode.color().write_global();
+    // Help pages are portable Markdown, so terminal color escapes never enter
+    // the generated source. The website adds syntax and prompt styling when
+    // it renders fenced blocks.
+    ColorChoice::Never.write_global();
 
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
@@ -478,7 +467,7 @@ Commands with pages: merge, switch, remove, list"
     };
 
     let parent_name = format!("wt {}", subcommand);
-    let raw_help = mode.transform_raw(combine_command_docs(sub));
+    let raw_help = combine_command_docs(sub);
 
     // Subdocs are expanded separately so the main command reference comes first.
     let (main_content, subdoc_content) = match raw_help.find(SUBDOC_MARKER_PREFIX) {
@@ -718,7 +707,7 @@ fn format_subcommand_section(
     // full_command is "wt config create"
     let full_command = format!("{} {}", parent_name, subcommand_name);
 
-    let raw_help = mode.transform_raw(combine_command_docs(sub));
+    let raw_help = combine_command_docs(sub);
 
     // Extract [experimental] marker from content start → badge after heading.
     // Web mode: placed after the heading so it does not affect the anchor slug.

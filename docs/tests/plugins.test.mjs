@@ -320,4 +320,18 @@ test('console output retains state-color semantics without ANSI in Markdown', ()
       { text: ' done' },
     ],
   );
+
+  assert.deepEqual(
+    semanticOutputSegments('[unoptimized + debuginfo] Allow and remember?'),
+    [{ text: '[unoptimized + debuginfo] Allow and remember?' }],
+  );
+  assert.deepEqual(
+    semanticOutputSegments('@ feat  +   ↑'),
+    [
+      { text: '@ feat  ' },
+      { text: '+', tone: 'positive' },
+      { text: '   ' },
+      { text: '↑', tone: 'positive' },
+    ],
+  );
 });

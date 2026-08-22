@@ -1,6 +1,8 @@
 const terminalBlocks = new WeakMap();
 
-const semanticMarker = /([+↑⇡]\d*|[-↓⇣]\d+|✓|✗|[!?](?=\s|$))/gu;
+// Bare `+` is a status only at a line edge or between wide table columns;
+// ordinary prose such as `[unoptimized + debuginfo]` stays neutral.
+const semanticMarker = /([+↑⇡]\d+|[↑⇡]|(?<!\s)\+|\+(?!\s)|(?<=^|\s\s)\+(?=\s\s|\s*$)|[-↓⇣]\d+|✓|✗|(?<=^|\s)[!?](?=\s|$))/gmu;
 
 function addClass(node, className) {
   const classes = node.properties.className ?? [];
