@@ -7,9 +7,10 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use shared_child::SharedChild;
+
 use worktrunk::config::UserConfig;
 use worktrunk::shell::extract_filename_from_path;
-use worktrunk::shell_exec::ChildWaiter;
 
 use crate::pager::{git_config_pager, parse_pager_value};
 
@@ -90,7 +91,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         .stderr(Stdio::null())
         .env("COLUMNS", width.to_string());
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = match cmd.spawn() {
+    let child = match SharedChild::spawn(&mut cmd) {
         Ok(child) => child,
         Err(e) => {
             tracing::debug!(error = %e, "Failed to spawn pager: {}", e);
@@ -100,7 +101,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
 
     // Write input to stdin in a thread to avoid deadlock.
     // Thread will unblock when: (a) write completes, or (b) pipe breaks (pager exits/killed).
-    let stdin = child.stdin.take();
+    let stdin = child.take_stdin();
     let input = text.to_string();
     let writer_thread = std::thread::spawn(move || {
         if let Some(mut stdin) = stdin {
@@ -110,7 +111,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     });
 
     // Read output in a thread to avoid deadlock (can't read stdout after stdin fills)
-    let stdout = child.stdout.take();
+    let stdout = child.take_stdout();
     let reader_thread = std::thread::spawn(move || {
         stdout.map(|mut stdout| {
             let mut output = Vec::new();
@@ -120,8 +121,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     });
 
     // Wait for pager with timeout
-    let waiter = ChildWaiter::new(child);
-    match waiter.wait_timeout(PAGER_TIMEOUT) {
+    match child.wait_timeout(PAGER_TIMEOUT) {
         Ok(Some(status)) => {
             // Pager exited within timeout
             let _ = writer_thread.join();
@@ -137,8 +137,8 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         // nothing more: kill it, reap it, and fall back to the raw text below.
         outcome => {
             tracing::debug!(?outcome, timeout = ?PAGER_TIMEOUT, "Pager did not exit within {:?}", PAGER_TIMEOUT);
-            waiter.kill();
-            let _ = waiter.wait();
+            let _ = child.kill();
+            let _ = child.wait();
             let _ = reader_thread.join();
         }
     }
