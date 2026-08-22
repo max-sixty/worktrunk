@@ -558,9 +558,16 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
 /// Convert source-tagged steps into foreground steps with pipeline-kind policy.
 ///
 /// Shared between hook and alias dispatch. The `kind` argument supplies the
-/// per-call-site policy (announce style, stdin handling, error wrapping) while
-/// the `source` field on each step drives the per-step trust model
+/// per-call-site policy (announce style, stdout redirection, error wrapping)
+/// while the `source` field on each step drives the per-step trust model
 /// (`DirectivePassthrough`).
+///
+/// Foreground steps — hook and alias alike — inherit the parent's stdin so an
+/// interactive child keeps the controlling terminal (a `pre-*` hook can prompt;
+/// an alias body's `wt switch` picker works). The forms that can't be
+/// interactive get a closed stdin rather than a substitute payload: concurrent
+/// children (they'd race for the terminal) and detached (`post-*`) hooks (there
+/// is none). Template variables carry the context in every form.
 ///
 /// Trust model:
 /// - User-source alias steps pass EXEC through. The body lives in the user's
@@ -585,16 +592,13 @@ pub(crate) fn sourced_steps_to_foreground(
                 }
                 _ => DirectivePassthrough::inherit_from_env(),
             };
-            let (pipe_stdin, redirect_stdout_to_stderr, error_wrapper) = match kind {
-                PipelineKind::Hook { hook_type, .. } => {
-                    (true, true, hook_error_wrapper(*hook_type))
-                }
-                PipelineKind::Alias { name } => (false, false, alias_error_wrapper(name.clone())),
+            let (redirect_stdout_to_stderr, error_wrapper) = match kind {
+                PipelineKind::Hook { hook_type, .. } => (true, hook_error_wrapper(*hook_type)),
+                PipelineKind::Alias { name } => (false, alias_error_wrapper(name.clone())),
             };
             ForegroundStep {
                 step: sourced.step,
                 announce: kind.clone(),
-                pipe_stdin,
                 redirect_stdout_to_stderr,
                 error_wrapper,
                 directives,

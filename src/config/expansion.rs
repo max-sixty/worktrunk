@@ -81,7 +81,7 @@ pub fn base_vars() -> Vec<&'static str> {
 
 /// Reserved context key carrying a JSON-encoded `Vec<String>` of positional
 /// CLI args forwarded to an alias. The key flows through
-/// [`TemplateContext`]'s flat string map — stable for stdin JSON — and
+/// [`TemplateContext`]'s flat string map — stable for JSON round-trips — and
 /// [`expand_template`] rehydrates it as a `ShellArgs` object so bare
 /// `{{ args }}` renders as a space-joined, shell-escaped string while
 /// indexing, iteration, and `length` behave like a sequence.
@@ -111,14 +111,14 @@ pub const LIST_COLUMN_VARS: &[&str] = &["branch", "worktree_path", "worktree_nam
 /// The resolved template variables for one command invocation.
 ///
 /// Wraps the map `build_hook_context` produces and owns every operation on
-/// it: expansion, the JSON a hook child reads on stdin, and the `-v` variables
-/// table. Callers hold this rather than a bare map so the borrow
+/// it: expansion, the JSON a `wt step for-each` child reads on stdin, and the
+/// `-v` variables table. Callers hold this rather than a bare map so the borrow
 /// [`expand_template`] needs, the `serde_json` call, and the `(unset)` /
 /// `(unused)` rendering each have one home.
 ///
-/// Serializes transparently, so the JSON a child reads and the pipeline spec a
-/// background runner deserializes are both the flat `{"branch": "…", …}`
-/// object the [`ALIAS_ARGS_KEY`] contract describes.
+/// Serializes transparently, so the JSON a for-each child reads and the
+/// pipeline spec a background runner deserializes are both the flat
+/// `{"branch": "…", …}` object the [`ALIAS_ARGS_KEY`] contract describes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TemplateContext(HashMap<String, String>);
@@ -174,7 +174,7 @@ impl TemplateContext {
         expand_template_with(template, &vars, escape_mode, repo, name, vars_mode)
     }
 
-    /// The JSON form piped to a child's stdin.
+    /// The JSON form piped to a `wt step for-each` child's stdin.
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.0)
             .expect("HashMap<String, String> serialization should never fail")
@@ -191,8 +191,9 @@ pub enum VarScope<'a> {
     /// looked up. The set comes from `referenced_vars_for_config` or
     /// [`referenced_vars_for_templates`].
     Referenced(&'a BTreeSet<String>),
-    /// Something reads keys the templates never mention: a child consuming
-    /// the JSON on stdin, or a command whose output is the variable listing.
+    /// Something reads keys the templates never mention: a `wt step for-each`
+    /// child consuming the JSON on stdin, or a command whose output is the
+    /// variable listing.
     All,
 }
 

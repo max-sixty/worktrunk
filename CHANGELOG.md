@@ -8,6 +8,8 @@
 
 - **`wt config approvals add --yes` records approvals without a terminal**: the command refused every non-interactive run, so a container or CI job could not pre-approve a project it had just cloned. `--yes` now lists what it trusts and writes it, and a save it cannot make fails the command rather than warning and exiting 0. ([#3819](https://github.com/max-sixty/worktrunk/pull/3819))
 
+- **A foreground hook keeps the terminal, so it can ask before continuing**: A `pre-*` hook now inherits wt's stdin exactly as an alias body already did, so `trust = "gum confirm 'trust this worktree?' && mise trust"` gets a prompt instead of an immediate EOF. That covers every type under `wt hook <type> --foreground` too. (Breaking: hooks no longer receive the JSON context on stdin at all — a hook that ran `json.load(sys.stdin)` must take the values it needs as template variables instead, e.g. `setup = "python3 setup.py {{ branch }} {{ repo }}"`, which every hook has always had. The forms that can't hold a terminal — detached `post-*` hooks, and the children of a concurrent group, who would race for one — now read EOF rather than JSON. Foreground steps share one stdin, so a step that drains it to EOF starves the steps behind it when that stdin is a pipe or a file.) Fixes [#3093](https://github.com/max-sixty/worktrunk/issues/3093). ([#3129](https://github.com/max-sixty/worktrunk/pull/3129))
+
 - **`remote_repo` names the repository as the remote spells it**: `repo` is the directory on disk, so a renamed clone reports the new name. `{{ remote_repo }}` takes it from the primary remote's URL, available everywhere `owner` is and unset when no remote parses. ([#3745](https://github.com/max-sixty/worktrunk/pull/3745), thanks @canac)
 
 ### Fixed
