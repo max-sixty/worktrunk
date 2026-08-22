@@ -50,7 +50,7 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         Checkpoint(
             start=360,
             end=455,
-            expected=["Claude Code", "acme.dashboard"],
+            expected=["Claude Code", "Opus", "acme.dashboard"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
@@ -63,7 +63,7 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         Checkpoint(
             start=280,
             end=410,
-            expected=["Claude Code", "acme.alpha"],
+            expected=["Claude Code", "Opus", "acme.alpha"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
@@ -73,14 +73,14 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         ),
     ],
     "wt-zellij-omnibus": [
-        # Claude UI visible on TAB 1 (api) — shows the app heading and task.
+        # Claude UI visible on TAB 1 (api) — shows model name and task.
         # Range covers the window where Claude's UI is rendered and stable.
-        # The model name is intentionally dim and unreliable under OCR once
-        # ANSI colors are enabled, so match the bright app heading instead.
+        # Patterns kept minimal (just "Opus" + "acme") since Claude's UI
+        # layout shifts across versions — task text may wrap or truncate.
         Checkpoint(
             start=150,
             end=450,
-            expected=["Claude Code", "add function"],
+            expected=["Opus", "acme"],
             forbidden=[
                 "command not found",
                 "Unknown command",
@@ -89,13 +89,11 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Tackle your toughest",
             ],
         ),
-        # Claude UI visible on TAB 2 with the billing task, without referral
-        # or model ads. Match the bright task text because the worktree name
-        # is dim and unreliable under OCR once ANSI colors are enabled.
+        # Claude UI visible on TAB 2 (billing), without referral or model ads.
         Checkpoint(
             start=550,
             end=700,
-            expected=["Claude Code", "currency-formatting"],
+            expected=["Opus", "billing"],
             forbidden=[
                 "Not logged in",
                 "Share Claude Code",
@@ -205,6 +203,34 @@ def ocr_image(image_path: Path) -> str:
     return ""
 
 
+def ocr_low_contrast_text(image_path: Path) -> str:
+    """Run OCR after lifting dim terminal text to full contrast.
+
+    Claude renders its model name using a dim ANSI color. The normal OCR pass
+    preserves the frame for reliable error detection; this fallback makes dim
+    expected text readable without changing the recorded GIF.
+    """
+    with tempfile.TemporaryDirectory(prefix="wt-ocr-contrast-") as work_dir:
+        enhanced_path = Path(work_dir) / "high-contrast.png"
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-i",
+                str(image_path),
+                "-vf",
+                "format=gray,lut=y='if(gte(val,31),255,0)',"
+                "scale=iw*3:ih*3:flags=neighbor",
+                str(enhanced_path),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return ""
+        return ocr_image(enhanced_path)
+
+
 def _check_patterns(
     text: str,
     expected: list[str],
@@ -268,6 +294,12 @@ def validate_checkpoint(
                 return False, f"forbidden '{pattern}' present at frame {frame}"
 
         passed, errors = _check_patterns(text, checkpoint.expected, [])
+        if not passed and matched_frame is None:
+            low_contrast_text = ocr_low_contrast_text(frame_path)
+            if low_contrast_text:
+                passed, errors = _check_patterns(
+                    f"{text}\n{low_contrast_text}", checkpoint.expected, []
+                )
         if passed and matched_frame is None:
             matched_frame = frame
         if not best_errors or len(errors) < len(best_errors):
