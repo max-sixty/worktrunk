@@ -243,7 +243,7 @@ sha2 = "0.11"
 # breaking-change rollout (see `test_codename_outputs_are_stable` and
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
-petname = { version = "=3.1.0", default-features = false, features = ["default-words"] }
+petname = { version = "=3.2.0", default-features = false, features = ["default-words"] }
 # PINNED EXACT to match `petname`: its caret dependency otherwise permits a
 # different proc-macro version, but the generated code and runtime re-exports
 # require an exact match. Keep both pins in lockstep.
