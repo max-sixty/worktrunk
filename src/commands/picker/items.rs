@@ -460,8 +460,10 @@ pub(super) struct LocalCheckout {
     /// re-seed the just-cleared cache from its frozen `item` (see the
     /// orchestrator's *Spawn generations* docs).
     pub spawn_gen: SpawnGeneration,
-    /// Whether this branch has an upstream tracking ref, read synchronously at
-    /// construction so the remote-diff tab does not depend on async row data.
+    /// Whether this branch has an upstream tracking ref. Read synchronously
+    /// from `Repository::local_branches()` at construction, never from the
+    /// async `item.upstream`: that field is `None` until the row pipeline lands
+    /// and would otherwise lock the tab bar into a stale state.
     pub has_upstream: bool,
     /// Whether `[commit.generation]` summaries are configured.
     pub summaries_enabled: bool,

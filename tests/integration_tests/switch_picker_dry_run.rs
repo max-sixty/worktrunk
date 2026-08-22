@@ -194,10 +194,12 @@ fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
 fn test_picker_dry_run_tempdir_inside_worktree_has_no_index_artifacts(
     #[from(main_only_repo)] repo: TestRepo,
 ) {
-    let local_tmp = repo.path().join("local-tmp");
+    // Brackets also prove the exclusion quotes Git pathspec glob metacharacters
+    // in the user-selected temporary directory.
+    let local_tmp = repo.path().join("local-[tmp]");
     std::fs::create_dir_all(&local_tmp).unwrap();
     std::fs::write(local_tmp.join(".gitkeep"), "").unwrap();
-    repo.run_git(&["add", "local-tmp/.gitkeep"]);
+    repo.run_git(&["add", "local-[tmp]/.gitkeep"]);
     repo.run_git(&["commit", "-m", "track local temp directory"]);
     std::fs::write(repo.path().join("loose.txt"), "loose\n").unwrap();
     let branch = repo.current_branch();
@@ -232,7 +234,7 @@ fn test_picker_dry_run_tempdir_inside_worktree_has_no_index_artifacts(
             "mode {mode} retains genuine untracked content: {content:?}"
         );
         assert!(
-            !content.contains("local-tmp/"),
+            !content.contains("local-[tmp]/"),
             "mode {mode} must not include temporary-index artifacts: {content:?}"
         );
     }

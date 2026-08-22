@@ -14,11 +14,18 @@ use super::{GitError, LineDiff, Repository};
 use crate::git::CommandError;
 use crate::git::parse_numstat_line;
 
-const TEMP_INDEX_DIR: &str = "temp-index";
-const TEMP_INDEX_PREFIX: &str = "index-";
+const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
-fn temp_index_dir() -> PathBuf {
-    std::env::temp_dir().join("worktrunk").join(TEMP_INDEX_DIR)
+/// Quote a path component for Git's `glob` pathspec magic. The caller adds
+/// the one intentional wildcard after the escaped literal.
+fn escape_pathspec_glob_literal(path: &str) -> String {
+    path.chars().fold(String::new(), |mut escaped, ch| {
+        if matches!(ch, '\\' | '*' | '?' | '[' | ']') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+        escaped
+    })
 }
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
@@ -778,18 +785,19 @@ impl<'a> WorkingTree<'a> {
         }
 
         let idx = self.temp_index()?;
+        let add_args = [
+            "add",
+            "--sparse",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ];
         let add_output = idx
-            .git(["add", "--pathspec-from-file=-", "--pathspec-file-nul"])
+            .git(add_args)
             .stdin_bytes(output.stdout)
             .run()
             .context("Failed to stage untracked files")?;
         if !add_output.status.success() {
-            return Err(CommandError::from_failed_output(
-                "git",
-                &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
-                &add_output,
-            )
-            .into());
+            return Err(CommandError::from_failed_output("git", &add_args, &add_output).into());
         }
 
         let mut args = vec![
@@ -834,16 +842,9 @@ impl<'a> WorkingTree<'a> {
         // index exists, copy it back, otherwise leave the path empty and
         // let the first `git` call against `GIT_INDEX_FILE` create a fresh
         // valid index there.
-        let temp_dir = temp_index_dir();
-        std::fs::create_dir_all(&temp_dir).with_context(|| {
-            format!(
-                "Failed to create temporary index directory {}",
-                temp_dir.display()
-            )
-        })?;
         let temp = tempfile::Builder::new()
             .prefix(TEMP_INDEX_PREFIX)
-            .tempfile_in(&temp_dir)
+            .tempfile()
             .context("Failed to create temporary index")?
             .into_temp_path();
         std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
@@ -984,9 +985,11 @@ impl TempIndex {
     /// Register untracked files in the temporary index without adding their
     /// contents. A following `git diff <base>` can then include those files as
     /// new while preserving the user's real index and staging state. If the
-    /// temp namespace is inside the worktree, the pathspec excludes the whole
-    /// namespace so concurrent temporary indexes cannot enter each other's
-    /// diffs.
+    /// system temp directory is inside the worktree, the pathspec excludes all
+    /// files in that directory with Worktrunk's dedicated prefix so concurrent
+    /// temporary indexes cannot enter each other's diffs. Keeping the random
+    /// files directly in the OS temp directory avoids a predictable shared
+    /// parent on multi-user systems.
     pub(super) fn register_untracked(&self) -> anyhow::Result<()> {
         let mut args = vec![
             "add".to_string(),
@@ -1004,12 +1007,11 @@ impl TempIndex {
                 .context("Temporary index has no parent directory")?,
         );
         let worktree_root = canonicalize_with_parents(&self.worktree_root);
-        if let Ok(relative) = temp_dir.strip_prefix(&worktree_root)
-            && !relative.as_os_str().is_empty()
-        {
+        if let Ok(relative) = temp_dir.strip_prefix(&worktree_root) {
+            let relative = escape_pathspec_glob_literal(&relative.to_slash_lossy());
+            let separator = if relative.is_empty() { "" } else { "/" };
             args.push(format!(
-                ":(top,exclude,literal){}",
-                relative.to_slash_lossy()
+                ":(top,exclude,glob){relative}{separator}{TEMP_INDEX_PREFIX}*"
             ));
         }
         let output = self
@@ -1288,6 +1290,27 @@ mod tests {
             index_before, index_after,
             "real index must not be mutated by the temp-index path"
         );
+    }
+
+    #[test]
+    fn untracked_diff_stats_crosses_sparse_checkout_boundary() {
+        let test = TestRepo::with_initial_commit();
+        std::fs::create_dir_all(test.root_path().join("visible")).unwrap();
+        std::fs::create_dir_all(test.root_path().join("hidden")).unwrap();
+        std::fs::write(test.root_path().join("visible/tracked.txt"), "base\n").unwrap();
+        std::fs::write(test.root_path().join("hidden/tracked.txt"), "base\n").unwrap();
+        test.run_git(&["add", "visible/tracked.txt", "hidden/tracked.txt"]);
+        test.run_git(&["commit", "-m", "add sparse fixture"]);
+        test.run_git(&["sparse-checkout", "init", "--cone"]);
+        test.run_git(&["sparse-checkout", "set", "visible"]);
+
+        std::fs::create_dir_all(test.root_path().join("hidden")).unwrap();
+        std::fs::write(test.root_path().join("hidden/loose.txt"), "loose\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let stats = repo.current_worktree().untracked_diff_stats().unwrap();
+        assert_eq!(stats.added, 1);
+        assert_eq!(stats.deleted, 0);
     }
 
     #[test]

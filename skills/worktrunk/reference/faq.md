@@ -159,7 +159,7 @@ None of this is tracked by git or pushed to remotes.
 
 ### 5. Temporary files (automatic)
 
-Worktrunk creates temporary Git index copies at `$TMPDIR/worktrunk/temp-index/index-*`. They let `wt list`, `wt statusline`, `wt step diff`, and `wt switch` include untracked files without changing the real index. The files are removed when the command exits normally.
+Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index-*`. They let `wt list`, `wt statusline`, `wt step diff`, and `wt switch` include untracked files without changing the real index. The files are removed when the command exits normally.
 
 ### What Worktrunk does NOT create
 
@@ -272,7 +272,7 @@ Confirm it with `wt config alias dry-run <name>`: if the value is already substi
 
 To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](https://worktrunk.dev/extending/#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.
 
-## What does Worktrunk require?
+## Installation fails with C compilation errors
 
 Worktrunk requires Git 2.34 or newer.
 
@@ -282,7 +282,7 @@ Installing with Cargo and the default features also requires a C99 compiler for 
 cargo install worktrunk --no-default-features --features cli
 ```
 
-This disables bash syntax highlighting in command output but keeps all core functionality.
+This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
 ## Running tests (for contributors)
 
