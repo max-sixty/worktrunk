@@ -2865,6 +2865,9 @@ command = "cat >/dev/null && echo 'feat: add untracked'"
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        // The worktree-root case exercises the empty relative path in the
+        // temporary-index exclusion.
+        .env("TMPDIR", repo.root_path())
         .output()
         .expect("wt step commit --dry-run failed");
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -2872,6 +2875,10 @@ command = "cat >/dev/null && echo 'feat: add untracked'"
         stdout.contains("untracked.txt"),
         "--dry-run with default --stage=all should include untracked files in the prompt; \
          got stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("worktrunk-temp-index-"),
+        "--dry-run must exclude its temporary index artifacts; got stdout:\n{stdout}"
     );
 
     // The user's real index must not have absorbed the untracked file.
@@ -3026,7 +3033,7 @@ command = "cat >/dev/null && echo 'feat: combined feature work'"
 /// `GIT_INDEX_FILE` pointed at the copy. If that `git add` exits non-zero, the
 /// error must propagate (not silently feed an empty diff to the LLM). We
 /// reproduce a non-zero exit by replacing `.git/index` with garbage — the temp
-/// copy succeeds, but `git add -A` rejects the corrupt index.
+/// copy succeeds, but the all-files `git add` rejects the corrupt index.
 #[rstest]
 fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
     fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write file");
@@ -3045,8 +3052,8 @@ fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("git add -A failed"),
-        "expected bail! to surface 'git add -A failed'; got stderr:\n{stderr}"
+        stderr.contains("git add -A -- . failed"),
+        "expected the failing git add command; got stderr:\n{stderr}"
     );
 }
 

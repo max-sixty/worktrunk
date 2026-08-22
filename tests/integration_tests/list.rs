@@ -3369,6 +3369,52 @@ fn test_list_working_tree_conflicts(mut repo: TestRepo) {
     });
 }
 
+/// A dirty worktree may contain untracked files outside its sparse-checkout
+/// definition. The temporary-index snapshot must still include the visible
+/// tracked change and produce the working-tree conflict result.
+#[rstest]
+fn test_list_working_tree_conflicts_cross_sparse_checkout_boundary(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+
+    std::fs::create_dir_all(repo.root_path().join("visible")).unwrap();
+    std::fs::create_dir_all(repo.root_path().join("hidden")).unwrap();
+    std::fs::write(repo.root_path().join("visible/shared.txt"), "base\n").unwrap();
+    std::fs::write(repo.root_path().join("hidden/tracked.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.commit("Add sparse fixture");
+
+    let feature = repo.add_worktree("feature");
+    std::fs::write(repo.root_path().join("visible/shared.txt"), "main\n").unwrap();
+    repo.commit("Change shared file on main");
+
+    repo.run_git_in(&feature, &["sparse-checkout", "init", "--cone"]);
+    repo.run_git_in(&feature, &["sparse-checkout", "set", "visible"]);
+    std::fs::write(feature.join("visible/shared.txt"), "feature\n").unwrap();
+    std::fs::create_dir_all(feature.join("hidden")).unwrap();
+    std::fs::write(feature.join("hidden/loose.txt"), "loose\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row");
+    assert_eq!(feature["default_branch"]["merge_conflicts"], true);
+}
+
 ///
 /// Even with --full, if the working tree is clean, we skip the working-tree check
 /// and just use the commit-level conflict detection.

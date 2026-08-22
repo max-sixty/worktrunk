@@ -61,7 +61,7 @@ impl<'repo> PreparedDiff<'repo> {
                     .current_dir(path)
                     .context(path_to_logging_context(path)),
             ),
-            DiffSource::TempIndex(index) => index.git(args.iter().cloned()),
+            DiffSource::TempIndex(index) => index.command(args.iter().cloned()),
         }
     }
 
