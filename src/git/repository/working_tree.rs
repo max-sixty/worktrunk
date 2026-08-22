@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use dashmap::mapref::entry::Entry;
+use path_slash::PathExt;
 
 use crate::path::canonicalize_with_parents;
 use crate::shell_exec::Cmd;
@@ -12,6 +13,13 @@ use dunce::canonicalize;
 use super::{GitError, LineDiff, Repository};
 use crate::git::CommandError;
 use crate::git::parse_numstat_line;
+
+const TEMP_INDEX_DIR: &str = "temp-index";
+const TEMP_INDEX_PREFIX: &str = "index-";
+
+fn temp_index_dir() -> PathBuf {
+    std::env::temp_dir().join("worktrunk").join(TEMP_INDEX_DIR)
+}
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
 ///
@@ -386,12 +394,19 @@ impl<'a> WorkingTree<'a> {
     /// each want porcelain (e.g., working-tree diff + conflict detection during
     /// `wt list`) share a single subprocess. Uses `--no-optional-locks` to avoid
     /// index-lock contention with the `git write-tree` run by
-    /// `WorkingTreeConflictsTask` in parallel.
+    /// `WorkingTreeConflictsTask` in parallel. Explicitly requests normal
+    /// untracked-file reporting so `status.showUntrackedFiles=no` cannot make
+    /// an untracked-only worktree look clean to callers.
     pub fn status_porcelain_cached(&self) -> anyhow::Result<String> {
         match self.repo.cache.status_porcelain.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let stdout = self.run_command(&["--no-optional-locks", "status", "--porcelain"])?;
+                let stdout = self.run_command(&[
+                    "--no-optional-locks",
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=normal",
+                ])?;
                 Ok(e.insert(stdout).clone())
             }
         }
@@ -819,7 +834,16 @@ impl<'a> WorkingTree<'a> {
         // index exists, copy it back, otherwise leave the path empty and
         // let the first `git` call against `GIT_INDEX_FILE` create a fresh
         // valid index there.
-        let temp = tempfile::NamedTempFile::new()
+        let temp_dir = temp_index_dir();
+        std::fs::create_dir_all(&temp_dir).with_context(|| {
+            format!(
+                "Failed to create temporary index directory {}",
+                temp_dir.display()
+            )
+        })?;
+        let temp = tempfile::Builder::new()
+            .prefix(TEMP_INDEX_PREFIX)
+            .tempfile_in(&temp_dir)
             .context("Failed to create temporary index")?
             .into_temp_path();
         std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
@@ -939,8 +963,8 @@ impl<'a> WorkingTree<'a> {
 /// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
 /// untracked, used by `wt list --full` / `wt statusline`),
 /// `WorkingTreeConflictsTask` (write-tree of dirty + untracked, for
-/// merge-conflict probing), and `wt step diff` (diff vs target merge-base
-/// with untracked).
+/// merge-conflict probing), `wt step diff` (diff vs target merge-base with
+/// untracked), and the `wt switch` unified/working preview tabs.
 pub struct TempIndex {
     temp: tempfile::TempPath,
     worktree_root: PathBuf,
@@ -955,6 +979,47 @@ impl TempIndex {
     /// UTF-8 path to the temp index file. Validated at construction.
     pub fn path(&self) -> &str {
         self.temp.to_str().expect("validated in temp_index()")
+    }
+
+    /// Register untracked files in the temporary index without adding their
+    /// contents. A following `git diff <base>` can then include those files as
+    /// new while preserving the user's real index and staging state. If the
+    /// temp namespace is inside the worktree, the pathspec excludes the whole
+    /// namespace so concurrent temporary indexes cannot enter each other's
+    /// diffs.
+    pub(super) fn register_untracked(&self) -> anyhow::Result<()> {
+        let mut args = vec![
+            "add".to_string(),
+            "--intent-to-add".to_string(),
+            // An untracked file may sit outside a sparse-checkout definition.
+            // Without --sparse git refuses the entire add, hiding both that
+            // file and otherwise-valid worktree changes from the preview.
+            "--sparse".to_string(),
+            "--".to_string(),
+            ".".to_string(),
+        ];
+        let temp_dir = canonicalize_with_parents(
+            self.temp
+                .parent()
+                .context("Temporary index has no parent directory")?,
+        );
+        let worktree_root = canonicalize_with_parents(&self.worktree_root);
+        if let Ok(relative) = temp_dir.strip_prefix(&worktree_root)
+            && !relative.as_os_str().is_empty()
+        {
+            args.push(format!(
+                ":(top,exclude,literal){}",
+                relative.to_slash_lossy()
+            ));
+        }
+        let output = self
+            .git(&args)
+            .run()
+            .context("Failed to register untracked files")?;
+        if !output.status.success() {
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
+        }
+        Ok(())
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1050,6 +1115,21 @@ mod tests {
             .unwrap()
             .expect("HEAD still resolved after second commit");
         assert_ne!(before, after, "head_sha must reflect the new commit");
+    }
+
+    #[test]
+    fn cached_porcelain_reports_untracked_files_hidden_by_user_config() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["config", "status.showUntrackedFiles", "no"]);
+        std::fs::write(test.root_path().join("hidden-by-config.txt"), "loose\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let status = repo.current_worktree().status_porcelain_cached().unwrap();
+
+        assert!(
+            status.contains("?? hidden-by-config.txt"),
+            "the shared status snapshot must override status.showUntrackedFiles=no: {status:?}"
+        );
     }
 
     #[test]

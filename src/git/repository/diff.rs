@@ -1,11 +1,165 @@
 //! Diff, history, and commit operations for Repository.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
 
+use crate::git::CommandError;
+use crate::shell_exec::Cmd;
+
+use super::working_tree::{TempIndex, WorkingTree, path_to_logging_context};
 use super::{DiffStats, LineDiff, Repository};
+
+enum DiffSource<'repo> {
+    Repository {
+        repo: &'repo Repository,
+        path: PathBuf,
+    },
+    TempIndex(TempIndex),
+}
+
+/// A fully specified `git diff` whose execution can be captured or streamed.
+///
+/// The source owns a temporary index when untracked files must participate in
+/// the diff. Keeping that index alive in this value makes multi-command reads
+/// such as a stat followed by a patch observe the same prepared worktree state.
+#[must_use]
+pub struct PreparedDiff<'repo> {
+    source: DiffSource<'repo>,
+    revisions: Vec<String>,
+}
+
+impl<'repo> PreparedDiff<'repo> {
+    fn new(
+        repo: &'repo Repository,
+        path: PathBuf,
+        revisions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            source: DiffSource::Repository { repo, path },
+            revisions: revisions.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    fn with_temp_index(
+        index: TempIndex,
+        revisions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            source: DiffSource::TempIndex(index),
+            revisions: revisions.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    fn command(&self, args: &[String]) -> Cmd {
+        match &self.source {
+            DiffSource::Repository { repo, path } => repo.with_object_store_env(
+                Cmd::new("git")
+                    .args(args.iter().cloned())
+                    .current_dir(path)
+                    .context(path_to_logging_context(path)),
+            ),
+            DiffSource::TempIndex(index) => index.git(args.iter().cloned()),
+        }
+    }
+
+    fn run(&self, args: &[String]) -> anyhow::Result<String> {
+        let output = self
+            .command(args)
+            .run()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+        if !output.status.success() {
+            return Err(CommandError::from_failed_output("git", args, &output).into());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Capture one diff invocation with `options` placed before the revisions.
+    ///
+    /// Revisions are fenced with `--end-of-options`, so even a ref beginning
+    /// with `-` is treated as a positional argument.
+    pub fn capture(
+        &self,
+        options: impl IntoIterator<Item = impl Into<String>>,
+    ) -> anyhow::Result<String> {
+        self.capture_with_git_options(std::iter::empty::<String>(), options)
+    }
+
+    /// Capture one diff invocation with git-wide options placed before the
+    /// `diff` subcommand and diff options placed after it.
+    pub fn capture_with_git_options(
+        &self,
+        git_options: impl IntoIterator<Item = impl Into<String>>,
+        diff_options: impl IntoIterator<Item = impl Into<String>>,
+    ) -> anyhow::Result<String> {
+        let mut args = vec!["--no-optional-locks".to_string()];
+        args.extend(git_options.into_iter().map(Into::into));
+        args.push("diff".to_string());
+        args.extend(diff_options.into_iter().map(Into::into));
+        args.push("--end-of-options".to_string());
+        args.extend(self.revisions.iter().cloned());
+        self.run(&args)
+    }
+
+    /// Capture a stat header followed by the colored patch.
+    ///
+    /// Returns `None` when the stat is empty, avoiding the second git command.
+    pub fn capture_stat_and_patch(&self, width: usize) -> anyhow::Result<Option<String>> {
+        let stat = self.capture([
+            "--stat".to_string(),
+            "--color=always".to_string(),
+            format!("--stat-width={width}"),
+        ])?;
+        if stat.trim().is_empty() {
+            return Ok(None);
+        }
+
+        let patch = self.capture(["--color=always"])?;
+        Ok(Some(format!("{stat}{patch}")))
+    }
+
+    /// Stream the diff, preserving `wt step diff`'s argument order so git owns
+    /// paging, coloring, and interpretation of caller-supplied arguments.
+    pub fn stream(&self, extra_args: &[String]) -> anyhow::Result<()> {
+        let mut args = vec!["diff".to_string()];
+        args.extend(self.revisions.iter().cloned());
+        args.extend_from_slice(extra_args);
+        self.command(&args).stream()
+    }
+}
+
+impl Repository {
+    /// Prepare an immutable revision diff in this repository's context.
+    pub fn prepare_diff(
+        &self,
+        revisions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> PreparedDiff<'_> {
+        PreparedDiff::new(self, self.discovery_path().to_path_buf(), revisions)
+    }
+}
+
+impl<'repo> WorkingTree<'repo> {
+    /// Prepare a diff against this worktree's tracked index and files.
+    pub fn prepare_diff(
+        &self,
+        revisions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> PreparedDiff<'repo> {
+        PreparedDiff::new(self.repo, self.path.clone(), revisions)
+    }
+
+    /// Prepare a diff that also includes untracked files without changing the
+    /// real index.
+    pub fn prepare_diff_with_untracked(
+        &self,
+        revisions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> anyhow::Result<PreparedDiff<'repo>> {
+        let index = self.temp_index()?;
+        index.register_untracked()?;
+        Ok(PreparedDiff::with_temp_index(index, revisions))
+    }
+}
 
 /// Subject and body for one commit in a range.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

@@ -1025,7 +1025,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 - **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status), plus the largest PR/MR number seen (sizes the CI column)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
-- **Git commands** — SHA-keyed disk caches: merge-tree, ancestry, diff-stats, and `wt switch` preview renders
+- **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo
 - **Previous branch** — the `wt switch -` target, re-recorded on the next switch
 

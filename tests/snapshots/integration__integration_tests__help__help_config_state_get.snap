@@ -72,7 +72,7 @@ Shows all stored state including:
 - [1mVars[0m: Custom variables per branch
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30-60s TTL), plus the largest PR/MR number seen (sizes the [2mwt list[0m CI column)
 - [1mSummaries[0m: Cached LLM-generated branch summaries (shown in [2mwt list --full[0m and [2mwt switch[0m preview)
-- [1mGit commands cache[0m: SHA-keyed disk caches — merge-tree, ancestry, diff-stats, and [2mwt switch[0m preview renders
+- [1mGit commands cache[0m: Cached merge-tree, ancestry, diff-stat, and [2mwt switch[0m preview results
 - [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Operation and debug logs
 - [1mTrash[0m: Staged worktree directories awaiting background deletion

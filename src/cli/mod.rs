@@ -689,8 +689,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
 | `Alt-o` | Open the selected row's PR/MR URL in the browser |
 | `Alt-r` | Refresh the list (pick up worktrees created elsewhere) |
 | `Esc` | Cancel |
-| `Alt-1`–`Alt-7` | Jump to a preview tab |
-| `Tab`/`Shift-Tab` | Cycle preview tabs forward/backward |
+| `Alt-1`–`Alt-8` | Jump to a preview tab |
+| `Tab`/`Shift-Tab` | Cycle available preview tabs forward/backward |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
@@ -704,13 +704,16 @@ Typing a gutter sigil filters by row kind: `+` narrows to linked worktrees and `
 
 **Preview tabs:**
 
-1. **HEAD±** — Diff of uncommitted changes
-2. **log** — Recent commits; commits already on the default branch have dimmed hashes
-3. **main…±** — Diff of changes since the merge-base with the default branch
-4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
-5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
-6. **pr** — The selected row's PR/MR, for any row whose branch has one
-7. **comments** — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
+1. **diff** — One net diff from the comparison base through the current worktree: committed, staged, unstaged, and untracked changes
+2. **working** — Staged, unstaged, and untracked changes against `HEAD`
+3. **committed** — Committed changes since the comparison base
+4. **log** — Recent commits; commits already on the default branch have dimmed hashes
+5. **remote⇅** — Ahead/behind diff vs upstream tracking branch
+6. **summary** — LLM-generated branch summary; requires `[list] summary = true` and [`commit.generation`](@/config.md#commit)
+7. **pr** — The selected row's PR/MR, for any row whose branch has one
+8. **comments** — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
+
+The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on **diff** for local rows and **pr** for a PR/MR listed by `--prs` but not available locally. `Tab` and `Shift-Tab` skip tabs without content; `Alt-1` through `Alt-8` open any tab directly. After you choose a tab, that choice stays active while you navigate.
 
 On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every `Alt-N` accelerator stays visible.
 

@@ -2655,7 +2655,7 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
 /// PR row streams in, `spawn_pr_previews` kicks off `gh pr view <n> --json
 /// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
 /// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
-/// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
+/// mode:4}` (Log) entry with non-empty bytes proves the whole mechanism end to
 /// end: `spawn_compute` → `compute_pr_log` → `parse_github_commits` → cache.
 ///
 /// `headRefOid` here is a SHA that isn't in the test repo's object store, so
@@ -2695,10 +2695,10 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
-    // Mode 2 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
+    // Mode 4 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
     let log_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2757,7 +2757,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     let entries = parsed["entries"].as_array().expect("entries array");
     let log_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2766,12 +2766,12 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
 
     // The comments tab has no local path, so its forge fetch failed (pr view →
     // exit 1); the closure caches a terminal "couldn't load" pane rather than
-    // leaving the slot empty. Mode 7 is Comments. A non-empty entry here can only
+    // leaving the slot empty. Mode 8 is Comments. A non-empty entry here can only
     // be that failure pane — a successful comments fetch is impossible with
     // `pr view` rigged to exit 1.
     let comments_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| {
             panic!("failed comments fetch must cache a couldn't-load pane:\n{stdout}")
         });
@@ -2786,7 +2786,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
 /// strand the tab on its loading spinner for the session — there's no in-session
 /// retry). Here the PR carries no `headRefOid`, so the `log` tab can't take the
 /// local fast path and must hit the forge API, and `gh pr view` is rigged to
-/// exit 1 — so both the `log` (mode 2) and `comments` (mode 7) cache entries are
+/// exit 1 — so both the `log` (mode 4) and `comments` (mode 8) cache entries are
 /// present and non-empty, each the couldn't-load pane.
 #[rstest]
 fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
@@ -2822,8 +2822,8 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     // Both deferred tabs cached a terminal couldn't-load pane (non-empty), never
-    // an empty slot. Modes: 2 = Log, 7 = Comments.
-    for (mode, tab) in [(2, "log"), (7, "comments")] {
+    // an empty slot. Modes: 4 = Log, 8 = Comments.
+    for (mode, tab) in [(4, "log"), (8, "comments")] {
         let entry = entries
             .iter()
             .find(|e| e["branch"] == "pr:42" && e["mode"] == mode)
@@ -2835,10 +2835,10 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     }
 }
 
-/// The `comments` tab (7) loads the PR discussion in the background, the same
+/// The `comments` tab (8) loads the PR discussion in the background, the same
 /// way the `log` tab loads commits: `spawn_pr_previews` fires `gh pr view <n>
 /// --json comments` keyed by the row's `pr:{N}` token. A `{branch:"pr:42",
-/// mode:7}` entry in the dry-run cache dump proves `compute_pr_comments` →
+/// mode:8}` entry in the dry-run cache dump proves `compute_pr_comments` →
 /// `render_github_comments` → cache ran end to end. (`gh pr view --json
 /// commits` and `--json comments` both match the mock's `pr view` key, so the
 /// canned response carries both arrays; serde ignores the one each renderer
@@ -2875,10 +2875,10 @@ fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
-    // Mode 7 is Comments; the row keys its cache by `pr:42`.
+    // Mode 8 is Comments; the row keys its cache by `pr:42`.
     let comments_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .find(|e| e["branch"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| panic!("no pr:42 Comments cache entry in dump:\n{stdout}"));
     assert!(
         comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2921,7 +2921,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 /// GitLab counterpart of the GitHub `_log_tab` / `_comments_tab` dry-run tests:
 /// an MR row's deferred `log` and `comments` tabs load via background `glab api
 /// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
-/// calls keyed by the row's `mr:{N}` token. Both `mode:2` (Log) and `mode:7`
+/// calls keyed by the row's `mr:{N}` token. Both `mode:4` (Log) and `mode:8`
 /// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
 /// `compute_pr_comments` → `parse_gitlab_commits` / `render_gitlab_notes` →
 /// cache for the GitLab forge — the half the unit tests (canned JSON straight
@@ -2964,7 +2964,7 @@ fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
-    for (mode, label) in [(2, "Log"), (7, "Comments")] {
+    for (mode, label) in [(4, "Log"), (8, "Comments")] {
         let entry = entries
             .iter()
             .find(|e| e["branch"] == "mr:7" && e["mode"] == mode)
