@@ -1,0 +1,5 @@
+---
+source: src/commands/picker/items.rs
+expression: "PickerRow::loading_placeholder(mode)"
+---
+[2m↳[22m [2mLoading complete diff…[22m

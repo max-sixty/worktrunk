@@ -1670,7 +1670,7 @@ pub fn handle_picker(
         _ => (80, 24),
     };
 
-    // Reset the preview tab to working-tree and select the layout from the
+    // Reset the preview tab to the complete diff and select the layout from the
     // terminal size.
     let state = PreviewState::new(PreviewLayout::for_dimensions(
         term_width as f64,
@@ -1684,7 +1684,8 @@ pub fn handle_picker(
     // and `root()`, and is also short-circuited when `collect::collect` calls
     // `repo.url_template()` → `load_project_config()` → `project_config_path()`
     // (which runs `prewarm_info` again — now a cache hit).
-    let _ = repo.current_worktree().prewarm_info();
+    let current_worktree = repo.current_worktree();
+    let _ = current_worktree.prewarm_info();
 
     // Preview cache is created up-front so the speculative first-item
     // preview can run in parallel with `collect::collect` below. Tasks
@@ -1714,16 +1715,22 @@ pub fn handle_picker(
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
     // Speculative warm-up: the picker sorts the current worktree first, and
-    // the default tab (WorkingTree = `git diff HEAD` in that worktree) is
-    // what skim will render first. Kicking this off before `collect::collect`
-    // overlaps preview compute with list collection.
+    // the default tab (UnifiedDiff = comparison base through the worktree,
+    // including untracked files) is what skim will render first. Kicking this
+    // off before `collect::collect` overlaps preview compute with list
+    // collection.
     // The real spawn later skips this key via `contains_key`.
-    if let (Ok(Some(branch)), Ok(path)) = (
-        repo.current_worktree().branch(),
-        repo.current_worktree().root(),
+    if let (Ok(Some(branch)), Ok(path), Ok(Some(head))) = (
+        current_worktree.branch(),
+        current_worktree.root(),
+        current_worktree.head_sha(),
     ) {
         use super::list::model::{ItemKind, ListItem, WorktreeData};
-        let mut item = ListItem::new_branch(String::new(), branch);
+        // UnifiedDiff resolves its comparison base from the row's HEAD. An
+        // empty placeholder would let this speculative producer cache an
+        // error before collection's real row gets a chance to fill the same
+        // key, so the warm-up only runs with a resolved commit.
+        let mut item = ListItem::new_branch(head, branch);
         item.kind = ItemKind::Worktree(Box::new(WorktreeData {
             path,
             ..Default::default()
@@ -1736,7 +1743,7 @@ pub fn handle_picker(
         orchestrator.spawn_preview(
             &orchestrator.generation(),
             Arc::new(item),
-            PreviewMode::WorkingTree,
+            PreviewMode::UnifiedDiff,
             dims,
         );
     }
@@ -1984,10 +1991,10 @@ pub fn handle_picker(
         .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Preview-tab switching (alt-1..alt-7 jump to a tab; tab / shift-tab
+            // Preview-tab switching (alt-1..alt-8 jump to a tab; tab / shift-tab
             // cycle) is installed natively below via `install_preview_tab_keybindings`
             // rather than here — those keys run Rust callbacks, not shell commands.
-            // Bare digits 1-7 stay unbound so they flow to the query input (a PR
+            // Bare digits 1-8 stay unbound so they flow to the query input (a PR
             // number, or digits within a branch name).
             //
             // Create new worktree with query as branch name (alt-c for "create")
@@ -2197,12 +2204,12 @@ pub fn handle_picker(
     Ok(())
 }
 
-/// Install the preview-tab switches into skim's keymap: alt-1…alt-7 jump to a
+/// Install the preview-tab switches into skim's keymap: alt-1…alt-8 jump to a
 /// tab, tab / shift-tab cycle forward / backward.
 ///
 /// skim's string bind API only maps keys to its built-in actions, so these go
-/// in as `Action::Custom` callbacks that set the process-wide
-/// [`PreviewStateData`] mode and return `Event::RunPreview` to repaint. They're
+/// in as `Action::Custom` callbacks that update [`PreviewStateData`] and return
+/// `Event::RunPreview` to repaint. They're
 /// native rather than `execute-silent` shell commands, so they behave
 /// identically everywhere — the previous `echo`/`tr`/`mv` keybind bodies ran
 /// through skim's shell, which on Windows is cmd.exe and has neither `tr` nor
@@ -2219,19 +2226,21 @@ fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
     // alt-N jumps to tab N (1-indexed, matching PreviewMode's discriminant).
     let switch_to = |mode: PreviewMode| {
         Action::Custom(ActionCallback::new_sync(move |_app| {
-            PreviewStateData::set_mode(mode);
+            PreviewStateData::select_mode(mode);
             Ok(vec![Event::RunPreview])
         }))
     };
-    for digit in 1..=7u8 {
+    for digit in 1..=8u8 {
         if let Ok(key) = parse_key(&format!("alt-{digit}")) {
             keymap.insert(key, vec![switch_to(PreviewMode::from_u8(digit))]);
         }
     }
 
     let cycle = |forward: bool| {
-        Action::Custom(ActionCallback::new_sync(move |_app| {
-            PreviewStateData::rotate(forward);
+        Action::Custom(ActionCallback::new_sync(move |app| {
+            if app.item_list.selected().is_some() {
+                PreviewStateData::request_cycle(forward);
+            }
             Ok(vec![Event::RunPreview])
         }))
     };
@@ -2620,7 +2629,7 @@ pub mod tests {
         let mut keymap = KeyMap::default();
         install_preview_tab_keybindings(&mut keymap);
 
-        let mut specs: Vec<String> = (1..=7).map(|d| format!("alt-{d}")).collect();
+        let mut specs: Vec<String> = (1..=8).map(|d| format!("alt-{d}")).collect();
         specs.extend(["tab", "btab", "shift-btab", "shift-tab"].map(String::from));
         for spec in specs {
             let key = parse_key(&spec).expect("known key spec parses");

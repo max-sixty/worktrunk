@@ -28,16 +28,20 @@
 //! **On-disk** — content-addressed, cross-session, consulted only on an
 //! in-memory miss. [`super::preview_cache`] holds Log / BranchDiff /
 //! UpstreamDiff keyed by git SHA(s) + dimensions; [`crate::summary`] holds
-//! summaries keyed by a hash of the diff. WorkingTree, Pr, and Comments have no
-//! disk tier. Because these keys *are* content-addressed, moved content yields a
-//! fresh key and a natural miss — the disk tier is never stale, which is what
-//! makes clearing the in-memory tier above it cheap (an unchanged branch
-//! re-reads disk; only changed content recomputes).
+//! summaries keyed by a hash of the diff. UnifiedDiff reuses BranchDiff's disk
+//! entry for a clean worktree or branch-only row; a dirty UnifiedDiff and every
+//! WorkingTree preview are live-only. Pr and Comments have no general disk tier
+//! (GitHub comments use their own `updatedAt` cache below). Because the stable
+//! keys *are* content-addressed, moved content yields a fresh key and a natural
+//! miss — the disk tier is never stale, which is what makes clearing the
+//! in-memory tier above it cheap (an unchanged branch re-reads disk; only
+//! changed content recomputes).
 //!
 //! # What backs an in-memory miss, per mode
 //!
 //! | Mode | Disk tier | Recompute on miss |
 //! |------|-----------|-------------------|
+//! | UnifiedDiff | BranchDiff cache when clean / branch-only; none when dirty | cached committed diff or live net worktree diff |
 //! | WorkingTree | none (a dirty tree has no stable hash) | live `git diff HEAD` |
 //! | Log / BranchDiff / UpstreamDiff | [`super::preview_cache`], SHA-keyed | `git`, then write disk |
 //! | Summary | [`crate::summary`], diff-hash-keyed | LLM, then write disk |
@@ -50,9 +54,9 @@
 //!   `(branch, Pr)` entry when a row's live status changes, `--prs` rows drop
 //!   theirs on rebuild, and a corrected PR number drops the stale `Comments`
 //!   thread (see [`super::progressive_handler`]).
-//! - **WorkingTree / Log / BranchDiff / UpstreamDiff / Summary** have *no*
-//!   per-event in-memory invalidation. Within a session they are reconciled with
-//!   moved content only by a refresh.
+//! - **UnifiedDiff / WorkingTree / Log / BranchDiff / UpstreamDiff / Summary**
+//!   have *no* per-event in-memory invalidation. Within a session they are
+//!   reconciled with moved content only by a refresh.
 //! - **Refresh (`alt-r`)** calls [`PreviewOrchestrator::refresh`] (from
 //!   `PipelineFactory::spawn`, gated on `rebuild_repo`), which supersedes the
 //!   prior spawn's producers, rebinds the compute repo to the rebuilt spawn's,
@@ -107,10 +111,12 @@
 //! choke point: it inserts into the cache and pokes [`super::preview_notify`] so a
 //! compute that lands after skim already drew the pane repaints without a
 //! keystroke. Precompute is tiered — [`PreviewOrchestrator::spawn_initial_precompute`]
-//! at skeleton time (item 0 × the four local modes + summary, plus every row's
-//! default tab) and [`PreviewOrchestrator::spawn_deferred_precompute`] after the
-//! row drain (the rest); Pr and Comments are never precomputed. Both tiers re-run
-//! on every spawn, including a refresh (after its clear). `spawn_preview` and
+//! at skeleton time (item 0 × the five local modes + summary, plus the default
+//! tab for cheap branch-only rows) and [`PreviewOrchestrator::spawn_deferred_summaries`]
+//! after the row drain (summaries for the remaining rows). Off-screen worktree
+//! panes are demand-loaded instead of speculatively duplicating live worktree
+//! I/O; Pr and Comments are never precomputed. Both tiers re-run on every spawn,
+//! including a refresh (after its clear). `spawn_preview` and
 //! `spawn_compute` short-circuit on an in-memory hit, so a refresh must clear
 //! first or their recompute is a no-op; `spawn_summary` has no such guard and
 //! always recomputes — cheap, since `crate::summary` is gated by its own
@@ -157,14 +163,12 @@ use super::summary;
 use crate::commands::list::collect::COLLECT_POOL;
 use crate::commands::list::model::ListItem;
 
-/// The picker's initial preview tab — `WorkingTree`, shown when the
-/// picker opens. Pre-computed for every row at skeleton time so j/k
-/// navigation lands on warm content without paying the 4-mode bulk cost
-/// per row during the row-fill window. The remaining [`LOCAL_GIT_MODES`]
-/// for items 1..N are deferred until `spawn_deferred_precompute` fires
-/// (after row drain); for the landing row they fire at skeleton time so
-/// tab-cycling is responsive immediately.
-const INITIAL_MODE: PreviewMode = PreviewMode::WorkingTree;
+/// The picker's initial preview tab — `UnifiedDiff`, shown when the picker
+/// opens. Precomputed for the landing row and cheap branch-only rows; off-screen
+/// worktrees use the dedicated demand worker when selected so an untracked-heavy
+/// tree cannot compete with initial row collection. For the landing row, every
+/// local mode fires at skeleton time so tab-cycling is responsive immediately.
+const INITIAL_MODE: PreviewMode = PreviewMode::UnifiedDiff;
 
 struct PendingGuard(Arc<AtomicUsize>);
 
@@ -216,12 +220,8 @@ impl Default for SpawnGeneration {
 /// dedicated worker thread.
 ///
 /// Precompute alone leaves a gap: `SkimItem::preview` never computes (it only
-/// reads the in-memory cache), so a tab whose precompute hasn't landed sits on
-/// its loading placeholder until the background queue reaches it — behind the
-/// row pipeline, its network tail (`COLLECT_POOL` workers park on blocking
-/// `gh` subprocesses, and rayon has no task priorities), and the mode-major
-/// deferred tier. In a large repo with many worktrees that's several seconds
-/// of queue for a tab the user is staring at. The demand worker closes the
+/// reads the in-memory cache), so a tab without precompute would otherwise sit
+/// on its loading placeholder. The demand worker closes the
 /// gap: `preview()` routes a cache miss on a local-git tab here
 /// ([`PreviewMode::is_local_git`]), and the worker computes exactly that key,
 /// off `COLLECT_POOL` entirely — so the looked-at tab costs one disk-cache
@@ -705,16 +705,17 @@ impl PreviewOrchestrator {
 
     /// Spawn the skeleton-time pre-compute tier.
     ///
-    /// Fires at `on_skeleton`. Two layers of priority:
-    /// - First item × all 4 modes + first item summary — the user lands on
+    /// Fires at `on_skeleton`. Two layers of work:
+    /// - First item × all 5 modes + first item summary — the user lands on
     ///   row 0 and frequently tab-cycles modes there.
-    /// - Items 1..N × [`INITIAL_MODE`] only — pre-warms the default tab
-    ///   for every row so quick j/k navigation hits cached content,
-    ///   bounded contention with the row pipeline (~N tasks).
+    /// - Branch-only items 1..N × [`INITIAL_MODE`] — pre-warms the committed
+    ///   diff they can serve cheaply from the SHA-keyed cache. Off-screen
+    ///   worktrees are demand-loaded when selected: their untracked-inclusive
+    ///   default can require an index copy and full `git add -N` walk.
     ///
-    /// The remaining [`LOCAL_GIT_MODES`] for items 1..N and their summaries
-    /// are deferred to [`Self::spawn_deferred_precompute`], which fires
-    /// after the row pipeline tears down.
+    /// Summaries for items 1..N are deferred to
+    /// [`Self::spawn_deferred_summaries`], which fires after the row pipeline
+    /// tears down. Their subsidiary local-git modes are demand-loaded.
     pub(super) fn spawn_initial_precompute(
         &self,
         spawn_gen: &SpawnGeneration,
@@ -732,39 +733,34 @@ impl PreviewOrchestrator {
             self.spawn_summary(spawn_gen, Arc::clone(first), llm.to_string());
         }
 
-        // Items 1..N: default tab only. Other modes wait for drain.
-        for item in items.iter().skip(1) {
+        // Branch-only items 1..N: default tab only. Worktree-backed rows and
+        // all other local modes are demand-loaded.
+        for item in items
+            .iter()
+            .skip(1)
+            .filter(|item| item.worktree_data().is_none())
+        {
             self.spawn_preview(spawn_gen, Arc::clone(item), INITIAL_MODE, preview_dims);
         }
     }
 
-    /// Spawn the deferred pre-compute tier for items 1..N.
+    /// Spawn configured summaries for items 1..N after collection completes.
     ///
     /// Fires from the picker handler's `on_collect_complete` hook — i.e.
     /// after `collect::collect`'s drain ends. `COLLECT_POOL` serves
     /// both the row pipeline and the preview pipeline. Deferring this
     /// tier keeps these submissions out of that pool's injector while
     /// row tasks are still landing on workers' local deques. The
-    /// default tab for these rows already fired at skeleton time via
-    /// [`Self::spawn_initial_precompute`]; what's left is the rest of
-    /// [`LOCAL_GIT_MODES`] plus summaries.
-    ///
-    /// Spawn order: mode-major across previews, then summaries last —
-    /// each LLM call can take seconds. Called from outside any rayon
-    /// worker (the picker-collect bg thread), so submissions land on
-    /// rayon's FIFO injector and workers pick previews before summaries.
-    pub(super) fn spawn_deferred_precompute(
+    /// Each LLM call can take seconds. Called from outside any rayon worker
+    /// (the picker-collect bg thread), so submissions land on rayon's FIFO
+    /// injector. Local-git subsidiary modes are served by the demand worker
+    /// when selected instead of being computed for every unseen row.
+    pub(super) fn spawn_deferred_summaries(
         &self,
         spawn_gen: &SpawnGeneration,
         rest: &[Arc<ListItem>],
-        preview_dims: (usize, usize),
         llm_command: Option<&str>,
     ) {
-        for mode in LOCAL_GIT_MODES.into_iter().filter(|m| *m != INITIAL_MODE) {
-            for item in rest {
-                self.spawn_preview(spawn_gen, Arc::clone(item), mode, preview_dims);
-            }
-        }
         if let Some(llm) = llm_command {
             for item in rest {
                 self.spawn_summary(spawn_gen, Arc::clone(item), llm.to_string());
@@ -825,23 +821,34 @@ impl PreviewOrchestrator {
     }
 
     /// Preview-cache inventory for the dry-run dump: one sorted
-    /// `{branch, mode, bytes}` object per cached preview. Byte-length only
-    /// (not content) keeps output small and deterministic across terminals.
+    /// `{branch, mode, bytes, content}` object per cached preview. Content is
+    /// included because dry-run integration tests need to distinguish a real
+    /// preview from an equally non-empty error pane; the dump is test-only.
     pub(super) fn cache_entries_json(&self) -> serde_json::Value {
         let mut entries: Vec<_> = self
             .cache
             .iter()
             .map(|e| {
                 let (branch, mode) = e.key();
-                (branch.clone(), *mode as u8, e.value().len())
+                (
+                    branch.clone(),
+                    *mode as u8,
+                    e.value().len(),
+                    e.value().clone(),
+                )
             })
             .collect();
         entries.sort();
 
         entries
             .into_iter()
-            .map(|(branch, mode, bytes)| {
-                serde_json::json!({ "branch": branch, "mode": mode, "bytes": bytes })
+            .map(|(branch, mode, bytes, content)| {
+                serde_json::json!({
+                    "branch": branch,
+                    "mode": mode,
+                    "bytes": bytes,
+                    "content": content,
+                })
             })
             .collect()
     }
@@ -1137,9 +1144,8 @@ mod tests {
 
     /// End-to-end demand path: a `preview()` cache miss on a local-git tab is
     /// computed by the demand worker and served — without any precompute
-    /// spawn touching the pool. Pins the fix for the "navigated-to tab waits
-    /// behind the whole precompute queue" latency: the placeholder used to
-    /// sit until the deferred tier happened to reach the key.
+    /// spawn touching the pool. Pins that demand-loaded subsidiary panes do
+    /// not depend on speculative bulk precompute.
     #[test]
     fn preview_miss_is_served_by_demand_worker() {
         use super::super::items::{LocalCheckout, LocalContent, PickerRow};
@@ -1170,7 +1176,7 @@ mod tests {
             }),
         };
 
-        // The picker opens on WorkingTree — the process-global default tab,
+        // The picker opens on UnifiedDiff — the process-global default tab,
         // which this test deliberately leaves untouched (other tests read
         // it). This render misses and posts the demand. No assertion on the
         // returned placeholder: the worker races the render's own cache read
@@ -1190,7 +1196,7 @@ mod tests {
 
         // The demand worker fills the key with the real diff. Bounded poll so
         // a dead worker fails instead of hanging the suite.
-        let key = ("main".to_string(), PreviewMode::WorkingTree);
+        let key = ("main".to_string(), PreviewMode::UnifiedDiff);
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !orch.cache.contains_key(&key) {
             assert!(
@@ -1202,7 +1208,43 @@ mod tests {
         let served = orch.cache.get(&key).unwrap().clone();
         assert!(
             served.contains("README"),
-            "demand-computed working-tree diff served: {served:?}"
+            "demand-computed complete diff served: {served:?}"
+        );
+    }
+
+    #[test]
+    fn initial_precompute_skips_offscreen_worktrees_but_warms_branches() {
+        let (t, first) = dirty_worktree_item();
+        let head = first.head().to_string();
+        t.repo.run_command(&["branch", "branch-only"]).unwrap();
+
+        let mut offscreen = ListItem::new_branch(head.clone(), "offscreen".to_string());
+        offscreen.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: t.path().to_path_buf(),
+            ..Default::default()
+        }));
+        let offscreen = Arc::new(offscreen);
+        let branch = Arc::new(ListItem::new_branch(head, "branch-only".to_string()));
+
+        let orch = orch_for(&t);
+        orch.spawn_initial_precompute(
+            &orch.generation(),
+            &[first, Arc::clone(&offscreen), Arc::clone(&branch)],
+            (80, 24),
+            None,
+        );
+        orch.wait_for_idle();
+
+        assert!(
+            !orch
+                .cache
+                .contains_key(&("offscreen".to_string(), PreviewMode::UnifiedDiff)),
+            "off-screen worktree should wait for selected-row demand"
+        );
+        assert!(
+            orch.cache
+                .contains_key(&("branch-only".to_string(), PreviewMode::UnifiedDiff)),
+            "branch-only default should be prewarmed from the committed diff"
         );
     }
 
@@ -1531,6 +1573,7 @@ mod tests {
             assert!(e["branch"].is_string());
             assert!(e["mode"].is_number());
             assert!(e["bytes"].is_number());
+            assert!(e["content"].is_string());
         }
     }
 }

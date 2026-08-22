@@ -76,6 +76,12 @@ pub struct BranchDiffSpec {
     /// options: a single three-dot range `["{base}...{head}"]` normally, or
     /// `["{empty-tree}", "{head}"]` for an orphan.
     pub revs: Vec<String>,
+    /// Single tree-ish to compare with the worktree when rendering a unified
+    /// committed + uncommitted diff: the merge-base SHA normally, or the empty
+    /// tree for an orphan. `None` only when merge-base resolution failed; unlike
+    /// the committed-only three-dot diff, a worktree diff has no correct range
+    /// fallback in that case.
+    pub working_base: Option<String>,
     /// Display name of the comparison base, for "no file changes vs X".
     pub base_name: String,
     /// Stable SHA identifying the base for disk-cache keying: the base's commit
@@ -646,17 +652,27 @@ impl Repository {
         // merge-base *error* (invalid/unreachable object) is NOT an orphan —
         // fall through to the normal three-dot range and let the diff surface
         // the failure rather than dumping the whole tree as "the branch".
-        let (revs, cache_sha) = if matches!(self.merge_base_by_sha(base_sha, head), Ok(None)) {
-            (
+        let (revs, working_base, cache_sha) = match self.merge_base_by_sha(base_sha, head) {
+            Ok(None) => (
                 vec![EMPTY_TREE_SHA.to_string(), head.to_string()],
+                Some(EMPTY_TREE_SHA.to_string()),
                 EMPTY_TREE_SHA.to_string(),
-            )
-        } else {
-            (vec![format!("{base_sha}...{head}")], base_sha.to_string())
+            ),
+            Ok(Some(merge_base)) => (
+                vec![format!("{base_sha}...{head}")],
+                Some(merge_base),
+                base_sha.to_string(),
+            ),
+            Err(_) => (
+                vec![format!("{base_sha}...{head}")],
+                None,
+                base_sha.to_string(),
+            ),
         };
 
         Some(BranchDiffSpec {
             revs,
+            working_base,
             base_name: base.name.clone(),
             cache_sha,
         })

@@ -852,15 +852,15 @@ fn gitlab_mr_status(
     }
 }
 
-/// The pane for the tabs a `--prs` row leaves empty — working-tree (1),
-/// branch-diff (3), upstream (4), summary (5). The head branch isn't checked
+/// The pane for the tabs a `--prs` row leaves empty — complete diff (1),
+/// working-tree (2), branch-diff (3), upstream (5), summary (6). The head branch isn't checked
 /// out locally, so there's no working tree or diff to show; point the user at
-/// the `pr` tab, which holds the PR/MR metadata. The `log` tab (2) is *not*
+/// the `pr` tab, which holds the PR/MR metadata. The `log` tab (4) is *not*
 /// empty — it loads commits in the background (see [`compute_pr_log`]).
 pub(super) fn pr_row_empty_placeholder() -> String {
     let reset = Reset;
     cformat!(
-        "{INFO_SYMBOL}{reset} Not checked out locally — press <bold>alt-6</>{reset} for PR details, Enter to fetch & switch\n"
+        "{INFO_SYMBOL}{reset} Not checked out locally — press <bold>alt-7</>{reset} for PR details, Enter to fetch & switch\n"
     )
 }
 
@@ -1974,18 +1974,18 @@ mod tests {
     }
 
     #[test]
-    fn preview_renders_tabs_and_placeholder_off_the_pr_tab() {
-        // No tab switch happens here, so the in-memory `read_mode()` is its
-        // default (WorkingTree) — empty on a --prs row — so `preview()` renders
-        // the shared tab bar plus the "not checked out" placeholder. Drives the
-        // real `SkimItem::preview` (the `--prs` streaming path is too async to
-        // exercise it reliably under a PTY). `context.width` (80) is wide enough
-        // for the full tab bar, so the `pr` / `comments` tabs show their labels.
+    fn preview_defaults_to_pr_tab_for_forge_only_row() {
+        // Before an explicit tab choice, a `--prs` row opens on its PR details
+        // rather than an empty local-diff placeholder. Drives the real
+        // `SkimItem::preview` (the `--prs` streaming path is too async to
+        // exercise it reliably under a PTY).
+        let _state =
+            super::super::preview::PreviewState::new(super::super::preview::PreviewLayout::Right);
         let pr = pr_item(entry(RefType::Pr, 7, "Title"), 120, Some(&grid()));
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
-            width: 80,
+            width: 120,
             height: 24,
             current_index: 0,
             current_selection: "",
@@ -1998,11 +1998,11 @@ mod tests {
         // Assert on the ANSI-stripped bar so the check targets the tab labels
         // themselves, not a coincidental substring of the styled controls line.
         let bar = plain(&text);
-        assert!(bar.contains("6: pr"), "pr tab present: {bar:?}");
-        assert!(bar.contains("7: comments"), "comments tab present: {bar:?}");
+        assert!(bar.contains("7: pr"), "pr tab present: {bar:?}");
+        assert!(bar.contains("8: comments"), "comments tab present: {bar:?}");
         assert!(
-            text.contains("Not checked out locally"),
-            "placeholder present: {text:?}"
+            text.contains("Title") && !text.contains("Not checked out locally"),
+            "PR details are the automatic pane: {text:?}"
         );
     }
 
@@ -2010,7 +2010,7 @@ mod tests {
     fn log_tab_reads_cache_then_placeholder() {
         // The deferred `log` tab reads the shared cache keyed by the row's
         // output token. A miss shows the loading placeholder (pointing at
-        // alt-2); once the background fetch lands a value under that key, the
+        // alt-4); once the background fetch lands a value under that key, the
         // pane shows it.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let pr = pr_item_with_cache(entry(RefType::Pr, 42, "t"), 120, None, Arc::clone(&cache));
@@ -2163,7 +2163,7 @@ mod tests {
     fn comments_tab_reads_cache_then_placeholder() {
         // Like the log tab, the deferred `comments` tab reads the shared cache
         // keyed by the row's output token, with a loading placeholder (pointing
-        // at alt-7) on a miss.
+        // at alt-8) on a miss.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let pr = pr_item_with_cache(entry(RefType::Mr, 7, "t"), 120, None, Arc::clone(&cache));
 

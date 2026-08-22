@@ -17,7 +17,7 @@ use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, visual_width};
+use worktrunk::styling::{HINT_SYMBOL, INFO_SYMBOL, WARNING_SYMBOL, visual_width};
 
 use super::super::list::ci_status::{PrRef, PrStatus, ReviewState};
 use super::super::list::model::ListItem;
@@ -340,62 +340,18 @@ impl SkimItem for HeaderSkimItem {
     }
 }
 
-/// Render a `git diff` preview body (stat header, then the colored diff):
-/// `Some` when the diff is non-empty, `None` when it's empty (or the stat
-/// command failed). Callers render their own empty-state headline — the
-/// headline names the row's branch, which must stay out of the SHA-keyed
-/// disk cache (see [`preview_cache::BranchDiffCacheEntry`]), so this helper
-/// only ever produces the name-free body.
-///
-/// `prefix` is the command through the `diff` subcommand (e.g. `["diff"]` or
-/// `["-C", path, "diff"]`); `revs` are the positional revisions. Both commands
-/// use `--no-optional-locks` to avoid index lock contention, as `wt list`'s
-/// `git status` does: a preview runs on a background thread against a worktree
-/// the user may be working in, and can be signalled mid-run by
-/// [`worktrunk::shell_exec::cancel_background_commands`].
-///
-/// The diff options precede an `--end-of-options` sentinel, which fences the
-/// positional `revs` so a ref that looks like a flag (a branch literally named
-/// `-x` or `--foo`) can't be misparsed as an option. Today's callers pass
-/// resolved SHAs and `HEAD`, but the fence keeps the helper safe for any future
-/// caller that passes a raw name.
-fn compute_diff_preview(
-    repo: &Repository,
-    prefix: &[&str],
-    revs: &[&str],
-    width: usize,
-) -> Option<String> {
-    let stat_width_arg = format!("--stat-width={width}");
-
-    // Check stat output first.
-    let mut stat_args = vec!["--no-optional-locks"];
-    stat_args.extend_from_slice(prefix);
-    stat_args.extend([
-        "--stat",
-        "--color=always",
-        stat_width_arg.as_str(),
-        "--end-of-options",
-    ]);
-    stat_args.extend_from_slice(revs);
-
-    let stat = repo.run_command(&stat_args).ok()?;
-    if stat.trim().is_empty() {
-        return None;
-    }
-
-    let mut output = stat;
-
-    // Build diff args with color.
-    let mut diff_args = vec!["--no-optional-locks"];
-    diff_args.extend_from_slice(prefix);
-    diff_args.extend(["--color=always", "--end-of-options"]);
-    diff_args.extend_from_slice(revs);
-
-    if let Ok(diff) = repo.run_command(&diff_args) {
-        output.push_str(&diff);
-    }
-
-    Some(output)
+/// What the shared porcelain snapshot says about the worktree diff path.
+/// Only an untracked file requires the temporary-index path; tracked-only
+/// changes can use ordinary `git diff` without copying or updating an index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorktreeDiffState {
+    Clean,
+    TrackedOnly,
+    HasUntracked,
+    /// Status is an optimization hint, not the authority for rendering. If it
+    /// fails, use the inclusive path and let the actual diff report success or
+    /// failure rather than incorrectly declaring the tree clean.
+    Unknown,
 }
 
 /// Wrapper to implement SkimItem for ListItem.
@@ -470,29 +426,24 @@ pub(super) struct PickerRow {
     pub output_token: String,
     /// Shared cache for pre-computed previews (all modes)
     pub preview_cache: PreviewCache,
-    /// PR/MR status for the `pr`/`comments` tabs and the folded matcher tokens.
-    /// LIVE for a worktree row — primed from the CI cache and overwritten as the
-    /// `CiStatus` task streams in (so the `pr` tab reflects the live fetch);
-    /// PRE-FILLED and STATIC for a `--prs` row (from `PrEntry::display_status`,
-    /// never mutated within a row's life; a rebuild re-renders the `(pr:N, Pr)`
-    /// memo — see `prs::listed_pr_row`).
+    /// PR/MR status for the `pr`/`comments` tabs and matcher tokens. Live for a
+    /// local row, pre-filled and static for a listed `--prs` row.
     pub pr_status: PrStatusSlot,
     /// Surfaces a background preview fill without a keystroke. `preview()`
     /// records the row's awaited `(preview_key, mode)` here on every render; the
     /// orchestrator pokes a repaint when that key's compute lands (see
     /// [`PreviewNotifier`]).
     pub notifier: Arc<PreviewNotifier>,
-    /// Local-checkout data — `Some` for a worktree row, `None` for a listed
-    /// `--prs` row (whose head branch isn't checked out, so it has no working
-    /// tree, diffs, or local `ListItem`). Its presence is the single axis the
-    /// preview/output paths branch on.
+    /// Local-branch data — `Some` for a local worktree or branch-only row,
+    /// `None` for a listed `--prs` row (whose head isn't available as a local
+    /// `ListItem`). Its presence is the single axis the preview/output paths
+    /// branch on.
     pub local: Option<LocalCheckout>,
 }
 
-/// The worktree-backed half of a [`PickerRow`]: present only when the row's
-/// branch is checked out locally. A listed `--prs` row carries `None` and
-/// renders its local-checkout tabs (working-tree, branch-diff, upstream,
-/// summary) as placeholders.
+/// The local-git-backed half of a [`PickerRow`]: present for local worktree and
+/// branch-only rows. A listed `--prs` row carries `None` and renders its local
+/// diff/summary tabs as placeholders.
 pub(super) struct LocalCheckout {
     /// The row's snapshot `ListItem`, for the demand worker: a `preview()`
     /// cache miss on a local-git tab sends this item to [`PreviewDemand`] so
@@ -509,21 +460,15 @@ pub(super) struct LocalCheckout {
     /// re-seed the just-cleared cache from its frozen `item` (see the
     /// orchestrator's *Spawn generations* docs).
     pub spawn_gen: SpawnGeneration,
-    /// Whether this branch has an upstream tracking ref, for the tab-4
-    /// (remote⇅) empty state. A SYNCHRONOUS skeleton-time fact read from
-    /// `Repository::local_branches()` at construction — never from the async
-    /// `item.upstream`, which is `None` until the row pipeline lands and would
-    /// lock the tab bar into a stale state (see `TabAvailability`).
+    /// Whether this branch has an upstream tracking ref. Read synchronously
+    /// from `Repository::local_branches()` at construction, never from the
+    /// async `item.upstream`: that field is `None` until the row pipeline lands
+    /// and would otherwise lock the tab bar into a stale state.
     pub has_upstream: bool,
-    /// Whether `[commit.generation]` summaries are configured, for the tab-5
-    /// (summary) empty state. A process-wide static fact (`llm_command.is_some()`).
+    /// Whether `[commit.generation]` summaries are configured.
     pub summaries_enabled: bool,
-    /// Live diff-content signals for the `working_tree` / `branch_diff` /
-    /// `upstream` tabs, shared with the collect handler. The frozen `item`
-    /// snapshot can't carry these (its `counts` / `upstream` /
-    /// `working_tree_status` are `None` at skeleton and never update), so the
-    /// handler mirrors them here as the pipeline lands — letting those tabs dim
-    /// once their diff is known empty (see [`LocalContent`]).
+    /// Live diff-content signals shared with the collect handler. The frozen
+    /// `item` snapshot cannot carry updates that land after the skeleton.
     pub local_content: LocalContentSlot,
     /// Set when an `alt-x` removal kept this row's branch and morphed the row to
     /// `/ branch` in place: [`PickerRow::output`] then yields the bare branch
@@ -598,7 +543,16 @@ impl SkimItem for PickerRow {
         // (it's per-process picker state); everything else is derived in
         // `render_preview`, which takes the mode explicitly so it's testable
         // without touching that global state.
-        let mode = PreviewStateData::read_mode();
+        let default_mode = if self.local.is_some() {
+            PreviewMode::UnifiedDiff
+        } else {
+            PreviewMode::Pr
+        };
+        let mut mode = PreviewStateData::read_mode_for(default_mode);
+        if let Some(forward) = PreviewStateData::take_cycle_request() {
+            mode = self.tab_availability().cycle_from(mode, forward);
+            PreviewStateData::select_mode(mode);
+        }
         // Record what this (selected) row is showing *before* reading the cache,
         // so a background fill that lands right after a miss still finds the key
         // set and pokes a repaint (see `PreviewNotifier`). Keyed by `preview_key`
@@ -674,6 +628,16 @@ pub(super) fn pr_presence(pr_status: &Option<Option<PrStatus>>) -> PrPresence {
     }
 }
 
+/// Whether the PR-backed tabs have content for the current live status. They
+/// stay available while loading and dim together once the fetch reports no PR.
+fn pr_tab_available(pr_status: &PrStatusSlot) -> bool {
+    match &*pr_status.lock().unwrap() {
+        None => true,
+        Some(None) => false,
+        Some(Some(status)) => status.number.is_some(),
+    }
+}
+
 /// Whether two live `pr_status` slot values render the *same* `pr` pane. Equal
 /// under the `PrStatus` derive means identical; the pane ignores two fields —
 /// `is_priming` (a list-cell dim hint [`render_pr_pane_body`] never reads) and
@@ -701,24 +665,30 @@ pub(super) fn pr_status_pane_eq(
 }
 
 /// Live, content-aware availability for the local-checkout tabs whose pane is a
-/// diff — `working_tree`, `branch_diff`, and `upstream`. Each tab dims once its
+/// diff — `unified_diff`, `working_tree`, `branch_diff`, and `upstream`. Each tab dims once its
 /// diff is *known* empty, the same way the `pr` tab dims once the fetch reports
-/// no PR (see [`PickerRow::pr_tab_available`]).
+/// no PR (see [`pr_tab_available`]).
 ///
 /// The diff emptiness is async (the `counts` / `upstream` / `working_tree_status`
 /// fields are `None` at skeleton and land via the list pipeline), so each signal
 /// is `Option<bool>`: `None` while loading, `Some(has_content)` once known. A tab
 /// stays available while its signal is `None` — we don't dim before we know it's
-/// empty — and dims when the signal resolves to "no content". Each predicate
-/// mirrors exactly what its pane renders, so a dimmed number never contradicts a
-/// non-empty pane.
+/// empty — and dims when the signal resolves to "no content". Working,
+/// committed, remote, and summary signals mirror their panes. The complete
+/// diff uses the conservative union of working + committed signals: opposing
+/// changes can cancel in its net diff, but we never dim a potentially non-empty
+/// pane before computing it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct LocalContent {
-    /// `working_tree`: tracked uncommitted changes exist. Matches the pane's
-    /// `git diff HEAD` — staged/modified/renamed/deleted, NOT untracked (which
-    /// `git diff HEAD` doesn't show). `Some(false)` for a branch-only row (no
-    /// working tree to diff).
+    /// `working_tree`: staged, unstaged, or untracked changes exist. Matches the
+    /// pane's temporary-index `git diff HEAD`. `Some(false)` for a branch-only
+    /// row (no working tree to diff).
     working_tree: Option<bool>,
+    /// Tracked working-tree changes exist. The Summary pane's existing
+    /// combined-diff source uses ordinary `git diff HEAD`, which intentionally
+    /// excludes untracked files, so its availability must not reuse the
+    /// untracked-inclusive `working_tree` signal above.
+    summary_working_tree: Option<bool>,
     /// `branch_diff`: the branch has commits ahead of the mainline tip
     /// (`counts.ahead > 0`), or it is an orphan (no merge base — see
     /// [`Self::from_item`]). `counts` is `AheadBehindTask`'s answer, measured
@@ -740,17 +710,21 @@ impl LocalContent {
     /// Read the content signals off a row's `ListItem`. Called from the collect
     /// handler each time a row updates, then stored in the row's live slot.
     pub(super) fn from_item(item: &ListItem) -> Self {
-        let working_tree = match item.worktree_data() {
-            // A real worktree: tracked changes per the porcelain status (matches
-            // the pane's `git diff HEAD`, which excludes untracked files).
-            Some(data) => data
-                .working_tree_status
-                .map(|s| s.staged || s.modified || s.renamed || s.deleted),
+        let (working_tree, summary_working_tree) = match item.worktree_data() {
+            // A real worktree: every change the temporary-index pane includes,
+            // plus the tracked-only subset the Summary pane consumes.
+            Some(data) => (
+                data.working_tree_status
+                    .map(|s| s.staged || s.modified || s.renamed || s.deleted || s.untracked),
+                data.working_tree_status
+                    .map(|s| s.staged || s.modified || s.renamed || s.deleted),
+            ),
             // Branch-only row: no working tree, so nothing to diff.
-            None => Some(false),
+            None => (Some(false), Some(false)),
         };
         Self {
             working_tree,
+            summary_working_tree,
             // Commits ahead of the upstream-aware comparison base (see the
             // `branch_diff` field doc). An orphan has no merge base with the
             // default, so its three-dot diff is ill-defined — keep the tab
@@ -774,6 +748,7 @@ impl LocalContent {
 /// the difference reads as a data fact rather than a row-type policy.
 #[derive(Debug, Clone, Copy, Default)]
 struct LocalTabs {
+    unified_diff: bool,
     working_tree: bool,
     branch_diff: bool,
     upstream: bool,
@@ -781,24 +756,28 @@ struct LocalTabs {
 }
 
 impl LocalTabs {
-    /// A worktree-backed row. The diff tabs (`working_tree`, `branch_diff`,
+    /// A local row. The subsidiary diff tabs (`working_tree`, `branch_diff`,
     /// `upstream`) follow the live [`LocalContent`] signals — available while
-    /// loading, dim once their diff is known empty; `upstream` also requires the
+    /// loading, dim once their diff is known empty; `unified_diff` dims only
+    /// when both component signals are empty because their net changes can
+    /// cancel. `upstream` also requires the
     /// synchronous `has_upstream` floor (no tracking ref → dim with no loading
     /// window). `summary` requires the process-wide `[commit.generation]` flag
     /// *and* something to summarize: its pane is generated from the combined diff
     /// (`crate::summary::compute_combined_diff` = commits ahead of the comparison
-    /// base + working-tree changes), so it reuses the `branch_diff` and
-    /// `working_tree` signals that gate tabs 3 and 1 — dimming in concert with
-    /// them once both are known empty, not only when summaries are disabled.
+    /// base + tracked working-tree changes), so it uses `branch_diff` and the
+    /// tracked-only `summary_working_tree` signal — dimming in concert with its
+    /// actual input rather than the untracked-inclusive working pane.
     fn worktree(content: LocalContent, has_upstream: bool, summaries_enabled: bool) -> Self {
         let working_tree = content.working_tree.unwrap_or(true);
+        let summary_working_tree = content.summary_working_tree.unwrap_or(true);
         let branch_diff = content.branch_diff.unwrap_or(true);
         Self {
+            unified_diff: working_tree || branch_diff,
             working_tree,
             branch_diff,
             upstream: has_upstream && content.upstream_diverged.unwrap_or(true),
-            summary: summaries_enabled && (working_tree || branch_diff),
+            summary: summaries_enabled && (summary_working_tree || branch_diff),
         }
     }
 }
@@ -810,22 +789,23 @@ impl LocalTabs {
 /// `loading_placeholder`). Two genuine axes drive availability, and `--prs`
 /// touches neither — it only decides whether a PR row is *listed* at all:
 ///
-/// - The local-checkout tabs ([`LocalTabs`]): the three diff tabs
+/// - The local-checkout tabs ([`LocalTabs`]): the three subsidiary diff tabs
 ///   (`working_tree` / `branch_diff` / `upstream`) follow the row's live
-///   [`LocalContent`] — available while their diff is still loading, dim once
-///   it's known empty (a clean working tree, no commits ahead, up to date with
-///   upstream), the same loading-then-dim shape as the `pr` tab. `upstream` also
+///   [`LocalContent`] exactly; `unified_diff` uses their conservative union,
+///   since opposing working and committed changes can cancel only after its
+///   net diff is computed. Tabs stay available while loading and dim once
+///   known empty, the same shape as the `pr` tab. `upstream` also
 ///   carries a synchronous `has_upstream` floor (`Repository::local_branches()`),
 ///   so a branch with no tracking ref dims immediately with no loading window.
 ///   `summary` requires the process-wide `[commit.generation]` flag *and* a
-///   non-empty combined diff — its pane's content source — so it reuses the
-///   `branch_diff` / `working_tree` signals and dims alongside the "no changes
-///   to summarize" pane, not only when summaries are disabled. A `--prs` row has
-///   no local checkout, so all four are empty.
+///   non-empty combined diff — its pane's content source — so it uses the
+///   `branch_diff` plus tracked-working signals and dims alongside the "no
+///   changes to summarize" pane, not only when summaries are disabled. A `--prs` row has
+///   no local checkout, so all five local tabs are empty.
 /// - The PR-backed tabs: `pr` and `comments` are available together, gated by
 ///   `has_pr`. On a worktree row that's the live status slot (primed from the CI
 ///   cache, then refreshed by the `CiStatus` task — see
-///   [`PickerRow::pr_tab_available`]): it dims once the fetch reports no
+///   [`pr_tab_available`]): it dims once the fetch reports no
 ///   PR, and stays available while loading or with a PR. A `--prs` row always
 ///   has a PR, so both are available.
 ///
@@ -836,6 +816,7 @@ impl LocalTabs {
 /// `--prs` row).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabAvailability {
+    unified_diff: bool,
     working_tree: bool,
     log: bool,
     branch_diff: bool,
@@ -853,6 +834,7 @@ impl TabAvailability {
     /// row and a listed-PR row.
     fn from_axes(local: LocalTabs, has_pr: bool) -> Self {
         Self {
+            unified_diff: local.unified_diff,
             working_tree: local.working_tree,
             log: true,
             branch_diff: local.branch_diff,
@@ -866,7 +848,7 @@ impl TabAvailability {
     /// A worktree-backed row: the local-checkout tabs follow [`LocalTabs`]
     /// (diff tabs gated by the live [`LocalContent`] + the `has_upstream` floor);
     /// the PR-backed tabs follow the live PR status (see
-    /// [`PickerRow::pr_tab_available`]).
+    /// [`pr_tab_available`]).
     pub(super) fn worktree(
         content: LocalContent,
         has_upstream: bool,
@@ -886,6 +868,38 @@ impl TabAvailability {
     /// genuine data ones — no local checkout, and a PR that's always present.
     pub(super) fn listed_pr() -> Self {
         Self::from_axes(LocalTabs::default(), true)
+    }
+
+    /// Whether `mode` has content for this row. Empty tabs remain directly
+    /// selectable with Alt-N, but sequential cycling skips them.
+    fn contains(self, mode: PreviewMode) -> bool {
+        match mode {
+            PreviewMode::UnifiedDiff => self.unified_diff,
+            PreviewMode::WorkingTree => self.working_tree,
+            PreviewMode::BranchDiff => self.branch_diff,
+            PreviewMode::Log => self.log,
+            PreviewMode::UpstreamDiff => self.upstream,
+            PreviewMode::Summary => self.summary,
+            PreviewMode::Pr => self.pr,
+            PreviewMode::Comments => self.comments,
+        }
+    }
+
+    /// The next available tab in the requested direction. `log` is always
+    /// available, so the bounded walk always finds a tab.
+    pub(super) fn cycle_from(self, current: PreviewMode, forward: bool) -> PreviewMode {
+        let mut candidate = current;
+        for _ in 0..8 {
+            candidate = if forward {
+                candidate.next()
+            } else {
+                candidate.prev()
+            };
+            if self.contains(candidate) {
+                return candidate;
+            }
+        }
+        current
     }
 }
 
@@ -916,7 +930,7 @@ struct Tab {
 /// **Width adaptation.** skim renders previews with wrapping off (its default),
 /// so a tab bar wider than `width` would truncate on the right — and the `pr` /
 /// `comments` tabs, exactly the ones with content on a `--prs` row, sit at that
-/// end. When the seven full-form tabs don't fit, the bar falls back to a compact
+/// end. When the eight full-form tabs don't fit, the bar falls back to a compact
 /// form (`1 2: log 3 …`): every accelerator digit stays visible, but only the
 /// active tab keeps its label. The two style signals survive — empty digits dim,
 /// the active digit+label bolds — so navigation works at any width. `width` is
@@ -931,42 +945,48 @@ pub(super) fn render_preview_tabs(
     let tabs = [
         Tab {
             number: 1,
-            label: "HEAD±",
+            label: "diff",
+            is_active: mode == PreviewMode::UnifiedDiff,
+            has_content: avail.unified_diff,
+        },
+        Tab {
+            number: 2,
+            label: "working",
             is_active: mode == PreviewMode::WorkingTree,
             has_content: avail.working_tree,
         },
         Tab {
-            number: 2,
-            label: "log",
-            is_active: mode == PreviewMode::Log,
-            has_content: avail.log,
-        },
-        Tab {
             number: 3,
-            label: "main…±",
+            label: "committed",
             is_active: mode == PreviewMode::BranchDiff,
             has_content: avail.branch_diff,
         },
         Tab {
             number: 4,
+            label: "log",
+            is_active: mode == PreviewMode::Log,
+            has_content: avail.log,
+        },
+        Tab {
+            number: 5,
             label: "remote⇅",
             is_active: mode == PreviewMode::UpstreamDiff,
             has_content: avail.upstream,
         },
         Tab {
-            number: 5,
+            number: 6,
             label: "summary",
             is_active: mode == PreviewMode::Summary,
             has_content: avail.summary,
         },
         Tab {
-            number: 6,
+            number: 7,
             label: "pr",
             is_active: mode == PreviewMode::Pr,
             has_content: avail.pr,
         },
         Tab {
-            number: 7,
+            number: 8,
             label: "comments",
             is_active: mode == PreviewMode::Comments,
             has_content: avail.comments,
@@ -987,7 +1007,7 @@ pub(super) fn render_preview_tabs(
     // into the query); Tab/shift-tab cycle the same tabs.
     //
     // Order: primary action (Enter), preview navigation (ctrl-u/d scroll, then
-    // the Tab/alt-1…7 accelerators), then row actions, with Esc last.
+    // the Tab/alt-1…8 accelerators), then row actions, with Esc last.
     //
     // The controls line is intentionally NOT width-managed: skim clips it on the
     // right on a narrow pane, but it's only a reminder. Note the trade-off of
@@ -996,7 +1016,7 @@ pub(super) fn render_preview_tabs(
     // managed) tab bar above — so on a narrow pane the only on-screen reminder of
     // them can clip away.
     let controls = cformat!(
-        "<dim,cyan>Enter: switch | ctrl-u/d: scroll | Tab/alt-1…7: preview | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Esc: cancel</>"
+        "<dim,cyan>Enter: switch | ctrl-u/d: scroll | Tab/alt-1…8: preview | alt-c: create | alt-x: remove | alt-y: copy | alt-o: open | alt-r: refresh | alt-p: toggle | Esc: cancel</>"
     );
 
     // Each tab/segment already ends with a full reset (so styling never bleeds
@@ -1103,29 +1123,7 @@ impl PickerRow {
     /// the `pr` tab's `render_pr_pane` call — is testable with a given mode
     /// rather than the process-wide picker mode.
     fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
-        // Build preview: tabs header + content. `has_upstream` and
-        // `summaries_enabled` are synchronous skeleton-time facts (see
-        // `TabAvailability`); the diff tabs' live emptiness (`local_content`) and
-        // `pr` (`pr_tab_available`) read the row's live slots, refreshed as the
-        // list pipeline / `CiStatus` task stream in, so they can change between
-        // selections — a tab dims once its diff (or PR) is known empty, and stays
-        // available while still loading. The `summary` tab rides the same
-        // `local_content` signal: its content source is the combined diff, so it
-        // dims once both `branch_diff` and `working_tree` are known empty. Both
-        // reads are cheap (no body clone); the panes themselves are rendered once
-        // and memoized.
-        let avail = match &self.local {
-            Some(local) => TabAvailability::worktree(
-                self.local_content(),
-                local.has_upstream,
-                local.summaries_enabled,
-                self.pr_tab_available(),
-            ),
-            // A listed `--prs` row: the local-checkout tabs are empty (no
-            // working tree to diff) and the `pr` tab always has content (the
-            // static slot carries a `number`), matching `pr_tab_available`.
-            None => TabAvailability::listed_pr(),
-        };
+        let avail = self.tab_availability();
         let mut result = render_preview_tabs(mode, avail, width);
         result.push_str(&match mode {
             // The PR-backed tabs read the same `pr_status` slot for both row
@@ -1133,8 +1131,8 @@ impl PickerRow {
             // thread when the row has a PR (always, for a `--prs` row).
             PreviewMode::Pr => self.render_pr_pane_cached(width),
             PreviewMode::Comments => self.render_comments_pane(),
-            // The local-checkout tabs (working-tree/log/branch-diff/upstream/
-            // summary) compute locally for a worktree row; a `--prs` row has no
+            // The local-checkout tabs (complete diff/working-tree/log/
+            // branch-diff/upstream/summary) compute locally for a local row; a `--prs` row has no
             // checkout, so its `log` loads from the forge and the rest point at
             // the `pr` tab (see `render_listed_pr_mode`).
             _ => match &self.local {
@@ -1161,30 +1159,17 @@ impl PickerRow {
         }
     }
 
-    /// Whether the PR-backed tabs (`pr` and `comments`) have content for this
-    /// row — they dim together only once the live fetch reports no PR. A cheap
-    /// discriminant read of the `pr_status` slot (no `PrStatus` clone, unlike
-    /// [`Self::pr_preview`]), so the tab bar can be drawn on every `preview()`
-    /// call without re-cloning the possibly-large body that
-    /// [`Self::render_pr_pane_cached`] already memoizes.
-    fn pr_tab_available(&self) -> bool {
-        match &*self.pr_status.lock().unwrap() {
-            None => true,                                  // still fetching
-            Some(None) => false,                           // fetch reported no PR
-            Some(Some(status)) => status.number.is_some(), // a bare branch workflow is "no PR"
+    /// The same live availability used by the tab bar and sequential cycling.
+    fn tab_availability(&self) -> TabAvailability {
+        match &self.local {
+            Some(local) => TabAvailability::worktree(
+                *local.local_content.lock().unwrap(),
+                local.has_upstream,
+                local.summaries_enabled,
+                pr_tab_available(&self.pr_status),
+            ),
+            None => TabAvailability::listed_pr(),
         }
-    }
-
-    /// Snapshot the row's live diff-content signals for the `working_tree` /
-    /// `branch_diff` / `upstream` tabs (see [`LocalContent`]). A cheap copy of
-    /// three `Option<bool>`s; the collect handler overwrites the slot as the list
-    /// pipeline lands. A listed `--prs` row has no checkout, so it reports the
-    /// default (all-`None`) signals — its diff tabs render placeholders anyway.
-    fn local_content(&self) -> LocalContent {
-        self.local
-            .as_ref()
-            .map(|l| *l.local_content.lock().unwrap())
-            .unwrap_or_default()
     }
 
     /// Render the `pr` pane, memoized in the shared `preview_cache` so repeated
@@ -1265,7 +1250,7 @@ impl PickerRow {
 
     /// Non-PR-tab content for a listed `--prs` row (no local checkout): the
     /// `log` tab loads commits in the background and reads from the cache; the
-    /// local-only tabs (working-tree, branch-diff, upstream, summary) have no
+    /// local-only tabs (complete diff, working-tree, branch-diff, upstream, summary) have no
     /// PR equivalent, so they point the user at the `pr` tab.
     fn render_listed_pr_mode(&self, mode: PreviewMode) -> String {
         match mode {
@@ -1307,9 +1292,10 @@ impl PickerRow {
     /// — so the placeholder just states what's loading.
     pub(super) fn loading_placeholder(mode: PreviewMode) -> String {
         let (verb, label) = match mode {
+            PreviewMode::UnifiedDiff => ("Loading", "complete diff"),
             PreviewMode::WorkingTree => ("Loading", "working-tree diff"),
-            PreviewMode::Log => ("Loading", "log"),
             PreviewMode::BranchDiff => ("Loading", "branch diff"),
+            PreviewMode::Log => ("Loading", "log"),
             PreviewMode::UpstreamDiff => ("Loading", "upstream diff"),
             PreviewMode::Summary => ("Generating", "summary"),
             // `preview()` routes the PR-backed tabs around this path: `pr` renders
@@ -1341,6 +1327,10 @@ impl PickerRow {
         height: usize,
     ) -> (String, bool) {
         match mode {
+            PreviewMode::UnifiedDiff => (
+                Self::page_diff(Self::compute_unified_diff_preview(repo, item, width), width),
+                false,
+            ),
             PreviewMode::WorkingTree => (
                 Self::page_diff(Self::compute_working_tree_preview(repo, item, width), width),
                 false,
@@ -1375,7 +1365,91 @@ impl PickerRow {
         }
     }
 
-    /// Compute Tab 1: Working tree preview (uncommitted changes vs HEAD)
+    fn worktree_diff_state(repo: &Repository, path: &std::path::Path) -> WorktreeDiffState {
+        let Ok(status) = repo.worktree_at(path).status_porcelain_cached() else {
+            return WorktreeDiffState::Unknown;
+        };
+        if status.trim().is_empty() {
+            WorktreeDiffState::Clean
+        } else if status.lines().any(|line| line.starts_with("?? ")) {
+            WorktreeDiffState::HasUntracked
+        } else {
+            WorktreeDiffState::TrackedOnly
+        }
+    }
+
+    /// Compute a live worktree diff. Porcelain selects the cheapest path, but
+    /// never supplies the diff itself: tracked-only changes use ordinary
+    /// `git diff`, while untracked or unknown state uses a temporary index so
+    /// untracked files are included without touching the real index.
+    fn compute_live_worktree_diff(
+        repo: &Repository,
+        path: &std::path::Path,
+        base: &str,
+        width: usize,
+        state: WorktreeDiffState,
+    ) -> anyhow::Result<Option<String>> {
+        let worktree = repo.worktree_at(path);
+        let diff = match state {
+            WorktreeDiffState::Clean => return Ok(None),
+            WorktreeDiffState::TrackedOnly => worktree.prepare_diff([base]),
+            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => {
+                worktree.prepare_diff_with_untracked([base])?
+            }
+        };
+        diff.capture_stat_and_patch(width)
+    }
+
+    fn unavailable_diff(branch: &str, label: &str) -> String {
+        let reset = Reset;
+        cformat!(
+            "{WARNING_SYMBOL}{reset} Could not load the {label} for <bold>{branch}</>{reset}\n"
+        )
+    }
+
+    /// Compute Tab 1: one net diff from the comparison base to the worktree,
+    /// including committed, staged, unstaged, and untracked changes.
+    fn compute_unified_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
+        let branch = item.branch_name();
+        let Some(wt_info) = item.worktree_data() else {
+            // A branch-only row has no mutable worktree state, so its complete
+            // diff is exactly the committed diff and can reuse that disk cache.
+            return Self::compute_branch_diff_preview(repo, item, width);
+        };
+        // Collection asks for this same cached status. If the worktree is clean,
+        // the complete view is exactly the committed view, so reuse its SHA-keyed
+        // disk cache and skip the temporary index. A status failure falls through
+        // to the diff itself, which may still succeed and is the better authority.
+        let worktree_state = Self::worktree_diff_state(repo, &wt_info.path);
+        if worktree_state == WorktreeDiffState::Clean {
+            return Self::compute_branch_diff_preview(repo, item, width);
+        }
+        let reset = Reset;
+        let Some(spec) = repo.branch_diff_spec(item.head()) else {
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no comparison base for a complete diff\n"
+            );
+        };
+        let Some(base) = spec.working_base.as_deref() else {
+            return Self::unavailable_diff(branch, "complete diff");
+        };
+
+        match Self::compute_live_worktree_diff(repo, &wt_info.path, base, width, worktree_state) {
+            Ok(Some(diff)) => diff,
+            Ok(None) => {
+                let base_name = &spec.base_name;
+                cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes vs <bold>{base_name}</>{reset}\n"
+                )
+            }
+            Err(error) => {
+                log::debug!("Could not compute complete diff for {branch}: {error:#}");
+                Self::unavailable_diff(branch, "complete diff")
+            }
+        }
+    }
+
+    /// Compute Tab 2: staged, unstaged, and untracked changes vs HEAD.
     fn compute_working_tree_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let Some(wt_info) = item.worktree_data() else {
@@ -1385,12 +1459,23 @@ impl PickerRow {
             );
         };
 
-        let path = wt_info.path.display().to_string();
-
         let reset = Reset;
-        compute_diff_preview(repo, &["-C", &path, "diff"], &["HEAD"], width).unwrap_or_else(|| {
-            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no uncommitted changes\n")
-        })
+        let worktree_state = Self::worktree_diff_state(repo, &wt_info.path);
+        if worktree_state == WorktreeDiffState::Clean {
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no working-tree changes\n"
+            );
+        }
+        match Self::compute_live_worktree_diff(repo, &wt_info.path, "HEAD", width, worktree_state) {
+            Ok(Some(diff)) => diff,
+            Ok(None) => cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no working-tree changes\n"
+            ),
+            Err(error) => {
+                log::debug!("Could not compute working-tree diff for {branch}: {error:#}");
+                Self::unavailable_diff(branch, "working-tree diff")
+            }
+        }
     }
 
     /// Compute Tab 3: Branch diff preview (line diffs vs the comparison base)
@@ -1434,15 +1519,22 @@ impl PickerRow {
             return render(&cached);
         }
 
-        let revs: Vec<&str> = spec.revs.iter().map(String::as_str).collect();
-        let entry = preview_cache::BranchDiffCacheEntry {
-            body: compute_diff_preview(repo, &["diff"], &revs, width),
+        let body = match repo
+            .prepare_diff(spec.revs.iter().cloned())
+            .capture_stat_and_patch(width)
+        {
+            Ok(body) => body,
+            Err(error) => {
+                log::debug!("Could not compute committed diff for {branch}: {error:#}");
+                return Self::unavailable_diff(branch, "committed diff");
+            }
         };
+        let entry = preview_cache::BranchDiffCacheEntry { body };
         preview_cache::write_branch_diff(repo, &spec.cache_sha, item.head(), width, &entry);
         render(&entry)
     }
 
-    /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
+    /// Compute Tab 5: Upstream diff preview (ahead/behind vs tracking branch)
     ///
     /// Independent of `item.upstream` — `git rev-parse {branch}@{{u}}`
     /// probes existence (non-zero exit when `@{{u}}` is unresolvable) and
@@ -1535,7 +1627,13 @@ impl PickerRow {
             } else {
                 format!("{}...{upstream_sha}", item.head())
             };
-            compute_diff_preview(repo, &["diff"], &[&range], width)
+            match repo.prepare_diff([range]).capture_stat_and_patch(width) {
+                Ok(body) => body,
+                Err(error) => {
+                    log::debug!("Could not compute upstream diff for {branch}: {error:#}");
+                    return Self::unavailable_diff(branch, "upstream diff");
+                }
+            }
         };
 
         let entry = preview_cache::UpstreamDiffCacheEntry {
@@ -1888,22 +1986,24 @@ mod tests {
         }
     }
 
-    /// Width at which all seven full-form tabs fit, so the snapshots capture the
+    /// Width at which all eight full-form tabs fit, so the snapshots capture the
     /// full bar (the compact fallback has its own test).
     const WIDE: usize = 200;
 
-    /// A worktree row whose three diff tabs (working-tree, branch-diff, upstream)
-    /// all have content — every diff signal known and non-empty.
+    /// A worktree row whose diff tabs all have content — every diff signal known
+    /// and non-empty.
     const CONTENT_FULL: LocalContent = LocalContent {
         working_tree: Some(true),
+        summary_working_tree: Some(true),
         branch_diff: Some(true),
         upstream_diverged: Some(true),
     };
 
-    /// A worktree row whose three diff tabs are all *known* empty — a clean
+    /// A worktree row whose diff tabs are all *known* empty — a clean
     /// working tree, no commits ahead, and up to date with a present upstream.
     const CONTENT_EMPTY: LocalContent = LocalContent {
         working_tree: Some(false),
+        summary_working_tree: Some(false),
         branch_diff: Some(false),
         upstream_diverged: Some(false),
     };
@@ -1912,16 +2012,17 @@ mod tests {
     fn test_render_preview_tabs() {
         // Each mode active, on a worktree row whose diffs all have content
         // (uncommitted changes, commits ahead, diverged from upstream) with
-        // summaries enabled but no PR (tabs 1-5 available; tabs 6 pr and 7
+        // summaries enabled but no PR (tabs 1-6 available; tabs 7 pr and 8
         // comments dim). The active mode's label is bold, inactive available
-        // labels dim, and on the `pr` iteration tab 6 is active-but-empty —
+        // labels dim, and on the `pr` iteration tab 7 is active-but-empty —
         // exercising the rule that emptiness dims even the active tab. Verifies
         // labels and structure.
         let wt = TabAvailability::worktree(CONTENT_FULL, true, true, false);
         for (name, mode) in [
+            ("unified_diff", PreviewMode::UnifiedDiff),
             ("working_tree", PreviewMode::WorkingTree),
-            ("log", PreviewMode::Log),
             ("branch_diff", PreviewMode::BranchDiff),
+            ("log", PreviewMode::Log),
             ("upstream_diff", PreviewMode::UpstreamDiff),
             ("summary", PreviewMode::Summary),
             ("pr", PreviewMode::Pr),
@@ -1930,15 +2031,15 @@ mod tests {
         }
 
         // Empty states. Three rows:
-        // - `empty_upstream_and_summary`: diffs still loading (so tabs 1 and 3
+        // - `empty_upstream_and_summary`: diffs still loading (so tabs 1–3
         //   read as available), no upstream ref, summaries disabled, no PR — dims
-        //   tabs 4, 5, 6, and 7.
+        //   tabs 5, 6, 7, and 8.
         // - `empty_all_local_diffs`: every diff *known* empty (clean working tree,
         //   no commits ahead, up to date with a present upstream) — dims tabs 1,
-        //   3, 4, plus 5/6/7, leaving only `log`. This is the behavior the diff
+        //   2, 3, 5, plus 6/7/8, leaving only `log`. This is the behavior the diff
         //   tabs gained: a dimmed number once the diff is known empty.
-        // - `pr_row`: a listed-PR row dims the working-tree/branch-diff/upstream/
-        //   summary tabs but keeps log/pr/comments.
+        // - `pr_row`: a listed-PR row dims the complete/working/committed/
+        //   upstream/summary tabs but keeps log/pr/comments.
         assert_snapshot!(
             "empty_upstream_and_summary",
             render_preview_tabs(
@@ -1958,6 +2059,39 @@ mod tests {
         assert_snapshot!(
             "pr_row",
             render_preview_tabs(PreviewMode::Pr, TabAvailability::listed_pr(), WIDE)
+        );
+    }
+
+    #[test]
+    fn tab_cycles_only_through_tabs_with_content() {
+        let listed_pr = TabAvailability::listed_pr();
+        assert_eq!(
+            listed_pr.cycle_from(PreviewMode::Pr, true),
+            PreviewMode::Comments
+        );
+        assert_eq!(
+            listed_pr.cycle_from(PreviewMode::Pr, false),
+            PreviewMode::Log,
+            "shift-tab skips every empty local tab"
+        );
+
+        let clean_local = TabAvailability::worktree(CONTENT_EMPTY, true, false, false);
+        assert_eq!(
+            clean_local.cycle_from(PreviewMode::UnifiedDiff, true),
+            PreviewMode::Log,
+            "a clean row advances to its only available tab"
+        );
+        assert_eq!(
+            clean_local.cycle_from(PreviewMode::Log, true),
+            PreviewMode::Log,
+            "cycling a one-tab row stays on that tab"
+        );
+
+        let changed_local = TabAvailability::worktree(CONTENT_FULL, true, true, false);
+        assert_eq!(
+            changed_local.cycle_from(PreviewMode::Summary, true),
+            PreviewMode::UnifiedDiff,
+            "cycling wraps past empty PR-backed tabs"
         );
     }
 
@@ -2032,8 +2166,8 @@ mod tests {
             "no remote configured is empty"
         );
 
-        // `working_tree` matches `git diff HEAD`: tracked changes count, untracked
-        // alone does not (the pane wouldn't show them).
+        // `working_tree` matches the temporary-index diff: tracked and untracked
+        // changes both count.
         let worktree_with = |status: WorkingTreeStatus| {
             let mut item = ListItem::new_branch("abc".into(), "feature".into());
             item.kind = ItemKind::Worktree(Box::new(WorktreeData {
@@ -2048,11 +2182,12 @@ mod tests {
             Some(true),
             "modified is tracked content"
         );
-        // untracked only → `git diff HEAD` is empty.
+        // untracked only is content too: the preview registers it with
+        // intent-to-add in a temporary index.
         assert_eq!(
             worktree_with(WorkingTreeStatus::new(false, false, true, false, false)),
-            Some(false),
-            "untracked alone is not shown by `git diff HEAD`"
+            Some(true),
+            "untracked alone is shown by the working-tree diff"
         );
         // A worktree whose status task hasn't landed yet stays loading.
         let mut pending = ListItem::new_branch("abc".into(), "feature".into());
@@ -2066,7 +2201,14 @@ mod tests {
     /// before (or despite) the live ahead/behind signal.
     #[test]
     fn diff_tabs_dim_only_once_known_empty() {
-        let has = |avail: TabAvailability| (avail.working_tree, avail.branch_diff, avail.upstream);
+        let has = |avail: TabAvailability| {
+            (
+                avail.unified_diff,
+                avail.working_tree,
+                avail.branch_diff,
+                avail.upstream,
+            )
+        };
 
         // Loading (default): every diff tab available — we don't dim before we know.
         assert_eq!(
@@ -2076,28 +2218,28 @@ mod tests {
                 false,
                 false
             )),
-            (true, true, true),
+            (true, true, true, true),
             "loading → available"
         );
 
         // Known empty + a present upstream: all three dim.
         assert_eq!(
             has(TabAvailability::worktree(CONTENT_EMPTY, true, false, false)),
-            (false, false, false),
+            (false, false, false, false),
             "known empty → dim"
         );
 
         // Known non-empty: all three available.
         assert_eq!(
             has(TabAvailability::worktree(CONTENT_FULL, true, false, false)),
-            (true, true, true),
+            (true, true, true, true),
             "known content → available"
         );
 
         // No tracking ref: the upstream tab dims regardless of the live signal —
         // the synchronous floor wins over a (stale or loading) divergence read.
         assert!(
-            !has(TabAvailability::worktree(CONTENT_FULL, false, false, false)).2,
+            !has(TabAvailability::worktree(CONTENT_FULL, false, false, false)).3,
             "no upstream ref → dim despite a 'diverged' signal"
         );
     }
@@ -2130,11 +2272,13 @@ mod tests {
         // Only one diff has content → still something to summarize → available.
         let working_only = LocalContent {
             working_tree: Some(true),
+            summary_working_tree: Some(true),
             branch_diff: Some(false),
             upstream_diverged: Some(false),
         };
         let branch_only = LocalContent {
             working_tree: Some(false),
+            summary_working_tree: Some(false),
             branch_diff: Some(true),
             upstream_diverged: Some(false),
         };
@@ -2143,6 +2287,17 @@ mod tests {
             "uncommitted changes → available"
         );
         assert!(summary(branch_only, true), "commits ahead → available");
+
+        let untracked_only = LocalContent {
+            working_tree: Some(true),
+            summary_working_tree: Some(false),
+            branch_diff: Some(false),
+            upstream_diverged: Some(false),
+        };
+        assert!(
+            !summary(untracked_only, true),
+            "untracked-only work is absent from the summary pane's combined diff"
+        );
 
         // Still loading (both unknown) → available; don't dim before we know.
         assert!(
@@ -2160,14 +2315,14 @@ mod tests {
         // A --prs row with the `pr` tab active, in a narrow pane.
         let compact = render_preview_tabs(PreviewMode::Pr, TabAvailability::listed_pr(), 40);
         let plain = compact.lines().next().unwrap().ansi_strip().to_string();
-        // Every digit 1-7 is present; only the active tab keeps its label.
-        for n in 1..=7 {
+        // Every digit 1-8 is present; only the active tab keeps its label.
+        for n in 1..=8 {
             assert!(
                 plain.contains(&n.to_string()),
                 "digit {n} present: {plain:?}"
             );
         }
-        assert!(plain.contains("6: pr"), "active tab labeled: {plain:?}");
+        assert!(plain.contains("7: pr"), "active tab labeled: {plain:?}");
         assert!(
             !plain.contains("comments"),
             "inactive label dropped: {plain:?}"
@@ -2179,7 +2334,7 @@ mod tests {
         // The same row in a wide pane uses the full bar (labels for all tabs).
         let full = render_preview_tabs(PreviewMode::Pr, TabAvailability::listed_pr(), WIDE);
         assert!(
-            full.contains("7: ") && full.contains("comments"),
+            full.contains("8: ") && full.contains("comments"),
             "wide pane keeps full labels"
         );
 
@@ -2310,9 +2465,10 @@ mod tests {
     fn test_loading_placeholder_all_modes() {
         // Verifies wording and refresh-key hint per mode.
         for (name, mode) in [
+            ("unified_diff", PreviewMode::UnifiedDiff),
             ("working_tree", PreviewMode::WorkingTree),
-            ("log", PreviewMode::Log),
             ("branch_diff", PreviewMode::BranchDiff),
+            ("log", PreviewMode::Log),
             ("upstream_diff", PreviewMode::UpstreamDiff),
             ("summary", PreviewMode::Summary),
             // `Pr` isn't backed by the preview cache — it renders from the
@@ -2662,14 +2818,14 @@ mod tests {
 
         // In Pr mode, `render_preview` assembles the tab bar plus the worktree PR
         // pane — the dispatch arm `SkimItem::preview` reaches once the picker-state
-        // file selects mode 6. The pane shows the title and the markdown body.
-        let pr_pane = row.render_preview(PreviewMode::Pr, 80, 24);
+        // state selects mode 7. The pane shows the title and the markdown body.
+        let pr_pane = row.render_preview(PreviewMode::Pr, WIDE, 24);
         // Strip ANSI before checking the tab labels: the active `pr` tab is bold,
-        // so `6: pr` is split by an SGR escape in the raw string (the bar's own
+        // so `7: pr` is split by an SGR escape in the raw string (the bar's own
         // test, `test_render_preview_tabs`, snapshots the styled form).
         let bar = pr_pane.ansi_strip().to_string();
-        assert!(bar.contains("6: pr"), "pr tab: {bar:?}");
-        assert!(bar.contains("7: comments"), "comments tab: {bar:?}");
+        assert!(bar.contains("7: pr"), "pr tab: {bar:?}");
+        assert!(bar.contains("8: comments"), "comments tab: {bar:?}");
         assert!(
             pr_pane.contains("Fix the flaky retry"),
             "title: {pr_pane:?}"
@@ -2683,10 +2839,12 @@ mod tests {
             "description body rendered: {pr_pane:?}"
         );
 
-        // `SkimItem::preview` reads the default in-memory mode (WorkingTree, since
-        // no tab switch happens in this test) and delegates to `render_preview`,
-        // exercising the wrapper and the non-pr dispatch arm (cache miss → loading
-        // placeholder).
+        // `SkimItem::preview` reads the default in-memory mode (UnifiedDiff,
+        // since no tab switch happens in this test) and delegates to
+        // `render_preview`, exercising the wrapper and the non-pr dispatch arm
+        // (cache miss → loading placeholder).
+        let _state =
+            super::super::preview::PreviewState::new(super::super::preview::PreviewLayout::Right);
         let ctx = PreviewContext {
             query: "",
             cmd_query: "",
@@ -2700,9 +2858,9 @@ mod tests {
         let ItemPreview::AnsiText(text) = row.preview(ctx) else {
             panic!("expected AnsiText preview");
         };
-        assert!(text.contains("HEAD"), "tab bar present: {text:?}");
+        assert!(text.contains("diff"), "tab bar present: {text:?}");
         assert!(
-            text.contains("Loading working-tree diff"),
+            text.contains("Loading complete diff"),
             "non-pr arm placeholder: {text:?}"
         );
     }
@@ -2828,6 +2986,98 @@ mod tests {
     }
 
     #[test]
+    fn unified_diff_is_net_change_and_subsidiary_diffs_include_untracked() {
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let (t, repo) = repo_with_main();
+        let shared = t.path().join("shared.txt");
+        std::fs::write(&shared, "base\n").unwrap();
+        repo.run_command(&["add", "shared.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "add shared file"])
+            .unwrap();
+
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(&shared, "committed\n").unwrap();
+        repo.run_command(&["add", "shared.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "change shared file"])
+            .unwrap();
+
+        // Reverse the committed edit in the working tree, so the complete diff
+        // must cancel it while each subsidiary pane still shows its side.
+        std::fs::write(&shared, "base\n").unwrap();
+        std::fs::write(t.path().join("untracked.txt"), "loose\n").unwrap();
+        repo.run_command(&["config", "status.showUntrackedFiles", "no"])
+            .unwrap();
+
+        let mut item = item_at(&repo, "feature");
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: t.path().to_path_buf(),
+            ..Default::default()
+        }));
+
+        let real_index = repo.current_worktree().git_dir().unwrap().join("index");
+        let index_before = std::fs::read(&real_index).unwrap();
+        let unified = PickerRow::compute_unified_diff_preview(&repo, &item, 80);
+        let working = PickerRow::compute_working_tree_preview(&repo, &item, 80);
+        let committed = PickerRow::compute_branch_diff_preview(&repo, &item, 80);
+        let index_after = std::fs::read(&real_index).unwrap();
+
+        assert!(
+            unified.contains("untracked.txt"),
+            "complete diff includes untracked files: {unified:?}"
+        );
+        assert!(
+            !unified.contains("shared.txt"),
+            "opposing committed and working changes cancel in the net diff: {unified:?}"
+        );
+        assert!(
+            working.contains("shared.txt") && working.contains("untracked.txt"),
+            "working pane shows both the reversal and untracked file: {working:?}"
+        );
+        assert!(
+            committed.contains("shared.txt") && !committed.contains("untracked.txt"),
+            "committed pane excludes worktree-only content: {committed:?}"
+        );
+        assert_eq!(
+            index_after, index_before,
+            "preview computation must leave the real index byte-identical"
+        );
+    }
+
+    #[test]
+    fn worktree_diff_surfaces_full_diff_command_failure() {
+        use crate::commands::list::model::{ItemKind, WorktreeData};
+
+        let (t, repo) = repo_with_main();
+        std::fs::write(t.path().join(".gitattributes"), "*.txt diff=explode\n").unwrap();
+        std::fs::write(t.path().join("tracked.txt"), "base\n").unwrap();
+        repo.run_command(&["add", ".gitattributes", "tracked.txt"])
+            .unwrap();
+        repo.run_command(&["commit", "-m", "add textconv fixture"])
+            .unwrap();
+        repo.run_command(&["config", "diff.explode.textconv", "false"])
+            .unwrap();
+        std::fs::write(t.path().join("tracked.txt"), "changed\n").unwrap();
+
+        let mut item = item_at(&repo, "main");
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: t.path().to_path_buf(),
+            ..Default::default()
+        }));
+
+        let unified = PickerRow::compute_unified_diff_preview(&repo, &item, 80);
+        let working = PickerRow::compute_working_tree_preview(&repo, &item, 80);
+        assert!(
+            unified.contains("Could not load the complete diff"),
+            "a failed full diff must not leave a plausible stat-only pane: {unified:?}"
+        );
+        assert!(
+            working.contains("Could not load the working-tree diff"),
+            "working pane must report the failed full diff: {working:?}"
+        );
+    }
+
+    #[test]
     fn branch_diff_orphan_shows_full_content() {
         // An orphan branch shares no history with the comparison base, so its
         // three-dot diff has no merge base. The pane must fall back to the
@@ -2938,7 +3188,10 @@ mod tests {
         repo.run_command(&["update-ref", "refs/heads/-weird", head.trim()])
             .unwrap();
 
-        let out = compute_diff_preview(&repo, &["diff"], &[root.trim(), "-weird"], 80)
+        let out = repo
+            .prepare_diff([root.trim(), "-weird"])
+            .capture_stat_and_patch(80)
+            .expect("diff commands succeed")
             .expect("non-empty diff between the two refs");
         assert!(
             out.contains("fenced.txt"),
@@ -2961,7 +3214,7 @@ mod tests {
 
         let output = PickerRow::compute_working_tree_preview(&repo, &item, 80);
         assert!(
-            output.contains("main") && output.contains("has no uncommitted changes"),
+            output.contains("main") && output.contains("has no working-tree changes"),
             "expected clean-worktree headline, got: {output:?}"
         );
     }
@@ -2971,7 +3224,7 @@ mod tests {
         // Pre-populate the disk cache with a sentinel value, then call
         // compute — a hit must return the sentinel verbatim instead of
         // running git diff. Proves the SHA + width key is the lookup path
-        // and that a hit short-circuits before `compute_diff_preview`.
+        // and that a hit short-circuits before preparing or running a diff.
         let (t, repo) = repo_with_main();
         repo.run_command(&["checkout", "-b", "feature"]).unwrap();
         std::fs::write(t.path().join("real.txt"), "real\n").unwrap();
@@ -3324,7 +3577,7 @@ mod tests {
         // The per-tab `{reset}` is appended in the full bar regardless of a
         // tab's internal styling, so the reset/divider counts hold whether a tab
         // is active (bold label), inactive-available (dim label), or empty (dim
-        // number + label — here tabs 6 pr and 7 comments). WIDE forces the full
+        // number + label — here tabs 7 pr and 8 comments). WIDE forces the full
         // (not compact) bar.
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
@@ -3339,13 +3592,13 @@ mod tests {
         // This prevents bold/dim from bleeding into the " | " dividers
         let full_reset = "\x1b[0m";
 
-        // Count resets - should have one after each of the 7 tabs
-        assert_eq!(first_line.matches(full_reset).count(), 7);
+        // Count resets - should have one after each of the 8 tabs
+        assert_eq!(first_line.matches(full_reset).count(), 8);
 
         // The sequence should be: style + text + [22m + [0m + divider
         // Check that dividers come after full resets
         let parts: Vec<&str> = first_line.split(" | ").collect();
-        assert_eq!(parts.len(), 7);
+        assert_eq!(parts.len(), 8);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 
         // Controls line should end with full reset to ensure clean state for preview content

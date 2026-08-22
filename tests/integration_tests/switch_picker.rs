@@ -396,7 +396,7 @@ fn wait_for_exit(
 ///
 /// Example: `[("\x1b[B", None), ("\x1b3", Some("diff --git"))]`
 /// - After Down (move cursor to the next worktree): just wait for the screen to settle.
-/// - After Alt-3 (switch to the main…± diff panel): wait until "diff --git" appears.
+/// - After Alt-3 (switch to the committed diff panel): wait until "diff --git" appears.
 fn exec_in_pty_with_input_expectations(
     command: &str,
     args: &[&str],
@@ -736,7 +736,7 @@ fn is_cursor_arrow(input: &str) -> bool {
 /// that decorate asynchronously (CI status / PR markers): when the background
 /// resolution lands it refreshes skim's item list, which resets the cursor to the
 /// top, stranding the pointer on the primary worktree. That is a Windows-CI flake
-/// observed with the cursor stuck on `main`, where the HEAD± tab showed the
+/// observed with the cursor stuck on `main`, where the complete-diff tab showed the
 /// primary's empty diff and the awaited `diff --git` never appeared. Re-issuing
 /// the idempotent arrow drives the cursor back down after any reset; the wait
 /// returns only once the pointer holds on the target through [`STABLE_DURATION`],
@@ -788,28 +788,6 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // Query line has timing variations (shows typed chars at different rates).
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
-
-    // Skim's previewer overlays its vertical scroll indicator (`{vscroll_offset}/
-    // {content.len()}`) at the right edge of the preview pane's first line, in
-    // reverse video — see `skim::previewer::Previewer::draw`. We don't see the
-    // reverse-video attribute (vt100's `rows()` strips it), so it lands on screen
-    // as bare `N/M` overlapping the tab header text. content.len() varies with
-    // terminal width and preview content height, so it must be normalized.
-    //
-    // The previewer right-aligns the indicator at `screen_width - len - 1`, so
-    // it overwrites a variable-width chunk at the right edge of the tab bar. With
-    // all six numbered tabs the bar fills the 60-col preview pane, so the chunk
-    // covers tab 6 (`6: pr`), its ` | ` divider, and a few trailing chars of tab
-    // 5 — how many depends on the indicator's digit count (`5: summary1/46` vs
-    // `5: summar1/286`). Anchor on the always-visible left portion (through
-    // `5: summ`, well inside the pane) and rewrite the corrupted tail to the
-    // canonical full bar. The exact per-tab styling (bold/plain/dim) is asserted
-    // by the `items.rs` unit snapshots; here we only need a stable marker that
-    // the bar rendered with tab 6 present.
-    settings.add_filter(
-        r"(?m)^(1: HEAD± \| 2: log \| 3: main…± \| 4: remote⇅ \| 5: summ).*$",
-        "${1}ary | 6: pr [N/M]",
-    );
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -975,7 +953,8 @@ fn test_switch_picker_preview_navigation_and_log_panel(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     let feature_path = repo.add_worktree("feature");
 
-    // One clean commit is enough to distinguish the log pane from HEAD±.
+    // One clean commit is enough to distinguish the complete diff and log panes
+    // from the clean working-tree pane.
     std::fs::write(feature_path.join("file.txt"), "content\n").unwrap();
     repo.run_git_in(&feature_path, &["add", "file.txt"]);
     repo.run_git_in(
@@ -999,33 +978,34 @@ fn test_switch_picker_preview_navigation_and_log_panel(mut repo: TestRepo) {
         &env_vars,
     );
 
-    // One real session covers both cyclic directions and direct Alt-N
-    // selection. The paired Shift-Tab then Tab transition distinguishes
-    // comments (7) from PR (6): both empty panes say "has no PR", but only
-    // comments advances to HEAD± (1).
+    // One real session covers both cyclic directions, skipping empty tabs, and
+    // direct Alt-N selection. This row has content only in complete diff,
+    // committed diff, and log.
     send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("feature"));
+    wait_for_stable_with_content(&rx, &mut parser, Some("diff --git"));
 
-    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[Z", Some("has no PR"));
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[Z", Some("* "));
 
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\t", Some("diff --git"));
+
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\t", Some("diff --git"));
+    assert!(
+        !preview_pane_text(parser.screen()).contains("no working-tree changes"),
+        "Tab skips the empty working-tree pane"
+    );
+
+    // Direct accelerators still allow inspecting an empty tab.
     send_input_awaiting_content(
         &writer,
         &rx,
         &mut parser,
-        "\t",
-        Some("has no uncommitted changes"),
+        "\x1b2",
+        Some("has no working-tree changes"),
     );
 
-    send_input_awaiting_content(&writer, &rx, &mut parser, "\t", Some("* "));
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b1", Some("diff --git"));
 
-    send_input_awaiting_content(
-        &writer,
-        &rx,
-        &mut parser,
-        "\x1b1",
-        Some("has no uncommitted changes"),
-    );
-
-    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b2", Some("* "));
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b4", Some("* "));
 
     let list = list_pane_text(parser.screen());
     let preview = preview_pane_text(parser.screen());
@@ -1304,6 +1284,69 @@ fn test_switch_picker_alt_x_flashes_unremovable_reason(mut repo: TestRepo) {
     assert_valid_abort_exit_code(exit_code);
 }
 
+/// skim debounces preview rendering after navigation, so a Down immediately
+/// followed by Tab must let the newly selected row resolve the cycle, rather
+/// than use whichever row rendered last. A listed PR starts on PR and advances
+/// directly to its next available tab, comments.
+#[rstest]
+fn test_switch_picker_rapid_pr_navigation_cycles_from_pr(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+    let head = repo.git_output(&["rev-parse", "HEAD"]);
+    let pr_json = format!(
+        r#"[{{"number":42,"title":"Rapid preview cycle","headRefName":"rapid-pr","headRefOid":"{}","author":{{"login":"octocat"}},"isDraft":false,"url":"https://github.com/owner/test-repo/pull/42","body":"body"}}]"#,
+        head.trim()
+    );
+    std::fs::write(mock_bin.join("pr_list.json"), pr_json).unwrap();
+    let comments_json = r#"{"comments":[{"author":{"login":"octocat"},"body":"RAPIDCYCLEMARK","createdAt":"2025-01-01T00:00:00Z"}]}"#;
+    MockConfig::new("gh")
+        .version("gh version 1.0.0 (mock)")
+        .command("pr list --state", MockResponse::file("pr_list.json"))
+        .command("pr list --head", MockResponse::output("[]"))
+        .command("pr view 42", MockResponse::output(comments_json))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    let env_vars = forge_mock_env_vars(&repo, &mock_bin);
+
+    let PickerSession {
+        child,
+        _master,
+        writer,
+        rx,
+        mut parser,
+    } = boot_picker_pty(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--prs"],
+        repo.root_path(),
+        &env_vars,
+    );
+
+    // Wait only for the row inventory, then queue navigation and cycling in
+    // one flush so the PR preview cannot render between the two key events.
+    wait_for_stable_with_content(&rx, &mut parser, Some("rapid"));
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(b"\x1b[B\t").unwrap();
+        w.flush().unwrap();
+    }
+    wait_for_stable_with_content(&rx, &mut parser, Some("RAPIDCYCLEMARK"));
+
+    let preview = preview_pane_text(parser.screen());
+    assert!(
+        preview.contains("RAPIDCYCLEMARK"),
+        "Tab after rapid local→PR navigation must open comments:\n{preview}"
+    );
+    let exit_code = abort_and_exit_code(child, writer, rx);
+    assert_valid_abort_exit_code(exit_code);
+}
+
 /// A preview pane fills in on its own once its background compute lands — no
 /// keystroke needed. The deterministic vehicle is a `--prs` row's `comments`
 /// tab: the comment fetch (`gh pr view <n> --json comments`) is held behind a
@@ -1382,7 +1425,7 @@ fn test_switch_picker_preview_auto_refreshes_when_compute_lands(repo: TestRepo) 
     // shows the short head branch `flaky`; the worktree row shows `main`. A
     // re-issued Down re-drives the pointer after a streamed-row refresh.
     send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b[B", Some("flaky"));
-    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b7", Some("Loading comments"));
+    send_input_awaiting_content(&writer, &rx, &mut parser, "\x1b8", Some("Loading comments"));
     let loading = preview_pane_text(parser.screen());
     assert!(
         loading.contains("Loading comments"),
@@ -1891,7 +1934,7 @@ fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
     wait_for_stable_with_content(
         &rx,
         &mut parser,
-        Some(&format!("{remove_target} has no uncommitted changes")),
+        Some(&format!("{remove_target} has no file changes vs")),
     );
 
     // alt-x drops the last row; the cursor lands on the new last row and its preview
@@ -1901,16 +1944,16 @@ fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
     wait_for_stable_with_content(
         &rx,
         &mut parser,
-        Some(&format!("{new_last} has no uncommitted changes")),
+        Some(&format!("{new_last} has no file changes vs")),
     );
 
     let preview = preview_pane_text(parser.screen());
     assert!(
-        preview.contains(&format!("{new_last} has no uncommitted changes")),
+        preview.contains(&format!("{new_last} has no file changes vs")),
         "the preview refreshed to the new last row `{new_last}`.\nPreview:\n{preview}"
     );
     assert!(
-        !preview.contains(&format!("{remove_target} has no uncommitted changes")),
+        !preview.contains(&format!("{remove_target} has no file changes vs")),
         "the preview must not keep showing the removed row `{remove_target}`.\nPreview:\n{preview}"
     );
 
@@ -1918,7 +1961,7 @@ fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
 }
 
 /// alt-r refreshes the preview pane, not just the row list. The in-memory preview
-/// cache is keyed by `(branch, mode)` with no SHA, so a warm working-tree diff
+/// cache is keyed by `(branch, mode)` with no SHA, so a warm complete diff
 /// would otherwise survive an edit and re-serve stale content; the refresh clears
 /// it so the pane recomputes against the current tree. Targets the pinned current
 /// worktree (the top row), so the cursor sits on it before and after the reload
@@ -1927,8 +1970,8 @@ fn test_switch_picker_alt_x_last_row_refreshes_preview(mut repo: TestRepo) {
 fn test_switch_picker_alt_r_refreshes_preview(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // A committed, tracked file in the current worktree so `git diff HEAD` has
-    // something to show once it's edited (untracked files don't appear in it).
+    // A committed, tracked file in the current worktree so the complete diff has
+    // something to show once it's edited.
     let tracked = repo.root_path().join("tracked.txt");
     std::fs::write(&tracked, "original\n").unwrap();
     repo.run_git(&["add", "tracked.txt"]);
@@ -1953,12 +1996,12 @@ fn test_switch_picker_alt_r_refreshes_preview(repo: TestRepo) {
         w.flush().unwrap();
     };
 
-    // The picker opens on the working-tree tab with the cursor on the pinned
+    // The picker opens on the complete-diff tab with the cursor on the pinned
     // current worktree (`main`), whose tree is clean.
-    wait_for_stable_with_content(&rx, &mut parser, Some("has no uncommitted changes"));
+    wait_for_stable_with_content(&rx, &mut parser, Some("has no file changes vs"));
 
     // Edit the tracked file *while the picker is open*. Without the refresh clearing
-    // the warm cache, alt-r would re-serve the cached "no uncommitted changes" pane.
+    // the warm cache, alt-r would re-serve the cached "no changes" pane.
     std::fs::write(&tracked, "original\nedited\n").unwrap();
 
     send(b"\x1br"); // alt-r: refresh
@@ -1970,7 +2013,7 @@ fn test_switch_picker_alt_r_refreshes_preview(repo: TestRepo) {
         "alt-r must recompute the working-tree preview to show the new edit.\nPreview:\n{preview}"
     );
     assert!(
-        !preview.contains("has no uncommitted changes"),
+        !preview.contains("has no file changes vs"),
         "the stale clean preview must not survive the refresh.\nPreview:\n{preview}"
     );
 

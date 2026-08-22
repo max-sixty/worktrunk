@@ -99,7 +99,7 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
         "expected at least one cache entry, got: {stdout}"
     );
 
-    // Every entry has {branch: string, mode: u8, bytes: usize}. Asserting
+    // Every entry has {branch: string, mode: u8, bytes: usize, content: string}. Asserting
     // schema (not specific branches/modes) keeps the test robust to fixture
     // changes while still covering the dump format.
     for e in entries {
@@ -121,18 +121,180 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
                 .is_some_and(|bytes| usize::try_from(bytes).is_ok()),
             "entry bytes is not a usize: {e}"
         );
+        assert!(
+            e["content"].is_string(),
+            "entry content is not a string: {e}"
+        );
     }
 
     assert!(
         entries
             .iter()
-            .any(|e| e["mode"] == 5 && e["bytes"].as_u64().is_some_and(|bytes| bytes > 0)),
+            .any(|e| e["mode"] == 6 && e["bytes"].as_u64().is_some_and(|bytes| bytes > 0)),
         "summaries are disabled, so the picker must seed a nonempty static config hint: {stdout}"
     );
     assert!(
         mock_calls(call_log.path(), "summary-probe").is_empty(),
         "a configured summary command must not run while list.summary=false"
     );
+}
+
+/// The speculative default-preview producer runs before list collection. It
+/// must carry a real HEAD, or it can poison the `(branch, UnifiedDiff)` cache
+/// key with an error pane before the collected row tries to fill it. One Rayon
+/// worker makes that ordering deterministic. The hidden-untracked setting also
+/// pins that the shared cleanliness signal cannot suppress the file.
+#[rstest]
+fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
+    #[from(main_only_repo)] repo: TestRepo,
+) {
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    std::fs::write(repo.path().join("untracked-preview.txt"), "preview\n").unwrap();
+    let branch = repo.current_branch();
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("RAYON_NUM_THREADS", "1")
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let complete = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array")
+        .iter()
+        .find(|entry| entry["branch"] == branch && entry["mode"] == 1)
+        .expect("current branch has a complete-diff cache entry");
+    let content = complete["content"].as_str().expect("content is a string");
+
+    assert!(
+        content.contains("untracked-preview.txt"),
+        "complete preview should contain the untracked file, got: {content:?}"
+    );
+    assert!(
+        !content.contains("Could not load the complete diff"),
+        "speculative preview must not cache an error pane: {content:?}"
+    );
+}
+
+/// A user may point TMPDIR inside the repository (common in hermetic build
+/// environments). Temporary indexes share an excluded temp namespace so
+/// concurrent panes cannot see them as untracked files. Genuine untracked
+/// content still appears.
+#[rstest]
+fn test_picker_dry_run_tempdir_inside_worktree_has_no_index_artifacts(
+    #[from(main_only_repo)] repo: TestRepo,
+) {
+    // Brackets also prove the exclusion quotes Git pathspec glob metacharacters
+    // in the user-selected temporary directory.
+    let local_tmp = repo.path().join("local-[tmp]");
+    std::fs::create_dir_all(&local_tmp).unwrap();
+    std::fs::write(local_tmp.join(".gitkeep"), "").unwrap();
+    repo.run_git(&["add", "local-[tmp]/.gitkeep"]);
+    repo.run_git(&["commit", "-m", "track local temp directory"]);
+    std::fs::write(repo.path().join("loose.txt"), "loose\n").unwrap();
+    let branch = repo.current_branch();
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("TMPDIR", &local_tmp)
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array");
+    for mode in [1, 2] {
+        let pane = entries
+            .iter()
+            .find(|entry| entry["branch"] == branch && entry["mode"] == mode)
+            .unwrap_or_else(|| panic!("branch {branch} has mode-{mode} cache entry"));
+        let content = pane["content"].as_str().expect("content is a string");
+        assert!(
+            content.contains("loose.txt"),
+            "mode {mode} retains genuine untracked content: {content:?}"
+        );
+        assert!(
+            !content.contains("local-[tmp]/"),
+            "mode {mode} must not include temporary-index artifacts: {content:?}"
+        );
+    }
+}
+
+/// Intent-to-add must cross a sparse-checkout boundary. Otherwise one
+/// untracked file outside the sparse definition makes Git reject the whole add
+/// and both complete/working panes degrade to an unavailable warning.
+#[rstest]
+fn test_picker_dry_run_includes_untracked_outside_sparse_checkout(
+    #[from(main_only_repo)] repo: TestRepo,
+) {
+    let visible = repo.path().join("visible");
+    let hidden = repo.path().join("hidden");
+    std::fs::create_dir_all(&visible).unwrap();
+    std::fs::create_dir_all(&hidden).unwrap();
+    std::fs::write(visible.join("tracked.txt"), "base\n").unwrap();
+    std::fs::write(hidden.join("tracked.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "visible/tracked.txt", "hidden/tracked.txt"]);
+    repo.run_git(&["commit", "-m", "add sparse fixture"]);
+    repo.run_git(&["sparse-checkout", "init", "--cone"]);
+    repo.run_git(&["sparse-checkout", "set", "visible"]);
+
+    std::fs::write(visible.join("tracked.txt"), "changed\n").unwrap();
+    std::fs::create_dir_all(&hidden).unwrap();
+    std::fs::write(hidden.join("loose.txt"), "loose\n").unwrap();
+    let branch = repo.current_branch();
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array");
+    for mode in [1, 2] {
+        let pane = entries
+            .iter()
+            .find(|entry| entry["branch"] == branch && entry["mode"] == mode)
+            .unwrap_or_else(|| panic!("branch {branch} has mode-{mode} cache entry"));
+        let content = pane["content"].as_str().expect("content is a string");
+        assert!(
+            content.contains("visible/tracked.txt") && content.contains("hidden/loose.txt"),
+            "mode {mode} includes tracked and out-of-sparse untracked changes: {content:?}"
+        );
+        assert!(
+            !content.contains("Could not load"),
+            "mode {mode} must not degrade on sparse checkout: {content:?}"
+        );
+    }
 }
 
 /// `switch --prs` must select the GitLab subprocess route from the remote URL,
@@ -278,7 +440,7 @@ fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
     );
 
     // The worktree row with a PR spawns a `comments` background fetch keyed by
-    // its branch name (PreviewMode::Comments == 7) — the same fetch a `--prs`
+    // its branch name (PreviewMode::Comments == 8) — the same fetch a `--prs`
     // row makes, so the comments tab is no longer `--prs`-only. In this no-network
     // test the entry holds a terminal pane (a "couldn't load" on a GitHub remote,
     // or a "forge unsupported" note otherwise), but its presence proves the fetch
@@ -287,7 +449,7 @@ fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
         .as_array()
         .expect("top-level `entries` array")
         .iter()
-        .filter(|e| e["mode"] == 7)
+        .filter(|e| e["mode"] == 8)
         .map(|e| e["branch"].as_str().expect("branch is a string"))
         .collect();
     assert!(
@@ -337,7 +499,7 @@ fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
 }
 
 /// Same as above but with `list.summary=true` and a strict fake LLM command,
-/// proving the configured generator runs before its result reaches mode 5.
+/// proving the configured generator runs before its result reaches mode 6.
 #[rstest]
 fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
@@ -366,14 +528,14 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
         .as_array()
         .expect("top-level `entries` array");
 
-    // Summary mode is `5` (see `PreviewMode` in `src/commands/picker/preview.rs`).
+    // Summary mode is `6` (see `PreviewMode` in `src/commands/picker/preview.rs`).
     // At least one entry should be a summary when summaries are enabled —
-    // that proves the summary spawn branch ran to completion. Mode 4
+    // that proves the summary spawn branch ran to completion. Mode 5
     // (UpstreamDiff) is always present as part of the normal preview
     // modes array, so asserting on it would not prove anything about
     // the summary path.
     assert!(
-        entries.iter().any(|e| e["mode"] == 5),
+        entries.iter().any(|e| e["mode"] == 6),
         "expected at least one Summary entry, got: {stdout}"
     );
     assert!(

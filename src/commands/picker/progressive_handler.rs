@@ -20,17 +20,16 @@
 //! initialized). Intermediate updates coalesce to [`RENDER_THROTTLE`]; the
 //! terminal `on_collect_complete` forces one final unthrottled frame.
 //!
-//! Preview pre-compute is staged in two tiers:
-//! - `on_skeleton` fires the first item's 4 modes + first-item summary,
-//!   plus the default-tab mode for items 1..N (so quick j/k navigation
-//!   lands on warm content). It also fills the static Summary hint for
-//!   every row when summaries are disabled.
-//! - `on_collect_complete` fires the secondary modes (Log / BranchDiff /
-//!   UpstreamDiff) and summaries for items 1..N once the row pipeline
-//!   has torn down. Preview tasks share `COLLECT_POOL` with the row
-//!   pipeline. Staging keeps low-priority preview submissions out of
-//!   that pool's injector while row tasks are still landing on
-//!   workers' local deques during drain.
+//! Preview work is staged in two tiers:
+//! - `on_skeleton` fires the first item's 5 modes + first-item summary,
+//!   plus the default-tab mode for branch-only items 1..N (their committed
+//!   diff is cheap from the SHA-keyed cache; off-screen worktree rows are
+//!   demand-loaded when selected). It also fills the static Summary hint
+//!   for every row when summaries are disabled.
+//! - `on_collect_complete` fires configured summaries for items 1..N once
+//!   the row pipeline has torn down. Secondary local-git modes on those rows
+//!   are computed only when selected by the dedicated demand worker, avoiding
+//!   speculative worktree I/O for panes the user may never open.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -310,7 +309,7 @@ impl PickerProgressHandler for PickerHandler {
             HashMap::with_capacity(items.len());
 
         // Synchronous skeleton-time tab-availability facts (see `TabAvailability`).
-        // Branches with an upstream tracking ref drive the tab-4 (remote⇅) empty
+        // Branches with an upstream tracking ref drive the tab-5 (remote⇅) empty
         // state, read from the pre-skeleton `for-each-ref` inventory — never the
         // async `item.upstream`. A `local_branches()` failure yields the empty set
         // (every branch reads as no-upstream); preview rendering must not error.
@@ -532,12 +531,10 @@ impl PickerProgressHandler for PickerHandler {
             shown_branches,
         });
 
-        // Tier 1: warm the user's landing row (all modes) and every
-        // other row's default tab. Tier 2 (secondary modes + summaries
-        // for items 1..N) fires from `on_collect_complete` after the row
-        // pipeline tears down — spawning that bulk now would queue ahead
-        // of row tasks in `COLLECT_POOL`'s injector while workers are still
-        // grinding through the row work.
+        // Tier 1: warm the user's landing row (all modes) and the default tab
+        // of branch-only rows. Configured summaries for items 1..N fire from
+        // `on_collect_complete` after the row pipeline tears down. Secondary
+        // local modes stay demand-loaded.
         self.orchestrator.spawn_initial_precompute(
             &self.spawn_gen,
             &list_items,
@@ -666,10 +663,9 @@ impl PickerProgressHandler for PickerHandler {
         if items.len() <= 1 {
             return;
         }
-        self.orchestrator.spawn_deferred_precompute(
+        self.orchestrator.spawn_deferred_summaries(
             &self.spawn_gen,
             &items[1..],
-            self.preview_dims,
             self.llm_command.as_deref(),
         );
     }
@@ -1594,11 +1590,13 @@ mod tests {
     }
 
     /// Preview pre-compute is tiered. After `on_skeleton`:
-    /// - First item gets all 4 modes (the user's landing row).
-    /// - Items 1..N get only `WorkingTree` (the picker's initial tab) so
-    ///   quick j/k navigation hits warm content.
-    /// - Secondary modes for items 1..N are deferred until
-    ///   `on_collect_complete` fires.
+    /// - First item gets all 5 modes (the user's landing row).
+    /// - Branch-only items 1..N get only `UnifiedDiff` (the picker's initial
+    ///   tab) so quick j/k navigation hits warm content. Worktree-backed rows
+    ///   are demand-loaded instead; that split is pinned in
+    ///   `preview_orchestrator`, not here.
+    /// - Secondary modes for items 1..N stay demand-loaded rather than
+    ///   consuming worktree I/O speculatively.
     ///
     /// Summary hint is filled for every item synchronously at skeleton
     /// time so the Summary tab is usable for any selection immediately.
@@ -1630,11 +1628,12 @@ mod tests {
             );
         }
 
-        // First item: all 4 modes spawned at skeleton time.
+        // First item: all 5 modes spawned at skeleton time.
         for mode in [
+            PreviewMode::UnifiedDiff,
             PreviewMode::WorkingTree,
-            PreviewMode::Log,
             PreviewMode::BranchDiff,
+            PreviewMode::Log,
             PreviewMode::UpstreamDiff,
         ] {
             assert!(
@@ -1643,35 +1642,18 @@ mod tests {
             );
         }
 
-        // Items 1..N: WorkingTree (default tab) cached at skeleton time.
+        // Branch-only items 1..N: UnifiedDiff cached at skeleton time.
         for branch in ["beta", "gamma"] {
             assert!(
                 handler
                     .preview_cache
-                    .contains_key(&(branch.into(), PreviewMode::WorkingTree)),
-                "{branch}.WorkingTree should be cached after on_skeleton (initial tier)"
+                    .contains_key(&(branch.into(), PreviewMode::UnifiedDiff)),
+                "{branch}.UnifiedDiff should be cached after on_skeleton (initial tier)"
             );
         }
 
-        // Items 1..N: secondary modes NOT yet spawned (deferred tier).
+        // Items 1..N: secondary modes are not spawned speculatively.
         for branch in ["beta", "gamma"] {
-            for mode in [
-                PreviewMode::Log,
-                PreviewMode::BranchDiff,
-                PreviewMode::UpstreamDiff,
-            ] {
-                assert!(
-                    !handler.preview_cache.contains_key(&(branch.into(), mode)),
-                    "{branch}.{mode:?} should NOT be cached before on_collect_complete"
-                );
-            }
-        }
-
-        handler.on_collect_complete();
-        handler.orchestrator.wait_for_idle();
-
-        // After on_collect_complete, every item × every preview mode is cached.
-        for branch in ["alpha", "beta", "gamma"] {
             for mode in [
                 PreviewMode::WorkingTree,
                 PreviewMode::Log,
@@ -1679,8 +1661,27 @@ mod tests {
                 PreviewMode::UpstreamDiff,
             ] {
                 assert!(
-                    handler.preview_cache.contains_key(&(branch.into(), mode)),
-                    "{branch}.{mode:?} should be cached after on_collect_complete"
+                    !handler.preview_cache.contains_key(&(branch.into(), mode)),
+                    "{branch}.{mode:?} should remain demand-loaded"
+                );
+            }
+        }
+
+        handler.on_collect_complete();
+        handler.orchestrator.wait_for_idle();
+
+        // Collection completion must not bulk-compute subsidiary local modes.
+        // (Configured summaries use this hook, but this fixture has them off.)
+        for branch in ["beta", "gamma"] {
+            for mode in [
+                PreviewMode::WorkingTree,
+                PreviewMode::Log,
+                PreviewMode::BranchDiff,
+                PreviewMode::UpstreamDiff,
+            ] {
+                assert!(
+                    !handler.preview_cache.contains_key(&(branch.into(), mode)),
+                    "{branch}.{mode:?} should remain demand-loaded after collection"
                 );
             }
         }
@@ -1705,8 +1706,8 @@ mod tests {
             "no work should be spawned when on_skeleton never fired"
         );
 
-        // Case 2: single-item skeleton — first-item phase covered the 4
-        // modes plus the static Summary hint (5 entries total). Nothing
+        // Case 2: single-item skeleton — first-item phase covered the 5
+        // modes plus the static Summary hint (6 entries total). Nothing
         // left to defer; on_collect_complete must not add any entries.
         let (handler, _test, _rx) = make_handler();
         let items = vec![ListItem::new_branch("aaa".into(), "solo".into())];
@@ -1714,6 +1715,7 @@ mod tests {
         handler.orchestrator.wait_for_idle();
         let before = handler.preview_cache.iter().count();
         for mode in [
+            PreviewMode::UnifiedDiff,
             PreviewMode::WorkingTree,
             PreviewMode::Log,
             PreviewMode::BranchDiff,
@@ -1725,7 +1727,7 @@ mod tests {
                 "first-item phase should have cached {mode:?}"
             );
         }
-        assert_eq!(before, 5, "first-item phase populates exactly 5 entries");
+        assert_eq!(before, 6, "first-item phase populates exactly 6 entries");
 
         handler.on_collect_complete();
         handler.orchestrator.wait_for_idle();

@@ -80,7 +80,7 @@ pub use remove::{
 pub use repository::sha_cache;
 pub use repository::{
     Branch, BranchDiffSpec, CommitMessageDetail, InProgressOperation, IntegrationTargets,
-    RefSnapshot, Repository, ResolvedWorktree, Selector, TempIndex, WorkingTree,
+    PreparedDiff, RefSnapshot, Repository, ResolvedWorktree, Selector, TempIndex, WorkingTree,
     duplicated_branches, is_valid_branch_name, normalize_selector, resolve_input_path,
     select_comparison_base, set_base_path,
 };

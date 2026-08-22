@@ -242,13 +242,11 @@ pub(crate) fn compute_combined_diff(
         // stat and full-diff invocations differ only by the `--stat` flag.
         // The prefix overrides keep the diff parseable into per-file sections
         // by `prepare_diff` (same guard as `build_commit_prompt`).
+        let prepared = repo.prepare_diff(spec.revs.iter().cloned());
         let run_branch_diff = |opts: &[&str], out: &mut String| {
-            let mut args = DIFF_PREFIX_OVERRIDES.to_vec();
-            args.push("diff");
-            args.extend_from_slice(opts);
-            args.push("--end-of-options");
-            args.extend(spec.revs.iter().map(String::as_str));
-            if let Ok(text) = repo.run_command(&args) {
+            if let Ok(text) =
+                prepared.capture_with_git_options(DIFF_PREFIX_OVERRIDES, opts.iter().copied())
+            {
                 out.push_str(&text);
             }
         };
@@ -258,16 +256,14 @@ pub(crate) fn compute_combined_diff(
 
     // Working tree diff: uncommitted changes
     if let Some(wt_path) = worktree_path {
-        let path = wt_path.display().to_string();
-        if let Ok(wt_stat) = repo.run_command(&["-C", &path, "diff", "HEAD", "--stat"])
+        let prepared = repo.worktree_at(wt_path).prepare_diff(["HEAD"]);
+        if let Ok(wt_stat) = prepared.capture(["--stat"])
             && !wt_stat.trim().is_empty()
         {
             stat.push_str(&wt_stat);
         }
-        let mut wt_diff_args = vec!["-C", &path];
-        wt_diff_args.extend(DIFF_PREFIX_OVERRIDES);
-        wt_diff_args.extend(["diff", "HEAD"]);
-        if let Ok(wt_diff) = repo.run_command(&wt_diff_args)
+        if let Ok(wt_diff) =
+            prepared.capture_with_git_options(DIFF_PREFIX_OVERRIDES, std::iter::empty::<&str>())
             && !wt_diff.trim().is_empty()
         {
             diff.push_str(&wt_diff);

@@ -3,67 +3,69 @@
 //! Tracks the active preview tab (in process memory) and selects the preview
 //! layout for the interactive selector.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI8, AtomicU8, Ordering};
 
 /// Preview modes for the interactive selector
 ///
 /// Each mode shows a different aspect of the selected row:
-/// 1. WorkingTree: Uncommitted changes (git diff HEAD --stat)
-/// 2. Log: Commit history since diverging from the default branch (git log with merge-base)
-/// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat DEFAULT…)
-/// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
-/// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
-/// 6. Pr: The selected row's PR/MR, rendered from already-fetched data (no network)
-/// 7. Comments: The PR/MR's comment thread (background forge fetch on any row
+/// 1. UnifiedDiff: Committed and working-tree changes in one diff, including untracked files
+/// 2. WorkingTree: Staged, unstaged, and untracked changes against HEAD
+/// 3. BranchDiff: Committed changes since the comparison base
+/// 4. Log: Commit history since diverging from the default branch (git log with merge-base)
+/// 5. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
+/// 6. Summary: LLM-generated branch summary (requires [commit.generation] config)
+/// 7. Pr: The selected row's PR/MR, rendered from already-fetched data (no network)
+/// 8. Comments: The PR/MR's comment thread (background forge fetch on any row
 ///    whose branch has an open PR — worktree row or `--prs` row alike)
 ///
 /// A mode whose content is structurally absent for the current row is rendered
 /// de-emphasized in the tab bar (see `TabAvailability` / `render_preview_tabs`):
-/// tab 4 when the branch has no upstream, tab 5 when summaries are disabled or
-/// the branch has nothing to summarize, the working-tree/branch-diff/upstream/
-/// summary tabs on a `--prs` row (no local worktree), and the PR-backed tabs 6
-/// (pr) and 7 (comments) when the row's branch has no PR. The PR-backed tabs are
+/// tab 5 when the branch has no upstream, tab 6 when summaries are disabled or
+/// the branch has nothing to summarize, the unified/working-tree/branch-diff/
+/// upstream/summary tabs on a `--prs` row (no local worktree), and the PR-backed tabs 7
+/// (pr) and 8 (comments) when the row's branch has no PR. The PR-backed tabs are
 /// available together, by the same rule, on every row — `--prs` only decides
 /// whether a PR row is listed, not how these tabs behave.
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
-/// - Tab 1 corresponds to "HEAD±" column
-/// - Tab 2 shows commits (related to "main↕" counts)
-/// - Tab 3 corresponds to "main…±" column
-/// - Tab 4 corresponds to "Remote⇅" column
-/// - Tab 6 corresponds to the "CI" column's PR/MR
+/// - Tabs 1–3 decompose all changes into working-tree and committed diffs
+/// - Tab 4 shows commits (related to "main↕" counts)
+/// - Tab 5 corresponds to "Remote⇅" column
+/// - Tab 7 corresponds to the "CI" column's PR/MR
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum PreviewMode {
-    WorkingTree = 1,
-    Log = 2,
+    UnifiedDiff = 1,
+    WorkingTree = 2,
     BranchDiff = 3,
-    UpstreamDiff = 4,
-    Summary = 5,
-    Pr = 6,
-    Comments = 7,
+    Log = 4,
+    UpstreamDiff = 5,
+    Summary = 6,
+    Pr = 7,
+    Comments = 8,
 }
 
 impl PreviewMode {
     pub(super) fn from_u8(n: u8) -> Self {
         match n {
-            2 => Self::Log,
+            2 => Self::WorkingTree,
             3 => Self::BranchDiff,
-            4 => Self::UpstreamDiff,
-            5 => Self::Summary,
-            6 => Self::Pr,
-            7 => Self::Comments,
-            _ => Self::WorkingTree,
+            4 => Self::Log,
+            5 => Self::UpstreamDiff,
+            6 => Self::Summary,
+            7 => Self::Pr,
+            8 => Self::Comments,
+            _ => Self::UnifiedDiff,
         }
     }
 
-    /// The next tab, wrapping `Comments` → `WorkingTree` (tab key).
+    /// The next tab, wrapping `Comments` → `UnifiedDiff` (tab key).
     pub(super) fn next(self) -> Self {
-        Self::from_u8(if self as u8 >= 7 { 1 } else { self as u8 + 1 })
+        Self::from_u8(if self as u8 >= 8 { 1 } else { self as u8 + 1 })
     }
 
-    /// The previous tab, wrapping `WorkingTree` → `Comments` (shift-tab key).
+    /// The previous tab, wrapping `UnifiedDiff` → `Comments` (shift-tab key).
     pub(super) fn prev(self) -> Self {
-        Self::from_u8(if self as u8 <= 1 { 7 } else { self as u8 - 1 })
+        Self::from_u8(if self as u8 <= 1 { 8 } else { self as u8 - 1 })
     }
 
     /// Whether this tab is in [`LOCAL_GIT_MODES`].
@@ -72,16 +74,17 @@ impl PreviewMode {
     }
 }
 
-/// The four tabs computed from local git alone — the one canonical set both
+/// The five tabs computed from local git alone — the one canonical set both
 /// preview producers consume: the orchestrator precomputes exactly these
 /// (plus summaries), and the demand worker serves them on a cache miss (see
 /// `PreviewDemand`), so the two can't drift. Summary is excluded (an LLM
 /// call on tab navigation would be a surprise cost); Pr and Comments
 /// render/fetch through their own paths.
-pub(super) const LOCAL_GIT_MODES: [PreviewMode; 4] = [
+pub(super) const LOCAL_GIT_MODES: [PreviewMode; 5] = [
+    PreviewMode::UnifiedDiff,
     PreviewMode::WorkingTree,
-    PreviewMode::Log,
     PreviewMode::BranchDiff,
+    PreviewMode::Log,
     PreviewMode::UpstreamDiff,
 ];
 
@@ -233,7 +236,7 @@ impl PreviewLayout {
 /// One picker runs per process, so a single process-wide value is the source of
 /// truth: `PickerRow::preview` reads it to choose
 /// what to render, and the keymap's `Action::Custom` callbacks (installed in
-/// `super::install_preview_tab_keybindings`) write it on alt-1…alt-7 / tab /
+/// `super::install_preview_tab_keybindings`) write it on alt-1…alt-8 / tab /
 /// shift-tab, then re-run the preview.
 ///
 /// It lives in memory rather than on disk. Tab switching used to write a digit
@@ -242,45 +245,65 @@ impl PreviewLayout {
 /// way to react to a keypress. The native `Action::Custom` path removes that
 /// constraint — and with it the file, whose `tr`/`mv` commands skim's Windows
 /// shell (cmd.exe) cannot run.
-static PREVIEW_MODE: AtomicU8 = AtomicU8::new(PreviewMode::WorkingTree as u8);
+/// `0` means the caller-supplied automatic choice; `1..=8` is an explicit
+/// [`PreviewMode`]. Keeping both states in one atomic prevents an impossible
+/// "explicit flag + unrelated configured mode" combination.
+static PREVIEW_SELECTION: AtomicU8 = AtomicU8::new(0);
+/// A Tab keypress is resolved by the selected row when `RunPreview` renders it,
+/// because that row already owns the live availability data.
+static PENDING_CYCLE: AtomicI8 = AtomicI8::new(0);
 
 pub(super) struct PreviewStateData;
 
 impl PreviewStateData {
-    /// The active preview tab.
-    pub(super) fn read_mode() -> PreviewMode {
-        PreviewMode::from_u8(PREVIEW_MODE.load(Ordering::Relaxed))
+    /// Active mode for a row. Until the user chooses a tab, local rows open on
+    /// the unified diff while forge-only rows open on their PR details. Once a
+    /// tab is chosen, that explicit mode stays sticky across row navigation.
+    pub(super) fn read_mode_for(default_mode: PreviewMode) -> PreviewMode {
+        effective_mode(PREVIEW_SELECTION.load(Ordering::Relaxed), default_mode)
     }
 
-    /// Jump to a specific tab (alt-1…alt-7).
-    pub(super) fn set_mode(mode: PreviewMode) {
-        PREVIEW_MODE.store(mode as u8, Ordering::Relaxed);
+    /// Jump to a specific tab (alt-1…alt-8), making the choice sticky.
+    pub(super) fn select_mode(mode: PreviewMode) {
+        PREVIEW_SELECTION.store(mode as u8, Ordering::Relaxed);
     }
 
-    /// Cycle to the next (`forward`) / previous tab, wrapping around (tab /
-    /// shift-tab). Runs on skim's single event-loop thread, so the
-    /// load-then-store needs no compare-and-swap.
-    pub(super) fn rotate(forward: bool) {
-        let current = Self::read_mode();
-        Self::set_mode(if forward {
-            current.next()
-        } else {
-            current.prev()
-        });
+    pub(super) fn request_cycle(forward: bool) {
+        PENDING_CYCLE.store(if forward { 1 } else { -1 }, Ordering::Relaxed);
+    }
+
+    pub(super) fn take_cycle_request() -> Option<bool> {
+        match PENDING_CYCLE.swap(0, Ordering::Relaxed) {
+            1 => Some(true),
+            -1 => Some(false),
+            _ => None,
+        }
+    }
+
+    fn reset() {
+        PREVIEW_SELECTION.store(0, Ordering::Relaxed);
+        PENDING_CYCLE.store(0, Ordering::Relaxed);
+    }
+}
+
+fn effective_mode(selection: u8, default_mode: PreviewMode) -> PreviewMode {
+    match selection {
+        0 => default_mode,
+        explicit => PreviewMode::from_u8(explicit),
     }
 }
 
 /// Per-session preview state: the initial layout (selected once from the
 /// terminal size in `handle_picker`). Constructing it also resets
-/// [`PreviewStateData`] to the working-tree tab so every picker opens on the
-/// same tab.
+/// [`PreviewStateData`] to automatic mode so local rows open on the unified
+/// diff and forge-only rows open on PR details.
 pub(super) struct PreviewState {
     pub(super) initial_layout: PreviewLayout,
 }
 
 impl PreviewState {
     pub(super) fn new(initial_layout: PreviewLayout) -> Self {
-        PreviewStateData::set_mode(PreviewMode::WorkingTree);
+        PreviewStateData::reset();
         Self { initial_layout }
     }
 }
@@ -291,16 +314,31 @@ mod tests {
 
     #[test]
     fn test_preview_mode_from_u8() {
-        assert_eq!(PreviewMode::from_u8(1), PreviewMode::WorkingTree);
-        assert_eq!(PreviewMode::from_u8(2), PreviewMode::Log);
+        assert_eq!(PreviewMode::from_u8(1), PreviewMode::UnifiedDiff);
+        assert_eq!(PreviewMode::from_u8(2), PreviewMode::WorkingTree);
         assert_eq!(PreviewMode::from_u8(3), PreviewMode::BranchDiff);
-        assert_eq!(PreviewMode::from_u8(4), PreviewMode::UpstreamDiff);
-        assert_eq!(PreviewMode::from_u8(5), PreviewMode::Summary);
-        assert_eq!(PreviewMode::from_u8(6), PreviewMode::Pr);
-        assert_eq!(PreviewMode::from_u8(7), PreviewMode::Comments);
-        // Invalid values default to WorkingTree
-        assert_eq!(PreviewMode::from_u8(0), PreviewMode::WorkingTree);
-        assert_eq!(PreviewMode::from_u8(99), PreviewMode::WorkingTree);
+        assert_eq!(PreviewMode::from_u8(4), PreviewMode::Log);
+        assert_eq!(PreviewMode::from_u8(5), PreviewMode::UpstreamDiff);
+        assert_eq!(PreviewMode::from_u8(6), PreviewMode::Summary);
+        assert_eq!(PreviewMode::from_u8(7), PreviewMode::Pr);
+        assert_eq!(PreviewMode::from_u8(8), PreviewMode::Comments);
+        // Invalid values default to UnifiedDiff
+        assert_eq!(PreviewMode::from_u8(0), PreviewMode::UnifiedDiff);
+        assert_eq!(PreviewMode::from_u8(99), PreviewMode::UnifiedDiff);
+    }
+
+    #[test]
+    fn test_automatic_mode_uses_the_rows_default() {
+        assert_eq!(
+            effective_mode(0, PreviewMode::UnifiedDiff),
+            PreviewMode::UnifiedDiff
+        );
+        assert_eq!(effective_mode(0, PreviewMode::Pr), PreviewMode::Pr);
+        assert_eq!(
+            effective_mode(PreviewMode::WorkingTree as u8, PreviewMode::Pr),
+            PreviewMode::WorkingTree,
+            "an explicit choice stays sticky on a forge-only row"
+        );
     }
 
     #[test]
@@ -448,28 +486,29 @@ mod tests {
 
     #[test]
     fn test_preview_mode_rotation() {
-        // tab cycles forward through all seven tabs and wraps; shift-tab is the
+        // tab cycles forward through all eight tabs and wraps; shift-tab is the
         // exact inverse. These drive the tab / shift-tab keybindings.
         let forward: Vec<PreviewMode> =
-            std::iter::successors(Some(PreviewMode::WorkingTree), |m| {
+            std::iter::successors(Some(PreviewMode::UnifiedDiff), |m| {
                 let next = m.next();
-                (next != PreviewMode::WorkingTree).then_some(next)
+                (next != PreviewMode::UnifiedDiff).then_some(next)
             })
             .collect();
         assert_eq!(
             forward,
             vec![
+                PreviewMode::UnifiedDiff,
                 PreviewMode::WorkingTree,
-                PreviewMode::Log,
                 PreviewMode::BranchDiff,
+                PreviewMode::Log,
                 PreviewMode::UpstreamDiff,
                 PreviewMode::Summary,
                 PreviewMode::Pr,
                 PreviewMode::Comments,
             ]
         );
-        assert_eq!(PreviewMode::Comments.next(), PreviewMode::WorkingTree);
-        assert_eq!(PreviewMode::WorkingTree.prev(), PreviewMode::Comments);
+        assert_eq!(PreviewMode::Comments.next(), PreviewMode::UnifiedDiff);
+        assert_eq!(PreviewMode::UnifiedDiff.prev(), PreviewMode::Comments);
         for mode in forward {
             assert_eq!(mode.next().prev(), mode);
         }

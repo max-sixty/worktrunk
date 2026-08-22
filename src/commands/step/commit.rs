@@ -1,12 +1,11 @@
 //! `wt step commit` — commit working tree changes.
 
-use std::fs;
+use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::Repository;
-use worktrunk::shell_exec::Cmd;
+use worktrunk::git::{Repository, TempIndex};
 use worktrunk::styling::println;
 
 use super::super::command_approval::{approve_or_skip, resolve_template_for_preview};
@@ -92,7 +91,7 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     } else {
         None
     };
-    let index_override = temp_index.as_deref();
+    let index_override = temp_index.as_ref().map(|temp| Path::new(temp.path()));
 
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
@@ -111,29 +110,14 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     print_dry_run(&prompt, &commit_config, &message)
 }
 
-/// Copy the current worktree's index to a temp file and run `git <add_args>` against it.
+/// Stage into the worktree's shared temporary-index abstraction.
 ///
-/// Returns the [`tempfile::TempPath`] so the caller controls its lifetime — when
-/// dropped, the temp file is removed without ever touching the user's real index.
-fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<tempfile::TempPath> {
-    let wt = repo.current_worktree();
-    let real_index = wt.git_dir()?.join("index");
-    // Close the freshly-created 0-byte tempfile's handle (Windows leaves
-    // the name delete-pending if it's still open) and clear the file; if a
-    // real index exists, copy it back, otherwise let `git add` create a
-    // fresh index at the reserved path. Mirrors `WorkingTree::temp_index`.
-    let temp = tempfile::NamedTempFile::new()
-        .context("Failed to create temporary index")?
-        .into_temp_path();
-    fs::remove_file(&temp).context("Failed to clear temporary index")?;
-    if real_index.exists() {
-        fs::copy(&real_index, &temp).context("Failed to copy index file")?;
-    }
-
-    let output = Cmd::new("git")
-        .args(add_args.iter().copied())
-        .current_dir(wt.root()?)
-        .env("GIT_INDEX_FILE", &temp)
+/// Returning [`TempIndex`] keeps the copied index alive while the caller builds
+/// the prompt, then removes it on drop without touching the user's real index.
+fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<TempIndex> {
+    let temp = repo.current_worktree().temp_index()?;
+    let output = temp
+        .git(add_args.iter().copied())
         .run()
         .context("Failed to stage changes into temp index")?;
     if !output.status.success() {
@@ -156,7 +140,10 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        let err = super::stage_to_temp_index(&repo, &["add", "--", ":(bad"]).unwrap_err();
+        let err = match super::stage_to_temp_index(&repo, &["add", "--", ":(bad"]) {
+            Ok(_) => panic!("invalid pathspec should fail"),
+            Err(err) => err,
+        };
         let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
         assert_eq!(cmd_err.command_string(), "git add -- :(bad");
     }

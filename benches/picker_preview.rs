@@ -8,13 +8,14 @@
 //
 // What this measures
 // ------------------
-// `wt switch` (interactive picker) submits one preview-compute task per row
-// (worktree/branch) into the global rayon pool. Each task gathers the data
-// that fills the picker's preview pane — diff stats, log lines, ahead/behind
-// — and stores it in the in-memory preview cache. The user-visible quantity
-// to optimize is "time from picker launch to all previews ready": that's
-// the responsiveness window where j/k navigation should land on warm
-// content.
+// `wt switch` (interactive picker) submits every local preview for the landing
+// row and the cheap, cacheable default preview for each branch-only row into
+// its rayon pool. Off-screen worktrees are demand-loaded when selected so their
+// untracked-inclusive diff cannot delay row collection. The user-visible
+// quantity to optimize here is the skeleton-time preview workload before skim
+// launches. The demand path this defers work onto is not measured anywhere:
+// `preview_miss_is_served_by_demand_worker` asserts that path is
+// correct, not that it is fast, and no bench covers selected-row latency.
 //
 // We measure that wall clock headlessly by spawning `wt` with
 // `WORKTRUNK_PREVIEW_BENCH=1`, which runs the full picker prelude (collect,
@@ -24,7 +25,7 @@
 // (option 2 from the task: "spawn → first interactive-ready point") would
 // require a TTY harness; the documented nextest/SIGTTOU pain on
 // `shell-integration-tests` (see project `CLAUDE.md`) makes that a follow-up
-// rather than a prerequisite. The headless path captures the full pool
+// rather than a prerequisite. The headless path captures the initial pool
 // workload, which is the variable the optimization work in #2662 / #2683 /
 // #2685 / #2704 actually pushes on.
 //
