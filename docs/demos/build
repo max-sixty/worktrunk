@@ -74,12 +74,18 @@ CLAUDE_DEMOS = {"wt-switch", "wt-statusline", "wt-zellij-omnibus"}
 @contextmanager
 def prepared_demo_env(output_name: str, setup_func):
     """Create a prepared demo environment and remove it after use."""
-    with tempfile.TemporaryDirectory(prefix="wt-demo-") as demo_env_dir:
-        out_dir = Path(demo_env_dir)
-        setup_demo_output(out_dir)
-        env = DemoEnv(name=output_name, out_dir=out_dir, repo_name="acme")
-        setup_func(env)
-        yield env
+    with tempfile.TemporaryDirectory(
+        prefix="wt-demo-", ignore_cleanup_errors=True
+    ) as demo_env_dir:
+        yield _prepare_demo_env(Path(demo_env_dir), output_name, setup_func)
+
+
+def _prepare_demo_env(out_dir: Path, output_name: str, setup_func) -> DemoEnv:
+    """Prepare a demo environment at an existing directory."""
+    setup_demo_output(out_dir)
+    env = DemoEnv(name=output_name, out_dir=out_dir, repo_name="acme")
+    setup_func(env)
+    return env
 
 
 def _add_billing_branch(env: DemoEnv):
@@ -631,9 +637,10 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
     # Handle --shell mode (interactive, must be sequential)
     if args.shell:
         tape_file, output_name, setup_func = demos[0]
-        with prepared_demo_env(output_name, setup_func) as env:
-            print(f"Demo repo: {env.repo}")
-            spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
+        debug_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
+        env = _prepare_demo_env(debug_dir, output_name, setup_func)
+        print(f"Demo repo: {env.repo}")
+        spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
         return []
 
     # TUI demos run sequentially (they use Zellij which conflicts when parallel)

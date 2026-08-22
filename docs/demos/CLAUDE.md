@@ -104,7 +104,7 @@ External dependencies are downloaded/built automatically on first run:
 - **Claude Code binary** — Downloaded from Anthropic's release bucket
 - **Zellij plugin** — Downloaded from GitHub releases
 
-Demos that launch Claude Code (`wt-switch`, `wt-statusline`, `wt-zellij-omnibus) require authentication. On macOS, the recorder reuses the current `claude auth login` credential from the user's Keychain. Other environments can provide an OAuth token or API key:
+Demos that launch Claude Code (`wt-switch`, `wt-statusline`, `wt-zellij-omnibus`) require authentication. On macOS, the recorder reuses the current `claude auth login` credential from the user's Keychain. Other environments can provide an OAuth token or API key:
 
 ```bash
 export CLAUDE_CODE_OAUTH_TOKEN=...
@@ -224,6 +224,8 @@ claude                                    # See what happens on first launch
 wt switch --create foo                    # Create a worktree
 wt switch --execute claude --create bar   # Test the demo command
 ```
+
+After fish exits, the debug environment remains at the path printed when the shell starts. Remove that directory manually when you no longer need it.
 
 ## Timing guidelines
 

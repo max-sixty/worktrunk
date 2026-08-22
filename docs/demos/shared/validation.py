@@ -6,10 +6,10 @@ multiplexers. Instead, we extract frames from the GIF and use OCR to verify
 expected content appears.
 
 Checkpoints specify a frame range rather than a single frame. The validator
-scans frames within the range (sampling every N frames) and passes the
-checkpoint if ANY frame in the range matches all expected patterns while
-containing none of the forbidden patterns. This makes validation resilient
-to timing shifts from UI changes.
+scans frames within the range (sampling every N frames). Expected patterns must
+share at least one sampled frame, while forbidden patterns must be absent from
+every sampled frame. This makes validation resilient to timing shifts from UI
+changes without allowing transient errors.
 
 Usage:
     from shared.validation import validate_tui_demo, TUI_CHECKPOINTS
@@ -42,7 +42,8 @@ class Checkpoint:
 # Checkpoint definitions per TUI demo.
 # Ranges are calibrated from actual GIF content at 30fps.
 # Expected patterns must ALL be present (case-insensitive) in at least one
-# frame within the range. Forbidden patterns must ALL be absent.
+# frame within the range. Every forbidden pattern must be absent from every
+# sampled frame.
 
 TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
     "wt-switch": [
