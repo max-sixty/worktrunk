@@ -2605,6 +2605,68 @@ fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
     );
 }
 
+// =============================================================================
+// Pi plugin install/uninstall
+// =============================================================================
+
+#[rstest]
+fn test_pi_install_creates_profile_aware_hook(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("OMP_PROFILE", "research");
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join(".omp/profiles/research/agent/hooks/pre/worktrunk.ts");
+    let content = fs::read_to_string(&plugin_path).expect("Pi hook should be installed");
+    assert!(content.contains("agent_start"));
+    assert!(content.contains("agent_end"));
+    assert!(content.contains("session_shutdown"));
+}
+
+#[rstest]
+fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-pi-agent");
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(agent_dir.join("hooks/pre/worktrunk.ts").exists());
+}
+
+#[rstest]
+fn test_pi_uninstall_removes_hook(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join(".omp/agent");
+    let plugin_path = agent_dir.join("hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(!plugin_path.exists());
+}
+
 /// When $SHELL is not set but PSModulePath is, config show should display
 /// "Detected shell: powershell" in the diagnostics and show the verification hint.
 #[rstest]
