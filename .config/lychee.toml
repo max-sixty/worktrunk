@@ -1,8 +1,8 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
-# Root directory for resolving absolute paths (e.g., /assets/...)
-root_dir = "docs/public"
+# Built Astro root for resolving absolute routes and assets.
+root_dir = "docs/dist"
 
 # Network resilience - handles transient failures
 max_retries = 6
