@@ -6,25 +6,25 @@ Manage user & project configs. Includes shell integration, hooks, and saved stat
 
 Install shell integration (required for directory switching):
 
-```bash
+```console
 $ wt config shell install
 ```
 
 Create user config file with documented examples:
 
-```bash
+```console
 $ wt config create
 ```
 
 Create project config file (`.config/wt.toml`) for hooks:
 
-```bash
+```console
 $ wt config create --project
 ```
 
 Show current configuration and file locations:
 
-```bash
+```console
 $ wt config show
 ```
 
@@ -611,7 +611,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the [u
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
-```bash
+```console
 $ wt config shell install
 ```
 
@@ -645,7 +645,7 @@ For nested config sections, use double underscores to separate levels:
 
 Override the LLM command in CI to use a mock:
 
-```bash
+```console
 $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
@@ -673,7 +673,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 
 `--config-set <toml>` overrides any user config key for a single invocation. The value is a TOML fragment, so arrays and tables work directly; the flag is global (works before or after the subcommand), repeatable, and a later `--config-set` replaces an earlier one for the same key.
 
-```bash
+```console
 $ wt --config-set list.full=true list
 $ wt step copy-ignored --config-set 'step.copy-ignored.exclude=["target", "dist"]'
 ```
@@ -691,7 +691,7 @@ Sources closer to the invocation rank higher (user config above system config), 
 
 A `--config-set` that names a project entry is both the highest layer and the most specific key, so it beats the same flag's global key:
 
-```bash
+```console
 $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratch"' switch --create feature
 ```
 
@@ -754,7 +754,7 @@ If a config file doesn't exist, shows defaults that would be used.
 
 Use `--full` to run diagnostic checks:
 
-```bash
+```console
 $ wt config show --full
 ```
 
@@ -812,37 +812,37 @@ Project hooks and project aliases prompt for approval on first run to prevent un
 ### Examples
 
 List commands and their approval status for current project:
-```bash
+```console
 $ wt config approvals list
 ```
 
 Pre-approve all hook and alias commands for current project:
-```bash
+```console
 $ wt config approvals add
 ```
 
 Pre-approve without prompting, for a container or CI job:
-```bash
+```console
 $ wt config approvals add --yes
 ```
 
 Clear approvals for current project:
-```bash
+```console
 $ wt config approvals clear
 ```
 
 Clear only approvals for commands no longer in the project config:
-```bash
+```console
 $ wt config approvals clear --stale
 ```
 
 Clear global approvals:
-```bash
+```console
 $ wt config approvals clear --global
 ```
 
 Check whether an unattended run would stop for approval:
-```bash
+```console
 $ wt config approvals list --format=json | jq -r .state
 ```
 
@@ -915,17 +915,17 @@ Aliases are command templates configured in user (`~/.config/worktrunk/config.to
 ### Examples
 
 Show every configured alias's template:
-```bash
+```console
 $ wt config alias show
 ```
 
 Show the template for `deploy`:
-```bash
+```console
 $ wt config alias show deploy
 ```
 
 Preview an invocation without running it:
-```bash
+```console
 $ wt config alias dry-run deploy
 $ wt config alias dry-run deploy -- --env=staging
 ```
@@ -981,37 +981,37 @@ State is stored in `.git/` (config entries and log files), separate from configu
 ### Examples
 
 Get the default branch:
-```bash
+```console
 $ wt config state default-branch
 ```
 
 Set the default branch manually:
-```bash
+```console
 $ wt config state default-branch set main
 ```
 
 Set a marker for current branch:
-```bash
+```console
 $ wt config state marker set 🚧
 ```
 
 Store arbitrary data:
-```bash
+```console
 $ wt config state vars set env=staging
 ```
 
 Drop the regenerable caches:
-```bash
+```console
 $ wt config state cache clear
 ```
 
 Show all stored state:
-```bash
+```console
 $ wt config state get
 ```
 
 Clear all stored state:
-```bash
+```console
 $ wt config state clear
 ```
 
@@ -1075,12 +1075,12 @@ Without a subcommand, runs `get`.
 ### Examples
 
 Show cache contents:
-```bash
+```console
 $ wt config state cache
 ```
 
 Drop all caches:
-```bash
+```console
 $ wt config state cache clear
 ```
 
@@ -1128,7 +1128,7 @@ Default branch detection and override.
 
 Useful in scripts to avoid hardcoding `main` or `master`:
 
-```bash
+```console
 $ git rebase $(wt config state default-branch)
 ```
 
@@ -1252,27 +1252,27 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 ### Examples
 
 List all log files:
-```bash
+```console
 $ wt config state logs
 ```
 
 Query the command log:
-```bash
+```console
 $ tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
-```bash
+```console
 $ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
 ```
 
 Logs for a specific branch:
-```bash
+```console
 $ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
 ```
 
 Clear all logs:
-```bash
+```console
 $ wt config state logs clear
 ```
 
@@ -1373,7 +1373,7 @@ Custom status text or emoji shown in the `wt list` Status column.
 
 Markers appear at the end of the Status column, after git symbols:
 
-```
+```console
 $ wt list
   Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
 @ main             ^⇡                                    ⇡1      33323bc  1d    Initial commit
@@ -1394,7 +1394,7 @@ $ wt list
 
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
-```bash
+```console
 $ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
 ```
 
@@ -1450,23 +1450,23 @@ Store custom variables per branch. Values are stored as-is — plain strings or 
 ### Examples
 
 Set and get values:
-```bash
+```console
 $ wt config state vars set env=staging
 $ wt config state vars get env
 ```
 
 Store JSON:
-```bash
+```console
 $ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 
 List all keys:
-```bash
+```console
 $ wt config state vars list
 ```
 
 Operate on a different branch:
-```bash
+```console
 $ wt config state vars set env=production --branch=main
 ```
 
@@ -1481,7 +1481,7 @@ dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.p
 
 JSON object and array values support dot access:
 
-```bash
+```console
 $ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 ```toml

@@ -10,11 +10,11 @@ Env CLAUDE_CODE_OAUTH_TOKEN "{{CLAUDE_CODE_OAUTH_TOKEN}}"
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 # Switch to alpha worktree first (has uncommitted changes for diff stats)
 Type "wt switch alpha"
+Show
+Sleep 300ms
 Enter
 Sleep 1.5s
 
@@ -26,3 +26,5 @@ Sleep 1s
 Type "claude"
 Enter
 Sleep 8s
+
+Hide

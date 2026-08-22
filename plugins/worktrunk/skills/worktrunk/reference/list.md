@@ -14,7 +14,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 List all worktrees:
 
-```
+```console
 $ wt list
   Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02  30m   Add API tests
@@ -27,7 +27,7 @@ $ wt list
 
 Include CI status and LLM summaries:
 
-```
+```console
 $ wt list --full
   Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
@@ -40,7 +40,7 @@ $ wt list --full
 
 Include branches that don't have worktrees:
 
-```
+```console
 $ wt list --branches --full
   Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
@@ -55,7 +55,7 @@ $ wt list --branches --full
 
 Output as JSON for scripting:
 
-```bash
+```console
 $ wt list --format=json
 ```
 
@@ -277,7 +277,7 @@ Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `url_active` → `dev_server`, `statusline`/`symbols`/`columns` → `display.*`,
 and the per-item `repo` moves to the envelope's `repo.forge`.
 
-```bash
+```console
 # Current worktree path (for scripts)
 $ wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'
 
@@ -300,7 +300,7 @@ optional there rather than required-and-null.
 
 The original bare-array format, and the default while unset:
 
-```bash
+```console
 # Current worktree path (for scripts)
 $ wt list --format=json | jq -r '.[] | select(.is_current) | .path'
 

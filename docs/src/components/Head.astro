@@ -1,0 +1,97 @@
+---
+import Default from '@astrojs/starlight/components/Head.astro';
+
+const description = 'Git worktree management for parallel AI agent workflows.';
+const image = new URL('/assets/social/social-card.png', Astro.site).href;
+const isHome = Astro.url.pathname === '/';
+const structuredData = isHome
+  ? [
+      {
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        name: 'Worktrunk',
+        url: 'https://worktrunk.dev/',
+        description,
+      },
+      {
+        '@context': 'https://schema.org',
+        '@type': 'SoftwareApplication',
+        name: 'Worktrunk',
+        url: 'https://worktrunk.dev/',
+        description,
+        applicationCategory: 'DeveloperApplication',
+        operatingSystem: 'macOS, Linux, Windows',
+        offers: {
+          '@type': 'Offer',
+          price: '0',
+          priceCurrency: 'USD',
+        },
+        codeRepository: 'https://github.com/max-sixty/worktrunk',
+        license: 'https://opensource.org/licenses/Apache-2.0',
+      },
+    ]
+  : [];
+---
+
+<Default />
+<meta property="og:image" content={image} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:image" content={image} />
+<style is:inline>starlight-menu-button:not(:defined) { display: none; }</style>
+<script>
+  import { installTocFollower } from './toc-scroll.mjs';
+
+  installTocFollower();
+</script>
+<script is:inline>
+  if (window.location.hostname === 'worktrunk.dev') {
+    const analytics = document.createElement('script');
+    analytics.async = true;
+    analytics.src = 'https://www.googletagmanager.com/gtag/js?id=G-6YY8BDJ4QH';
+    document.head.append(analytics);
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-6YY8BDJ4QH');
+  }
+
+  function setDemoTheme(root = document) {
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    root.querySelectorAll('figure.demo picture > source').forEach((source) => {
+      const sourceTheme = source.dataset.demoTheme
+        || (source.srcset.includes('/dark/') ? 'dark' : 'light');
+      const layoutMedia = source.dataset.demoMedia || 'all';
+      source.media = sourceTheme === theme ? layoutMedia : 'not all';
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setDemoTheme(), { once: true });
+  } else {
+    setDemoTheme();
+  }
+  document.addEventListener('astro:page-load', () => setDemoTheme());
+  new MutationObserver(() => setDemoTheme()).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  });
+
+  // Starlight keeps mobile-menu state on the host, while accessibility APIs
+  // read it from the controlling button.
+  new MutationObserver((mutations) => {
+    mutations.forEach(({ target }) => {
+      if (!(target instanceof HTMLElement) || target.localName !== 'starlight-menu-button') return;
+      const button = target.querySelector('button');
+      const expanded = target.getAttribute('aria-expanded') === 'true' ? 'true' : 'false';
+      if (button?.getAttribute('aria-expanded') !== expanded) {
+        button.setAttribute('aria-expanded', expanded);
+      }
+    });
+  }).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['aria-expanded'],
+    subtree: true,
+  });
+</script>
+{structuredData.map((value) => <script is:inline type="application/ld+json" set:html={JSON.stringify(value)} />)}

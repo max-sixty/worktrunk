@@ -1,384 +1,274 @@
-# Docs Site
+# Documentation Site
 
-This is the Zola-based documentation site for Worktrunk, published at worktrunk.dev.
+The Worktrunk site is built with Astro and Starlight and published at
+https://worktrunk.dev.
 
-## Development workflow
+## Development
 
-The docs dev server starts automatically via the post-start hook. Find the port with `wt list statusline`.
+The project hook installs the site dependencies, fetches the demo assets, and
+starts the Astro dev server. Find this worktree's URL with `wt list`.
 
-For static builds with local URLs (e.g., testing with a simple HTTP server):
+To run it yourself:
 
 ```bash
-zola build --base-url "http://127.0.0.1:PORT"
+npm --prefix docs install
+npm --prefix docs run dev -- --host 127.0.0.1 --port 4321
 ```
+
+The local production checks are:
+
+```bash
+npm --prefix docs run check
+npm --prefix docs test
+npm --prefix docs run build
+npm --prefix docs run test:site
+```
+
+`npm run build` clears Astro's content cache, writes `docs/dist/`, and builds
+the Pagefind search index. The forced content rebuild is intentional: renderer
+plugin changes affect generated asset hashes but are not part of Astro's
+content-cache key.
 
 ### Verifying changes
 
-**Text-only changes** (prose edits, content rewrites): Run pre-commit and provide the dev server link. Playwright verification is not required.
+Text-only edits need the docs sync test and a production build. Visual changes
+also need browser verification with Playwright at desktop and mobile widths.
+Check the changed page, one command-reference page, search, the mobile menu,
+theme switching, anchor navigation, code copying, wide tables, and demo images.
 
-**Visual changes** (CSS, layout, templates, responsive breakpoints): Use Playwright MCP to verify before returning. Visual bugs often hide in CSS specificity, template inheritance, and responsive behavior.
+Always include the local dev-server link when handing off a docs change:
 
-Playwright workflow for visual changes:
-1. Navigate to affected page(s)
-2. Take a snapshot to verify rendered output
-3. Iterate if the result doesn't match expectations
-
-Common visual issues to check:
-- Text positioning and visibility
-- Spacing and alignment
-- Regressions on nearby elements
-- Responsive behavior (use `browser_resize`)
-
-**Always include the dev server link** when returning after doc changes:
-
-```
+```text
 View changes: http://127.0.0.1:<port>
 ```
 
-## Theme architecture
+## Site architecture
 
-The docs use a standalone "warm workbench" theme. Key files:
+| Path | Responsibility |
+|------|----------------|
+| `astro.config.mjs` | Starlight integration, navigation, metadata, and code rendering |
+| `src/content/docs/` | Canonical documentation Markdown |
+| `src/pages/index.astro` | Homepage route; renders the canonical `worktrunk.md` body |
+| `src/styles/custom.css` | Worktrunk's visual system and narrow Starlight adjustments |
+| `src/plugins/stable-heading-ids.mjs` | Stable public anchor IDs for Markdown headings |
+| `src/plugins/worktrunk-terminal.mjs` | Prompts, copy behavior, and state colors for `console` fences |
+| `src/components/Head.astro` | Social metadata, structured data, and analytics |
+| `tests/` | Renderer unit tests and built-site route/link checks |
+| `public/` | Files served unchanged at the site root |
+| `demos/` | VHS sources and scripts for the external demo assets |
 
-| File | Purpose |
-|------|---------|
-| `templates/_variables.html` | CSS custom properties (colors, layout, typography) |
-| `sass/custom.scss` | All styling, organized by section |
-| `templates/base.html` | Head overrides, iOS viewport polyfill |
-| `templates/index.html` | Homepage hero and animations |
-| `templates/page.html` | Doc page TOC rendering |
+The site uses Starlight's own navigation, table of contents, responsive shell,
+search, code frames, copy controls, and theme selector. Keep overrides narrow.
+Before replacing a Starlight component, check whether configuration or CSS can
+express the change. Every full component override becomes an upstream merge
+surface.
 
-### Layout system
+The visual direction is a warm technical field manual: ivory paper, dark ink,
+one orange accent, strong typography, and terminal output as the main visual
+material. Avoid generic product-site devices such as gradient headline text,
+glass cards, feature-card grids, decorative blobs, and animation without a
+clear navigational or explanatory purpose.
 
-The sticky header and TOC use **definitional CSS variables** so positions are always in sync:
+## Content and route contract
 
-```
---wt-header-height: 60px    (includes border via box-sizing: border-box)
---wt-main-padding-top: 40px
+Public documentation routes are stable. Existing pages should keep their root
+paths, for example `src/content/docs/switch.md` is `/switch/`. The homepage
+renders `worktrunk.md`; `/worktrunk/` remains available for compatibility and
+has a canonical link to `/`.
 
-TOC sticks at: calc(header + padding) = 100px
-Anchor scroll-margin: same calculation
-```
-
-When either variable changes (including via media queries), all dependent values update automatically. This prevents the TOC from "jumping" when transitioning to sticky mode.
-
-### Key technical decisions
-
-1. **`box-sizing: border-box` on header** - Border is included in height, simplifying calculations
-2. **`scrollbar-gutter: stable`** - Reserves scrollbar space to prevent layout shift on navigation
-3. **IntersectionObserver intercept** - Ensures scroll-spy doesn't conflict with TOC styling
-4. **Logo preload** - Prevents flash when navigating between pages
-5. **WCAG AA colors** - `--wt-color-text-soft` is #78716a for 4.5:1 contrast
-6. **iOS viewport polyfill** - Sets stable `--vh-full` variable for Firefox iOS/Chrome iOS (see `templates/base.html` for details on the jank issue and what we tried)
-
-### Responsive breakpoints
-
-Variables are overridden in media queries to maintain definitional correctness:
-
-- **≤1024px**: `--wt-main-padding-top: 30px`
-- **≤768px**: `--wt-header-height: 50px`, `--wt-main-padding-top: 20px`, TOC hidden
-
-### Extending the theme
-
-When adding new positioned elements:
-- Use the layout variables rather than hardcoding pixel values
-- Test anchor navigation to verify no visual jumps
-- Check both with and without page scroll
-
-## Doc sync taxonomy
-
-Three categories, kept in sync by `test_docs_are_in_sync` (run it after any doc change; it auto-updates out-of-sync pages):
-
-1. **Command pages** (config, hook, list, merge, remove, step, switch): `dev/*.example.toml` (via `include_str!`) → `src/cli/mod.rs` *(PRIMARY SOURCE)* → `docs/content/{command}.md` → `skills/worktrunk/reference/{command}.md`. Within `src/cli/mod.rs`, `after_long_help` carries the conceptual prose; clap attributes (`about`, `long_about`, doc comments on args) carry usage, options, and examples. Mechanism details: "Command page generation" below.
-2. **Non-command docs** (claude-code, code-signing, extending, faq, llm-commits, tips-patterns, worktrunk): `docs/content/*.md` is PRIMARY; edit it directly, the skill reference auto-syncs.
-3. **Skill-only files** (shell-integration.md, troubleshooting.md): edit `skills/worktrunk/reference/` directly, no docs equivalent. When adding one, also add a `linguist-generated=false` line to `.gitattributes` — the broad `skills/worktrunk/reference/*.md linguist-generated=true` rule otherwise marks it generated, collapsing real edits in GitHub PR diffs.
-
-Never hand-edit a generated mirror.
-
-### Help text authoring
-
-Help text renders in three contexts; check all three when editing:
-
-1. **Terminal** (`wt step X --help`): `about` and `subtitle` at the top, `after_long_help` below the Options block — separated by distance.
-2. **Web docs**: `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` as consecutive paragraphs.
-3. **Skill reference**: mirrors web docs.
-
-Because web docs concatenate everything, the `after_long_help` opener must not restate `about`/`subtitle` — start with new information (see "Command documentation structure" below for opener patterns). Link text must stand alone when the URL is stripped (terminal help drops the URL, keeping only the text): use `` [`wt foo`](...) `` for commands (the backticks signal a `--help` lookup) or a descriptive phrase for doc sections; avoid bare labels that match the destination's heading.
-
-After editing `after_long_help`, also refresh the help snapshots: `cargo insta test --accept --test integration -- test_help`.
-
-### Config doc TOML blocks
-
-Config docs (`USER_CONFIG_START` / `PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is `#`-commented, so TOML comments inside code blocks become double-commented (`# # comment`). Use plain-text descriptions ending with a colon before each code block; inline end-of-line comments (`key = "value"  # explanation`) are fine.
-
-## Command page generation
-
-Each command page in `docs/content/` is a frontmatter skeleton with an `AUTO-GENERATED` region populated from `wt <command> --help-page`:
+Use root-relative links in canonical Markdown:
 
 ```markdown
-+++
-title = "wt list"
-weight = 11
-
-[extra]
-group = "Commands"
-+++
-
-<!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit src/cli/mod.rs to update -->
-
-[generated content here]
-
-<!-- END AUTO-GENERATED -->
+[hook templates](/hook/#template-variables)
 ```
 
-The bare close marker is paired with the open via non-greedy regex matching. `test_no_nested_auto_generated_markers` enforces that no `AUTO-GENERATED` open ever appears inside a region in `docs/content/*.md`, which is the precondition for non-greedy pairing to be safe.
+The sync pipeline expands them to full `https://worktrunk.dev/...` URLs for
+README and agent-skill copies. Do not add framework-specific link syntax.
+`stable-heading-ids.mjs` preserves the site's established anchor scheme, and
+`test:site` verifies every built internal page link and fragment.
 
-The frontmatter (title, weight, group) is preserved; everything between the markers is regenerated as `after_long_help` (conceptual prose) followed by a Command Reference section from `--help`.
+Images and demos use root-relative paths into `public/`:
 
-### Command documentation structure
-
-Each command has three documentation pieces in `src/cli/mod.rs`:
-
-| Piece | Source | Purpose |
-|-------|--------|---------|
-| **Definition** | First `///` line | Short identifier for command lists |
-| **Subdefinition** | Second `///` line (optional) | Adds context when relevant |
-| **after_long_help** | `#[command(after_long_help = "...")]` | Full documentation |
-
-**Where each appears:**
-
-| Context | What's shown |
-|---------|--------------|
-| Command list (`wt --help`) | Definition only |
-| Terminal `-h` | Definition in header |
-| Terminal `--help` | Definition (header) + Subdefinition (under header) + after_long_help (after options) |
-| Web docs | "Definition. Subdefinition." as lead paragraph, then after_long_help |
-
-**Content principles:**
-
-1. **Definition must be short** — It appears in command lists; keep it to a noun phrase or brief imperative.
-
-2. **Subdefinition adds context** — Only include if it provides information the definition doesn't. If the definition is complete, omit the subdefinition.
-
-3. **after_long_help must not repeat** — Start with NEW information that expands on or provides context for the definition. Each piece should add information the previous pieces didn't provide.
-
-4. **after_long_help should mostly stand alone** — The opener should give context or purpose, not just continue with details that only make sense after reading the definition. Avoid non-sequiturs.
-
-5. **Give a behavior the share of the docs that matches its share of the feature** — every paragraph is read by everyone who runs `--help`, so length is a claim on that attention. A guard or edge case that is a tiny share of the command usually gets zero words: its own error message states it at the moment it matters, and the help page leaves it implicit. Reserve prose for what most users of the command meet.
-
-**Good patterns for after_long_help openers:**
-
-- Explain the mental model: "Worktrees are addressed by branch name..."
-- Contrast with similar tools: "Unlike `git merge`, this merges current into target..."
-- State the use case: "Use when you're done with a feature branch."
-- Explain what something is: "Shell commands that run at key points..."
-- Describe relationship to other commands: "The building blocks of `wt merge`: commit, squash, rebase, push."
-
-**Patterns to avoid:**
-
-- Repeating the definition with different words
-- Starting with details that assume context ("The table shows..." when there's no prior mention of a table)
-- Leading with configuration defaults before establishing what the command does
-- Non-sequiturs that jump to side-effects without context
-
-### Example output expansion (wt list)
-
-The `wt list` examples use **HTML comments + code blocks** that expand to full snapshot output. In `src/cli/mod.rs`, you write:
-
-`````
-<!-- wt list -->
-```console
-wt list
-```
-`````
-
-This renders differently in each context:
-- **Terminal help (`--help`)**: HTML comment skipped, code block shows as dimmed `wt list`
-- **Web docs (`--help-page`)**: Both are replaced with the standard template format:
-
-```
-<!-- ⚠️ AUTO-GENERATED from tests/snapshots/<snapshot_file> — edit source to update -->
-
-{% terminal() %}
-<span class="prompt">$</span> <span class="cmd">wt list</span>
-<output...>
-{% end %}
-
-<!-- END AUTO-GENERATED -->
-```
-
-**The mapping** (in `tests/integration_tests/readme_sync.rs`):
-
-| Placeholder | Snapshot File |
-|-------------|---------------|
-| `<!-- wt list -->` | `readme_example_list.snap` |
-| `<!-- wt list --full -->` | `readme_example_list_full.snap` |
-| `<!-- wt list --branches --full -->` | `readme_example_list_branches.snap` |
-
-**To update example output:**
-
-1. Edit test setup in `tests/integration_tests/list.rs` → `setup_readme_example_repo()`
-2. Run tests to regenerate snapshots: `cargo test --test integration readme_example_list`
-3. Accept snapshots: `cargo insta accept`
-4. Sync docs: `cargo test --test integration test_docs_are_in_sync`
-
-The examples in `src/cli/mod.rs` are just command stubs — the actual output comes from snapshots generated by integration tests. This ensures docs always match real CLI behavior.
-
-### Code block convention
-
-All shell commands use `$ ` prefix in `` ```console `` blocks. `convert_dollar_console_to_terminal()` (`src/docs.rs`, shared library function) converts them to terminal shortcodes. The sync test also runs this on hand-written docs.
-
-| Detected pattern | Web output | Highlighting |
-|------------------|------------|--------------|
-| `$ ` commands | `cmd` parameter with `\|\|\|` delimiter | Full Syntect |
-| No `$ ` | `console` → `bash` conversion | Syntect (no `$ ` prompt) |
-
-All `$ ` commands go through the `cmd` parameter path for consistent Syntect highlighting. Multiple commands are joined by `|||`; the template splits and highlights each individually. Commands are wrapped in `<span class="cmd">` (CSS `::before` adds `$ `). Comment lines (`#`) are highlighted but not wrapped (no prompt).
-
-**Placeholders in cmd values:** Tera (Zola's template engine) would interpret `{{ }}` in the `cmd` parameter as template expressions, and `"` would close the parameter string. Since Tera has no backslash-escape mechanism for string literals, these characters are replaced with text placeholders (`__WT_OPEN__`, `__WT_CLOSE__`, `__WT_QUOT__`) in the Rust conversion function. The terminal shortcode template replaces them back before Syntect highlighting. The sync test also strips them when generating skill reference files.
-
-Hand-written docs can use either `console` fences with `$ ` (auto-converted by the sync test) or shortcodes directly.
-
-### CLI and web compatibility
-
-Content in `after_long_help` must work in **both** the terminal (`--help`) and the web docs:
-
-- **Tables** — Work in both. Prefer tables over bullet lists for structured data.
-- **Markdown links** — Work in both (`[text](/path/)`)
-- **Code blocks** — Work in both
-- **Raw HTML** — Avoid. Renders as raw text in terminal help.
-
-### Post-processing for web docs
-
-The `--help-page` generator in `src/help.rs` applies post-processing to transform CLI-friendly content into web-friendly HTML:
-
-| CLI Source | Web Output |
-|------------|------------|
-| `` ```console `` with `$ ` | `terminal` shortcode with `cmd` parameter |
-| `` ```console `` (no `$ `) | `` ```bash `` |
-| `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
-| `` `●` blue `` | `<span style='color:#00a'>●</span> blue` |
-| `` `●` red `` | `<span style='color:#a00'>●</span> red` |
-| `` `●` magenta `` | `<span style='color:#a0a'>●</span> magenta` |
-| `` `●` cyan `` | `<span style='color:#0aa'>●</span> cyan` |
-| `` `●` yellow `` | `<span style='color:#a60'>●</span> yellow` |
-| `` `●` gray `` | `<span style='color:#888'>●</span> gray` |
-| `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS `::after`) |
-
-To add web-only styling for new content, edit `post_process_for_html()` in `src/help.rs` — not the markdown files.
-
-Similarly, `md_help::colorize_status_symbols()` applies ANSI colors for terminal `--help` output.
-
-### Subdoc expansion
-
-Include subcommand documentation as H2 sections within a parent command's docs page using subdoc placeholders:
-
-```markdown
-<!-- subdoc: subcommand-name -->
-```
-
-In `src/cli/mod.rs`, add the placeholder anywhere in the parent command's `after_long_help`:
-
-```rust
-after_long_help = r#"...main documentation...
-
-<!-- subdoc: create -->
-
-...more documentation..."#
-```
-
-This expands during `--help-page` generation to:
-
-```markdown
-## wt config create
-
-### User config
-[subcommand's after_long_help content with heading levels increased]
-
----
-
-### Command reference
-[subcommand's usage and options]
-```
-
-**How it works:**
-- The placeholder is invisible in terminal `--help` output (HTML comment)
-- Heading levels in the subcommand's `after_long_help` are increased by one (## → ###)
-- The subcommand's help reference is formatted as a nested `### Command reference`
-
-**Use cases:**
-- `wt list statusline` — Surfaces output formats that would otherwise be terminal-only
-- `wt config state marker` — Shows per-key examples not in the parent
-
-All AUTO-GENERATED markers use a consistent format with START and END tags:
-```html
-<!-- ⚠️ AUTO-GENERATED from <source> — edit <file> to update -->
-[content]
-<!-- END AUTO-GENERATED -->
-```
-
-All `AUTO-GENERATED` regions use the bare close — sync test
-`test_no_nested_auto_generated_markers` enforces that no region ever nests
-inside another in `docs/content/*.md`, which is the precondition for the
-outer-region regex to safely pair the open with the close via non-greedy
-matching. If you ever need nested regions, restore a disambiguating close
-form on the outer marker rather than relying on the regex.
-
-## Template examples in documentation
-
-**All template examples must have corresponding tests** in `tests/integration_tests/doc_templates.rs`. This catches issues like operator precedence bugs (PR #373).
-
-When adding template examples, add a test that verifies the template produces expected output. See existing tests for patterns.
-
-## Demo GIF workflow
-
-Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid bloating git history. Both build and fetch output to `docs/static/assets/` (gitignored), so local builds override fetched assets.
-
-**For local development:**
-```bash
-task fetch-assets       # Download published assets
-```
-
-**To regenerate demos** (required after CLI output changes):
-
-```bash
-./docs/demos/build docs      # Doc site demos (light + dark)
-./docs/demos/build social    # Social media demos (light only)
-task publish-assets          # Publish to assets repo
-```
-
-Deploy runs `fetch-assets` before building.
-
-For detailed demo development guidelines (timing, debugging, environment setup), see `docs/demos/CLAUDE.md`.
-
-## Social card workflow
-
-Social cards follow the same assets pattern as demos.
-
-**Source files:**
-- `social-card.svg` (1200×630) — Open Graph/Twitter link previews, referenced in `base.html`
-- `github-social-card.svg` (1280×640) — GitHub repository preview, uploaded manually in repo Settings → Social preview
-
-**To regenerate** (after changing tagline, logo, or layout):
-
-```bash
-task build-social-cards    # SVG → PNG (downloads fonts if needed)
-task publish-assets        # Publish to assets repo
-```
-
-The build script automatically downloads Inter and Plus Jakarta Sans fonts from GitHub if not installed locally. Requires `rsvg-convert` (from librsvg).
-
-**Referenced in:** `docs/templates/base.html` (og:image, twitter:image meta tags)
-
-### Light/dark theme variants
-
-In markdown, use `<picture>` with media queries:
 ```html
 <figure class="demo">
 <picture>
-  <source srcset="/assets/docs/dark/wt-switch-picker.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch picker demo" width="1600" height="800">
+  <source srcset="/assets/docs/dark/wt-switch.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/docs/light/wt-switch.gif" alt="wt switch demo" width="1600" height="900">
 </picture>
 </figure>
 ```
 
-The browser automatically shows the appropriate variant based on system preference.
+## Documentation sync taxonomy
+
+`cargo test --test integration test_docs_are_in_sync` owns the complete sync
+pipeline. It updates generated files and then fails so the changes are visible.
+Run it again after reviewing those changes; the second run must pass.
+
+There are three source categories:
+
+1. **Command pages**: `src/cli/mod.rs` is primary for `config`, `hook`, `list`,
+   `merge`, `remove`, `step`, and `switch`. The sync test writes the generated
+   region in `docs/src/content/docs/{command}.md`, then generates the matching
+   `skills/worktrunk/reference/` page.
+2. **Non-command pages**: files such as `claude-code.md`, `extending.md`,
+   `faq.md`, `llm-commits.md`, `tips-patterns.md`, and `worktrunk.md` are primary
+   in `docs/src/content/docs/`. The sync test derives the skill copy.
+3. **Skill-only pages**: files such as `shell-integration.md` and
+   `troubleshooting.md` are primary in `skills/worktrunk/reference/` and have no
+   site page. When adding one, add a `linguist-generated=false` entry to
+   `.gitattributes`.
+
+Never hand-edit a generated mirror.
+
+### Command-page generation
+
+Each command page keeps YAML frontmatter outside one generated region:
+
+```markdown
+---
+title: "wt list"
+description: "List worktrees and their status."
+sidebar:
+  order: 11
+---
+<!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit src/cli/mod.rs to update -->
+
+[generated content]
+
+<!-- END AUTO-GENERATED -->
+```
+
+The bare close marker is paired with the open marker using a non-greedy match.
+`test_no_nested_auto_generated_markers` enforces the required invariant: an
+auto-generated region may not contain another auto-generated region.
+
+Each command has three pieces in `src/cli/mod.rs`:
+
+| Piece | Source | Purpose |
+|-------|--------|---------|
+| Definition | First `///` line | Short text for command lists |
+| Subdefinition | Second `///` line, when useful | Context below the terminal help header |
+| Full guide | `after_long_help` | Mental model, workflow, examples, and reference links |
+
+Terminal help displays the full guide after the options. The web page combines
+the definition and subdefinition as its lead, followed by the full guide. Do
+not repeat the lead at the start of `after_long_help`.
+
+Link text must still make sense when terminal help removes the URL. Prefer
+``[`wt merge`](/merge/)`` or a descriptive phrase over a bare destination
+heading.
+
+Config examples between `USER_CONFIG_START` / `USER_CONFIG_END` and
+`PROJECT_CONFIG_START` / `PROJECT_CONFIG_END` also generate commented TOML
+files. Put prose before a code block instead of adding standalone TOML comment
+lines that would become double-commented. End-of-line comments are fine.
+
+After changing help text, refresh both generated pages and help snapshots:
+
+```bash
+cargo test --test integration test_docs_are_in_sync
+cargo insta test --accept --test integration -- test_help
+```
+
+### Snapshot examples
+
+A command placeholder in `src/cli/mod.rs` expands from an integration snapshot:
+
+````markdown
+<!-- wt list -->
+```console
+$ wt list
+```
+````
+
+The mapping lives in `tests/integration_tests/readme_sync.rs`. The generated
+site page uses the real command plus ANSI-stripped output in one `console`
+fence. This keeps the Markdown readable on GitHub and lets the site renderer
+add prompts and command-only copy behavior without changing the source.
+
+To update an example:
+
+1. Change the test setup that owns the snapshot.
+2. Run the focused integration test.
+3. Accept the snapshot with `cargo insta accept`.
+4. Run `test_docs_are_in_sync` twice, reviewing the first run's edits.
+
+### Code-block convention
+
+Use ordinary fenced Markdown. There are no template shortcodes or encoded
+command parameters.
+
+- Use `bash` for commands a reader can copy as a complete recipe.
+- Use `console` when commands and captured output share a block. Prefix command
+  lines with `$ `; leave output unprefixed.
+- Use the actual data language (`toml`, `json`, `yaml`, and so on) for files and
+  structured output.
+
+Example:
+
+````markdown
+```console
+$ wt switch --create feature-auth
+✓ Created branch feature-auth from main
+```
+````
+
+Starlight and Expressive Code create the terminal frame and copy button. The
+small Worktrunk plugin removes `$ ` from presentation data, renders it as a
+prompt, and makes mixed blocks copy only their commands. Comment lines and
+blank recipe separators remain copyable; captured output does not. The plugin
+also restores green/red/amber state markers from the portable text rather than
+putting ANSI escapes in Markdown. Committed Markdown must remain useful without
+the plugin.
+
+### Web-only post-processing
+
+`post_process_for_html()` in `src/help.rs` handles the few semantic differences
+between terminal and site output: experimental badges, CI color labels, demo
+figures, and a linked issue-report phrase. Do not route general Markdown
+through it and do not add pre-rendered ANSI HTML.
+
+### Subdocument expansion
+
+Use a subdocument placeholder to include a subcommand as a section of its
+parent page:
+
+```markdown
+<!-- subdoc: create -->
+```
+
+The generator raises the subcommand heading levels and appends its command
+reference. The comment is invisible in terminal help.
+
+## Template examples
+
+Every Worktrunk template expression shown in documentation needs a matching
+test in `tests/integration_tests/doc_templates.rs`. This is what catches parser
+and operator-precedence changes before they make an example misleading.
+
+## Demo assets
+
+Large GIFs and rendered social cards live in the separate
+`max-sixty/worktrunk-assets` repository. `task fetch-assets` copies published
+assets to `docs/public/assets/`, which is gitignored. The publish workflow does
+the same before building.
+
+To regenerate and publish demos:
+
+```bash
+./docs/demos/build docs
+./docs/demos/build social
+task publish-assets
+```
+
+See `docs/demos/CLAUDE.md` for timing, terminal setup, validation, and recording
+guidance.
+
+Social-card SVG sources remain in `docs/public/`:
+
+- `social-card.svg` is the 1200 by 630 Open Graph source.
+- `github-social-card.svg` is the 1280 by 640 repository-preview source.
+
+Build their PNG outputs with `task build-social-cards`, then publish them with
+`task publish-assets`. `src/components/Head.astro` points social metadata at
+`/assets/social/social-card.png`.

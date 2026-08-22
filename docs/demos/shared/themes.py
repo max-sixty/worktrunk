@@ -1,13 +1,12 @@
-"""VHS theme definitions matching the doc site color palette.
+"""VHS themes coordinated with the documentation site's color palette.
 
-These themes are designed to match the CSS variables in docs/templates/_variables.html
-so demos integrate seamlessly with light/dark mode switching.
+The base surfaces and accents follow ``docs/src/styles/custom.css``. ANSI hues
+are tuned separately for legible terminal captures in each theme.
 """
 
 import json
 
-# Light theme - matches the "Warm Workbench" light mode
-# Terminal colors from docs/templates/_variables.html (light mode)
+# Light theme — based on the default ``--wt-*`` palette in custom.css.
 LIGHT_THEME = {
     "name": "Warm Gold Light",
     "black": "#6b7280",  # --bright-black
@@ -26,18 +25,13 @@ LIGHT_THEME = {
     "brightMagenta": "#a855f7",
     "brightCyan": "#5a9e9e",
     "brightWhite": "#8c959f",
-    "background": "#FFFBF0",
-    "foreground": "#1f2328",
-    "cursor": "#d97706",
-    "selection": "#FFF0C8",
+    "background": "#f7f3eb",  # --wt-paper
+    "foreground": "#27231f",  # --wt-ink
+    "cursor": "#d85d22",  # --wt-orange
+    "selection": "#f7d6c1",  # --sl-color-accent-low
 }
 
-# Dark theme - matches the "Warm Workbench" dark mode from _variables.html
-# Colors derived from the CSS custom properties in dark mode:
-#   --wt-color-bg: #1c1b1a
-#   --wt-color-text: #e8e6e3
-#   --wt-color-accent: #f59e0b
-#   Terminal colors: --cyan: #67d4d4, --green: #4ade80, --red: #f87171, etc.
+# Dark theme — based on the ``data-theme='dark'`` palette in custom.css.
 DARK_THEME = {
     "name": "Warm Workbench Dark",
     "black": "#6b7280",  # --bright-black from CSS
@@ -47,7 +41,7 @@ DARK_THEME = {
     "blue": "#60a5fa",  # --blue dark mode
     "magenta": "#c084fc",  # --magenta dark mode
     "cyan": "#67d4d4",  # --cyan dark mode
-    "white": "#a8a29e",  # --wt-color-text-muted
+    "white": "#a8a29e",
     "brightBlack": "#6b7280",  # same as black
     "brightRed": "#fca5a5",  # lighter red
     "brightGreen": "#86efac",  # lighter green
@@ -55,11 +49,11 @@ DARK_THEME = {
     "brightBlue": "#93c5fd",  # lighter blue
     "brightMagenta": "#d8b4fe",  # lighter magenta
     "brightCyan": "#a5f3fc",  # lighter cyan
-    "brightWhite": "#e8e6e3",  # --wt-color-text
-    "background": "#1c1b1a",  # --wt-color-bg dark mode
-    "foreground": "#e8e6e3",  # --wt-color-text dark mode
-    "cursor": "#f59e0b",  # --wt-color-accent dark mode
-    "selection": "#422006",  # --wt-color-accent-soft dark mode
+    "brightWhite": "#eee8de",  # --wt-ink
+    "background": "#1d1a18",  # --wt-paper
+    "foreground": "#eee8de",  # --wt-ink
+    "cursor": "#ef8a50",  # --wt-orange
+    "selection": "#49200f",  # --sl-color-accent-low
 }
 
 THEMES = {

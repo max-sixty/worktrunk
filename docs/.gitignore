@@ -1,3 +1,4 @@
-public/
-static/assets/
-static/giallo*.css
+node_modules/
+.astro/
+dist/
+public/assets/

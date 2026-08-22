@@ -554,7 +554,7 @@ mod tests {
     fn test_render_inline_formatting_strips_links() {
         assert_eq!(render_inline_formatting("[text](url)"), "text");
         assert_eq!(
-            render_inline_formatting("See [wt hook](@/hook.md) for details"),
+            render_inline_formatting("See [wt hook](/hook/) for details"),
             "See wt hook for details"
         );
     }
@@ -624,7 +624,7 @@ mod tests {
         assert_snapshot!(mixed, @"text [2mcode[0m more [1mbold[0m end");
 
         // Backticks inside link text
-        let link_code = render_inline_formatting("See [`wt hook`](@/hook.md) for details");
+        let link_code = render_inline_formatting("See [`wt hook`](/hook/) for details");
         assert_snapshot!(link_code, @"See [2mwt hook[0m for details");
 
         // Unclosed backtick
@@ -660,7 +660,7 @@ mod tests {
         // header's own style covers the whole line (no literal backticks, no
         // mid-line ANSI reset). Real case: `### Command log (`commands.jsonl`)`
         // on the `wt config state logs` page.
-        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](@/x.md)";
+        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](/x/)";
         let result = render_markdown_in_help(md);
         assert_snapshot!(result, @"
         [32m--stage[0m

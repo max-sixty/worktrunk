@@ -22,25 +22,31 @@ jobs:
       - name: 📂 Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Zola
-        uses: taiki-e/install-action@v2.86.3
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          tool: zola@0.22.1
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install docs dependencies
+        run: npm ci
+        working-directory: docs
 
       - name: Fetch assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
-          cp -r /tmp/worktrunk-assets/assets docs/static/
+          cp -r /tmp/worktrunk-assets/assets docs/public/
 
       - name: 🕷️ Build docs
-        run: zola build
+        run: npm run check && npm test && npm run build && npm run test:site
         working-directory: docs
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: docs/public/
+          path: docs/dist/
           retention-days: 1
 
   deploy-docs:

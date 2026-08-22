@@ -4012,7 +4012,7 @@ fn restore_dir_permissions(dir: &std::path::Path) {
 // convention — `<!-- wt remove (docs-example) -->` in `src/cli/mod.rs`.
 // ============================================================================
 
-/// `wt remove` example for `docs/content/remove.md` — pre-remove hook running
+/// `wt remove` example for `docs/src/content/docs/remove.md` — pre-remove hook running
 /// `flyctl scale count 0`, background cleanup.
 #[rstest]
 fn test_docs_remove_pre_remove_hook(mut repo: TestRepo) {

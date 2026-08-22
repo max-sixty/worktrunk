@@ -1182,8 +1182,10 @@ def extract_commands_from_tape(
     Parses the tape looking for Type "command" followed by Enter patterns,
     filtering to commands that start with specified prefixes (default: wt, git).
 
-    Only extracts commands after Show directive (visible part of demo).
-    Skips commands in Hide blocks.
+    Only extracts commands executed after a Show directive (visible part of
+    demo). A command may be typed while hidden to make a complete command the
+    first frame, provided its Enter occurs after Show. Skips commands executed
+    in Hide blocks.
 
     Args:
         tape_path: Path to the .tape template file
@@ -1200,40 +1202,42 @@ def extract_commands_from_tape(
 
     commands = []
     in_visible_section = False
+    pending_command = None
     lines = rendered.split("\n")
-    i = 0
-
-    while i < len(lines):
-        line = lines[i].strip()
+    for raw_line in lines:
+        line = raw_line.strip()
 
         # Track visibility
         if line == "Show":
             in_visible_section = True
+            continue
         elif line == "Hide":
             in_visible_section = False
+            continue
 
-        # Look for Type "command" pattern
-        if in_visible_section and line.startswith("Type "):
-            # Extract command from Type "..." or Type '...'
+        if line.startswith("Type "):
             match = re.match(r'Type\s+["\'](.+)["\']', line)
             if match:
-                cmd = match.group(1)
-                # Check if Enter follows (possibly with Sleep in between)
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j].strip()
-                    if not next_line:
-                        j += 1
-                        continue
-                    if next_line.startswith("Sleep "):
-                        j += 1
-                        continue
-                    if next_line == "Enter":
-                        # Only include commands with specified prefixes
-                        if any(cmd.startswith(prefix) for prefix in command_prefixes):
-                            commands.append(cmd)
-                    break
-        i += 1
+                pending_command = match.group(1)
+            continue
+
+        if line == "Enter":
+            if (
+                in_visible_section
+                and pending_command
+                and any(
+                    pending_command.startswith(prefix) for prefix in command_prefixes
+                )
+            ):
+                commands.append(pending_command)
+            pending_command = None
+            continue
+
+        if line and not line.startswith(("#", "Sleep ")):
+            # Interactive editing or completion means the literal Type text is
+            # not the command that Enter will execute. Snapshot mode cannot
+            # replay those terminal interactions faithfully.
+            pending_command = None
 
     return commands
 
@@ -1342,6 +1346,7 @@ class DemoSize:
 # Predefined sizes for different contexts
 SIZE_SOCIAL = DemoSize(width=1200, height=700, fontsize=26)  # Big text for mobile
 SIZE_DOCS = DemoSize(width=1600, height=900, fontsize=24)  # More content for docs
+SIZE_DOCS_MOBILE = DemoSize(width=576, height=432, fontsize=20)
 
 
 def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
@@ -1380,7 +1385,7 @@ def record_theme(
     """Record one demo GIF in a prepared environment.
 
     Args:
-        demo_env: Demo environment with repo and home paths
+        demo_env: Prepared demo environment for this theme
         tape_template: Path to the .tape template file
         theme_name: Name of the VHS theme to use
         output_gif: Output GIF path

@@ -1,4 +1,9 @@
 # Common requirements and environment - Source after Output
+#
+# Hide must be the first executable directive. VHS only runs pre-roll before
+# starting its recorder when the first non-Set/Output/Require directive is Hide.
+Hide
+
 Require wt
 Require git
 
@@ -12,7 +17,6 @@ Env HOME "{{DEMO_HOME}}"
 Env XDG_CONFIG_HOME "{{DEMO_HOME}}/.config"
 Env STARSHIP_CONFIG "{{STARSHIP_CONFIG}}"
 
-Hide
 Type "set -g fish_autosuggestion_enabled 0"
 Enter
 Type "source $HOME/.config/fish/colors.fish"

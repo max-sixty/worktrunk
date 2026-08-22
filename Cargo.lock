@@ -74,16 +74,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ansi-to-html"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1747e9bde0e06cdfa780fcba909df1fa220f82421ead1fd4a93427763d2cbda6"
-dependencies = [
- "memchr",
- "regex",
-]
-
-[[package]]
 name = "ansi-to-tui"
 version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4813,7 +4803,6 @@ name = "worktrunk"
 version = "0.74.0"
 dependencies = [
  "ansi-str",
- "ansi-to-html",
  "ansi-to-tui",
  "anstream",
  "anstyle",

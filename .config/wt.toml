@@ -1,12 +1,19 @@
-[post-start]
+[[post-start]]
 # Copy target/ from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = "wt step copy-ignored"
 assets = "task fetch-assets"
-# `zola serve` runs forever; tether kills its whole process tree when the
+
+# Restore any packages copy-ignored could not share. The common case uses the
+# local npm cache and finishes without reaching the network.
+[[post-start]]
+docs-install = "npm --prefix docs install --prefer-offline --no-audit --no-fund"
+
+# Astro's dev server runs forever; tether kills its whole process tree when the
 # worktree is removed (any path — `wt remove`, `git worktree remove`, `rm -rf`),
-# so no `pre-remove`/`post-remove` cleanup is needed. `-C docs` runs zola in the
-# docs subdir; the worktree root is still what teardown watches.
-docs = "wt step tether -C docs -- zola serve -p {{ branch | hash_port }}"
+# so no `pre-remove`/`post-remove` cleanup is needed. The worktree root is still
+# what teardown watches even though the server runs from `docs/`.
+[[post-start]]
+docs = "wt step tether -C docs -- npm run dev -- --host 127.0.0.1 --port {{ branch | hash_port }}"
 
 [post-merge]
 clippy = "pre-commit run clippy --all-files || true"

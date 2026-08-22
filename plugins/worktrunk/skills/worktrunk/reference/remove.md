@@ -6,7 +6,7 @@ Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 Remove current worktree:
 
-```
+```console
 $ wt remove
 ◎ Running pre-remove project:cleanup
   flyctl scale count 0
@@ -17,20 +17,20 @@ Scaling app to 0 machines
 
 Remove specific worktrees / branches:
 
-```bash
+```console
 $ wt remove feature-branch
 $ wt remove old-feature another-branch
 ```
 
 Keep the branch:
 
-```bash
+```console
 $ wt remove --no-delete-branch feature-branch
 ```
 
 Force-delete an unmerged branch:
 
-```bash
+```console
 $ wt remove -D experimental
 ```
 
@@ -64,7 +64,7 @@ Worktrunk has two force flags for different situations:
 | `--force` (`-f`) | Worktree | Worktree has uncommitted changes |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
-```bash
+```console
 $ wt remove feature --force       # Remove dirty worktree
 $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
@@ -82,7 +82,7 @@ After each `wt remove`, entries in `.git/wt/trash/` older than 24 hours are swep
 
 `--reap` terminates processes left running in the worktree before it is removed — a `post-start` dev server, a file watcher, a language server — freeing the ports and file handles they hold. Processes are discovered by working directory: any process whose current directory is at or under the worktree path (`SIGTERM`, then `SIGKILL` for survivors).
 
-```bash
+```console
 $ wt remove --reap feature
 ◎ Reaping 2 processes under feature worktree
    ┃ 51234 node

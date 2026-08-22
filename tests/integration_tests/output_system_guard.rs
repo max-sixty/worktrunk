@@ -502,8 +502,8 @@ fn test_color_follows_the_consumer(repo: TestRepo) {
         (
             &["merge", "--help-page"][..],
             None,
-            true,
-            "the web reference block's ANSI is data the docs pipeline turns into HTML spans",
+            false,
+            "web reference pages are portable Markdown; the site renderer owns syntax styling",
         ),
         (
             &["merge", "--help-page", "--plain"][..],

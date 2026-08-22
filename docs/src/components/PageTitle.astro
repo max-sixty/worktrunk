@@ -1,0 +1,30 @@
+---
+import DefaultPageTitle from '@astrojs/starlight/components/PageTitle.astro';
+import type { StarlightRouteData } from '@astrojs/starlight/route-data';
+
+const isHomepage = Astro.url.pathname === '/';
+const { starlightRoute } = Astro.locals as typeof Astro.locals & {
+  starlightRoute: StarlightRouteData;
+};
+const title = starlightRoute.entry.data.title;
+---
+
+{
+  isHomepage ? (
+    <h1 id="_top"><span id="worktrunk">{title}</span></h1>
+  ) : (
+    <DefaultPageTitle />
+  )
+}
+
+<style>
+  @layer starlight.core {
+    h1 {
+      margin-top: 1rem;
+      color: var(--sl-color-white);
+      font-size: var(--sl-text-h1);
+      font-weight: 600;
+      line-height: var(--sl-line-height-headings);
+    }
+  }
+</style>

@@ -71,15 +71,15 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 The Claude Code, Codex, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
 
-```bash
+```console
 $ wt list
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Path</b>                 <b>Commit</b>   <b>Age</b>   <b>Message</b>
-@ main             <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      .                    <span class=d>33323bc</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
-+ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>        <span class=g>+1</span>                ../repo.feature-api  <span class=d>70343f0</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
-+ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>        <span class=g>+1</span>                ../repo.review-ui    <span class=d>a585d6e</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
-+ wip-docs       <span class=c>?</span> <span class=d>–</span>                                             ../repo.wip-docs     <span class=d>33323bc</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Path                 Commit   Age   Message
+@ main             ^⇡                                    ⇡1      .                    33323bc  1d    Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0  1d    Add REST API endpoints
++ review-ui      ? ↑ 💬              ↑1        +1                ../repo.review-ui    a585d6e  1d    Add dashboard component
++ wip-docs       ? –                                             ../repo.wip-docs     33323bc  1d    Initial commit
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead</span>
+○ Showing 4 worktrees, 2 with changes, 2 ahead
 ```
 
 - 🤖 — agent is working
@@ -91,7 +91,7 @@ All four plugins clear the marker when a session ends. A stale marker can remain
 
 Set status markers manually for any workflow:
 
-```bash
+```console
 $ wt config state marker set "🚧"                   # Current branch
 $ wt config state marker set "✅" --branch feature  # Specific branch
 $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct

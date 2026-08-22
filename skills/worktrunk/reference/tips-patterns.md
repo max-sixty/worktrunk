@@ -58,15 +58,15 @@ url = "http://localhost:{{ branch | hash_port }}"
 
 The URL column in `wt list` shows each worktree's dev server:
 
-```bash
+```console
 $ wt list
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>
-@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee083</span>
-+ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee083</span>
+  Branch       Status        HEAD±    main↕     main…±  Remote⇅  URL                     Commit
+@ main           ? ^⇅                                    ⇡1  ⇣1  http://localhost:12107  41ee083
++ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68
++ fix-typos        _|                                      |     http://localhost:14301  41ee083
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden</span>
+○ Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden
 ```
 
 `fix-auth` always gets port 16460, on any machine. The URL dims if the server isn't running.
@@ -355,7 +355,7 @@ tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 
 To create a worktree and immediately attach:
 
-```bash
+```console
 $ wt switch --create feature -x tmux -- attach -t '{{ branch | sanitize }}'
 ```
 

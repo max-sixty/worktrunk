@@ -1,0 +1,657 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
+
+/* Worktrunk's original warm-workbench palette, mapped onto Starlight by role. */
+:root {
+  --wt-paper: #f7f2e9;
+  --wt-paper-raised: #fcfaf5;
+  --wt-paper-soft: #efe7da;
+  --wt-ink: #282019;
+  --wt-ink-muted: #6d6258;
+  --wt-gold: #be842d;
+  --wt-copper: #9f4f2a;
+  --wt-craft: #7e6247;
+  --wt-gold-wash: #ead9bb;
+  --wt-line: #d9cab7;
+  --wt-focus: var(--wt-copper);
+  --wt-font-display: 'Newsreader', ui-serif, 'Iowan Old Style', 'Palatino Linotype', Palatino,
+    Georgia, serif;
+
+  --sl-font: 'Inter', system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sl-color-accent-low: var(--wt-gold-wash);
+  --sl-color-accent: var(--wt-copper);
+  --sl-color-accent-high: #78350f;
+  --sl-color-text-accent: var(--wt-copper);
+  --sl-color-white: var(--wt-ink);
+  --sl-color-gray-1: #403a35;
+  --sl-color-gray-2: #5d554e;
+  --sl-color-gray-3: var(--wt-ink-muted);
+  --sl-color-gray-4: #a8a29e;
+  --sl-color-gray-5: var(--wt-line);
+  --sl-color-gray-6: var(--wt-paper-soft);
+  --sl-color-black: var(--wt-paper);
+  --sl-color-bg: var(--wt-paper);
+  --sl-color-bg-nav: var(--wt-paper-raised);
+  --sl-color-bg-sidebar: var(--wt-paper);
+  --sl-color-bg-inline-code: var(--wt-paper-soft);
+  --sl-color-hairline-light: var(--wt-line);
+  --sl-color-hairline: var(--wt-line);
+  --sl-color-hairline-shade: var(--wt-line);
+  --sl-content-width: 50rem;
+  --sl-sidebar-width: 17rem;
+}
+
+:root[data-theme='dark'] {
+  --wt-paper: #1d1916;
+  --wt-paper-raised: #241e1a;
+  --wt-paper-soft: #2c241e;
+  --wt-ink: #eee5d8;
+  --wt-ink-muted: #b9ab9c;
+  --wt-gold: #d8a553;
+  --wt-copper: #dd8555;
+  --wt-craft: #b99776;
+  --wt-gold-wash: #44311e;
+  --wt-line: #493a2e;
+  --sl-color-accent-low: var(--wt-gold-wash);
+  --sl-color-accent: var(--wt-copper);
+  --sl-color-accent-high: #fcd34d;
+  --sl-color-text-accent: var(--wt-copper);
+  --sl-color-white: var(--wt-ink);
+  --sl-color-gray-1: #dedbd7;
+  --sl-color-gray-2: #b8b1aa;
+  --sl-color-gray-3: var(--wt-ink-muted);
+  --sl-color-gray-4: #78716a;
+  --sl-color-gray-5: var(--wt-line);
+  --sl-color-gray-6: var(--wt-paper-raised);
+  --sl-color-black: var(--wt-paper);
+}
+
+body {
+  background-color: var(--wt-paper);
+  background-image: radial-gradient(
+    circle at 20% 0%,
+    color-mix(in srgb, var(--wt-gold) 4%, transparent),
+    transparent 31rem
+  );
+  color: var(--wt-ink);
+  font-feature-settings: 'ss01', 'cv11';
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (forced-colors: none) {
+  :where(a, button, input, select, textarea, summary, .sl-markdown-content table):focus-visible {
+    outline: 2px solid var(--wt-focus);
+  }
+
+  .expressive-code {
+    --ec-focusBrd: var(--wt-focus);
+  }
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--wt-font-display);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+/* Page sequence is quiet editorial navigation, not a pair of feature cards. */
+.pagination-links {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  border-block-start: 1px solid var(--wt-line);
+  padding-block-start: 0.9rem;
+}
+
+.pagination-links:empty {
+  display: none;
+}
+
+.pagination-links a {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0.25rem 0;
+  background: transparent;
+  color: var(--wt-ink-muted);
+  font-family: var(--sl-font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+
+.pagination-links a:hover {
+  color: var(--wt-copper);
+}
+
+.pagination-links .link-title {
+  color: var(--wt-ink);
+  font-family: var(--sl-font);
+  font-size: 0.92rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.3;
+  text-transform: none;
+}
+
+.pagination-links svg {
+  width: 1rem;
+  color: var(--wt-copper);
+}
+
+.site-title {
+  color: var(--wt-ink);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.site-title:hover {
+  color: var(--wt-ink);
+}
+
+.site-title img {
+  width: 2rem;
+  height: 2rem;
+}
+
+header.header {
+  border-block-end-color: color-mix(in srgb, var(--wt-line) 75%, transparent);
+  background: color-mix(in srgb, var(--wt-paper-raised) 92%, transparent);
+}
+
+.right-group .social-icons::after {
+  display: none;
+}
+
+.sidebar-pane {
+  background: color-mix(in srgb, var(--wt-paper) 88%, var(--wt-paper-soft));
+}
+
+.right-sidebar-panel {
+  border-inline-start-color: color-mix(in srgb, var(--wt-line) 75%, transparent);
+}
+
+.sidebar-content a[aria-current='page'] {
+  border-radius: 0;
+  box-shadow: inset 2px 0 var(--wt-copper);
+  background: transparent;
+  color: var(--wt-copper);
+}
+
+.sl-markdown-content {
+  font-size: 0.98rem;
+  line-height: 1.74;
+}
+
+.sl-markdown-content > h1,
+.content-panel h1 {
+  font-size: clamp(2.8rem, 5vw, 3.55rem);
+  line-height: 0.98;
+}
+
+.sl-markdown-content h2 {
+  margin-block-start: 2.8rem;
+  font-size: 2.05rem;
+  line-height: 1.08;
+}
+
+.sl-markdown-content h3 {
+  font-size: 1.5rem;
+  line-height: 1.15;
+}
+
+.sl-markdown-content :is(p, li):not(:where(.not-content *)) {
+  max-width: 68ch;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--wt-copper);
+  text-decoration-color: color-mix(in srgb, var(--wt-copper) 55%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.sl-markdown-content :is(p, li, td, th, summary) code:not(:where(.not-content *)) {
+  border: 1px solid var(--wt-line);
+  border-radius: 0.2rem;
+  background: color-mix(in srgb, var(--wt-paper-soft) 72%, transparent);
+  color: #96502f;
+}
+
+:root[data-theme='dark']
+  .sl-markdown-content
+  :is(p, li, td, th, summary)
+  code:not(:where(.not-content *)) {
+  color: #e4a079;
+}
+
+/* Ordinary tables are complete primitives; no Starlight edge spacing leaks in. */
+.sl-markdown-content table:not(.cmd-compare):not(:where(.not-content *)) {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-block: 1px solid var(--wt-craft);
+  border-collapse: separate;
+  border-spacing: 0;
+  background: transparent;
+}
+
+.sl-markdown-content table:not(.cmd-compare) :is(th, td) {
+  min-width: 0;
+  border: 0;
+  border-block-end: 1px solid var(--wt-line);
+  padding: 0.65rem 0.85rem;
+  text-align: start;
+  vertical-align: top;
+}
+
+.sl-markdown-content table:not(.cmd-compare) :is(th, td):first-child {
+  min-width: 7rem;
+}
+
+.sl-markdown-content table:not(.cmd-compare) th {
+  background: transparent;
+  color: var(--wt-craft);
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sl-markdown-content table:not(.cmd-compare) tr:last-child td {
+  border-block-end: 0;
+}
+
+.sl-markdown-content table:not(.cmd-compare) td:first-child {
+  color: var(--wt-copper);
+  font-weight: 550;
+}
+
+.sl-markdown-content table:not(.cmd-compare) td code {
+  white-space: nowrap;
+}
+
+.sl-markdown-content .wt-responsive-record-label {
+  display: none;
+}
+
+@media (max-width: 42rem) {
+  .sl-markdown-content
+    table:not(.cmd-compare):has(> thead > tr > th:nth-child(2):last-child) {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    overflow: visible;
+    background-image: none;
+  }
+
+  .sl-markdown-content
+    table:not(.cmd-compare):has(> thead > tr > th:nth-child(2):last-child)
+    :is(th, td):first-child {
+    width: 38%;
+    min-width: 0;
+  }
+
+  .sl-markdown-content
+    table:not(.cmd-compare):has(> thead > tr > th:nth-child(2):last-child)
+    td
+    code {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .sl-markdown-content table.wt-responsive-records:not(.cmd-compare) {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+    border: 0;
+    background-image: none;
+    line-height: 1.45;
+  }
+
+  .sl-markdown-content table.wt-responsive-records thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .sl-markdown-content table.wt-responsive-records tbody {
+    display: block;
+  }
+
+  .sl-markdown-content table.wt-responsive-records tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.15rem 0.6rem;
+    border-block-start: 1px solid var(--wt-line);
+    padding-block: 0.2rem;
+  }
+
+  .sl-markdown-content table.wt-responsive-records[data-record-columns='3'] tbody tr {
+    grid-template-columns: fit-content(30%) fit-content(30%) minmax(0, 1fr);
+  }
+
+  .sl-markdown-content table.wt-responsive-records[data-record-columns='4'] tbody td:nth-child(-n + 2) {
+    grid-column: 1 / -1;
+  }
+
+  .sl-markdown-content table.wt-responsive-records tbody tr:last-child {
+    border-block-end: 1px solid var(--wt-line);
+  }
+
+  .sl-markdown-content table.wt-responsive-records tbody td {
+    display: block;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    padding: 0.1rem 0.05rem 0.18rem;
+    overflow-wrap: anywhere;
+  }
+
+  .sl-markdown-content table.wt-responsive-records .wt-responsive-record-label {
+    display: block;
+    position: static;
+    width: auto;
+    margin-block-end: 0.05rem;
+    color: var(--wt-ink-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+
+  .sl-markdown-content table.wt-responsive-records td code {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+/* The homepage comparison keeps task adjacency without becoming a card grid. */
+.sl-markdown-content .cmd-compare:not(:where(.not-content *)) {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-block: 1px solid var(--wt-line);
+}
+
+.sl-markdown-content .cmd-compare :is(thead, tbody) {
+  display: block;
+}
+
+.sl-markdown-content .cmd-compare tr {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.7fr) minmax(14rem, 1fr) minmax(19rem, 1.4fr);
+}
+
+.sl-markdown-content .cmd-compare :is(th, td) {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0.85rem 1rem;
+  text-align: start;
+  vertical-align: top;
+}
+
+.sl-markdown-content .cmd-compare thead {
+  background: var(--wt-paper-soft);
+}
+
+.sl-markdown-content .cmd-compare th:nth-child(2),
+.sl-markdown-content .cmd-compare td:nth-child(2) {
+  background: color-mix(in srgb, var(--wt-gold) 7%, transparent);
+}
+
+.sl-markdown-content .cmd-compare tbody tr + tr {
+  border-block-start: 1px solid var(--wt-line);
+}
+
+.sl-markdown-content .cmd-compare tbody td:first-child {
+  color: var(--wt-ink-muted);
+  font-weight: 600;
+}
+
+.sl-markdown-content .cmd-compare pre {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  white-space: pre-wrap;
+}
+
+.sl-markdown-content .cmd-compare td:nth-child(n + 2) code {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--wt-ink);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 44rem) {
+  .sl-markdown-content .cmd-compare:not(:where(.not-content *)) {
+    overflow: visible;
+    border: 0;
+  }
+
+  .sl-markdown-content .cmd-compare thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .sl-markdown-content .cmd-compare tbody {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .sl-markdown-content .cmd-compare tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    border-block: 1px solid var(--wt-line);
+  }
+
+  .sl-markdown-content .cmd-compare tbody td {
+    border: 0;
+  }
+
+  .sl-markdown-content .cmd-compare tbody td:first-child {
+    padding-block: 0.65rem;
+    background: var(--wt-paper-soft);
+    color: var(--wt-ink);
+  }
+
+  .sl-markdown-content .cmd-compare tbody td:nth-child(n + 2) {
+    display: grid;
+    grid-template-columns: 5.25rem minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: baseline;
+  }
+
+  .sl-markdown-content .cmd-compare tbody td:nth-child(3) {
+    border-block-start: 1px solid var(--wt-line);
+  }
+
+  .sl-markdown-content .cmd-compare tbody td:nth-child(n + 2)::before {
+    content: attr(data-label);
+    color: var(--wt-ink-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.5rem;
+  }
+}
+
+/* Code is content, not a simulated application window. */
+.expressive-code .frame {
+  margin-block: 1.25rem;
+}
+
+.expressive-code .frame pre {
+  --wt-scroll-surface: color-mix(in srgb, var(--wt-paper-raised) 58%, var(--wt-paper));
+  border: 0;
+  border-inline-start: 2px solid color-mix(in srgb, var(--wt-copper) 72%, var(--wt-line));
+  border-radius: 0;
+  background-color: var(--wt-scroll-surface);
+  box-shadow: none;
+}
+
+/* A local cover hides the stationary edge shade once the inline scroll reaches its end. */
+.sl-markdown-content table:not(.cmd-compare):not(:where(.not-content *)),
+.expressive-code .frame pre {
+  background-image:
+    linear-gradient(
+      var(--wt-scroll-surface, var(--wt-paper)),
+      var(--wt-scroll-surface, var(--wt-paper))
+    ),
+    linear-gradient(to right, transparent, color-mix(in srgb, var(--wt-ink) 18%, transparent));
+  background-position: right center;
+  background-size: 2rem 100%, 0.8rem 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, scroll;
+}
+
+.badge-experimental::after {
+  content: 'experimental';
+  display: inline-flex;
+  margin-inline-start: 0.35rem;
+  border-block: 1px solid var(--wt-craft);
+  padding: 0.05rem 0.2rem;
+  color: var(--wt-craft);
+  font-family: var(--sl-font-mono);
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  vertical-align: 0.12em;
+}
+
+figure.demo {
+  margin: 1.75rem 0;
+}
+
+.wt-home > p + figure.demo {
+  margin-block-start: 0.75rem;
+}
+
+.wt-home figure.demo figcaption {
+  margin-block-start: 0.65rem;
+  color: var(--wt-ink-muted);
+  font-family: var(--wt-font-display);
+  font-size: 0.9rem;
+  font-style: italic;
+  line-height: 1.5;
+  text-align: center;
+}
+
+figure.demo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--wt-line);
+  border-radius: 0.25rem;
+  background: var(--wt-paper-raised);
+}
+
+.wt-home {
+  scroll-margin-top: calc(var(--sl-nav-height) + 1rem);
+}
+
+.wt-home > p:first-of-type {
+  color: var(--wt-ink);
+  font-family: var(--wt-font-display);
+  font-size: 1.35rem;
+  line-height: 1.55;
+}
+
+.wt-home > p:first-of-type strong {
+  color: var(--wt-copper);
+  font-weight: 500;
+}
+
+.sl-markdown-content .wt-home > * {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.wt-home .workflow-stage {
+  margin-block-start: 3rem;
+  color: var(--wt-copper);
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.wt-home .workflow-heading {
+  margin-block-end: 0;
+}
+
+.wt-home > .workflow-heading + ul {
+  max-width: none;
+  margin-block-start: 0.75rem;
+  columns: 2;
+  column-gap: 3rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.wt-home > .workflow-heading + ul > li {
+  break-inside: avoid;
+  margin-block: 0 0.4rem;
+}
+
+@media (max-width: 42rem) {
+  .wt-home > .workflow-heading + ul {
+    columns: 1;
+  }
+}
+
+@media (min-width: 72rem) {
+  html:has(.wt-home) .main-pane {
+    --sl-content-margin-inline: auto 0;
+    width: min(
+      calc(100% - var(--sl-sidebar-width)),
+      calc(
+        var(--sl-content-width) +
+          (100% - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
+      )
+    );
+  }
+}
+
+@media (max-width: 49.99rem) {
+  .sl-markdown-content h2 {
+    font-size: 1.8rem;
+  }
+}
