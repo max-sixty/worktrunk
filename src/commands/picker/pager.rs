@@ -221,11 +221,11 @@ mod tests {
         let input = "line 1\nline 2";
         let start = std::time::Instant::now();
         let result = pipe_through_pager(input, "exec sleep 30", 80);
+        let elapsed = start.elapsed();
         assert_eq!(result, input);
         assert!(
-            start.elapsed() < PAGER_TIMEOUT * 4,
-            "the timeout did not bound the wait: {:?}",
-            start.elapsed()
+            elapsed < PAGER_TIMEOUT * 4,
+            "the timeout did not bound the wait: {elapsed:?}"
         );
     }
 

@@ -2693,6 +2693,17 @@ mod tests {
         );
     }
 
+    /// A command that can't be spawned at all fails as a spawn error, not as a
+    /// timeout — the deadline path never starts, so the caller doesn't wait it out.
+    #[test]
+    fn test_cmd_timeout_surfaces_a_spawn_failure() {
+        let err = Cmd::new("worktrunk-no-such-program-3856")
+            .timeout(Duration::from_secs(30))
+            .run()
+            .unwrap_err();
+        assert_ne!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
     /// The timeout has to bound wall-clock, not just signal the direct child.
     /// A grandchild inherits the child's stderr pipe, so one that survives the
     /// kill holds the write end open and the output readers block on it — which
