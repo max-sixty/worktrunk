@@ -22,9 +22,10 @@
 //!
 //! Preview work is staged in two tiers:
 //! - `on_skeleton` fires the first item's 5 modes + first-item summary,
-//!   plus the default-tab mode for items 1..N (so quick j/k navigation
-//!   lands on warm content). It also fills the static Summary hint for
-//!   every row when summaries are disabled.
+//!   plus the default-tab mode for branch-only items 1..N (their committed
+//!   diff is cheap from the SHA-keyed cache; off-screen worktree rows are
+//!   demand-loaded when selected). It also fills the static Summary hint
+//!   for every row when summaries are disabled.
 //! - `on_collect_complete` fires configured summaries for items 1..N once
 //!   the row pipeline has torn down. Secondary local-git modes on those rows
 //!   are computed only when selected by the dedicated demand worker, avoiding
@@ -530,8 +531,8 @@ impl PickerProgressHandler for PickerHandler {
             shown_branches,
         });
 
-        // Tier 1: warm the user's landing row (all modes) and every other
-        // row's default tab. Configured summaries for items 1..N fire from
+        // Tier 1: warm the user's landing row (all modes) and the default tab
+        // of branch-only rows. Configured summaries for items 1..N fire from
         // `on_collect_complete` after the row pipeline tears down. Secondary
         // local modes stay demand-loaded.
         self.orchestrator.spawn_initial_precompute(
@@ -1590,8 +1591,10 @@ mod tests {
 
     /// Preview pre-compute is tiered. After `on_skeleton`:
     /// - First item gets all 5 modes (the user's landing row).
-    /// - Items 1..N get only `UnifiedDiff` (the picker's initial tab) so
-    ///   quick j/k navigation hits warm content.
+    /// - Branch-only items 1..N get only `UnifiedDiff` (the picker's initial
+    ///   tab) so quick j/k navigation hits warm content. Worktree-backed rows
+    ///   are demand-loaded instead; that split is pinned in
+    ///   `preview_orchestrator`, not here.
     /// - Secondary modes for items 1..N stay demand-loaded rather than
     ///   consuming worktree I/O speculatively.
     ///
@@ -1639,7 +1642,7 @@ mod tests {
             );
         }
 
-        // Items 1..N: UnifiedDiff (default tab) cached at skeleton time.
+        // Branch-only items 1..N: UnifiedDiff cached at skeleton time.
         for branch in ["beta", "gamma"] {
             assert!(
                 handler
