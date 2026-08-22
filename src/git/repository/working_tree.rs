@@ -989,9 +989,10 @@ impl TempIndex {
 
     /// Stage the paths selected by `mode` into this temporary index.
     ///
-    /// Uses the same `git add` mode as [`WorkingTree::stage`]. All-files mode
-    /// only adds a pathspec that excludes Worktrunk's own temporary indexes if
-    /// the system temp directory sits inside the worktree.
+    /// Uses the same `git add` mode as [`WorkingTree::stage`], minus its
+    /// unmerged-paths gate. All-files mode also scopes the add to the worktree
+    /// root (`-- .`) and, when the system temp directory sits inside the
+    /// worktree, excludes Worktrunk's own temporary indexes.
     ///
     /// [`StageMode`]: crate::config::StageMode
     pub fn stage(&self, mode: crate::config::StageMode) -> anyhow::Result<()> {

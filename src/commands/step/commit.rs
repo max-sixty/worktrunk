@@ -81,9 +81,8 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     // path. StageMode::None has nothing to stage, so we use the existing index as-is.
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
     let temp_index = if dry_run {
-        stage_mode
-            .add_args()
-            .map(|_| {
+        (stage_mode != StageMode::None)
+            .then(|| {
                 let temp = env.repo.current_worktree().temp_index()?;
                 temp.stage(stage_mode)?;
                 Ok::<_, anyhow::Error>(temp)
