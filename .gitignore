@@ -1,5 +1,5 @@
 /target
-docs/static/assets/
+docs/public/assets/
 docs/demos/out/
 
 # Claude Code per-developer local settings (never share these)

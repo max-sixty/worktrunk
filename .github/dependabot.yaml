@@ -21,3 +21,15 @@ updates:
     schedule:
       interval: daily
     labels: []
+
+  - package-ecosystem: npm
+    directory: "/docs"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore: "
+    groups:
+      docs-site:
+        patterns:
+          - "*"
+    labels: []

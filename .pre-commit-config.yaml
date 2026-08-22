@@ -31,7 +31,8 @@ repos:
   - repo: https://github.com/lycheeverse/lychee
     rev: nightly
     hooks:
-      # Check links using .config/lychee.toml exclusions
+      # Check links using .config/lychee.toml exclusions. Build the docs first
+      # so root-relative site links resolve against docs/dist.
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
       #
       # Manual stage only: link health depends on external sites (429s,

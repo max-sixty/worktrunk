@@ -46,7 +46,7 @@
       "reason": "dirty detection"
     },
     {
-      "path": "docs/content/faq.md",
+      "path": "docs/src/content/docs/faq.md",
       "reason": "documented destructive surface"
     },
     {

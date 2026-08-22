@@ -7,11 +7,11 @@ Source docs/demos/tapes/shared-commands.tape
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 # Switch to branch with uncommitted changes
 Type "wt switch hooks"
+Show
+Sleep 300ms
 Enter
 Sleep 1s
 
@@ -30,6 +30,6 @@ Type "git log -1"
 Enter
 Sleep 3s
 
+Hide
 Type "exit"
 Enter
-Sleep 500ms

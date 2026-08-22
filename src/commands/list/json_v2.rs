@@ -103,7 +103,7 @@ pub struct JsonEnvelope {
 /// The published JSON Schema for [`JsonEnvelope`], as a JSON value.
 ///
 /// `wt list --print-schema` prints this and `test_docs_are_in_sync` commits it
-/// to `docs/static/schema/list-v2.json`; it lives here so the document and the
+/// to `docs/public/schema/list-v2.json`; it lives here so the document and the
 /// types it describes stay in one place, and so `test_schema_accepts_envelopes`
 /// checks the same document that ships.
 ///
@@ -116,8 +116,8 @@ pub fn schema_document() -> serde_json::Value {
 
     let mut value = serde_json::to_value(&schema).expect("schema serializes");
     let object = value.as_object_mut().expect("schema is an object");
-    // Zola serves docs/static/ at the site root, so this is where the
-    // committed docs/static/schema/list-v2.json is reachable.
+    // Astro serves docs/public/ at the site root, so this is where the
+    // committed docs/public/schema/list-v2.json is reachable.
     object.insert(
         "$id".to_string(),
         "https://worktrunk.dev/schema/list-v2.json".into(),

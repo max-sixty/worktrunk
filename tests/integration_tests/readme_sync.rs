@@ -22,7 +22,6 @@
 
 use crate::common::wt_command;
 use ansi_str::AnsiStr;
-use ansi_to_html::convert as ansi_to_html;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs;
@@ -56,13 +55,13 @@ static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex for literal bracket notation (as stored in snapshots) - used by literal_to_escape
 static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-9;]*m").unwrap());
 
-/// Regex to find snapshot-driven terminal-shortcode markers in standalone docs files
-/// (worktrunk.md, llm-commits.md, etc.) for in-place refresh. The `.snap` ID
-/// requirement and `{% terminal() %}` body together are specific enough to
-/// exclude command-page help-region markers and other AUTO-GENERATED users.
+/// Regex to find snapshot-driven markers in standalone docs files
+/// (worktrunk.md, llm-commits.md, etc.) for in-place refresh. Matching the
+/// marker envelope instead of its body keeps snapshot sync independent of the
+/// documentation renderer.
 static DOCS_SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?s){}([^\s]+\.snap) — edit source to update -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
+        r"(?s){}([^\s]+\.snap) — edit source to update -->\n+(.*?)\n+{}",
         regex::escape(MARKER_OPEN_PREFIX),
         regex::escape(MARKER_CLOSE),
     ))
@@ -121,58 +120,48 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
-/// Regex to convert Zola internal links to full URLs
-/// Matches: [text](@/page.md) or [text](@/page.md#anchor)
+/// Regex to convert site-root documentation links to full URLs.
+/// Matches: [text](/page/) or [text](/page/#anchor).
 ///
 /// Link text tolerates `]` characters when they appear inside a backticked
 /// code span (e.g. `[[block]]`), alternating "a `...` code span" with "any
 /// non-`]`-non-backtick char". Bare backticks are forbidden so the regex
 /// can't bridge across two unrelated code spans on the same line.
-static ZOLA_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
+static SITE_LINK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/([^)/]+)/(#[^)]*)?\)").unwrap());
 
-/// Regex guardrail: any leftover `](@/...md...)` link that the transform
-/// above failed to rewrite. Used by [`assert_no_untransformed_zola_links`] to
-/// fail loudly on stray Zola internal links in generated content.
-static UNTRANSFORMED_ZOLA_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\]\(@/[^)]+\.md").unwrap());
+/// Guardrail for root-relative or legacy Zola links on generated non-site surfaces.
+static UNTRANSFORMED_SITE_LINK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\]\((?:/|@/)[^)]+\)").unwrap());
 
-/// Guardrail for every generated surface that rewrites Zola internal links.
+/// Guardrail for every generated non-site surface that rewrites internal links.
 ///
-/// A `@/page.md` target is meaningful only to Zola: it resolves when the docs
-/// site builds and is dead text anywhere else. Both link rewrites here are
-/// regexes over link *text*, so their failure mode is silence — an
-/// unanticipated character makes the pattern decline to match and the raw
-/// markdown survives into the generated file. Neither sync test can see it,
-/// because each compares the generated file against the same transform that
-/// produced it, so an unconverted link is "in sync" by construction.
+/// Root-relative links work on the site but not in installed skill files or
+/// generated config examples. Both rewrites are regexes over link text, so an
+/// unsupported shape can otherwise survive silently.
 ///
-/// So each surface asserts the negative afterwards: no `](@/…md` may remain.
+/// So each surface asserts the negative afterwards: no `](/…)` or legacy
+/// `](@/…)` may remain.
 /// `surface` names the generated content for the failure message.
-fn assert_no_untransformed_zola_links(content: &str, surface: &str) {
-    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(content) {
+fn assert_no_untransformed_site_links(content: &str, surface: &str) {
+    if let Some(m) = UNTRANSFORMED_SITE_LINK_PATTERN.find(content) {
         let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
         let snippet_end = content[m.end()..]
             .find('\n')
             .map_or(content.len(), |i| m.end() + i);
         panic!(
-            "Failed to transform a Zola internal link in {surface} — likely an \
-             unsupported character in the link text. Offending line:\n{}",
+            "Failed to transform an internal site link in {surface} — likely \
+             legacy syntax or an unsupported character in the link text. Offending line:\n{}",
             &content[snippet_start..snippet_end]
         );
     }
 }
 
-/// Regex to convert Zola rawcode shortcode to HTML pre tags
-/// Matches: {% rawcode() %}...{% end %}
-static ZOLA_RAWCODE_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)\{% rawcode\(\) %\}(.*?)\{% end %\}").unwrap());
-
-/// Regex to convert Zola figure/picture elements to simple markdown images
+/// Regex to convert figure/picture elements to simple markdown images
 /// Matches: <figure class="demo">...<img src="/assets/X.gif" alt="Y"...>...</figure>
 /// Extracts: src path and alt text from the <img> tag
 /// Note: Maps /assets/X to assets/X in the worktrunk-assets repo
-static ZOLA_FIGURE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+static HTML_FIGURE_TO_IMAGE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?s)<figure class="demo">\s*<picture>.*?<img src="/assets/([^"]+)" alt="([^"]*)"[^>]*>.*?</picture>.*?</figure>"#,
     )
@@ -185,8 +174,8 @@ static ZOLA_FIGURE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Output format for section updates
 enum OutputFormat {
-    /// Docs: HTML with ANSI colors in {% terminal() %} shortcode
-    DocsHtml,
+    /// Docs: framework-neutral console fence.
+    DocsMarkdown,
     /// Unwrapped: raw markdown content (help commands, doc sections)
     Unwrapped,
 }
@@ -335,22 +324,15 @@ fn replace_placeholders(content: &str) -> String {
 
 /// Format replacement content based on output format. The `wrap_in_marker`
 /// envelope is identical for both; only the body construction varies.
-fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
-    let body = match format {
-        OutputFormat::DocsHtml => {
-            // Extract command from <span class="cmd"> in body to also emit as
-            // cmd= parameter (enables giallo syntax highlighting). The span
-            // stays in body so sync comparisons remain stable.
-            let cmd_re = Regex::new(r#"^<span class="cmd">([^<]+)</span>"#).unwrap();
-            let cmd_attr = cmd_re
-                .captures(content)
-                .map(|c| format!(r#"cmd="{}""#, c.get(1).unwrap().as_str()))
-                .unwrap_or_default();
-            format!("{{% terminal({cmd_attr}) %}}\n{content}\n{{% end %}}")
-        }
+fn format_body(content: &str, format: &OutputFormat) -> String {
+    match format {
+        OutputFormat::DocsMarkdown => format!("```console\n{content}\n```"),
         OutputFormat::Unwrapped => content.to_string(),
-    };
-    wrap_in_marker(id, "source", &body)
+    }
+}
+
+fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
+    wrap_in_marker(id, "source", &format_body(content, format))
 }
 
 /// Update sections matching a pattern in content
@@ -373,7 +355,7 @@ fn update_section(
         .map(|cap| {
             let full_match = cap.get(0).unwrap();
             let id = cap.get(1).unwrap().as_str().to_string();
-            let current = trim_lines(cap.get(2).unwrap().as_str());
+            let current = cap.get(2).unwrap().as_str().to_string();
             (full_match.start(), full_match.end(), id, current)
         })
         .collect();
@@ -390,7 +372,7 @@ fn update_section(
             }
         };
 
-        if current != expected {
+        if current != format_body(&expected, &format) {
             let replacement = format_replacement(&id, &expected, &format);
             result.replace_range(start..end, &replacement);
             updated += 1;
@@ -404,35 +386,73 @@ fn update_section(
     }
 }
 
+#[test]
+fn test_markdown_snapshot_section_converges() {
+    let content = "<!-- ⚠️ AUTO-GENERATED from tests/example.snap — edit source to update -->\n\n```console\n$ wt list\noutput\n```\n\n<!-- END AUTO-GENERATED -->";
+    let (unchanged, updated, total) = update_section(
+        content,
+        &DOCS_SNAPSHOT_MARKER_PATTERN,
+        OutputFormat::DocsMarkdown,
+        |_, _| Ok("$ wt list\noutput".to_string()),
+    )
+    .unwrap();
+    assert_eq!(unchanged, content);
+    assert_eq!((updated, total), (0, 1));
+
+    let (changed, updated, _) = update_section(
+        content,
+        &DOCS_SNAPSHOT_MARKER_PATTERN,
+        OutputFormat::DocsMarkdown,
+        |_, _| Ok("$ wt list\nnew output".to_string()),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+    assert!(changed.contains("```console\n$ wt list\nnew output\n```"));
+
+    let content_with_trailing_space = content.replace("output\n```", "output \n```");
+    let (cleaned, updated, _) = update_section(
+        &content_with_trailing_space,
+        &DOCS_SNAPSHOT_MARKER_PATTERN,
+        OutputFormat::DocsMarkdown,
+        |_, _| Ok("$ wt list\noutput".to_string()),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+    assert_eq!(cleaned, content);
+}
+
+#[test]
+fn test_snapshot_plain_text_has_no_trailing_whitespace() {
+    let rendered = trim_lines(&parse_snapshot_content("before\n\x1b[107m \x1b[0m \nafter"));
+    assert_eq!(rendered, "before\n\nafter");
+
+    let snapshot =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "tests/snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap",
+        ))
+        .unwrap();
+    let rendered = trim_lines(&parse_snapshot_content(&snapshot));
+    assert!(
+        rendered.lines().all(|line| line.trim_end() == line),
+        "snapshot output retained trailing whitespace"
+    );
+}
+
 // =============================================================================
 // End Unified Infrastructure
 // =============================================================================
 
 /// Regex to find command placeholder comments in help pages.
 ///
-/// A placeholder is an HTML comment `<!-- wt <id> -->` followed by one of three
-/// code-block forms (the form depends on which stage of `--help-page` has run):
-///
-/// - ````bash``` with an optional `$ ` prompt, optionally followed by multi-line
-///   output — this is what plain (`--help-page --plain`) output contains, and
-///   also what `cli/mod.rs` source contains before `convert_dollar_console_to_terminal`.
-/// - `{{ terminal(cmd="...") }}` self-closing Zola shortcode — produced by
-///   `convert_dollar_console_to_terminal` when the source block has only a command.
-/// - `{% terminal(cmd="...") %}…{% end %}` Zola shortcode — produced by
-///   `convert_dollar_console_to_terminal` when the source block has output too.
+/// A placeholder is an HTML comment `<!-- wt <id> -->` followed by a `bash` or
+/// `console` fence with an optional `$ ` prompt and optional captured output.
 ///
 /// Capture groups:
 /// 1. placeholder id (e.g. `wt list (markers)`) — drives snapshot lookup
-/// 2. display command when matched in the ```bash form
-/// 3. display command when matched as `{{ terminal() }}`
-/// 4. display command when matched as `{% terminal() %}…{% end %}`
-///
-/// Exactly one of groups 2–4 is non-None per match.
+/// 2. display command
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?s)<!-- (wt [^>\n]+) -->\n(?:```bash\n(?:\$ )?(wt [^\n]+).*?\n```|\{\{ terminal\(cmd="(wt [^"]+)"\) \}\}|\{% terminal\(cmd="(wt [^"]+)"\) %\}.*?\{% end %\})"#,
-    )
-    .unwrap()
+    Regex::new(r"(?s)<!-- (wt [^>\n]+) -->\n```(?:bash|console)\n(?:\$ )?(wt [^\n]+).*?\n```")
+        .unwrap()
 });
 
 /// Map commands to their snapshot files for help page expansion
@@ -467,43 +487,23 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
     }
 }
 
-/// Rendering mode for [`expand_command_placeholders`].
-enum ExpandMode {
-    /// HTML docs (`docs/content/*.md`): emit a `{% terminal(cmd="...") %}`
-    /// shortcode with an ANSI→HTML body, wrapped in AUTO-GENERATED markers.
-    Html,
-    /// Skill reference (`skills/worktrunk/reference/*.md`): emit a fenced code
-    /// block with a `$ <cmd>` prompt and a plain-text body.
-    Plain,
-}
-
 /// Expand command placeholders in help page content into rendered snapshot blocks.
 ///
 /// Finds `<!-- wt <id> -->` + ```bash\n[$ ]wt <cmd>\n``` blocks, looks up the
 /// snapshot for the placeholder id (e.g. `wt list (markers)`), and replaces
-/// the block with a mode-appropriate rendering (see [`ExpandMode`]).
+/// the block with a portable console rendering.
 ///
 /// The placeholder id drives snapshot lookup so disambiguation suffixes like
 /// `(markers)` don't have to appear in the displayed command. Commands without
 /// a snapshot mapping are left unchanged.
-fn expand_command_placeholders(
-    content: &str,
-    snapshots_dir: &Path,
-    mode: ExpandMode,
-) -> Result<String, String> {
+fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<String, String> {
     let mut result = content.to_string();
     let mut errors = Vec::new();
 
     for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
         let placeholder_id = cap.get(1).unwrap().as_str();
-        // Exactly one of groups 2–4 matched — pick whichever.
-        let display_cmd = cap
-            .get(2)
-            .or_else(|| cap.get(3))
-            .or_else(|| cap.get(4))
-            .unwrap()
-            .as_str();
+        let display_cmd = cap.get(2).unwrap().as_str();
 
         let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
             continue;
@@ -522,27 +522,13 @@ fn expand_command_placeholders(
         let snapshot_content = fs::read_to_string(&snapshot_path)
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
-        let replacement = match mode {
-            ExpandMode::Html => {
-                let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-                let normalized = encode_leading_spaces(&trim_lines(&html));
-                // cmd= parameter uses the displayed command (enables giallo
-                // syntax highlighting on the command line) rather than the
-                // placeholder id, so disambiguation suffixes like `(markers)`
-                // don't leak into the rendered prompt. Prompt ($) is added
-                // via CSS ::before, so not included in HTML.
-                //
-                // No inner AUTO-GENERATED wrapper — the whole command page
-                // regenerates wholesale each sync, so the wrapper is dead
-                // weight and would nest inside the outer help-page region's
-                // markers (forcing the outer regex to use a tempered match).
-                format!("{{% terminal(cmd=\"{display_cmd}\") %}}\n{normalized}\n{{% end %}}")
-            }
-            ExpandMode::Plain => {
-                let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
-                format!("```\n$ {display_cmd}\n{plain}\n```")
-            }
+        let plain = trim_lines(&parse_snapshot_content(&snapshot_content));
+        let body = if plain.is_empty() {
+            format!("$ {display_cmd}")
+        } else {
+            format!("$ {display_cmd}\n{plain}")
         };
+        let replacement = format!("```console\n{body}\n```");
 
         result = result.replace(full_match, &replacement);
     }
@@ -576,141 +562,12 @@ fn trim_lines(content: &str) -> String {
         .to_string()
 }
 
-/// Encode leading spaces on the first line as `&#32;` HTML entities.
-/// Zola trims leading whitespace from shortcode bodies, stripping the
-/// two-space gutter that aligns table headers with data rows in `wt list`.
-/// HTML entities survive the trim and render as spaces in `<pre>` blocks.
-fn encode_leading_spaces(content: &str) -> String {
-    let first_line = content.lines().next().unwrap_or("");
-    let leading = first_line.len() - first_line.trim_start().len();
-    if leading == 0 {
-        return content.to_string();
-    }
-    format!("{}{}", "&#32;".repeat(leading), &content[leading..])
-}
-
-/// Parse snapshot content for docs (with ANSI to HTML conversion)
-fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
-    let content = parse_snapshot_raw(content);
-    let content = replace_placeholders(&content);
-    let content = literal_to_escape(&content);
-    let html = ansi_to_html(&content).map_err(|e| format!("ANSI conversion failed: {e}"))?;
-    Ok(clean_ansi_html(&html))
-}
-
-/// Parse snapshot content for skill reference files (plain text, ANSI stripped)
-fn parse_snapshot_content_for_skill(content: &str) -> String {
+/// Parse snapshot content into portable Markdown code-block text.
+fn parse_snapshot_content(content: &str) -> String {
     let content = parse_snapshot_raw(content);
     let content = replace_placeholders(&content);
     let content = literal_to_escape(&content);
     content.ansi_strip().into_owned()
-}
-
-/// Ensure each line ends with a reset code, carrying active styles to the next line
-///
-/// Clap resets styles at line breaks when wrapping, so a bold span that wraps across
-/// lines loses its bold on the continuation. This tracks active SGR styles
-/// and re-opens them at the start of each continuation line, producing clean per-line
-/// HTML like `<b>first part</b>\n<b>second part</b>` instead of `<b>first part</b>\nsecond part`.
-fn ensure_line_resets_with_carry(ansi: &str) -> String {
-    const RESET: &str = "\x1b[0m";
-    // Match SGR sequences: ESC [ <params> m
-    static SGR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[([0-9;]*)m").unwrap());
-
-    let lines: Vec<&str> = ansi.lines().collect();
-    let mut result = Vec::with_capacity(lines.len());
-    let mut active_styles: Vec<String> = Vec::new();
-
-    for line in lines {
-        // Prepend active styles from previous line
-        let line = if active_styles.is_empty() {
-            line.to_string()
-        } else {
-            let prefix: String = active_styles.iter().map(|s| s.as_str()).collect();
-            format!("{prefix}{line}")
-        };
-
-        // Track which styles are active at end of this line
-        active_styles.clear();
-        for cap in SGR_RE.captures_iter(&line) {
-            let params = &cap[1];
-            if params.is_empty() || params == "0" {
-                active_styles.clear();
-            } else {
-                active_styles.push(format!("\x1b[{params}m"));
-            }
-        }
-
-        // Ensure line ends with reset
-        if line.ends_with(RESET) {
-            result.push(line);
-        } else {
-            result.push(format!("{line}{RESET}"));
-        }
-    }
-
-    result.join("\n")
-}
-
-/// Clean up HTML output from ansi-to-html conversion
-fn clean_ansi_html(html: &str) -> String {
-    // Regex to remove empty HTML spans (e.g., <span style='opacity:0.67'></span>)
-    static EMPTY_SPAN_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"<span[^>]*></span>").unwrap());
-
-    // Strip bare ESC characters left by the library
-    let html = html.replace('\x1b', "");
-
-    // Clean up empty tags generated by reset codes
-    let html = html.replace("<b></b>", "");
-    let html = EMPTY_SPAN_REGEX.replace_all(&html, "").to_string();
-
-    // Replace verbose inline styles with CSS classes for cleaner output
-    html.replace("<span style='opacity:0.67'>", "<span class=d>")
-        .replace("<span style='color:var(--green,#0a0)'>", "<span class=g>")
-        .replace("<span style='color:var(--red,#a00)'>", "<span class=r>")
-        .replace("<span style='color:var(--cyan,#0aa)'>", "<span class=c>")
-}
-
-/// Regex to find command reference code blocks with ANSI content
-/// Matches: ## Command reference\n\n```\n<content with ANSI>\n```
-/// or: ### Command reference\n\n```\n<content with ANSI>\n```
-static COMMAND_REF_BLOCK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)(###? Command reference\n\n)```\n(.*?)\n```").unwrap());
-
-/// Convert command reference code blocks to terminal shortcodes with HTML
-///
-/// Finds code blocks after "## Command reference" or "### Command reference" headers
-/// and converts ANSI escape codes to HTML, wrapping in {% terminal() %} shortcode.
-fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
-    let mut result = content.to_string();
-
-    // Find all command reference blocks and convert them
-    // Process in reverse order to preserve positions
-    let matches: Vec<_> = COMMAND_REF_BLOCK_PATTERN
-        .captures_iter(content)
-        .map(|cap| {
-            let full_match = cap.get(0).unwrap();
-            let header = cap.get(1).unwrap().as_str();
-            let code_content = cap.get(2).unwrap().as_str();
-            (full_match.start(), full_match.end(), header, code_content)
-        })
-        .collect();
-
-    for (start, end, header, code_content) in matches.into_iter().rev() {
-        // Convert ANSI to HTML
-        let with_resets = ensure_line_resets_with_carry(code_content);
-        let html =
-            ansi_to_html(&with_resets).map_err(|e| format!("ANSI conversion failed: {e}"))?;
-        let clean_html = clean_ansi_html(&html);
-        let trimmed_html = trim_lines(&clean_html);
-
-        // Build terminal shortcode
-        let replacement = format!("{header}{{% terminal() %}}\n{trimmed_html}\n{{% end %}}");
-        result.replace_range(start..end, &replacement);
-    }
-
-    Ok(result)
 }
 
 /// Get help output for a command
@@ -896,51 +753,15 @@ fn heading_to_anchor(heading: &str) -> String {
         .join("-")
 }
 
-/// Regex to match terminal-shortcode AUTO-GENERATED markers in docs files,
-/// for conversion to plain code blocks when extracting sections into README.
-/// Optionally consumes a preceding ```bash``` block (rendered redundant by
-/// the cmd= parameter on the shortcode).
-/// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms.
-static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"(?s)(?:```bash\n[^\n]+\n```\n+)?{}[^\n]+ -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
-        regex::escape(MARKER_OPEN_PREFIX),
-        regex::escape(MARKER_CLOSE),
-    ))
-    .unwrap()
-});
-
-/// Strip HTML tags from content, converting .cmd spans to `$ ` prefixed commands
-fn strip_html(content: &str) -> String {
-    // First, convert <span class="cmd">...</span> to "$ ..." (add prompt)
-    let cmd_pattern = Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap();
-    let result = cmd_pattern.replace_all(content, "$ $1");
-
-    // Strip remaining HTML tags
-    let tag_pattern = Regex::new(r"<[^>]+>").unwrap();
-    let result = tag_pattern.replace_all(&result, "");
-
-    // Decode HTML entities
-    result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-}
-
-/// Transform Zola-flavored markdown to GitHub-flavored markdown
+/// Transform site Markdown for embedding in GitHub-rendered files.
 ///
 /// Converts:
-/// - `[text](@/page.md)` → `[text](https://worktrunk.dev/page/)`
-/// - `[text](@/page.md#anchor)` → `[text](https://worktrunk.dev/page/#anchor)`
-/// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
+/// - `[text](/page/)` → `[text](https://worktrunk.dev/page/)`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
-/// - AUTO-GENERATED terminal markers → plain code blocks
-/// - `{{ terminal(cmd="...") }}` → ```bash code blocks
-fn transform_zola_to_github(content: &str) -> String {
+/// - AUTO-GENERATED marker comments → removed, leaving their Markdown body
+fn transform_docs_to_github(content: &str) -> String {
     // Transform internal links
-    let content = ZOLA_LINK_PATTERN
+    let content = SITE_LINK_PATTERN
         .replace_all(content, |caps: &regex::Captures| {
             let text = caps.get(1).unwrap().as_str();
             let page = caps.get(2).unwrap().as_str();
@@ -948,35 +769,13 @@ fn transform_zola_to_github(content: &str) -> String {
             format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
         })
         .into_owned();
-
-    // Transform rawcode shortcodes to pre tags
-    let content = ZOLA_RAWCODE_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            let inner = caps.get(1).unwrap().as_str();
-            format!("<pre>{}</pre>", inner)
-        })
+    let content = AUTO_GENERATED_MARKER_PATTERN
+        .replace_all(&content, "")
         .into_owned();
-
-    // Transform terminal markers to console code blocks for README
-    let content = TERMINAL_MARKER_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            let inner = caps.get(1).unwrap().as_str();
-            // Strip HTML, converting .cmd spans to "$ ..." (adds prompt)
-            let plain = strip_html(inner);
-            format!("```console\n{}\n```", plain)
-        })
-        .into_owned();
-
-    // Transform self-closing terminal shortcodes to bash code blocks for README
-    // These are `{{ terminal(cmd="...") }}` shortcodes without body content
-    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
-        })
-        .into_owned();
+    let content = content.replace(worktrunk::docs::BADGE_EXPERIMENTAL_HTML, "[experimental]");
 
     // Transform figure/picture elements to markdown images with GitHub raw URLs
-    ZOLA_FIGURE_PATTERN
+    let content = HTML_FIGURE_TO_IMAGE_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
             let filename = caps.get(1).unwrap().as_str();
             let alt = caps.get(2).unwrap().as_str();
@@ -984,13 +783,15 @@ fn transform_zola_to_github(content: &str) -> String {
                 "![{alt}](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/assets/{filename})"
             )
         })
-        .into_owned()
+        .into_owned();
+    assert_no_untransformed_site_links(&content, "README content");
+    content
 }
 
 /// Get section content from docs file, transformed for README
 ///
 /// Parses `path#anchor` ID format, extracts section(s) by anchor
-/// (supports ranges like `start..end`), and transforms Zola links to GitHub URLs.
+/// (supports ranges like `start..end`), and makes site links absolute.
 fn docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, String> {
     let (path, anchor) = id
         .split_once('#')
@@ -1003,8 +804,7 @@ fn docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, Stri
     let section = extract_section_by_anchor(&content, anchor)
         .ok_or_else(|| format!("Section '{}' not found in {}", anchor, docs_path.display()))?;
 
-    // Transform Zola links to GitHub URLs
-    Ok(transform_zola_to_github(&section))
+    Ok(transform_docs_to_github(&section))
 }
 
 /// Get content for a README marker based on its type
@@ -1049,13 +849,13 @@ fn sync_readme_markers(
     let total = matches.len();
 
     // Process in reverse order to preserve positions. README markers are always
-    // Help/Section (unwrapped); a Snapshot marker would mean a stale shortcode
-    // leaked through `transform_zola_to_github` and is a real bug to surface.
+    // Help/Section (unwrapped); generated snapshot marker comments are removed
+    // when docs sections are embedded.
     for (start, end, id, current) in matches.into_iter().rev() {
         if matches!(MarkerType::from_id(&id), MarkerType::Snapshot) {
             errors.push(format!(
                 "❌ {id}: README must not contain snapshot markers — \
-                 transform_zola_to_github should have stripped this"
+                 transform_docs_to_github should have stripped this"
             ));
             continue;
         }
@@ -1117,7 +917,7 @@ fn transform_config_source_to_toml(source: &str) -> String {
         }
 
         // Convert markdown links to plain text for config file readability
-        // [Link text](@/page.md) → Link text (https://worktrunk.dev/page/)
+        // [Link text](/page/) → Link text (https://worktrunk.dev/page/)
         // [Link text](https://...) → Link text (https://...)
         let line = convert_markdown_links_for_config(line);
 
@@ -1139,8 +939,8 @@ fn transform_config_source_to_toml(source: &str) -> String {
     // Guardrail: a link `convert_markdown_links_for_config` declined to match
     // survives as raw markdown into the generated example file, which
     // `wt config create` writes to the user's config and `wt config create
-    // --help` prints — so the `@/` target would reach the user verbatim.
-    assert_no_untransformed_zola_links(&result, "a generated config example");
+    // --help` prints — so a root-relative site link would reach the user verbatim.
+    assert_no_untransformed_site_links(&result, "a generated config example");
 
     result
 }
@@ -1148,17 +948,17 @@ fn transform_config_source_to_toml(source: &str) -> String {
 /// Convert markdown links to plain text with URL in parentheses.
 ///
 /// Config files aren't rendered as markdown, so links need to be readable as plain text.
-/// - `[Link text](@/page.md)` → `Link text (https://worktrunk.dev/page/)`
+/// - `[Link text](/page/)` → `Link text (https://worktrunk.dev/page/)`
 /// - `[Link text](https://example.com)` → `Link text (https://example.com)`
 ///
 /// The link text may itself contain a bracketed span — a TOML section name in
-/// backticks (``[pattern-keyed `[projects]` entry](@/config.md#…)``) is the
+/// backticks (``[pattern-keyed `[projects]` entry](/config/#…)``) is the
 /// shape that occurs here. A link that isn't converted survives as raw
 /// markdown into the generated example file, which `wt config create` writes
-/// to the user's config and `wt config create --help` prints, so a Zola `@/`
+/// to the user's config and `wt config create --help` prints, so a site-relative
 /// target reaches the user verbatim. Brackets in these link texts always sit
 /// inside a backticked code span, so the text class alternates a code span
-/// with any non-`]`-non-backtick char — the same rule `ZOLA_LINK_PATTERN`
+/// with any non-`]`-non-backtick char — the same rule `SITE_LINK_PATTERN`
 /// uses above, which also covers `[[…]]` array-of-tables names.
 fn convert_markdown_links_for_config(line: &str) -> String {
     use regex::Regex;
@@ -1172,17 +972,8 @@ fn convert_markdown_links_for_config(line: &str) -> String {
             let text = &caps[1];
             let url = &caps[2];
 
-            // Convert Zola @/ links to full URLs
-            let url = if let Some(path) = url.strip_prefix("@/") {
-                // Handle anchors: @/config.md#section → config/#section
-                let (page, anchor) = match path.split_once('#') {
-                    Some((p, a)) => (p.trim_end_matches(".md"), Some(a)),
-                    None => (path.trim_end_matches(".md"), None),
-                };
-                match anchor {
-                    Some(a) => format!("https://worktrunk.dev/{page}/#{a}"),
-                    None => format!("https://worktrunk.dev/{page}/"),
-                }
+            let url = if let Some(path) = url.strip_prefix('/') {
+                format!("https://worktrunk.dev/{path}")
             } else {
                 url.to_string()
             };
@@ -1196,19 +987,19 @@ fn convert_markdown_links_for_config(line: &str) -> String {
 /// one whose text carries a bracketed span of its own.
 ///
 /// The generated file is what `wt config create` writes and what `wt config
-/// create --help` prints, so a link this misses ships a raw `@/page.md` target
+/// create --help` prints, so a link this misses ships a raw site target
 /// to the user. Nothing downstream catches that: the sync test compares the
 /// example against this same transform, so an unconverted link is "in sync".
 #[test]
 fn test_config_markdown_links_convert_to_plain_text() {
     let cases = [
-        // Zola page link, and the same with an anchor.
+        // Site page link, and the same with an anchor.
         (
-            "See [hooks](@/hook.md) for details",
+            "See [hooks](/hook/) for details",
             "See hooks (https://worktrunk.dev/hook/) for details",
         ),
         (
-            "See [forge platform](@/config.md#forge-platform).",
+            "See [forge platform](/config/#forge-platform).",
             "See forge platform (https://worktrunk.dev/config/#forge-platform).",
         ),
         // An absolute URL passes through untouched.
@@ -1220,19 +1011,19 @@ fn test_config_markdown_links_convert_to_plain_text() {
         // backticks. The pre-fix regex stopped at the inner `]` and left the
         // whole link as raw markdown.
         (
-            "name it once with a [pattern-keyed `[projects]` entry](@/config.md#user-project-specific-settings) instead",
+            "name it once with a [pattern-keyed `[projects]` entry](/config/#user-project-specific-settings) instead",
             "name it once with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead",
         ),
         // The same shape naming an array-of-tables. These sections document
         // `[[projects."…".post-start]]` pipelines, so a link naming one is the
         // next form to arrive; the code-span class covers it.
         (
-            "see [`[[projects.\"…\".post-start]]` hooks](@/config.md#hooks) for the pipeline form",
+            "see [`[[projects.\"…\".post-start]]` hooks](/config/#hooks) for the pipeline form",
             "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#hooks) for the pipeline form",
         ),
         // Two links on one line still both convert.
         (
-            "[a](@/hook.md) and [b](@/config.md)",
+            "[a](/hook/) and [b](/config/)",
             "a (https://worktrunk.dev/hook/) and b (https://worktrunk.dev/config/)",
         ),
         // A bare bracketed span is not a link and must survive verbatim —
@@ -1253,7 +1044,7 @@ fn test_config_markdown_links_convert_to_plain_text() {
 }
 
 /// A link shape the rewrite declines to match fails loudly rather than
-/// shipping its `@/` target.
+/// shipping its site-relative target.
 ///
 /// This is the backstop for the case the test above can't anticipate: the next
 /// unsupported link text. The generated config example runs through
@@ -1261,10 +1052,16 @@ fn test_config_markdown_links_convert_to_plain_text() {
 /// regex silently declined" into a test failure naming the line.
 #[test]
 #[should_panic(expected = "a generated config example")]
-fn test_untransformed_zola_link_fails_the_config_transform() {
+fn test_untransformed_site_link_fails_the_config_transform() {
     // An unbalanced backtick in the link text: the code-span alternative can't
-    // close, so the rewrite declines and the raw `@/` target would survive.
-    transform_config_source_to_toml("See [a `broken span](@/config.md#hooks) here");
+    // close, so the rewrite declines and the raw target would survive.
+    transform_config_source_to_toml("See [a `broken span](/config/#hooks) here");
+}
+
+#[test]
+#[should_panic(expected = "legacy syntax")]
+fn test_legacy_zola_link_fails_the_guardrail() {
+    assert_no_untransformed_site_links("See [hooks](@/hook.md)", "test content");
 }
 
 /// Extract a config section from src/cli/mod.rs by marker pattern.
@@ -1462,13 +1259,14 @@ fn test_project_config_docs_include_all_sections() {
     );
 }
 
-/// Verify that LLM tool commands in docs/content/llm-commits.md match
+/// Verify that LLM tool commands in the Starlight LLM commits page match
 /// the examples in config.example.toml (the single source of truth).
 #[test]
 fn test_llm_docs_commands_match_config_example() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
-    let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
+    let llm_docs =
+        fs::read_to_string(project_root.join("docs/src/content/docs/llm-commits.md")).unwrap();
 
     // Extract commands from config example: "# command = ..." lines
     let config_commands: Vec<String> = config_example
@@ -1500,7 +1298,7 @@ fn test_llm_docs_commands_match_config_example() {
     for cmd in &config_commands {
         assert!(
             doc_commands.contains(cmd),
-            "Command from config.example.toml not found in docs/content/llm-commits.md:\n  {cmd}\n\
+            "Command from config.example.toml not found in docs/src/content/docs/llm-commits.md:\n  {cmd}\n\
              Update llm-commits.md to match the config example (source of truth: dev/config.example.toml, \
              generated from src/cli/mod.rs)."
         );
@@ -1641,7 +1439,7 @@ fn test_config_source_templates_are_in_sync() {
     }
 }
 
-/// Sync docs snapshot markers in a single file (with ANSI to HTML conversion)
+/// Sync snapshot markers in a docs file as portable console fences.
 fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Vec<String>> {
     if !doc_path.exists() {
         return Ok(0);
@@ -1654,7 +1452,7 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
     match update_section(
         &content,
         &DOCS_SNAPSHOT_MARKER_PATTERN,
-        OutputFormat::DocsHtml,
+        OutputFormat::DocsMarkdown,
         |snap_path, _current_content| {
             let full_path = project_root_for_snapshots.join(snap_path);
             let raw = fs::read_to_string(&full_path)
@@ -1663,14 +1461,11 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
             // Extract command from snapshot YAML header
             let command = extract_command_from_snapshot(&raw);
 
-            let html_content = parse_snapshot_content_for_docs(&raw)?;
-            let normalized = trim_lines(&html_content);
-
-            // Prepend command line with styling if present
-            // Prompt ($) is added via CSS ::before, so not included in HTML
+            let plain = trim_lines(&parse_snapshot_content(&raw));
             Ok(match command {
-                Some(cmd) => format!("<span class=\"cmd\">{}</span>\n{}", cmd, normalized),
-                None => normalized,
+                Some(cmd) if plain.is_empty() => format!("$ {cmd}"),
+                Some(cmd) => format!("$ {cmd}\n{plain}"),
+                None => plain,
             })
         },
     ) {
@@ -1684,7 +1479,7 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
     }
 }
 
-/// Update or insert the `description` field in TOML frontmatter.
+/// Update or insert the `description` field in YAML frontmatter.
 ///
 /// Handles three cases:
 /// - Description field exists → update it
@@ -1692,12 +1487,14 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
 /// - No frontmatter → return content unchanged
 fn sync_frontmatter_description(content: &str, description: &str) -> String {
     static DESC_PATTERN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"(?m)^description\s*=\s*"[^"]*""#).unwrap());
+        LazyLock::new(|| Regex::new(r"(?m)^description:\s*.*$").unwrap());
 
-    let new_field = format!(r#"description = "{}""#, description.replace('"', r#"\""#));
+    let new_field = format!(
+        "description: {}",
+        serde_json::to_string(description).unwrap()
+    );
 
-    // Check if we're in a TOML frontmatter block
-    if !content.starts_with("+++\n") {
+    if !content.starts_with("---\n") {
         return content.to_string();
     }
 
@@ -1709,7 +1506,7 @@ fn sync_frontmatter_description(content: &str, description: &str) -> String {
     } else {
         // Insert after title line
         static TITLE_PATTERN: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r#"(?m)^(title\s*=\s*"[^"]*")\n"#).unwrap());
+            LazyLock::new(|| Regex::new(r"(?m)^(title:\s*.*)\n").unwrap());
 
         TITLE_PATTERN
             .replace(content, |caps: &regex::Captures| {
@@ -1717,6 +1514,27 @@ fn sync_frontmatter_description(content: &str, description: &str) -> String {
             })
             .to_string()
     }
+}
+
+#[test]
+fn test_starlight_frontmatter_helpers() {
+    let source = "---\ntitle: \"wt list\"\nsidebar:\n  order: 11\n---\nBody\n";
+    let frontmatter = YAML_FRONTMATTER_PATTERN
+        .captures(source)
+        .and_then(|captures| captures.get(1))
+        .unwrap();
+    assert_eq!(
+        yaml_scalar(frontmatter.as_str(), "title").as_deref(),
+        Some("wt list")
+    );
+
+    let updated = sync_frontmatter_description(source, "List worktrees & show \"status\".");
+    assert!(updated.contains("description: \"List worktrees & show \\\"status\\\".\""));
+    assert!(updated.contains("sidebar:\n  order: 11"));
+
+    let updated_again = sync_frontmatter_description(&updated, "Updated description.");
+    assert_eq!(updated_again.matches("description:").count(), 1);
+    assert!(updated_again.contains("description: \"Updated description.\""));
 }
 
 /// Command pages generated via `wt <cmd> --help-page`
@@ -1748,14 +1566,14 @@ fn write_tracked(
     updated.push(rel_path.into());
 }
 
-/// Sync command pages from --help-page output to docs/content/*.md
+/// Sync command pages from --help-page output to the Starlight content collection.
 /// Returns (errors, updated_files)
 fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut updated_files = Vec::new();
 
     for cmd in COMMAND_PAGES {
-        let doc_path = project_root.join(format!("docs/content/{}.md", cmd));
+        let doc_path = project_root.join(format!("docs/src/content/docs/{}.md", cmd));
 
         // Run wt <cmd> --help-page (outputs START marker + content + END marker)
         let output = wt_command()
@@ -1789,26 +1607,13 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             continue;
         }
 
-        // Expand command placeholders (wt list -> terminal shortcode with snapshot output)
+        // Expand command placeholders into portable snapshot-backed console fences.
         let snapshots_dir = project_root.join("tests/snapshots");
-        let generated =
-            match expand_command_placeholders(&generated, &snapshots_dir, ExpandMode::Html) {
-                Ok(expanded) => expanded,
-                Err(e) => {
-                    errors.push(format!(
-                        "Failed to expand placeholders for '{}': {}",
-                        cmd, e
-                    ));
-                    continue;
-                }
-            };
-
-        // Convert command reference code blocks to terminal shortcodes with HTML
-        let generated = match convert_command_reference_to_html(&generated) {
-            Ok(converted) => converted,
+        let generated = match expand_command_placeholders(&generated, &snapshots_dir) {
+            Ok(expanded) => expanded.ansi_strip().into_owned(),
             Err(e) => {
                 errors.push(format!(
-                    "Failed to convert command reference for '{}': {}",
+                    "Failed to expand placeholders for '{}': {}",
                     cmd, e
                 ));
                 continue;
@@ -1866,7 +1671,7 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             write_tracked(
                 &doc_path,
                 &new_content,
-                format!("docs/content/{}.md", cmd),
+                format!("docs/src/content/docs/{}.md", cmd),
                 &mut updated_files,
             );
         }
@@ -1879,28 +1684,19 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
 // Docs to Skill File Sync
 // =============================================================================
 
-/// Regex to match Zola frontmatter and extract title
-static ZOLA_FRONTMATTER_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^\+\+\+\n(.*?)\n\+\+\+\n*").unwrap());
+/// YAML frontmatter used by Astro's Starlight content collection.
+static YAML_FRONTMATTER_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^---\n(.*?)\n---\n*").unwrap());
 
-/// Regex to extract title from frontmatter
-static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"title\s*=\s*"([^"]+)""#).unwrap());
-
-/// Regex to strip body-form terminal shortcodes ({% terminal(...) %}...{% end %}).
-/// Optionally captures the cmd parameter value (group 1) and body (group 2).
-static ZOLA_TERMINAL_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)\{%\s*terminal\((?:cmd="([^"]*)"\s*)?\)\s*%\}\n?(.*?)\{%\s*end\s*%\}"#)
-        .unwrap()
-});
-
-/// Regex to strip self-closing terminal shortcodes ({{ terminal(cmd="...") }}).
-static ZOLA_TERMINAL_SELF_CLOSING_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\{\{ terminal\(cmd="([^"]*)"\) \}\}"#).unwrap());
-
-/// Regex to replace Zola experimental shortcode with plain text for skill files
-static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
+fn yaml_scalar(frontmatter: &str, key: &str) -> Option<String> {
+    let value = frontmatter
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}:")))?
+        .trim();
+    serde_json::from_str(value)
+        .ok()
+        .or_else(|| (!value.is_empty()).then(|| value.to_string()))
+}
 
 /// Regex to strip AUTO-GENERATED marker comments (just the comments, not content).
 /// Matches the open prefix (with ⚠️) and the bare close form.
@@ -1917,102 +1713,23 @@ static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 static HTML_FIGURE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
 
-/// Regex to strip `<span class="cmd">...</span>` lines from shortcode bodies.
-/// These duplicate the cmd parameter content (the template uses `clean_body` for this).
-static SPAN_CMD_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<span class="cmd">[^<]*</span>\n?"#).unwrap());
-
-/// Regex to convert `<span class="cmd">X</span>` → `$ X` for no-cmd body shortcodes.
-static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
-
-/// Convert a `|||`-delimited cmd string (and optional body) into a ```bash block.
-/// When `with_prompt` is false, command lines pass through verbatim so the block
-/// is directly copy-pasteable. When true, command lines get a `$ ` prefix to
-/// distinguish them from interleaved output. Comment-only lines (`#`) and blank
-/// lines never get the prefix.
-fn cmd_to_bash_block(cmd: &str, body: &str, with_prompt: bool) -> String {
-    let mut result = String::from("```bash\n");
-    for line in cmd.split("|||") {
-        if line.is_empty() {
-            result.push('\n');
-        } else if line.starts_with('#') {
-            result.push_str(line);
-            result.push('\n');
-        } else {
-            if with_prompt {
-                result.push_str("$ ");
-            }
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-    // Strip <span class="cmd"> lines that duplicate the cmd parameter
-    let clean_body = SPAN_CMD_PATTERN.replace_all(body, "");
-    if !clean_body.is_empty() {
-        result.push_str(&clean_body);
-        if !clean_body.ends_with('\n') {
-            result.push('\n');
-        }
-    }
-    result.push_str("```");
-    result
-}
-
 /// Transform docs content for skill file consumption
 ///
 /// Transforms:
-/// - Extracts title from Zola frontmatter and prepends as H1
-/// - Strips Zola terminal shortcodes ({% terminal() %}...{% end %}) - keeps inner content
+/// - Extracts title from YAML frontmatter and prepends it as H1
 /// - Strips AUTO-GENERATED marker comments (keeps content)
 /// - Strips HTML figure elements (demo GIFs not useful for skill)
-/// - Replaces Zola shortcodes with plain text equivalents
-/// - Converts Zola internal links (@/page.md) -> full URLs
+/// - Converts site-root links to full URLs
 /// - Removes "See also" section (just links to other docs pages)
 fn transform_docs_for_skill(content: &str) -> String {
     // Extract title from frontmatter
-    let title = ZOLA_FRONTMATTER_PATTERN
+    let title = YAML_FRONTMATTER_PATTERN
         .captures(content)
         .and_then(|caps| caps.get(1))
-        .and_then(|fm| ZOLA_TITLE_PATTERN.captures(fm.as_str()))
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string());
+        .and_then(|fm| yaml_scalar(fm.as_str(), "title"));
 
     // Strip frontmatter
-    let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
-
-    // Strip terminal shortcodes, converting cmd parameters back to bash blocks.
-    // Commands joined by `|||` are split into separate lines. Block-form shortcodes
-    // with a body interleave command + output, so we keep the `$ ` prompt prefix
-    // there to distinguish the two; self-closing shortcodes are pure commands and
-    // get no prefix so the block stays copy-pasteable.
-    let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, |caps: &regex::Captures| {
-        let body = caps.get(2).map_or("", |m| m.as_str());
-        match caps.get(1) {
-            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body, !body.trim().is_empty()),
-            None if body.contains(r#"<span class="cmd">"#) => {
-                // Old-style body shortcode with <span class="cmd"> — convert to $ lines
-                let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
-                format!("```bash\n{converted}```")
-            }
-            // Terminal bodies without cmd are styled CLI output demos (colored
-            // spans, bold text). Strip HTML to plain text for skill files.
-            None => strip_html(body),
-        }
-    });
-    let content =
-        ZOLA_TERMINAL_SELF_CLOSING_PATTERN.replace_all(&content, |caps: &regex::Captures| {
-            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
-        });
-
-    // Strip rawcode shortcodes (keep content)
-    let content = ZOLA_RAWCODE_PATTERN.replace_all(&content, "$1");
-
-    // Replace placeholders used to escape Tera template syntax in cmd parameters
-    let content = content
-        .replace("__WT_OPEN__", "{{")
-        .replace("__WT_CLOSE__", "}}")
-        .replace("__WT_QUOT__", "\"");
+    let content = YAML_FRONTMATTER_PATTERN.replace(content, "");
 
     // Strip AUTO-GENERATED marker comments (keep content)
     let content = AUTO_GENERATED_MARKER_PATTERN.replace_all(&content, "");
@@ -2020,11 +1737,10 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
 
-    // Replace experimental markers (shortcode and HTML badge) with plain text.
+    // Replace the HTML badge with its portable text equivalent.
     // Sourcing the badge HTML from `worktrunk::docs` keeps producer (help.rs)
     // and consumer (this strip) in lockstep: a format change there breaks
     // here at compile time rather than silently leaking HTML into skills.
-    let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
     let content = content.replace(worktrunk::docs::BADGE_EXPERIMENTAL_HTML, "[experimental]");
 
     // Prepend title as H1 if extracted
@@ -2034,7 +1750,7 @@ fn transform_docs_for_skill(content: &str) -> String {
         content.trim().to_string()
     };
 
-    // Apply shared finalization: Zola links, See also removal, blank line cleanup
+    // Apply shared finalization: links, See also removal, blank line cleanup
     finalize_skill_content(&content)
 }
 
@@ -2063,41 +1779,7 @@ fn remove_section(content: &str, heading: &str) -> String {
     }
 }
 
-/// Convert ```console blocks with $ to terminal shortcodes in all docs files.
-///
-/// Command pages already have this conversion via --help-page, but hand-written
-/// docs (faq.md, llm-commits.md, claude-code.md) can also use ```console with $
-/// and get the same treatment.
-fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<String>) {
-    let mut errors = Vec::new();
-    let mut updated_files = Vec::new();
-    let docs_dir = project_root.join("docs/content");
-
-    for name in docs_content_page_names(&docs_dir) {
-        let path = docs_dir.join(&name);
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(format!("read {}: {e}", path.display()));
-                continue;
-            }
-        };
-        let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
-        if converted != content {
-            write_tracked(
-                &path,
-                &converted,
-                format!("docs/content/{name}"),
-                &mut updated_files,
-            );
-        }
-    }
-
-    (errors, updated_files)
-}
-
-/// Sorted `.md` page filenames in `docs/content/` (excluding `_index.md`
-/// and similar underscore-prefixed Zola section markers).
+/// Sorted Markdown page filenames in the Starlight content collection.
 fn docs_content_page_names(docs_dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(docs_dir)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_dir.display(), e))
@@ -2114,7 +1796,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut updated_files = Vec::new();
 
-    let docs_dir = project_root.join("docs/content");
+    let docs_dir = project_root.join("docs/src/content/docs");
     let skill_dir = project_root.join("skills/worktrunk/reference");
 
     let entries = docs_content_page_names(&docs_dir);
@@ -2133,7 +1815,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
                 }
             }
         } else {
-            // Non-command pages: read from docs, transform Zola syntax, strip residual HTML
+            // Non-command pages: read portable site Markdown and remove site-only elements.
             let docs_file = docs_dir.join(name);
             let docs_content = fs::read_to_string(&docs_file)
                 .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
@@ -2160,7 +1842,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
 /// Generate a skill reference file directly from `--help-page --plain` output.
 ///
 /// For command pages, this produces clean markdown without HTML. The only
-/// post-processing needed is Zola link transformation and section cleanup.
+/// post-processing needed is link expansion and section cleanup.
 fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, String> {
     let output = wt_command()
         .args([cmd, "--help-page", "--plain"])
@@ -2188,16 +1870,15 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
 
     // Expand command placeholders (e.g., <!-- wt list --> → plain text snapshot output)
     let snapshots_dir = project_root.join("tests/snapshots");
-    let content = expand_command_placeholders(&content, &snapshots_dir, ExpandMode::Plain)?;
+    let content = expand_command_placeholders(&content, &snapshots_dir)?;
 
     Ok(finalize_skill_content(&content))
 }
 
 /// Apply final transforms shared between command and non-command skill files:
-/// Zola internal links → full URLs, remove "See also" section, collapse blank lines.
+/// Site-root links → full URLs, remove "See also", and collapse blank lines.
 fn finalize_skill_content(content: &str) -> String {
-    // Transform Zola internal links to full URLs
-    let content = ZOLA_LINK_PATTERN
+    let content = SITE_LINK_PATTERN
         .replace_all(content, |caps: &regex::Captures| {
             let text = caps.get(1).unwrap().as_str();
             let page = caps.get(2).unwrap().as_str();
@@ -2206,9 +1887,8 @@ fn finalize_skill_content(content: &str) -> String {
         })
         .into_owned();
 
-    // Guardrail: ZOLA_LINK_PATTERN must catch every Zola internal link before
-    // we ship skill content, which would otherwise carry a dead link.
-    assert_no_untransformed_zola_links(&content, "skill content");
+    // Installed skills don't have the site's root URL as a resolution base.
+    assert_no_untransformed_site_links(&content, "skill content");
 
     // Remove "See also" section (just contains links to other pages)
     let content = remove_section(&content, "## See also");
@@ -2311,7 +1991,7 @@ fn sync_plugin_skills_mirror(project_root: &Path) -> (Vec<String>, Vec<String>) 
 /// Sync .well-known/agent-skills/ index.json and verify symlink.
 ///
 /// The skill files are served via a symlink:
-///   docs/static/.well-known/agent-skills/worktrunk → ../../../../skills/worktrunk
+///   docs/public/.well-known/agent-skills/worktrunk → ../../../../skills/worktrunk
 ///
 /// This function verifies the symlink is correct and generates index.json
 /// with the correct SHA-256 digest per the Cloudflare agent-skills-discovery RFC.
@@ -2319,7 +1999,7 @@ fn sync_well_known_skills(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut updated_files = Vec::new();
 
-    let well_known_dir = project_root.join("docs/static/.well-known/agent-skills");
+    let well_known_dir = project_root.join("docs/public/.well-known/agent-skills");
     let symlink_path = well_known_dir.join("worktrunk");
 
     // Verify the symlink exists and points to the right place
@@ -2387,7 +2067,7 @@ fn sync_well_known_skills(project_root: &Path) -> (Vec<String>, Vec<String>) {
         write_tracked(
             &index_dst,
             &index_json,
-            "docs/static/.well-known/agent-skills/index.json",
+            "docs/public/.well-known/agent-skills/index.json",
             &mut updated_files,
         );
     }
@@ -2464,7 +2144,7 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
             }
         };
 
-        let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
+        let plain = trim_lines(&parse_snapshot_content(&snapshot_content));
         // Body ends with a newline before the closing fence; match the source
         // convention so we don't churn whitespace on subsequent runs.
         let new_body = if plain.is_empty() {
@@ -2493,7 +2173,7 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
     (errors, updated_files)
 }
 
-/// Generate `docs/static/schema/list-v2.json` from `wt list --print-schema`,
+/// Generate `docs/public/schema/list-v2.json` from `wt list --print-schema`,
 /// publishing it at the `$id` the document carries
 /// (`https://worktrunk.dev/schema/list-v2.json`).
 ///
@@ -2530,7 +2210,7 @@ fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
         return (errors, updated_files);
     }
 
-    let rel_path = "docs/static/schema/list-v2.json";
+    let rel_path = "docs/public/schema/list-v2.json";
     let dst = project_root.join(rel_path);
     if fs::read_to_string(&dst).unwrap_or_default() != generated {
         write_tracked(&dst, &generated, rel_path, &mut updated_files);
@@ -2539,70 +2219,34 @@ fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
     (errors, updated_files)
 }
 
-/// Generate `docs/static/llms.txt` from `docs/content/*.md` front-matter,
+/// Generate `docs/public/llms.txt` from the Starlight content collection,
 /// following the llms.txt spec (https://llmstxt.org/): H1, blockquote summary,
 /// optional intro prose, H2 section headings with bulleted link lists.
 ///
 /// Link targets use the `.md` companion URLs (served via symlinks in
-/// `docs/static/*.md` → `skills/worktrunk/reference/*.md`).
+/// `docs/public/*.md` → `skills/worktrunk/reference/*.md`).
 fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
-    use serde::Deserialize;
     use std::collections::BTreeMap;
 
-    #[derive(Deserialize)]
-    struct ExtraFm {
-        group: Option<String>,
-    }
-
-    #[derive(Deserialize)]
     struct Frontmatter {
         title: String,
-        #[serde(default)]
         description: Option<String>,
-        weight: i64,
-        #[serde(default)]
-        extra: Option<ExtraFm>,
+        order: i64,
     }
 
     let mut errors = Vec::new();
     let mut updated = Vec::new();
 
-    let docs_dir = project_root.join("docs/content");
-    let config_path = project_root.join("docs/config.toml");
-
-    let config_content = match fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(e) => {
-            errors.push(format!("read {}: {e}", config_path.display()));
-            return (errors, updated);
-        }
-    };
-    let site_config: toml::Value = match toml::from_str(&config_content) {
-        Ok(v) => v,
-        Err(e) => {
-            errors.push(format!("parse {}: {e}", config_path.display()));
-            return (errors, updated);
-        }
-    };
-    let site_title = site_config
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Worktrunk");
-    let site_description = site_config
-        .get("extra")
-        .and_then(|e| e.get("site_description"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let base_url = site_config
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("https://worktrunk.dev/")
-        .trim_end_matches('/');
+    let docs_dir = project_root.join("docs/src/content/docs");
+    let mut site_title = None;
+    let mut site_description = None;
+    let base_url = "https://worktrunk.dev";
 
     let mut home_intro = String::new();
-    // Group pages by `extra.group`; order groups by their minimum weight so
-    // `## Commands` (weights 10–17) precedes `## Reference` (21–25) without
-    // hard-coding group names.
+    // Starlight's sidebar is configured in astro.config.mjs. COMMAND_PAGES is
+    // already the sync taxonomy's canonical command-page set; all other listed
+    // pages are reference material. Order within each group follows
+    // `sidebar.order` from frontmatter.
     let mut groups: BTreeMap<String, Vec<(String, Frontmatter)>> = BTreeMap::new();
 
     for name in docs_content_page_names(&docs_dir) {
@@ -2615,41 +2259,77 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
                 continue;
             }
         };
-        let Some(rest) = content.strip_prefix("+++\n") else {
+        let Some(captures) = YAML_FRONTMATTER_PATTERN.captures(&content) else {
+            errors.push(format!("missing YAML frontmatter in {}", path.display()));
             continue;
         };
-        let Some((fm_text, body)) = rest.split_once("\n+++\n") else {
+        let fm_text = captures.get(1).unwrap().as_str();
+        let body = &content[captures.get(0).unwrap().end()..];
+        let Some(title) = yaml_scalar(fm_text, "title") else {
+            errors.push(format!("frontmatter in {} has no title", path.display()));
             continue;
         };
-        let fm: Frontmatter = match toml::from_str(fm_text) {
-            Ok(fm) => fm,
-            Err(e) => {
-                errors.push(format!("parse frontmatter of {}: {e}", path.display()));
-                continue;
-            }
+        let order = fm_text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("order:"))
+            .and_then(|value| value.trim().parse::<i64>().ok());
+        let Some(order) = order else {
+            errors.push(format!(
+                "frontmatter in {} has no numeric sidebar.order",
+                path.display()
+            ));
+            continue;
+        };
+        let fm = Frontmatter {
+            title,
+            description: yaml_scalar(fm_text, "description"),
+            order,
         };
 
-        // Ungrouped pages supply the document's intro prose instead of becoming bullets.
-        let Some(group) = fm.extra.as_ref().and_then(|e| e.group.clone()) else {
+        if slug == "worktrunk" {
+            site_title = Some(fm.title);
+            site_description = fm.description;
             home_intro = extract_intro_prose(body);
             continue;
+        }
+
+        let group = if COMMAND_PAGES.contains(&slug.as_str()) {
+            "Commands"
+        } else {
+            "Reference"
         };
 
-        groups.entry(group).or_default().push((slug, fm));
+        groups
+            .entry(group.to_string())
+            .or_default()
+            .push((slug, fm));
     }
 
+    if !errors.is_empty() {
+        return (errors, updated);
+    }
+
+    let Some(site_title) = site_title else {
+        errors.push("docs content has no worktrunk.md homepage".to_string());
+        return (errors, updated);
+    };
+    let Some(site_description) =
+        site_description.filter(|description| !description.trim().is_empty())
+    else {
+        errors.push("worktrunk.md frontmatter has no description".to_string());
+        return (errors, updated);
+    };
+
     for pages in groups.values_mut() {
-        pages.sort_by_key(|(_, fm)| fm.weight);
+        pages.sort_by_key(|(_, fm)| fm.order);
     }
     let mut ordered: Vec<(String, Vec<(String, Frontmatter)>)> = groups.into_iter().collect();
-    ordered.sort_by_key(|(_, pages)| pages.first().map(|(_, fm)| fm.weight).unwrap_or(i64::MAX));
+    ordered.sort_by_key(|(_, pages)| pages.first().map(|(_, fm)| fm.order).unwrap_or(i64::MAX));
 
     use std::fmt::Write;
     let mut out = String::new();
     writeln!(out, "# {site_title}\n").unwrap();
-    if !site_description.is_empty() {
-        writeln!(out, "> {site_description}\n").unwrap();
-    }
+    writeln!(out, "> {site_description}\n").unwrap();
     if !home_intro.is_empty() {
         writeln!(out, "{home_intro}\n").unwrap();
     }
@@ -2670,10 +2350,10 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
 
     let out = format!("{}\n", out.trim_end());
 
-    let dst = project_root.join("docs/static/llms.txt");
+    let dst = project_root.join("docs/public/llms.txt");
     let current = fs::read_to_string(&dst).unwrap_or_default();
     if current != out {
-        write_tracked(&dst, &out, "docs/static/llms.txt", &mut updated);
+        write_tracked(&dst, &out, "docs/public/llms.txt", &mut updated);
     }
     (errors, updated)
 }
@@ -2729,22 +2409,17 @@ fn test_docs_are_in_sync() {
     let (mod_errors, mod_files) = sync_cli_mod_example_bodies(project_root);
     tag("cli/mod.rs", mod_errors, mod_files);
 
-    // Step 1: Sync command pages (mod.rs → docs/content/*.md)
+    // Step 1: Sync command pages into the Starlight content collection.
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
     tag("command pages", cmd_errors, cmd_files);
 
-    // Step 1b: Convert $ console blocks to terminal shortcodes in ALL docs
-    // (command pages already converted via --help-page; this catches hand-written docs)
-    let (console_errors, console_files) = convert_console_blocks_in_docs(project_root);
-    tag("console→terminal", console_errors, console_files);
-
-    // Step 2: Sync standalone docs files (snapshots → docs/content/*.md).
+    // Step 2: Sync standalone docs files from snapshots.
     // README extraction in step 5 reads these, so they must be current first.
     let standalone_doc_files = [
-        "docs/content/worktrunk.md",
-        "docs/content/claude-code.md",
-        "docs/content/tips-patterns.md",
-        "docs/content/llm-commits.md",
+        "docs/src/content/docs/worktrunk.md",
+        "docs/src/content/docs/claude-code.md",
+        "docs/src/content/docs/tips-patterns.md",
+        "docs/src/content/docs/llm-commits.md",
     ];
     let mut docs_errors: Vec<String> = Vec::new();
     let mut docs_files: Vec<String> = Vec::new();
@@ -2761,7 +2436,7 @@ fn test_docs_are_in_sync() {
     }
     tag("standalone docs", docs_errors, docs_files);
 
-    // Step 3: Sync skill files (docs/content/*.md → skills/*)
+    // Step 3: Sync skill files (Starlight Markdown → skills/*)
     let (skill_errors, skill_files) = sync_skill_files(project_root);
     tag("skill files", skill_errors, skill_files);
 
@@ -2770,23 +2445,23 @@ fn test_docs_are_in_sync() {
     let (mirror_errors, mirror_files) = sync_plugin_skills_mirror(project_root);
     tag("plugin skills mirror", mirror_errors, mirror_files);
 
-    // Step 4: Sync .well-known/agent-skills/ (skills/ → docs/static/)
+    // Step 4: Sync .well-known/agent-skills/ (skills/ → docs/public/)
     let (well_known_errors, well_known_files) = sync_well_known_skills(project_root);
     tag(".well-known", well_known_errors, well_known_files);
 
-    // Step 5: Generate docs/static/llms.txt from docs/content front-matter
+    // Step 5: Generate docs/public/llms.txt from Starlight frontmatter.
     let (llms_errors, llms_files) = sync_llms_txt(project_root);
     tag("llms.txt", llms_errors, llms_files);
 
-    // Step 5b: Generate docs/static/schema/list-v2.json from the derived
-    // schema. Grouped here because it also writes docs/static/, but it reads
+    // Step 5b: Generate docs/public/schema/list-v2.json from the derived
+    // schema. Grouped here because it also writes docs/public/, but it reads
     // the binary rather than the markdown pipeline, so it has no ordering
     // dependency on the steps above.
     let (schema_errors, schema_files) = sync_json_schema(project_root);
     tag("json schema", schema_errors, schema_files);
 
     // Step 6: Sync README from the now-fresh docs files. Runs last because
-    // section extraction depends on docs/content/*.md being current.
+    // section extraction depends on site Markdown being current.
     let readme_path = project_root.join("README.md");
     let readme_content = fs::read_to_string(&readme_path).unwrap();
     let mut readme_errors: Vec<String> = Vec::new();
@@ -2826,7 +2501,7 @@ fn test_docs_are_in_sync() {
 fn test_no_nested_auto_generated_markers() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut violations = Vec::new();
-    for entry in fs::read_dir(project_root.join("docs/content")).unwrap() {
+    for entry in fs::read_dir(project_root.join("docs/src/content/docs")).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "md") {
             let content = fs::read_to_string(&path).unwrap();
@@ -2852,33 +2527,6 @@ fn test_no_nested_auto_generated_markers() {
         "Nested AUTO-GENERATED markers found — outer help-page regex would chop \
          the region at the inner close. Either flatten the nesting or restore a \
          disambiguating close marker.\n\n{}",
-        violations.join("\n")
-    );
-}
-
-/// `terminal(cmd=...)` shortcodes must use the `__WT_QUOT__` placeholder for
-/// embedded double quotes — the terminal template substitutes that back to `"`
-/// before Syntect highlighting. Raw `&quot;` HTML entities pass through Tera
-/// untouched and render literally in the docs site (see #2495).
-#[test]
-fn test_terminal_cmd_uses_wt_quot_placeholder() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut violations = Vec::new();
-    for entry in fs::read_dir(project_root.join("docs/content")).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "md") {
-            let content = fs::read_to_string(&path).unwrap();
-            for (i, line) in content.lines().enumerate() {
-                if line.contains("terminal(cmd=") && line.contains("&quot;") {
-                    violations.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
-                }
-            }
-        }
-    }
-    assert!(
-        violations.is_empty(),
-        "Found `&quot;` inside terminal(cmd=...) shortcodes — these render \
-         literally on the docs site. Replace with `__WT_QUOT__`.\n\n{}",
         violations.join("\n")
     );
 }
@@ -2990,26 +2638,5 @@ fn test_template_variables_table_matches_constants() {
         actual, expected,
         "`## Template variables` table in src/cli/mod.rs drifted from \
          constants in src/config/expansion.rs. Update the table or the constants."
-    );
-}
-
-/// Verify that post_process_for_html() transforms the approval prompt code block
-/// into a styled terminal shortcode. If the source text in cli/mod.rs changes
-/// without updating the replacement in help.rs, the .replace() silently stops
-/// matching and the web docs fall back to a plain code block.
-#[test]
-fn test_approval_prompt_styled_in_hook_page() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = wt_command()
-        .args(["hook", "--help-page"])
-        .current_dir(project_root)
-        .output()
-        .expect("Failed to run wt hook --help-page");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(r#"class="y""#),
-        "hook --help-page should contain styled approval prompt (class=\"y\" for yellow ▲). \
-         If cli/mod.rs approval example changed, update the replacement in help.rs post_process_for_html()."
     );
 }

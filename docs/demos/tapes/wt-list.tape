@@ -7,11 +7,11 @@ Source docs/demos/tapes/shared-commands.tape
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 # Basic list - progressive rendering
 Type "wt list"
+Show
+Sleep 300ms
 Enter
 Sleep 2.5s
 
@@ -25,6 +25,6 @@ Type "wt list --branches"
 Enter
 Sleep 2.5s
 
+Hide
 Type "exit"
 Enter
-Sleep 500ms

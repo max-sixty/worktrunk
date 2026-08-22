@@ -279,7 +279,7 @@ copy = "wt step copy-ignored"
 
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
-```bash
+```console
 $ wt hook pre-merge              # Run all pre-merge hooks
 $ wt hook pre-merge test         # Run hooks named "test" from both sources
 $ wt hook pre-merge test build   # Run hooks named "test" and "build"
@@ -293,7 +293,7 @@ $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-```
+```console
 $ wt hook pre-merge
 ◎ Running pre-merge project:test
   cargo test
@@ -313,7 +313,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
 ```
 
-```bash
+```console
 $ wt hook post-start
 ◎ Running post-start: project @ ~/acme
 ```

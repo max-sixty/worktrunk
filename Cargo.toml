@@ -26,19 +26,18 @@ filterset = "binary_id(=worktrunk) | binary_id(=worktrunk::bin/wt)"
 
 # tests/integration_tests/readme_sync.rs reads each of these at runtime (via
 # fs::read_to_string) and asserts the committed copies stay in sync — both the
-# sources (README.md, docs/content markdown, docs/config.toml's site title and
-# description, src/cli/mod.rs, src/llm.rs, the skill references, Taskfile.yaml)
+# sources (README.md, docs/src/content/docs Markdown, src/cli/mod.rs,
+# src/llm.rs, the skill references, Taskfile.yaml)
 # and the generated artifacts it regenerates and compares against (the
-# dev/*.example.toml files, docs/static/llms.txt, the agent-skills index.json).
+# dev/*.example.toml files, docs/public/llms.txt, the agent-skills index.json).
 # Editing any of them flips the test, but coverage can't link a runtime-read
 # file to it.
 [[workspace.metadata.affected.rule]]
 globs = [
     "README.md",
     "docs/**/*.md",
-    "docs/config.toml",
-    "docs/static/llms.txt",
-    "docs/static/.well-known/agent-skills/index.json",
+    "docs/public/llms.txt",
+    "docs/public/.well-known/agent-skills/index.json",
     "dev/*.toml",
     "src/cli/mod.rs",
     "src/llm.rs",
@@ -321,7 +320,6 @@ criterion = "0.8"
 portable-pty = "0.9"
 regex = "1.12.3"
 vt100 = "0.16.2"
-ansi-to-html = "0.2.3"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
 jsonschema = { version = "0.49", default-features = false }

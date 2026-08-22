@@ -203,6 +203,65 @@ def ocr_image(image_path: Path) -> str:
     return ""
 
 
+def ocr_low_contrast_text(image_path: Path) -> str:
+    """Run OCR after lifting dim terminal text to full contrast.
+
+    Claude renders its model name using a dim ANSI color. The normal OCR pass
+    preserves the frame for reliable error detection; this fallback makes dim
+    expected text readable without changing the recorded GIF. Frame luminance
+    selects whether dim text is lifted from a dark or light background.
+    """
+    luma_result = subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-i",
+            str(image_path),
+            "-vf",
+            "format=gray,scale=40:30:flags=area,scale=1:1:flags=area",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ],
+        capture_output=True,
+    )
+    if luma_result.returncode != 0 or len(luma_result.stdout) != 1:
+        return ""
+
+    frame_luma = luma_result.stdout[0]
+    # Terminal background dominates the one-pixel average. Move the cutoff
+    # slightly toward the foreground so antialiased dim text becomes solid.
+    if frame_luma >= 128:
+        threshold = max(0, frame_luma - 24)
+        contrast_filter = f"if(lte(val,{threshold}),0,255)"
+    else:
+        threshold = min(255, frame_luma + 8)
+        contrast_filter = f"if(gte(val,{threshold}),255,0)"
+
+    with tempfile.TemporaryDirectory(prefix="wt-ocr-contrast-") as work_dir:
+        enhanced_path = Path(work_dir) / "high-contrast.png"
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-i",
+                str(image_path),
+                "-vf",
+                f"format=gray,lut=y='{contrast_filter}',"
+                "scale=iw*3:ih*3:flags=neighbor",
+                str(enhanced_path),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return ""
+        return ocr_image(enhanced_path)
+
+
 def _check_patterns(
     text: str,
     expected: list[str],
@@ -260,12 +319,20 @@ def validate_checkpoint(
         if not text:
             continue
 
+        passed, errors = _check_patterns(text, checkpoint.expected, [])
+        if not passed and matched_frame is None:
+            low_contrast_text = ocr_low_contrast_text(frame_path)
+            if low_contrast_text:
+                text = f"{text}\n{low_contrast_text}"
+                passed, errors = _check_patterns(
+                    text, checkpoint.expected, []
+                )
+
         text_lower = text.lower()
         for pattern in checkpoint.forbidden:
             if pattern.lower() in text_lower:
                 return False, f"forbidden '{pattern}' present at frame {frame}"
 
-        passed, errors = _check_patterns(text, checkpoint.expected, [])
         if passed and matched_frame is None:
             matched_frame = frame
         if not best_errors or len(errors) < len(best_errors):

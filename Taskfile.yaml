@@ -4,7 +4,7 @@ version: "3"
 vars:
   REPO_ROOT:
     sh: pwd
-  STATIC_DIR: "{{.REPO_ROOT}}/docs/static"
+  STATIC_DIR: "{{.REPO_ROOT}}/docs/public"
   ASSETS_DIR: "{{.STATIC_DIR}}/assets"
 
 tasks:
@@ -439,7 +439,7 @@ tasks:
           echo ""
         done
 
-        echo "Commands used (from docs/content/llm-commits.md):"
+        echo "Commands used (from docs/src/content/docs/llm-commits.md):"
         for tool in "${AVAILABLE[@]}"; do
           echo "  $tool: ${COMMANDS[$tool]}"
         done

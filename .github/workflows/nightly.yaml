@@ -358,11 +358,12 @@ jobs:
 
   link-check:
     # The pre-commit `lychee-system` hook (manual stage) over every tracked
-    # .md/.txt file. It lives here, not in PR CI: link health depends on the
-    # outside world (429s, bot-blocking, transient outages), so it was the
-    # flakiest PR check — and link rot isn't PR-correlated anyway; links
-    # break when external sites change, not when code does. A failure opens
-    # the nightly-failure issue instead of reddening an unrelated PR.
+    # .md/.txt file, resolving local routes against the built Astro site. It
+    # lives here, not in PR CI: link health depends on the outside world
+    # (429s, bot-blocking, transient outages), so it was the flakiest PR
+    # check — and link rot isn't PR-correlated anyway; links break when
+    # external sites change, not when code does. A failure opens the
+    # nightly-failure issue instead of reddening an unrelated PR.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
@@ -372,6 +373,28 @@ jobs:
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v7
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: docs/package-lock.json
+
+    - name: Install docs dependencies
+      run: npm ci
+      working-directory: docs
+
+    - name: Fetch docs assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
+        cp -r /tmp/worktrunk-assets/assets docs/public/
+
+    - name: Build docs
+      run: npm run build
+      working-directory: docs
 
     - name: Install lychee
       uses: baptiste0928/cargo-install@v3

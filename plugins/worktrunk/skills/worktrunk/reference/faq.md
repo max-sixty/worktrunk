@@ -10,7 +10,7 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
-```bash
+```console
 # Plain git worktree workflow
 $ git worktree add -b feature-branch ../myapp-feature main
 $ cd ../myapp-feature
@@ -23,7 +23,7 @@ $ git branch -d feature-branch
 
 Worktrunk automates the full lifecycle:
 
-```bash
+```console
 $ wt switch --create feature-branch  # Creates worktree, runs setup hooks
 # ...work...
 $ wt merge                            # Merges into default branch, cleans up
@@ -59,7 +59,7 @@ Not natively — stacked-branch workflows are a large design space, so Worktrunk
 
 Stash the changes, create the worktree, then pop:
 
-```bash
+```console
 $ git stash push -u           # -u also stashes untracked files
 $ wt switch --create feature  # new branch off the default branch
 $ git stash pop               # changes reappear in the new worktree
@@ -219,6 +219,7 @@ User hooks and user aliases don't require approval (you defined them). Commands 
 
 ### Example approval prompt
 
+```console
 ▲ repo needs approval to execute 3 commands:
 
 ○ pre-start install:
@@ -229,6 +230,7 @@ User hooks and user aliases don't require approval (you defined them). Commands 
   echo 'PORT={{ branch | hash_port }}' > .env.local
 
 ❯ Allow and remember? [y/N]
+```
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -238,7 +240,7 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
-```bash
+```console
 # Recent commands
 $ tail -5 .git/wt/logs/commands.jsonl | jq .
 

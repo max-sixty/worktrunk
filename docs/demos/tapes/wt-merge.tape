@@ -11,10 +11,10 @@ Env NEXTEST_NO_FAIL_FAST "1"
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 Type "wt list"
+Show
+Sleep 300ms
 Enter
 Sleep 1.6s
 
@@ -37,6 +37,6 @@ Enter
 Sleep 1.5s
 
 Sleep 4.5s
+Hide
 Type "exit"
 Enter
-Sleep 700ms

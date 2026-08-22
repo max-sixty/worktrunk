@@ -2,7 +2,7 @@
 extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/", "*.log"]
 
 [default]
-# Generated `wt list` doc embeds (README, docs/content, skills mirrors) truncate
+# Generated `wt list` doc embeds (README, site docs, skills mirrors) truncate
 # long commit messages with a trailing … . The cut leaves a word fragment glued
 # to the ellipsis (e.g. "authenticat…"), which typos would "correct" to the full
 # word — re-breaking the doc-sync test on every run. A token immediately followed

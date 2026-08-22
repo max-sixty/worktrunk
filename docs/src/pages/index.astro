@@ -1,0 +1,30 @@
+---
+import { getEntry, render } from 'astro:content';
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+
+const entry = await getEntry('docs', 'worktrunk');
+if (!entry) throw new Error('Missing Worktrunk overview page');
+
+const { Content, headings } = await render(entry);
+---
+
+<StarlightPage
+  headings={headings}
+  hasSidebar={true}
+  frontmatter={{
+    title: 'Worktrunk',
+    description: entry.data.description,
+    tableOfContents: false,
+    editUrl: 'https://github.com/max-sixty/worktrunk/edit/main/docs/src/content/docs/worktrunk.md',
+    head: [
+      {
+        tag: 'title',
+        content: 'Worktrunk — Git worktree management for parallel AI agent workflows',
+      },
+    ],
+  }}
+>
+  <div class="wt-home" data-contract="home-content-rail">
+    <Content />
+  </div>
+</StarlightPage>

@@ -7,12 +7,12 @@ Source docs/demos/tapes/shared-commands.tape
 Type "clear"
 Enter
 Sleep 1s
-Show
 Set KeyStrokes Show
-Sleep 500ms
 
 # Launch interactive picker (wt switch without args)
 Type "wt switch"
+Show
+Sleep 300ms
 Enter
 Sleep 1.5s
 
@@ -38,6 +38,6 @@ Sleep 1s
 Enter
 Sleep 1.5s
 
+Hide
 Type "exit"
 Enter
-Sleep 500ms

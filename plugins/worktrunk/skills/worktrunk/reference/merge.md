@@ -8,7 +8,7 @@ Unlike `git merge`, this merges the current branch into the target branch — no
 
 Merge to the default branch:
 
-```
+```console
 $ wt merge
 ◎ Running pre-merge project:test
   cargo nextest run
@@ -25,37 +25,37 @@ $ wt merge
 
 Merge to a different branch:
 
-```bash
+```console
 $ wt merge develop
 ```
 
 Keep the worktree after merging:
 
-```bash
+```console
 $ wt merge --no-remove
 ```
 
 Preserve commit history (no squash):
 
-```bash
+```console
 $ wt merge --no-squash
 ```
 
 Create a merge commit — rebased semi-linear history by default:
 
-```bash
+```console
 $ wt merge --no-ff
 ```
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-```bash
+```console
 $ wt merge --no-commit
 ```
 
 Preserve the exact clean commit graph and tip:
 
-```bash
+```console
 $ wt merge --no-commit --no-rebase
 ```
 

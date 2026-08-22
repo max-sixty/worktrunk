@@ -1201,7 +1201,7 @@ command = "{llm_path_str}"
 // appears on public pages.
 // ============================================================================
 
-/// `wt merge` example for `docs/content/merge.md` — pre-merge hook running
+/// `wt merge` example for `docs/src/content/docs/merge.md` — pre-merge hook running
 /// `cargo nextest run`, one-commit fast-forward merge, background cleanup.
 #[rstest]
 fn test_docs_merge_pre_merge_hook(mut repo: TestRepo) {
@@ -1293,7 +1293,7 @@ impl Registry {
     );
 }
 
-/// `wt merge` example for `docs/content/llm-commits.md` — three commits
+/// `wt merge` example for `docs/src/content/docs/llm-commits.md` — three commits
 /// squashed with an LLM-generated message, then merged to default branch.
 #[rstest]
 fn test_docs_merge_squash_llm(mut repo: TestRepo) {
@@ -1363,7 +1363,7 @@ logic, and authentication tests.";
     );
 }
 
-/// `wt step squash` example for `docs/content/llm-commits.md` — three commits
+/// `wt step squash` example for `docs/src/content/docs/llm-commits.md` — three commits
 /// squashed with an LLM-generated message.
 #[rstest]
 fn test_docs_step_squash_llm(mut repo: TestRepo) {
@@ -1421,7 +1421,7 @@ logic, and authentication tests.";
     });
 }
 
-/// `wt step commit` example for `docs/content/step.md` and `docs/content/llm-commits.md`.
+/// `wt step commit` example for `docs/src/content/docs/step.md` and `docs/src/content/docs/llm-commits.md`.
 /// Feature worktree with two staged files + LLM-generated commit message.
 #[rstest]
 fn test_docs_step_commit_llm(mut repo: TestRepo) {
