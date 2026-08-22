@@ -2677,10 +2677,17 @@ mod tests {
     /// (the Codex CLI's `workspace-write` mode), every timed wait in `wt` became an
     /// uncatchable `SIGABRT` with no diagnostic (#3856). `shared_child` wakes
     /// through `signal_hook`, which discards wake-write errors by design.
+    ///
+    /// The lockfile is read at runtime, not `include_str!`d: a compile-time embed
+    /// has to ship in every packaged build, which `embedded_assets_ship_in_package`
+    /// enforces and `Cargo.lock` doesn't satisfy. Tests only ever run from the
+    /// source tree, so the manifest dir is always there.
     #[test]
     fn test_wait_timeout_crate_stays_out_of_the_dependency_graph() {
+        let lockfile = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+        let lockfile = std::fs::read_to_string(&lockfile).expect("read Cargo.lock");
         assert!(
-            !include_str!("../Cargo.lock").contains("name = \"wait-timeout\""),
+            !lockfile.contains("name = \"wait-timeout\""),
             "wait-timeout is back in the dependency graph; its SIGCHLD handler \
              aborts wt when the self-pipe write fails (#3856)"
         );
