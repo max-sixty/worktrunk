@@ -16,7 +16,7 @@ use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_outp
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::{BranchFate, RemovalPlan};
+use super::worktree::{BranchFate, RemovalPlan, compute_worktree_path};
 use super::{RemoveTarget, flag_pair};
 
 /// The execution mode `--foreground` selects; the background default falls
@@ -58,6 +58,63 @@ impl RemovePlans {
     }
 }
 
+/// The detached worktree sitting where `branch`'s worktree would go, if any —
+/// the one thing a branch-only removal of `branch` can't otherwise mention.
+///
+/// Detaching a worktree's HEAD severs the only link git records between it and
+/// the branch, so `branch` genuinely has no worktree and deleting the ref alone
+/// is the right operation. But the directory is still on disk, and `No worktree
+/// found for branch <name>` reads as though it isn't. Once the link is gone the
+/// `worktree-path` template is all that still connects the two, which is a
+/// weaker association than the rest of the module draws — the template records
+/// where a worktree *would* go, not that this one belongs to that branch, and
+/// [`is_worktree_at_expected_path`] returns false for a detached worktree while
+/// [`worktree_display_name`] renders one as `dir_name (detached)` without
+/// consulting the template at all. That weakness is why this only ever adds a
+/// line: a mention that occasionally points at a coincidence costs nothing,
+/// where a refusal built on the same inference would block work.
+///
+/// Three cases go unmatched, each because naming them would mislead:
+///
+/// - a worktree checked out on some *other* branch — that branch names it, and
+///   it has nothing to do with this removal;
+/// - the main worktree, which `wt remove <path>` refuses with nothing to do
+///   about it, so the hint would be a dead end. What decides this is whether
+///   the hint leads anywhere, not whether the command succeeds: a *locked*
+///   worktree refuses too and is named all the same, because that refusal
+///   carries the `git worktree unlock` that clears the way. A bare repo has no
+///   main worktree, so its default-branch checkout is named like any other;
+/// - a prunable entry, whose directory is already gone — `wt step prune`'s to
+///   sweep, and nothing to point a user at.
+///
+/// A template that won't expand yields no expected path and so no match. The
+/// branch is known to exist by the time this runs: `prepare_worktree_removal`
+/// reports a typo, a deleted branch, or a remote-only name as an error, so a
+/// plan to annotate means the lookup already succeeded.
+///
+/// [`is_worktree_at_expected_path`]: super::worktree::is_worktree_at_expected_path
+/// [`worktree_display_name`]: super::worktree::worktree_display_name
+fn detached_worktree_for<'a>(
+    repo: &Repository,
+    config: &UserConfig,
+    branch: &str,
+    worktrees: &'a [worktrunk::git::WorktreeInfo],
+) -> Option<&'a Path> {
+    let expected = compute_worktree_path(repo, branch, config).ok()?;
+    worktrees
+        .iter()
+        .find(|wt| {
+            wt.branch.is_none()
+                && !wt.is_prunable()
+                && worktrunk::path::paths_match(&wt.path, &expected)
+                // A `git_dir` lookup that fails says nothing either way, so
+                // treat it as linked and name the worktree — an extra line is
+                // the worst a wrong answer here can cost.
+                && repo.worktree_at(&wt.path).is_linked().unwrap_or(true)
+        })
+        .map(|wt| wt.path.as_path())
+}
+
 /// Validate all removal targets, returning categorized plans.
 ///
 /// Resolves each branch name, determines whether it's the current worktree,
@@ -65,6 +122,7 @@ impl RemovePlans {
 /// Errors are collected (not fatal) to support partial success.
 fn validate_remove_targets(
     repo: &Repository,
+    config: &UserConfig,
     branches: Vec<String>,
     keep_branch: bool,
     force_delete: bool,
@@ -150,14 +208,32 @@ fn validate_remove_targets(
             // Bucket the validated result, not the pre-validation resolution:
             // a worktree whose directory disappeared degrades to BranchOnly
             // during preparation and must run with the other branch-only plans.
-            Ok(result) => match &result {
-                RemovalPlan::Worktree {
-                    changed_directory: true,
+            Ok(mut result) => {
+                // A branch whose worktree has since been detached still has no
+                // worktree — detaching severed the link — so the branch-only
+                // removal is right. What it can't see is the directory still
+                // sitting at that branch's templated path, which the output
+                // would otherwise never mention. Annotate here, where the
+                // user's typed branch name and the config are both in hand.
+                if let RemovalPlan::BranchOnly {
+                    branch_name,
+                    detached_worktree,
                     ..
-                } => plans.current = Some(result),
-                RemovalPlan::Worktree { .. } => plans.others.push(result),
-                RemovalPlan::BranchOnly { .. } => plans.branch_only.push(result),
-            },
+                } = &mut result
+                    && let Some(wts) = worktrees
+                {
+                    *detached_worktree = detached_worktree_for(repo, config, branch_name, wts)
+                        .map(Path::to_path_buf);
+                }
+                match &result {
+                    RemovalPlan::Worktree {
+                        changed_directory: true,
+                        ..
+                    } => plans.current = Some(result),
+                    RemovalPlan::Worktree { .. } => plans.others.push(result),
+                    RemovalPlan::BranchOnly { .. } => plans.branch_only.push(result),
+                }
+            }
             Err(e) => plans.record_error(e),
         }
     }
@@ -386,6 +462,7 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 let plans = validate_remove_targets(
                     &repo,
+                    &config,
                     branches,
                     !delete_branch,
                     args.force_delete,
@@ -493,6 +570,7 @@ mod tests {
 
         let plans = validate_remove_targets(
             &repo,
+            &UserConfig::default(),
             vec!["missing-worktree".to_string(), "branch-only".to_string()],
             false,
             false,

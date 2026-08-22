@@ -2874,6 +2874,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -2901,6 +2902,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         AltXRemover::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
@@ -3820,6 +3822,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert_eq!(
             super::removal_failure_subject(&branch_only),
@@ -4277,6 +4280,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert!(super::removal_target_still_present(&repo, &present_branch));
 
@@ -4287,6 +4291,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
             branch_checked_out_at: None,
+            detached_worktree: None,
         };
         assert!(!super::removal_target_still_present(&repo, &gone_branch));
     }
@@ -4308,6 +4313,7 @@ pub mod tests {
                 target_branch: None,
                 integration_reason: integration,
                 branch_checked_out_at: None,
+                detached_worktree: None,
             }
         };
 

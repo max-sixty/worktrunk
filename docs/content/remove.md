@@ -56,6 +56,8 @@ Branches matching these conditions and with empty working trees are dimmed in `w
 
 Those six ask whether deleting loses work. A branch checked out in a second worktree (only reachable via `git worktree add --force`) fails a different test: deleting the ref would leave that worktree unable to resolve `HEAD`, which is why `git branch -d` refuses the same delete. Such a branch is retained whatever `-D` asks, and the surviving checkout is named.
 
+Detaching a worktree's HEAD severs the only link git records between it and the branch, so the branch has no worktree from then on and `wt remove <branch>` deletes the ref alone. The directory stays where it is, and the removal names it and the `wt remove <path>` that clears it.
+
 ## Force flags
 
 Worktrunk has two force flags for different situations:
@@ -98,7 +100,7 @@ Reaping runs before the worktree directory is touched, so it is independent of f
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal, plus `detached_worktree` — the directory left at that branch's path with a detached HEAD, which the branch no longer names and this removal therefore leaves alone.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 

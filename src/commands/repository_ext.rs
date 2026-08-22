@@ -8,7 +8,7 @@ use worktrunk::git::{
     parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, format_with_gutter, suggest_command, warning_message};
+use worktrunk::styling::{eprintln, format_with_gutter, warning_message};
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -167,10 +167,12 @@ impl RepositoryCliExt for Repository {
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(branch.as_str()))
                 {
+                    // `path` is already shell-ready, so the suggested command
+                    // interpolates it rather than passing it through
+                    // `suggest_command`, which would escape it a second time.
                     let path = format_path_for_display(&wt.path);
                     bail!(cformat!(
-                        "Branch <bold>{branch}</> gained a worktree @ <bold>{path}</> since it was selected; to remove that worktree, run <bold>{}</>",
-                        suggest_command("remove", &[&path], &[])
+                        "Branch <bold>{branch}</> gained a worktree @ <bold>{path}</> since it was selected; to remove that worktree, run <bold>wt remove {path}</>"
                     ));
                 }
                 // Check the branch exists locally, so a typo or a remote-only
@@ -323,6 +325,7 @@ impl RepositoryCliExt for Repository {
                         target_branch: None,
                         integration_reason: None,
                         branch_checked_out_at: Some(shared),
+                        detached_worktree: None,
                     });
                 }
                 let default_branch = self.default_branch();
@@ -341,6 +344,7 @@ impl RepositoryCliExt for Repository {
                     target_branch,
                     integration_reason,
                     branch_checked_out_at: None,
+                    detached_worktree: None,
                 });
             }
             Resolved::Worktree {
@@ -583,10 +587,17 @@ pub(crate) fn compute_integration_reason(
 /// with an unresolvable `HEAD`, so every removal that could delete a branch
 /// asks this first.
 ///
-/// Only a live directory counts. A sibling entry whose directory is already
-/// gone is stale metadata awaiting `git worktree prune`, not a checkout with
-/// anything to lose — retaining a branch for it would strand the branch and
-/// point the user at a directory that isn't there.
+/// Only a live directory counts: a sibling entry whose directory is gone is
+/// stale metadata awaiting `git worktree prune`, not a checkout with anything
+/// to lose, and retaining a branch for it would strand the branch and point the
+/// user at a directory that isn't there.
+///
+/// `exists()` is the test, not [`Repository::worktree_is_unusable`], which the
+/// rest of the removal path uses. The two disagree on a directory that is
+/// present but no longer holds its worktree, and the disagreement is
+/// asymmetric: calling a dead sibling live retains a branch nobody needed,
+/// while calling a live one dead deletes a branch a checkout still resolves.
+/// This answer only ever gates a deletion, so it takes the conservative test.
 pub(crate) fn live_sibling_checkout<'a>(
     worktrees: &'a [WorktreeInfo],
     branch: &str,
