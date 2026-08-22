@@ -20,6 +20,7 @@ pub mod approvals;
 mod commands;
 pub(crate) mod deprecation;
 mod expansion;
+mod git_source;
 mod hooks;
 mod project;
 #[cfg(test)]
@@ -171,10 +172,14 @@ pub use expansion::{
     template_environment, template_references_var, validate_list_column_template,
     validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
 };
+pub use git_source::{
+    GIT_CONFIG_LIST_COMMAND, GIT_CONFIG_PREFIX, GIT_CONFIG_SOURCE_LABEL, redact_worktrunk_config_z,
+    render_git_source_toml, superseded_project_file_label,
+};
 pub use hooks::HooksConfig;
 pub use project::{
     ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
-    ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
+    ProjectConfigSource, ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
 };
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,

@@ -1097,6 +1097,7 @@ impl Repository {
     fn prewarm_git_config(discovery_path: &Path) {
         let Ok(output) = Cmd::new("git")
             .args(["config", "--list", "-z"])
+            .redact_logged_stdout(crate::config::redact_worktrunk_config_z)
             .current_dir(discovery_path)
             .context(path_to_logging_context(discovery_path))
             .run()
@@ -1128,6 +1129,7 @@ impl Repository {
     fn prewarm_git_config_from_common_dir(discovery_path: &Path, common_dir: &Path) {
         let Ok(output) = Cmd::new("git")
             .args(["config", "--list", "-z"])
+            .redact_logged_stdout(crate::config::redact_worktrunk_config_z)
             .current_dir(common_dir)
             .context(path_to_logging_context(common_dir))
             .run()
@@ -1536,6 +1538,7 @@ impl Repository {
             let args = ["config", "--list", "-z"];
             let output = Cmd::new("git")
                 .args(args)
+                .redact_logged_stdout(crate::config::redact_worktrunk_config_z)
                 .current_dir(&self.git_common_dir)
                 .context(path_to_logging_context(&self.git_common_dir))
                 .run()

@@ -44,12 +44,19 @@ fn collect_approvable_commands(project_config: &ProjectConfig) -> Vec<Approvable
 /// semantics need the config as their frame of reference (`add`, `clear
 /// --stale`); the read-only `list` instead treats absence as zero commands.
 fn require_project_config(repo: &Repository) -> anyhow::Result<ProjectConfig> {
-    let config_path = repo
-        .project_config_path()?
-        .context("Cannot determine project config location — no worktree found")?;
-    Ok(repo
-        .load_project_config()?
-        .ok_or(GitError::ProjectConfigNotFound { config_path })?)
+    // Load before resolving a path: the git-config source (worktrunk.config.*)
+    // can supply project config when no worktree resolves a file path at all
+    // (bare repo, default branch checked out in no worktree). The path is
+    // needed only to frame the not-found error.
+    if let Some(config) = repo.load_project_config()? {
+        return Ok(config);
+    }
+    match repo.project_config_path()? {
+        Some(config_path) => Err(GitError::ProjectConfigNotFound { config_path }.into()),
+        None => anyhow::bail!(
+            "No project config found — no worktree resolves .config/wt.toml, and git config has no worktrunk.config.* keys"
+        ),
+    }
 }
 
 /// One project command and whether its template is currently approved.

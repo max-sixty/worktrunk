@@ -1127,12 +1127,24 @@ pub fn step_prune(
     // candidate "(different hooks on branch)" annotation in the skip hint
     // can compare each candidate's own `.config/wt.toml` against this
     // baseline. Byte-equal is approximate (whitespace differences flag too)
-    // but the result drives a hint, not behavior.
-    let invoking_project_bytes = repo
-        .project_config_path()
+    // but the result drives a hint, not behavior. When the git-config source
+    // (worktrunk.config.*) is active the annotation is suppressed at the
+    // `differs` computation — git config is branch-independent, so
+    // per-branch file differences cannot change the selected hooks — and the
+    // baseline isn't loaded (it would go unread).
+    let git_source_active = repo
+        .project_config()
         .ok()
         .flatten()
-        .and_then(|p| std::fs::read(p).ok());
+        .is_some_and(|c| c.source == worktrunk::config::ProjectConfigSource::GitConfig);
+    let invoking_project_bytes = if git_source_active {
+        None
+    } else {
+        repo.project_config_path()
+            .ok()
+            .flatten()
+            .and_then(|p| std::fs::read(p).ok())
+    };
     let mut skipped_approval: Vec<SkippedApproval> = Vec::new();
 
     let check_lock = RwLock::new(());
@@ -1290,11 +1302,17 @@ pub fn step_prune(
                         info_message(cformat!("Skipped <bold>{label}</> (approval required)"))
                             .to_string();
                     let _ = job_tx.send(RemovalJob::PrintSkip(line));
-                    let differs = path.as_deref().is_some_and(|wt_path| {
-                        let candidate_bytes =
-                            std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
-                        candidate_bytes != invoking_project_bytes
-                    });
+                    // The guard, not the baseline, suppresses the annotation
+                    // under the git-config source: with the baseline `None`, a
+                    // candidate that has a committed `.config/wt.toml` would
+                    // compare `Some(_) != None` and flag the exact case where
+                    // hooks are identical across branches.
+                    let differs = !git_source_active
+                        && path.as_deref().is_some_and(|wt_path| {
+                            let candidate_bytes =
+                                std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
+                            candidate_bytes != invoking_project_bytes
+                        });
                     skipped_approval.push(SkippedApproval { path, differs });
                     continue;
                 }

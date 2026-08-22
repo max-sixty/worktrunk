@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use worktrunk::config::{ConfigFileKind, require_config_path};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
+use worktrunk::styling::{eprintln, hint_message, info_message, success_message, warning_message};
 
 /// Example user configuration file content (displayed in help with values uncommented)
 const USER_CONFIG_EXAMPLE: &str = include_str!("../../../dev/config.example.toml");
@@ -63,7 +63,26 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
                 "See https://worktrunk.dev/hook/ for hook documentation",
             ],
             user_config_exists,
-        )
+        )?;
+        // Born superseded: existing worktrunk.config.* keys in git config are
+        // the project config (all-or-nothing), so the file just created will
+        // not be read until they are removed. Say so now, not at first use.
+        if !repo.worktrunk_config_git_pairs()?.is_empty() {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "<bold>worktrunk.config.*</> keys exist in git config; the new project config will be ignored until they are removed"
+                ))
+            );
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To list the keys and their origins, run <underline>{}</>",
+                    worktrunk::config::GIT_CONFIG_LIST_COMMAND
+                ))
+            );
+        }
+        Ok(())
     } else {
         let project_config_exists = Repository::current()
             .and_then(|repo| repo.project_config_path())
