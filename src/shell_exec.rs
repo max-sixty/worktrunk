@@ -1014,8 +1014,8 @@ fn run_with_timeout_impl(
             Ok::<_, std::io::Error>(buf)
         });
 
-        match child.wait_timeout(timeout)? {
-            Some(status) => {
+        match child.wait_timeout(timeout) {
+            Ok(Some(status)) => {
                 let stdout = stdout_thread.join().unwrap()?;
                 let stderr = stderr_thread.join().unwrap()?;
                 Ok(std::process::Output {
@@ -1024,14 +1024,18 @@ fn run_with_timeout_impl(
                     stderr,
                 })
             }
-            None => {
+            // Timed out, or the wait itself failed. A failed wait has to tear the
+            // tree down too: propagating it instead would leave the child running,
+            // and the scope's join then blocks on `read_to_end` until the child
+            // closes its pipes — the caller waits out the full runtime the timeout
+            // exists to bound, and gets back an error that isn't `TimedOut`.
+            outcome => {
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
-                Err(std::io::Error::new(
-                    ErrorKind::TimedOut,
-                    "command timed out",
-                ))
+                Err(outcome.err().unwrap_or_else(|| {
+                    std::io::Error::new(ErrorKind::TimedOut, "command timed out")
+                }))
             }
         }
     })
