@@ -835,21 +835,29 @@ impl<'a> WorkingTree<'a> {
         let real_index = git_dir.join("index");
         let log_ctx = path_to_logging_context(self.path());
 
-        // A missing `<gitdir>/index` is semantically an empty index (nothing
-        // staged), so mirror git's own behaviour. Close the
-        // freshly-created 0-byte tempfile's handle (Windows leaves the name
-        // delete-pending if it's still open) and remove the file; if a real
-        // index exists, copy it back, otherwise leave the path empty and
-        // let the first `git` call against `GIT_INDEX_FILE` create a fresh
-        // valid index there.
-        let temp = tempfile::Builder::new()
+        // Keep the exclusively-created file open while copying a real index;
+        // removing it first would expose its random name to a symlink race in
+        // a shared system temp directory. A missing `<gitdir>/index` is
+        // semantically an empty index (nothing staged), so only that case
+        // closes and removes the 0-byte file before Git creates a valid index.
+        let mut temp_file = tempfile::Builder::new()
             .prefix(TEMP_INDEX_PREFIX)
             .tempfile()
-            .context("Failed to create temporary index")?
-            .into_temp_path();
-        std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
-        if real_index.exists() {
-            std::fs::copy(&real_index, &temp).context("Failed to copy index file")?;
+            .context("Failed to create temporary index")?;
+        let mut real_index_file = match std::fs::File::open(&real_index) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error).context("Failed to open index file"),
+        };
+        if let Some(real_index_file) = &mut real_index_file {
+            std::io::copy(real_index_file, temp_file.as_file_mut())
+                .context("Failed to copy index file")?;
+        }
+        let temp = temp_file.into_temp_path();
+        if real_index_file.is_none() {
+            // `into_temp_path` closes the handle first, which matters on
+            // Windows: deleting a still-open file leaves the name pending.
+            std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
         }
         // Validate UTF-8 once so `TempIndex::path` is infallible.
         temp.to_str()
