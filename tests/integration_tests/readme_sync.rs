@@ -426,10 +426,12 @@ fn test_snapshot_plain_text_has_no_trailing_whitespace() {
     let rendered = trim_lines(&parse_snapshot_content("before\n\x1b[107m \x1b[0m \nafter"));
     assert_eq!(rendered, "before\n\nafter");
 
-    let snapshot = include_str!(
-        "../snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap"
-    );
-    let rendered = trim_lines(&parse_snapshot_content(snapshot));
+    let snapshot =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "tests/snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap",
+        ))
+        .unwrap();
+    let rendered = trim_lines(&parse_snapshot_content(&snapshot));
     assert!(
         rendered.lines().all(|line| line.trim_end() == line),
         "snapshot output retained trailing whitespace"
