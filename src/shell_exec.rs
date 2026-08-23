@@ -2938,8 +2938,16 @@ mod tests {
         // none of it. Had phase 1 returned a status instead, `late` would
         // still be buffered and would show up here. The other thresholds never
         // reach this arm — `0` streams without waiting, `-1` skips phase 1.
+        //
+        // The child writes 450 ms after the threshold passes. Only the switch
+        // has to land in that window, and it follows the wait immediately, so
+        // the margin covers a deschedule far longer than anything the suite
+        // produces. The threshold stays well above zero for the opposite
+        // reason: were `remaining` to reach it already spent, phase 1 would
+        // skip the wait entirely and the test would pass without reaching the
+        // arm it exists to cover.
         let err = Cmd::new("sh")
-            .args(["-c", "sleep 0.2; echo late 1>&2; exit 3"])
+            .args(["-c", "sleep 0.5; echo late 1>&2; exit 3"])
             .delayed_stream(50, None)
             .unwrap_err();
         let stream_err = err
