@@ -49,9 +49,9 @@ export default defineConfig({
       },
       customCss: ['./src/styles/custom.css'],
       components: {
-        Footer: './src/components/Footer.astro',
         Head: './src/components/Head.astro',
         PageTitle: './src/components/PageTitle.astro',
+        Pagination: './src/components/Pagination.astro',
         SocialIcons: './src/components/SocialIcons.astro',
         ThemeSelect: './src/components/ThemeSelect.astro',
       },
