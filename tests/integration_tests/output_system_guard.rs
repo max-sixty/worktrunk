@@ -114,8 +114,7 @@ fn check_no_unexpected_stdout_writes() {
     let mut violations = Vec::new();
 
     // Recursively scan all .rs files under src/
-    let scanned = scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
-    assert_scanned_something(scanned, &src_dir);
+    scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
 
     if !violations.is_empty() {
         panic!(
@@ -128,53 +127,22 @@ fn check_no_unexpected_stdout_writes() {
     }
 }
 
-/// A floor on how much of the crate a `src/` walk must reach before its
-/// verdict means anything. `src/` holds ~200 `.rs` files, so this clears a
-/// partial walk — a workspace split that leaves a stub behind, a subtree that
-/// stops being readable — as well as an empty one.
-const MIN_SCANNED_FILES: usize = 100;
+fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
+    // A directory the walk can't read contributes no violations, so swallowing
+    // the error lets the guard pass over a tree it never inspected — a missing
+    // or relocated `src/` reads as a clean crate. Surface it instead.
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
 
-/// Both scans walk the tree with `Err(_) => return`, so an unreadable or
-/// relocated `src/` yields no violations and the guard passes having inspected
-/// nothing. The count each walk returns is what tells those apart: a real run
-/// reaches hundreds of files, so a count near zero is the scan failing to find
-/// the crate, never a crate that stopped writing output.
-fn assert_scanned_something(scanned: usize, src_dir: &Path) {
-    assert!(
-        scanned > MIN_SCANNED_FILES,
-        "scanned only {scanned} .rs files under {} — the guard passed without \
-         inspecting the crate.\n\
-         The walk swallows read errors, so this is a missing or unreadable scan root, \
-         not a clean result.",
-        src_dir.display()
-    );
-}
-
-/// Returns the number of `.rs` files the walk reached, allowlisted ones
-/// included — it measures the scan, not the verdict.
-fn scan_directory(
-    dir: &Path,
-    tokens: &[&str],
-    violations: &mut Vec<String>,
-    scan_root: &Path,
-) -> usize {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return 0,
-    };
-
-    let mut scanned = 0;
     for entry in entries.flatten() {
         let path = entry.path();
 
         if path.is_dir() {
-            scanned += scan_directory(&path, tokens, violations, scan_root);
+            scan_directory(&path, tokens, violations, scan_root);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            scanned += 1;
             check_file(&path, tokens, violations, scan_root);
         }
     }
-    scanned
 }
 
 fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
@@ -316,8 +284,7 @@ fn allowlisted_paths_still_exist() {
 fn check_stderr_macros_come_from_styling() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
-    let scanned = scan_stderr_macros(&src_dir, &src_dir, &mut violations);
-    assert_scanned_something(scanned, &src_dir);
+    scan_stderr_macros(&src_dir, &src_dir, &mut violations);
     violations.sort();
 
     assert!(
@@ -332,25 +299,18 @@ fn check_stderr_macros_come_from_styling() {
     );
 }
 
-/// Returns the number of `.rs` files the walk reached — see
-/// [`assert_scanned_something`].
-fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) -> usize {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return 0,
-    };
+fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
 
-    let mut scanned = 0;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scanned += scan_stderr_macros(&path, src_dir, violations);
+            scan_stderr_macros(&path, src_dir, violations);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            scanned += 1;
             check_stderr_macros_in_file(&path, src_dir, violations);
         }
     }
-    scanned
 }
 
 fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec<String>) {

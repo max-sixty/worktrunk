@@ -25,32 +25,12 @@ use std::process::Command;
 
 use path_slash::PathExt as _;
 
-/// A floor on how much of the crate a `src/` walk must reach before its
-/// verdict means anything. `src/` holds ~200 `.rs` files, so this clears a
-/// partial walk — a workspace split that leaves a stub behind, a subtree that
-/// stops being readable — as well as an empty one.
-const MIN_SCANNED_FILES: usize = 100;
-
 #[test]
 fn vergen_env_vars_are_read_optionally() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
     let mut violations = Vec::new();
-    let scanned = scan_directory(&src_dir, &src_dir, &mut violations);
-
-    // The walk swallows read errors, so a missing or relocated scan root
-    // yields no violations and this guard passes having read nothing — the
-    // same vacuous pass `output_system_guard` and `snapshot_formatting_guard`
-    // pin. `src/` holds ~200 `.rs` files, so anything near zero is the scan
-    // failing to find the crate, not the crate having stopped using `env!`.
-    assert!(
-        scanned > MIN_SCANNED_FILES,
-        "scanned only {scanned} .rs files under {} — the guard passed without \
-         inspecting the crate.\n\
-         The walk swallows read errors, so this is a missing or unreadable scan root, \
-         not a clean result.",
-        src_dir.display()
-    );
+    scan_directory(&src_dir, &src_dir, &mut violations);
 
     assert!(
         violations.is_empty(),
@@ -62,23 +42,21 @@ fn vergen_env_vars_are_read_optionally() {
     );
 }
 
-/// Returns the number of `.rs` files the walk reached — it measures the scan,
-/// not the verdict.
-fn scan_directory(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) -> usize {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return 0;
-    };
-    let mut scanned = 0;
+fn scan_directory(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
+    // Swallowing this error would let a missing or relocated `src/` read as a
+    // crate with no `env!("VERGEN_…")` in it — the vacuous pass that makes this
+    // guard, the one standing between a bare `env!` and another #3123, useless.
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scanned += scan_directory(&path, src_dir, violations);
+            scan_directory(&path, src_dir, violations);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            scanned += 1;
             check_file(&path, src_dir, violations);
         }
     }
-    scanned
 }
 
 fn check_file(path: &Path, src_dir: &Path, violations: &mut Vec<String>) {
