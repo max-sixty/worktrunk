@@ -55,6 +55,14 @@ println!("{}", table_output);
 stderr().flush()?;
 ```
 
+`src/` holds two crates, and the path differs between them: `worktrunk::styling`
+from the binary's modules — the ones `src/main.rs` declares (`commands`, `cli`,
+`display`, …), which the examples throughout this skill are written for — and
+`crate::styling` from the library's, the ones `src/lib.rs` declares (`git`,
+`config`, `shell_exec`, …), where `worktrunk::` does not resolve at all. The
+guard tests accept either, so the compiler is the only thing that tells you the
+path is wrong for the file.
+
 Which `println!` is in scope decides whether a closed pipe panics: std's
 panics on the `BrokenPipe` write error, anstream's drops it. `wt … | head`
 closes the pipe, so command code imports the `worktrunk::styling` one and no

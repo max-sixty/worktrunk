@@ -16,7 +16,8 @@
 //! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS`
 //!
 //! When adding stdout output:
-//! - Use `worktrunk::styling::println`. Where the consumer renders the escapes
+//! - Use `styling`'s `println` — `worktrunk::styling` from the binary's modules,
+//!   `crate::styling` from the library's. Where the consumer renders the escapes
 //!   and is never a tty (the statusline, `--help-page`), declare that once at
 //!   the top of the command with `ColorChoice::Always.write_global()` — the
 //!   global anstream consults before tty detection — and print normally.
@@ -98,6 +99,16 @@ const ALLOWED_LINE_PATTERNS: &[&str] = &[
     r#"println!("Hello, world!");"#,
 ];
 
+/// How to name the `styling` module, for a failure message a contributor pastes
+/// straight back into the file that tripped it.
+///
+/// `src/` holds both crates: `src/lib.rs` declares the library's modules (`git`,
+/// `config`, `shell_exec`, …) and `src/main.rs` the binary's (`cli`, `commands`,
+/// `display`, …). `worktrunk::` resolves only in the second, so a message naming
+/// it alone hands a library file code that cannot compile — and neither scan can
+/// catch that, since both accept any call prefixed with `styling::`.
+const STYLING_PATH_BY_CRATE: &str = "`worktrunk::styling` in the binary's modules (the ones `src/main.rs` declares), `crate::styling` in the library's (the ones `src/lib.rs` declares)";
+
 /// No file under `src/` writes to stdout unless it is listed as a surface that
 /// deliberately does. The scan covers the whole crate rather than just
 /// `src/commands/`: `src/help.rs` carries the answer for `--help-page` and
@@ -120,7 +131,8 @@ fn check_no_unexpected_stdout_writes() {
         panic!(
             "Unexpected stdout writes:\n\n{}\n\n\
              stdout is reserved for data output (JSON, tables).\n\
-             Use worktrunk::styling::println for stdout, and its eprintln — not color_print's ceprintln! — for stderr.\n\
+             Use the `println` from `styling` for stdout, and its `eprintln` — not color_print's ceprintln! — for stderr.\n\
+             Spell the path for the crate the file belongs to: {STYLING_PATH_BY_CRATE}.\n\
              Add file path to STDOUT_ALLOWED_PATHS if stdout is intentional.",
             violations.join("\n")
         );
@@ -214,8 +226,9 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_r
 /// Paths (relative to `src/`) allowed to reach std's `eprint!`/`eprintln!`.
 ///
 /// Every other file that writes to stderr must have the macro of that name in
-/// scope from `worktrunk::styling`, or qualify the call — see
-/// [`check_stderr_macros_come_from_styling`].
+/// scope from `styling`, or qualify the call — see
+/// [`check_stderr_macros_come_from_styling`], and [`STYLING_PATH_BY_CRATE`] for
+/// which path spells it from where.
 ///
 /// An entry exempts the **whole file**, not the call its comment names, so an
 /// entry added for one narrow site also covers whatever that file grows later.
@@ -254,9 +267,10 @@ fn check_stderr_macros_come_from_styling() {
         "stderr writes that resolve to std's macro instead of anstream's:\n\n{}\n\n\
          std's `eprint!`/`eprintln!` keep ANSI escapes when stderr is redirected, so a\n\
          file mixing them with anstream's emits color on some lines of a log and not others.\n\
-         Import the macro from `worktrunk::styling`, qualify the call as\n\
-         `worktrunk::styling::eprintln!(…)`, or add the file to STD_STDERR_ALLOWED_PATHS\n\
-         with a comment explaining why std's macro is the right one there.",
+         Import the macro from `styling`, or qualify the call as `styling::eprintln!(…)`.\n\
+         Spell the path for the crate the file belongs to: {STYLING_PATH_BY_CRATE}.\n\
+         Or add the file to STD_STDERR_ALLOWED_PATHS with a comment explaining why\n\
+         std's macro is the right one there.",
         violations.join("\n")
     );
 }
