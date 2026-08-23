@@ -76,3 +76,24 @@ runs:
       run: |
         sudo timeout -k 30 300 apt-get update
         sudo timeout -k 30 300 apt-get install -y zsh fish
+
+    # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
+    # agent can't install it itself: that user has no sudo, so it can't create
+    # /nix. Installing here, as `runner`, puts /nix/var/nix/profiles/default/bin
+    # on $GITHUB_PATH, and tend carries system PATH entries into the sandbox
+    # verbatim (only runner-home entries get rewritten to the sandbox's own
+    # home), so the agent inherits `nix` with no `sandbox_path:` entry in
+    # .config/tend.yaml. It costs ~4 s, so every tend workflow pays it rather
+    # than gating on which one is running.
+    #
+    # No `access-tokens = github.com=…` here, unlike nightly.yaml's `nix-flake`
+    # job: that value lands in world-readable /etc/nix/nix.conf, and tend's
+    # credential proxy exists so the sandboxed agent never holds a real token.
+    # The proxy injects the bot's token into sandbox requests to github.com,
+    # codeload.github.com, and api.github.com, so flake fetches authenticate
+    # without it.
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
