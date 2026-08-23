@@ -287,8 +287,13 @@ already enabled — don't install it in-session, the sandbox user has no sudo
 and every installer stops there:
 
 ```bash
-nix flake update
+nix flake update rust-overlay
 ```
+
+Name the input: a bare `nix flake update` relocks nixpkgs too, which lands an
+unrelated bump in a PR scoped to the toolchain and the pins, and hands the
+`nix-flake` job a nixpkgs nobody chose to move. Bump nixpkgs on its own when
+it's worth doing.
 
 Verify the new lock evaluates with the channel bump before committing:
 

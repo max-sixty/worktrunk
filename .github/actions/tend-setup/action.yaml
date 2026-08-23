@@ -93,12 +93,10 @@ runs:
     # with flakes on and the daemon owns the store writes. A single-user install
     # would land in `/home/runner/.nix-profile` and be dropped by that rewrite.
     #
-    # Deliberately no `github_access_token`: the action would write it into
-    # world-readable `/etc/nix/nix.conf`, handing the sandbox a real credential
-    # — the one thing the proxy exists to prevent. `GITHUB_TOKEN: ""` blocks the
-    # env fallback that would do the same silently. Nothing is lost: the proxy
-    # injects the bot PAT for github.com, api.github.com, and
-    # codeload.github.com, so the agent's flake fetches are authenticated.
+    # No `github_access_token` — see the scrub step below for why the input
+    # alone isn't enough. Nothing is lost by having no token: the proxy injects
+    # the bot PAT for github.com, api.github.com, and codeload.github.com, so
+    # the agent's flake fetches are authenticated.
     #
     # Gated to the one workflow that needs it, so the other seven tend jobs
     # don't pay the install. The generated `tend-*.yaml` files are overwritten
@@ -107,5 +105,26 @@ runs:
     - name: Install Nix (weekly flake.lock refresh)
       if: github.workflow == 'tend-weekly'
       uses: cachix/install-nix-action@v31
-      env:
-        GITHUB_TOKEN: ""
+
+    # The sandbox must never hold a real credential, and `install-nix-action`
+    # hands it one by default: `install-nix.sh` falls back to `$GITHUB_TOKEN`
+    # when no `github_access_token` is passed, and the action's own composite
+    # step hardcodes `GITHUB_TOKEN: ${{ github.token }}` in its `env:`. A
+    # composite step's own `env:` is the innermost scope, so the caller can't
+    # override it — that assignment is exactly what makes the fallback fire for
+    # callers who pass nothing. The multi-user installer then places the result
+    # with `install -m 0644 … /etc/nix/nix.conf`, world-readable, and
+    # `tend-weekly`'s job token carries contents/pull-requests/issues write.
+    #
+    # So delete the line rather than trying to suppress it, and assert it's
+    # gone: the invariant is then enforced by this step instead of resting on a
+    # reading of the runner's env-merge order.
+    - name: Drop the token install-nix-action writes to /etc/nix/nix.conf
+      if: github.workflow == 'tend-weekly'
+      shell: bash
+      run: |
+        sudo sed -i '/^access-tokens = /d' /etc/nix/nix.conf
+        if grep -q '^access-tokens' /etc/nix/nix.conf; then
+          echo "::error::a GitHub token survived the scrub in /etc/nix/nix.conf"
+          exit 1
+        fi
