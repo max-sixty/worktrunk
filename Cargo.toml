@@ -243,14 +243,18 @@ sha2 = "0.11"
 # breaking-change rollout (see `test_codename_outputs_are_stable` and
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
-petname = { version = "=3.1.0", default-features = false, features = ["default-words"] }
+petname = { version = "=3.2.0", default-features = false, features = ["default-words"] }
 # PINNED EXACT to match `petname`: its caret dependency otherwise permits a
 # different proc-macro version, but the generated code and runtime re-exports
 # require an exact match. Keep both pins in lockstep.
 petname-macros = "=3.2.0"
 
 tempfile = "3.27"
-wait-timeout = "0.2"
+
+# Timed waits on child processes (`Cmd::timeout`, `Cmd::delayed_stream`, the
+# picker's pager). Replaced `wait-timeout`, whose SIGCHLD handler aborts the
+# process when its self-pipe write fails — see "Timed waits" in `shell_exec`.
+shared_child = "1.1"
 
 # Interactive picker (`wt switch`) TUI stack, pulled in only by the `cli`
 # feature's `dep:` entries. These are platform-neutral (skim 4.x is the
@@ -278,7 +282,7 @@ wait-timeout = "0.2"
 # not panic on push/pop keyboard enhancement flags failure") and is
 # Windows-green again. Kept as an exact pin; it can relax to a range now that
 # the keyboard-enhancement path no longer regresses the legacy console.
-skim = { version = "=5.6.4", optional = true, default-features = false, features = ["frizbee"] }
+skim = { version = "=5.6.5", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
 # Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`

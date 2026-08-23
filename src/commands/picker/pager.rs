@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use wait_timeout::ChildExt;
+use shared_child::SharedChild;
 
 use worktrunk::config::UserConfig;
 use worktrunk::shell::extract_filename_from_path;
@@ -91,7 +91,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         .stderr(Stdio::null())
         .env("COLUMNS", width.to_string());
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = match cmd.spawn() {
+    let child = match SharedChild::spawn(&mut cmd) {
         Ok(child) => child,
         Err(e) => {
             tracing::debug!(error = %e, "Failed to spawn pager: {}", e);
@@ -101,7 +101,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
 
     // Write input to stdin in a thread to avoid deadlock.
     // Thread will unblock when: (a) write completes, or (b) pipe breaks (pager exits/killed).
-    let stdin = child.stdin.take();
+    let stdin = child.take_stdin();
     let input = text.to_string();
     let writer_thread = std::thread::spawn(move || {
         if let Some(mut stdin) = stdin {
@@ -111,7 +111,7 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     });
 
     // Read output in a thread to avoid deadlock (can't read stdout after stdin fills)
-    let stdout = child.stdout.take();
+    let stdout = child.take_stdout();
     let reader_thread = std::thread::spawn(move || {
         stdout.map(|mut stdout| {
             let mut output = Vec::new();
@@ -133,15 +133,10 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
             }
             tracing::debug!(status = %status, "Pager exited with status: {}", status);
         }
-        Ok(None) => {
-            // Timed out - kill pager and clean up
-            tracing::debug!(timeout = ?PAGER_TIMEOUT, "Pager timed out after {:?}", PAGER_TIMEOUT);
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = reader_thread.join();
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "Failed to wait for pager: {}", e);
+        // Timed out, or the wait failed outright. Either way the pager owes us
+        // nothing more: kill it, reap it, and fall back to the raw text below.
+        outcome => {
+            tracing::debug!(?outcome, timeout = ?PAGER_TIMEOUT, "Pager did not exit within {:?}", PAGER_TIMEOUT);
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader_thread.join();
@@ -211,6 +206,27 @@ mod tests {
         let input = "hello world";
         let result = pipe_through_pager(input, "tr 'a-z' 'A-Z'", 80);
         assert_eq!(result, "HELLO WORLD");
+    }
+
+    /// A pager that never exits must not freeze skim's event loop: it is killed at
+    /// `PAGER_TIMEOUT` and the preview falls back to the unpaged text.
+    ///
+    /// Explicit `exec`, because the kill reaches the pager and not its children:
+    /// a grandchild inherits the stdout pipe, and the reader thread this function
+    /// joins blocks until *it* exits. `sh -c "sleep 30"` forks here, so without
+    /// the `exec` the wait runs the full 30 s despite the pager being dead.
+    #[test]
+    #[cfg(unix)]
+    fn test_pipe_through_pager_times_out() {
+        let input = "line 1\nline 2";
+        let start = std::time::Instant::now();
+        let result = pipe_through_pager(input, "exec sleep 30", 80);
+        let elapsed = start.elapsed();
+        assert_eq!(result, input);
+        assert!(
+            elapsed < PAGER_TIMEOUT * 4,
+            "the timeout did not bound the wait: {elapsed:?}"
+        );
     }
 
     #[test]
