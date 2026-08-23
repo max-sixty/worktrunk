@@ -346,9 +346,19 @@ Triage each duplicate:
   open an issue or fix it. Common shapes: `merge_base("main", "<sha>")` vs
   `merge_base("main", "branch")` keying separately;
   `worktree_at(cwd)` vs `worktree_at(porcelain_path)` not canonicalizing.
+- **Measurement artifact** — `-vv` is what produces the trace, and the
+  diagnostic collector that writes the bundle runs its own
+  `git --version`, `git worktree list --porcelain`, and `gh --version`
+  (`src/diagnostic.rs`) *after* the render. Those land in the same trace, so
+  the report reliably flags `gh --version` and `git worktree list
+  --porcelain` as same-context duplicates on an otherwise clean render.
+  Confirm before chasing one: in `.git/wt/logs/trace.log` the collector's
+  calls are the trailing block, after the last `gh api …/check-runs` line.
+  Only a duplicate *within* the render is a finding.
 
 Baseline: ~29 git subprocesses per render on a clean tree; a jump above
-~32 warrants investigation.
+~32 warrants investigation. `command_count` in the same JSON report is the
+number to read.
 
 ## Weekly Maintenance: LLM Model Names in Docs
 
