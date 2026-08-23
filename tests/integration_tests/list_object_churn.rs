@@ -53,13 +53,21 @@ fn test_list_does_not_stage_working_tree_changes(mut repo: TestRepo) {
     let worktree = repo.add_worktree("feature");
     std::fs::write(worktree.join("untracked.txt"), "new file\n").unwrap();
 
-    let before = repo.git_output(&["status", "--porcelain"]);
+    // Assert against the worktree the probe actually snapshots. The primary is
+    // clean, so `WorkingTreeConflictsTask` returns before the temp-index
+    // `git add -A` ever runs there.
+    let probed = worktree.to_str().unwrap();
+    let before = repo.git_output(&["-C", probed, "status", "--porcelain"]);
+    assert!(
+        before.contains("?? untracked.txt"),
+        "precondition: the probed worktree must be dirty, got: {before}"
+    );
     run_list(&repo);
-    let after = repo.git_output(&["status", "--porcelain"]);
+    let after = repo.git_output(&["-C", probed, "status", "--porcelain"]);
 
     assert_eq!(
         before, after,
-        "wt list must not change the primary worktree's staging state"
+        "wt list must not change the probed worktree's staging state"
     );
 }
 
