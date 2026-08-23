@@ -757,10 +757,13 @@ impl Repository {
     /// until a `git gc --prune` reclaims it. A throwaway store makes the probe's
     /// output vanish at process exit, which is the intended lifetime.
     ///
-    /// The tradeoff is losing cross-run reuse of these objects: a probe can no
-    /// longer find a tree an earlier invocation wrote, so identical content is
-    /// re-hashed rather than deduped. That costs the write either way — the
-    /// saving was only in the object file — while the unbounded growth is real.
+    /// The tradeoff is losing cross-run reuse of these objects. Git skips the
+    /// object write entirely when the id already resolves — including through
+    /// an alternate — so before this change a probe over content the real
+    /// database already held re-hashed it but wrote nothing. The temporary
+    /// store starts empty every invocation, so that content is deflated and
+    /// written on every probe instead: ~600 ms rather than ~60 ms per probe
+    /// for an unchanged 20 MB untracked file.
     pub fn redirect_objects_for_observation(&self) -> Option<Self> {
         self.with_temporary_object_directory()
     }
