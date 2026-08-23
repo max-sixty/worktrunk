@@ -149,21 +149,23 @@ git fetch --all --prune; wt step for-each -- sh -c '
   g=$(git rev-parse --git-dir)
   rebasing() { test -d "$g/rebase-merge" || test -d "$g/rebase-apply"; }
   rebasing && exit 0
-  git diff --quiet HEAD || { echo "uncommitted changes; skipping"; exit 0; }
+  git diff --quiet HEAD || {
+    git -c advice.diverging=false merge --ff-only --no-autostash @{u}; exit 0
+  }
   git rebase @{u} --no-autostash || { rebasing && git rebase --abort; }
 ''''
 ```
 
-`wt up` fetches every remote, then iterates every worktree: skip if there is no upstream, skip if a rebase is already in progress, skip if a tracked file is modified, then rebase and abort on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
+`wt up` fetches every remote, then brings each worktree up to date with its upstream: skip if there is no upstream or a rebase is already in progress, fast-forward if a tracked file is modified or staged, otherwise rebase, aborting on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
 
 A sweep finds each worktree in whatever state you left it, so most of the script is guards:
 
 - `git fetch --all` exits non-zero when any single remote fails. With `&&`, one remote with lapsed credentials is enough to skip the whole sweep, so even worktrees whose refs fetched fine go unrebased. With `;` the sweep runs on what did fetch, and the fetch error still prints.
-- `git rebase --no-autostash` refuses to start when a tracked file is modified or staged, whether or not that worktree has anything to rebase. Without the `git diff` guard, a worktree you are editing fails the sweep. Neither `git rebase` nor `git diff HEAD` counts untracked files, so a worktree carrying only new files still rebases.
-- `rebasing` guards the abort as well as the skip. After a refusal there is nothing to abort, and an unguarded `git rebase --abort` adds `fatal: no rebase in progress` and exit 128 on top of git's own explanation. In a worktree where you stopped a rebase to resolve conflicts, it would throw that work away instead.
-- `--no-autostash` overrides a global `rebase.autostash`. When the autostash pops with conflicts, git leaves the markers in the worktree and the rebase still exits 0, so the sweep would report success on a worktree it had just left in conflict.
+- `git rebase` refuses to run in a worktree with a modified or staged tracked file, whether or not there is anything to rebase — so a worktree you are editing would fail the sweep. `git merge --ff-only` is the piece of the rebase git will still do there: it advances a branch that is simply behind, and otherwise changes nothing — a diverged branch, or an incoming file that collides with your edits, leaves the worktree exactly as it was, with the reason printed. Untracked files trigger neither the refusal nor the `git diff` guard, so a worktree carrying only new files still rebases. `-c advice.diverging=false` trims the diverged-branch refusal to one line.
+- `rebasing` guards the abort as well as the skip. `git rebase` fails two ways: conflicting partway, which leaves a rebase in progress to abort, and refusing to start, which leaves nothing. After a refusal, an unconditional `git rebase --abort` would answer `fatal: no rebase in progress` — exit 128 in place of git's own message and exit code.
+- Both arms pass `--no-autostash`, because a global `rebase.autostash` or `merge.autostash` breaks what each arm relies on. An autostash that pops with conflicts leaves the markers in the worktree and still exits 0, so the sweep would report success on a worktree it had just left in conflict — and an autostashed tree is momentarily clean, so a fast-forward that should have refused goes through and the collision lands on the pop instead.
 
-The sweep then exits non-zero only when a worktree fails for a reason worth stopping on. That matters where the alias is a hook step, since a non-zero step stops the rest of the pipeline.
+The sweep exits non-zero only when a worktree fails for a reason worth stopping on. That matters where the alias is a hook step, since a non-zero step stops the rest of the pipeline.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
