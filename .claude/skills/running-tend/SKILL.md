@@ -268,6 +268,16 @@ Files to update:
 | `Cargo.toml` | `rust-version` | `"1.93"` |
 | `tests/helpers/wt-perf/Cargo.toml` | `rust-version` | `"1.93"` |
 | `rust-toolchain.toml` | `channel` | `"1.93.0"` |
+| `.github/workflows/nightly.yaml` | `rustup override set nightly-<date>`, twice (`minimal-versions`, `check-unused-dependencies`) | a nightly at or above the new MSRV |
+
+The nightly pins are the ones that bite: cargo refuses a workspace whose
+`rust-version` exceeds the toolchain, so an MSRV bump past a stale pin fails
+both jobs before they check anything — and the failure follows the merge onto
+`main`, since `nightly.yaml`'s push trigger lists `**/Cargo.toml`. A nightly
+date's rustc version is in that day's `channel-rust-nightly.toml` under
+`static.rust-lang.org/dist/`, in the `[pkg.rustc]` block. Leave headroom
+rather than picking the first nightly that clears the new MSRV, so this isn't
+a weekly edit.
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
@@ -352,13 +362,16 @@ Triage each duplicate:
   (`src/diagnostic.rs`) *after* the render. Those land in the same trace, so
   the report reliably flags `gh --version` and `git worktree list
   --porcelain` as same-context duplicates on an otherwise clean render.
-  Confirm before chasing one: in `.git/wt/logs/trace.log` the collector's
+  Confirm before chasing one: in
+  `"$(git rev-parse --git-common-dir)/wt/logs/trace.log"` the collector's
   calls are the trailing block, after the last `gh api …/check-runs` line.
   Only a duplicate *within* the render is a finding.
 
 Baseline: ~29 git subprocesses per render on a clean tree; a jump above
-~32 warrants investigation. `command_count` in the same JSON report is the
-number to read.
+~32 warrants investigation. Read `command_count` from the same JSON report,
+then subtract the collector's three calls before comparing: the baseline was
+measured before the recipe used `-vv`, so it counts the render alone, and
+three is the whole width of the ~32 threshold.
 
 ## Weekly Maintenance: LLM Model Names in Docs
 

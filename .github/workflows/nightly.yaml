@@ -266,8 +266,9 @@ jobs:
     - name: 📂 Checkout code
       uses: actions/checkout@v7
 
-    # cargo-udeps requires nightly; update date periodically
-    - run: rustup override set nightly-2026-03-01
+    # cargo-udeps requires nightly. Keep at or above `rust-version` in
+    # `Cargo.toml`; see the note on `minimal-versions`' identical pin.
+    - run: rustup override set nightly-2026-08-01
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -302,7 +303,12 @@ jobs:
     - name: 📂 Checkout code
       uses: actions/checkout@v7
 
-    - run: rustup override set nightly-2026-03-01
+    # Pinned so `-Z direct-minimal-versions` resolves reproducibly. Must stay
+    # at or above `rust-version` in `Cargo.toml`: cargo refuses a workspace
+    # whose MSRV exceeds the toolchain, so a stale pin fails the job outright
+    # rather than reporting on dependency floors. Bumped by the weekly MSRV
+    # pass, with headroom so that isn't every week.
+    - run: rustup override set nightly-2026-08-01
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
