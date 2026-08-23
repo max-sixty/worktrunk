@@ -665,17 +665,39 @@ pub struct Repository {
     temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
 }
 
-/// A throwaway object database that a redirected [`Repository`] writes new
-/// objects into, with the real database (plus any inherited alternates) as
-/// read-only alternates so existing objects still resolve.
+/// A side object database that a redirected [`Repository`] writes new objects
+/// into, with the real database (plus any inherited alternates) as read-only
+/// alternates so existing objects still resolve.
 ///
 /// Held behind an `Arc` so cloning a `Repository` — as `wt list` does for its
-/// parallel tasks — shares one store and one `TempDir` lifetime; the directory
-/// is removed when the last clone drops.
+/// parallel tasks — shares one store. A [`ProbeObjectStore::Temporary`] variant
+/// also shares one `TempDir` lifetime, and its directory is removed when the
+/// last clone drops.
 #[derive(Debug)]
 struct TemporaryObjectDirectory {
-    directory: tempfile::TempDir,
+    store: ProbeObjectStore,
     alternates: OsString,
+}
+
+/// Where a redirected repository's probe objects live.
+///
+/// The persistent variant is the normal path: probe objects are reusable across
+/// invocations, which is what keeps an unchanged working tree cheap, while still
+/// never entering the real database. The temporary variant is the fallback for
+/// a git dir that cannot be written to, where the store is discarded at exit.
+#[derive(Debug)]
+enum ProbeObjectStore {
+    Persistent(PathBuf),
+    Temporary(tempfile::TempDir),
+}
+
+impl ProbeObjectStore {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Persistent(path) => path.as_path(),
+            Self::Temporary(directory) => directory.path(),
+        }
+    }
 }
 
 impl Repository {
@@ -744,9 +766,8 @@ impl Repository {
     /// Only *observational* commands may redirect. `wt list`'s merge and
     /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
     /// `merge-tree --write-tree`) that are never referenced, so writing them to
-    /// a throwaway store is harmless. A *mutating* command must never
-    /// redirect — its commit would be written to the throwaway store and lost
-    /// at process exit.
+    /// a side store is harmless. A *mutating* command must never redirect — its
+    /// commit would land in the side store, unreachable from the real database.
     ///
     /// The redirect is unconditional rather than gated on a read-only object
     /// database, because those never-referenced objects are exactly the ones
@@ -754,45 +775,71 @@ impl Repository {
     /// unreachable tree (and a blob per non-gitignored untracked file) behind on
     /// every invocation whose working tree changed since the last one, so a repo
     /// carrying large untracked artifacts grows by their full size per probe
-    /// until a `git gc --prune` reclaims it. A throwaway store makes the probe's
-    /// output vanish at process exit, which is the intended lifetime.
+    /// until a `git gc --prune` reclaims it. A side store keeps that output out
+    /// of the database that `git gc` and `git fsck` account for.
     ///
-    /// The tradeoff is losing cross-run reuse of these objects. Git skips the
-    /// object write entirely when the id already resolves — including through
-    /// an alternate — so before this change a probe over content the real
-    /// database already held re-hashed it but wrote nothing. The temporary
-    /// store starts empty every invocation, so that content is deflated and
-    /// written on every probe instead: ~600 ms rather than ~60 ms per probe
-    /// for an unchanged 20 MB untracked file.
+    /// The store is *persistent* (`.git/wt/cache/probe-objects`) rather than a fresh
+    /// temporary directory, which keeps cross-run reuse. Git skips the object
+    /// write entirely when the id already resolves — including through an
+    /// alternate — so a store that started empty every invocation would deflate
+    /// and rewrite an unchanged 20 MB untracked file on every probe (~600 ms
+    /// rather than ~60 ms). Reusing one store keeps the repeat-probe cost where
+    /// it was while the real database stays clean. A git dir that cannot be
+    /// written to falls back to a temporary store, which is correct but pays
+    /// that cost.
     pub fn redirect_objects_for_observation(&self) -> Option<Self> {
-        self.with_temporary_object_directory()
+        self.with_probe_object_store()
     }
 
-    /// Build a clone whose object writes are redirected into a fresh temporary
-    /// object database, with the real database as a read-only alternate so
-    /// existing objects still resolve. Returns `None` when the temporary store
-    /// can't be created (no writable temp dir), leaving the caller on the real
-    /// database. This is the *mechanism*; the *policy* — whether to redirect at
-    /// all — lives in [`Self::redirect_objects_for_observation`], the only
-    /// production caller.
-    fn with_temporary_object_directory(&self) -> Option<Self> {
+    /// Build a clone whose object writes are redirected into the probe object
+    /// store, with the real database as a read-only alternate so existing
+    /// objects still resolve. Prefers the persistent `.git/wt/cache/probe-objects`
+    /// and falls back to a temporary directory when the git dir is not
+    /// writable. Returns `None` when neither can be created, leaving the caller
+    /// on the real database.
+    ///
+    /// This is the *mechanism*. Which callers may use it is the policy, and it
+    /// lives in the call sites: only the observational `wt list` entry points
+    /// redirect, because a mutating command's commit would not be reachable
+    /// from the real database afterwards.
+    /// The persistent probe object store at `.git/wt/cache/probe-objects`, created on
+    /// demand with the `info`/`pack` subdirectories git expects of an object
+    /// database. `None` when the git dir is not writable, which sends the caller
+    /// to a temporary store.
+    ///
+    /// The store holds only probe output, so it is safe to delete at any time;
+    /// git re-derives what it needs on the next probe. It grows with distinct
+    /// working-tree states rather than without bound, since `write-tree` is
+    /// content-addressed and a repeated state re-resolves instead of writing.
+    fn persistent_probe_object_store(&self) -> Option<ProbeObjectStore> {
+        let store = self.wt_dir().join("cache").join("probe-objects");
+        // `info` and `pack` are what git's own `objects` layout provides; a
+        // store lacking them still works for writes but warns on some paths.
+        std::fs::create_dir_all(store.join("info")).ok()?;
+        std::fs::create_dir_all(store.join("pack")).ok()?;
+        Some(ProbeObjectStore::Persistent(
+            canonicalize(&store).unwrap_or(store),
+        ))
+    }
+
+    fn with_probe_object_store(&self) -> Option<Self> {
         let alternates = self.object_database_path().into_os_string();
-        let directory = tempfile::Builder::new()
-            .prefix("worktrunk-list-objects-")
-            .tempdir()
-            .ok()?;
+        let store = self.persistent_probe_object_store().or_else(|| {
+            tempfile::Builder::new()
+                .prefix("worktrunk-list-objects-")
+                .tempdir()
+                .ok()
+                .map(ProbeObjectStore::Temporary)
+        })?;
 
         let mut clone = self.clone();
-        clone.temporary_object_directory = Some(Arc::new(TemporaryObjectDirectory {
-            directory,
-            alternates,
-        }));
+        clone.temporary_object_directory =
+            Some(Arc::new(TemporaryObjectDirectory { store, alternates }));
         Some(clone)
     }
 
     /// Absolute path to this repository's shared object database — the store a
-    /// redirected repository probes for writability and names as its read-only
-    /// alternate.
+    /// redirected repository names as its read-only alternate.
     ///
     /// This is the common dir's `objects`, shared by every linked worktree. It
     /// does not resolve an inherited `GIT_OBJECT_DIRECTORY` (set only when `wt`
@@ -810,7 +857,7 @@ impl Repository {
     pub(super) fn object_store_environment(&self) -> Option<(&Path, &OsStr)> {
         self.temporary_object_directory
             .as_ref()
-            .map(|temporary| (temporary.directory.path(), temporary.alternates.as_os_str()))
+            .map(|temporary| (temporary.store.path(), temporary.alternates.as_os_str()))
     }
 
     /// Add the temporary-object-database environment to `cmd` when this

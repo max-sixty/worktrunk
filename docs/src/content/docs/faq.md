@@ -155,6 +155,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `.git/wt/logs/trace.jsonl` | Machine trace (one JSON object per record) | Running with `-vv` |
 | `.git/wt/logs/subprocess.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting (leads with the performance profile) | Running with `-vv` |
+| `.git/wt/cache/probe-objects/**` | Git objects written by `wt list`'s working-tree probes, kept out of the repository's own object database | `wt list`, `wt list statusline` |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.

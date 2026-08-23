@@ -32,7 +32,9 @@
 //! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,picker-preview,…}/`)
 //!   — one user-facing category covering every SHA-keyed disk cache, even
 //!   when implementation lives in different modules (`sha_cache` for parsed
-//!   results, `commands::picker::preview_cache` for rendered previews)
+//!   results, `commands::picker::preview_cache` for rendered previews). The
+//!   `wt list` probe object store (`.git/wt/cache/probe-objects/`) belongs to
+//!   this category too: git re-derives its contents on the next probe
 //! - Hints (git config `worktrunk.hints.*`)
 //!
 //! Each category has a `clear_*_reported` helper that clears it and prints its
@@ -1124,10 +1126,26 @@ fn clear_summary_reported(repo: &Repository) -> anyhow::Result<bool> {
 /// docstring at the top of this file.
 fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
     Ok(report_cleared_count(
-        sha_cache::clear_all(repo)? + preview_cache::clear_all(repo)?,
+        sha_cache::clear_all(repo)? + preview_cache::clear_all(repo)? + clear_probe_objects(repo)?,
         "git commands cache entry",
         "git commands cache entries",
     ))
+}
+
+/// Remove the `wt list` probe object store, counting it as one entry when it
+/// held anything.
+///
+/// The store carries only probe output, so git re-derives what it needs on the
+/// next probe. It is reported under the git commands cache rather than as its
+/// own category, which keeps the `state get` ↔ `state clear` parity intact.
+fn clear_probe_objects(repo: &Repository) -> anyhow::Result<usize> {
+    let store = repo.wt_dir().join("cache").join("probe-objects");
+    if !store.exists() {
+        return Ok(0);
+    }
+    std::fs::remove_dir_all(&store)
+        .with_context(|| format!("Failed to remove probe object store {}", store.display()))?;
+    Ok(1)
 }
 
 fn clear_vars_reported(repo: &Repository) -> anyhow::Result<bool> {

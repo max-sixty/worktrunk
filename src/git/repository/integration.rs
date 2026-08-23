@@ -255,7 +255,8 @@ impl Repository {
         }
 
         // Cache miss — create an ephemeral commit so merge-tree can resolve
-        // the merge-base. The commit is unreferenced and will be GC'd.
+        // the merge-base. The commit is unreferenced; under an observational
+        // redirect it lands in the probe store rather than the real database.
         let head_commit =
             self.run_command(&["commit-tree", tree_sha, "-p", branch_head_sha, "-m", ""])?;
         let head_commit = head_commit.trim();
@@ -1310,7 +1311,7 @@ mod read_only_object_store_tests {
 
     /// The safety property behind scoping the redirect to observational
     /// commands: a redirected merge tree is computed correctly but written only
-    /// to the throwaway store, so it is *not* in the real object database. A
+    /// to the probe store, so it is *not* in the real object database. A
     /// mutating command that redirected would therefore lose its commit — which
     /// is why mutating commands keep the persistent path and fail loudly on a
     /// read-only store instead.
@@ -1330,7 +1331,7 @@ mod read_only_object_store_tests {
         // Redirected clone: the merge tree lands in the temporary store only.
         let redirected = Repository::at(test.root_path())
             .unwrap()
-            .with_temporary_object_directory()
+            .with_probe_object_store()
             .unwrap();
         let ephemeral_tree = merge_tree(&redirected);
 
