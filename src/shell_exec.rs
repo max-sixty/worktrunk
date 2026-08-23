@@ -65,6 +65,16 @@
 //! wakeup costs at worst a wait that runs to its deadline, which is what a
 //! deadline is for. It also probes the wake fd and falls back to `write()` on a
 //! pipe, so the syscall that sandbox denies is not even on the path.
+//!
+//! **When the timed wait itself fails.** Setting a deadline is fallible — each
+//! call allocates a pipe and registers a handler — so each site decides what a
+//! failed `wait_timeout` means instead of propagating it. Where the deadline
+//! bounds wall-clock (`run_with_timeout_impl`, the pager) the site tears the
+//! child down, because a wait it cannot observe bounds nothing. Where it only
+//! decides when output starts streaming ([`Cmd::delayed_stream`]) the site
+//! streams. No site fails the command: a denied syscall in wt's own machinery
+//! is not the child's fault, and erroring over one repeats #3856 in a quieter
+//! form.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -2215,13 +2225,17 @@ impl Cmd {
                         trace.complete(status.success());
                         return stream_exit_result(status, &buffer, &cmd_str);
                     }
-                    // Threshold exceeded — fall through to streaming.
-                    Ok(None) => {}
-                    Err(e) => {
-                        let _ = stdout_handle.join();
-                        let _ = stderr_handle.join();
-                        trace.fail(&e);
-                        return Err(e).context("Failed to wait for command");
+                    // No status yet: the threshold passed, or the timed wait
+                    // itself failed. Both fall through to streaming. A failed
+                    // wait means the deadline machinery broke — `sigchld`
+                    // allocates a pipe and registers a handler per call, which
+                    // a sandbox or an fd limit can deny — not that the child
+                    // misbehaved, and Phase 2's `wait()` is a bare `waitid`
+                    // with neither, so it still returns the real status.
+                    // Failing here would turn a denied syscall into a failed
+                    // command, which is the shape of #3856.
+                    outcome => {
+                        tracing::debug!(?outcome, "No exit status yet; switching to streaming");
                     }
                 }
             }
@@ -2910,6 +2924,29 @@ mod tests {
         // A fast command under a generous threshold exits during phase 1
         // (wait_timeout returns Some) and stays buffered/quiet.
         Cmd::new("true").delayed_stream(5_000, None).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_crosses_the_threshold() {
+        // A command that outlives the threshold leaves phase 1 with no status
+        // (`wait_timeout` returns `Ok(None)`) and switches to streaming. Phase 2
+        // must then wait out the real exit rather than reporting at the
+        // threshold — the elapsed time is what distinguishes the two, since both
+        // return `Ok`.
+        //
+        // The other two thresholds skip this path entirely: `0` streams without
+        // waiting, `-1` disables phase 1.
+        let start = Instant::now();
+        Cmd::new("sleep")
+            .arg("0.3")
+            .delayed_stream(50, None)
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "phase 2 must wait for the child, not return at the threshold: {elapsed:?}"
+        );
     }
 
     #[test]
