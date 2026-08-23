@@ -2930,22 +2930,25 @@ mod tests {
     #[cfg(unix)]
     fn test_cmd_delayed_stream_crosses_the_threshold() {
         // A command that outlives the threshold leaves phase 1 with no status
-        // (`wait_timeout` returns `Ok(None)`) and switches to streaming. Phase 2
-        // must then wait out the real exit rather than reporting at the
-        // threshold — the elapsed time is what distinguishes the two, since both
-        // return `Ok`.
+        // (`wait_timeout` returns `Ok(None)`), which switches the readers to
+        // streaming, and phase 2 then reports the real exit.
         //
-        // The other two thresholds skip this path entirely: `0` streams without
-        // waiting, `-1` disables phase 1.
-        let start = Instant::now();
-        Cmd::new("sleep")
-            .arg("0.3")
+        // What pins the switch is where the late output goes: a streamed line
+        // is written to stderr instead of the buffer, so the error carries
+        // none of it. Had phase 1 returned a status instead, `late` would
+        // still be buffered and would show up here. The other thresholds never
+        // reach this arm — `0` streams without waiting, `-1` skips phase 1.
+        let err = Cmd::new("sh")
+            .args(["-c", "sleep 0.2; echo late 1>&2; exit 3"])
             .delayed_stream(50, None)
-            .unwrap();
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed >= Duration::from_millis(300),
-            "phase 2 must wait for the child, not return at the threshold: {elapsed:?}"
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output written after the switch must stream, not buffer"
         );
     }
 
