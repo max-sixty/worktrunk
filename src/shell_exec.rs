@@ -2333,13 +2333,18 @@ pub fn forward_signal_to_pid(pid: i32, sig: i32) {
 ///   caller holds the group leader unreaped throughout (see its doc), so on
 ///   that path the sweep always fires, harmlessly.
 /// - A member is genuinely alive at the deadline: the probe is accurate and
-///   the SIGKILL is the intended escalation.
+///   the SIGKILL is the intended escalation. For a SIGSTOP'd member it is the
+///   only signal that works — a stopped process runs no TERM handler, so the
+///   sweep is what keeps teardown bounded.
 ///
 /// Callers whose children are reaped concurrently — `Cmd::stream`'s main
 /// thread waiting while the signal-forwarder thread runs this, tether's
 /// supervisor — get the accurate reading: the poll loop returns at the first
 /// probe after the reap, so escalating over a cooperative child costs one
-/// poll interval, not the full grace.
+/// poll interval, not the full grace. A reap does unpin the pgid, leaving the
+/// microseconds between a probe that read alive and the following `killpg` as
+/// the accepted recycling exposure — unchanged from the fixed-sleep
+/// predecessor, and shared by every killpg-after-grace design.
 #[cfg(unix)]
 pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
     use nix::sys::signal::Signal;
