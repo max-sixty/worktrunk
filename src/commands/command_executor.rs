@@ -153,6 +153,10 @@ pub struct ForegroundStep {
 }
 
 /// Controls how foreground execution responds to command failures.
+///
+/// Only [`execute_pipeline_foreground`] reads this. `post-*` hooks default to
+/// the background pipeline in [`mod@super::run_pipeline`], which takes no
+/// failure strategy. A step that exits non-zero there stops the steps after it.
 #[derive(Clone, Copy)]
 pub enum FailureStrategy {
     /// Stop on first failure and surface the error to the caller.
@@ -162,8 +166,8 @@ pub enum FailureStrategy {
 }
 
 impl FailureStrategy {
-    /// Default strategy for a hook type: `pre-*` block (fail-fast),
-    /// `post-*` warn-and-continue.
+    /// Default strategy for a hook type: `pre-*` blocks (fail-fast), `post-*`
+    /// warns.
     pub fn default_for(hook_type: HookType) -> Self {
         if hook_type.is_pre() {
             Self::FailFast
