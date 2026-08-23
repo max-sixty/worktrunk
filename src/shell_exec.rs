@@ -2141,7 +2141,7 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts (the delay threshold is crossed).
+    /// starts.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
