@@ -85,15 +85,47 @@ runs:
     # home), so the agent inherits `nix` with no `sandbox_path:` entry in
     # .config/tend.yaml. It costs ~4 s, so every tend workflow pays it rather
     # than gating on which one is running.
-    #
-    # No `access-tokens = github.com=…` here, unlike nightly.yaml's `nix-flake`
-    # job: that value lands in world-readable /etc/nix/nix.conf, and tend's
-    # credential proxy exists so the sandboxed agent never holds a real token.
-    # The proxy injects the bot's token into sandbox requests to github.com,
-    # codeload.github.com, and api.github.com, so flake fetches authenticate
-    # without it.
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
+
+    - name: Make the Nix install sandbox-safe
+      shell: bash
+      # Two guards on the step above, both run while `runner` is still the
+      # only unprivileged user on the box.
+      #
+      # 1. It writes `access-tokens = github.com=<job token>` into
+      # /etc/nix/nix.conf whenever it can see one, and its action.yml passes
+      # `GITHUB_TOKEN: ${{ github.token }}` unconditionally, so no input
+      # suppresses it (install-nix.sh falls through to the job token when
+      # `github_access_token` is empty). The installer creates /etc/nix at
+      # mode 0555 and nix.conf at 0644, so the sandboxed agent could read a
+      # token carrying this job's `contents: write` and `pull-requests:
+      # write`. Deleting the line here closes that: the sandbox user isn't
+      # created until the tend action runs, so nothing untrusted can read the
+      # file in between.
+      #
+      # Nix loses nothing by it. tend's proxy overwrites `Authorization` on
+      # every sandbox request to github.com, codeload.github.com, and
+      # api.github.com with the bot's real token, whether or not nix sends
+      # one, so `github:` flake inputs still authenticate.
+      #
+      # 2. Only the multi-user branch puts /nix/var/nix/profiles/default/bin
+      # on $GITHUB_PATH. Without systemd the installer falls back to a
+      # single-user install whose one PATH entry is the runner's
+      # ~/.nix-profile/bin — a runner-home path tend rewrites to a sandbox
+      # path that doesn't exist, then drops. That leaves a green step and no
+      # `nix` in the session, discovered a week later mid-run, so assert the
+      # branch here instead.
+      run: |
+        sudo sed -i '/^access-tokens/d' /etc/nix/nix.conf
+        if sudo grep -q 'access-tokens' /etc/nix/nix.conf; then
+          echo "::error::a GitHub token survived in /etc/nix/nix.conf"
+          exit 1
+        fi
+        if [ ! -x /nix/var/nix/profiles/default/bin/nix ]; then
+          echo "::error::not a multi-user Nix install; the sandbox will have no nix"
+          exit 1
+        fi
