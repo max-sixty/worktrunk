@@ -1697,8 +1697,35 @@ fn test_state_cache_clear_removes_probe_objects(repo: TestRepo) {
     std::fs::create_dir_all(&fanout).unwrap();
     std::fs::write(fanout.join("cdef"), b"probe output").unwrap();
 
+    // The number is the point: `state get` must report the store's objects
+    // before `state clear` removes them. Asserting only that the directory
+    // disappears would pass with the get side unwired, or with clear reporting a
+    // flat 1.
+    let before = wt_state_cmd(&repo, "cache", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    let reported: serde_json::Value =
+        serde_json::from_slice(&before.stdout).expect("cache get must emit JSON");
+    assert_eq!(
+        reported["git_commands_cache"], 1,
+        "state get must count the store's one object: {reported}"
+    );
+
     let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
     assert!(output.status.success());
+    // Styled output interleaves ANSI codes with the text, and those codes contain
+    // digits, so drop them before reading the count back. `strip_str` is the
+    // transform an anstream printer applies, and handles OSC as well as CSI.
+    let cleared = String::from_utf8_lossy(&output.stderr);
+    let plain = anstream::adapter::strip_str(&cleared).to_string();
+    let reported = plain
+        .lines()
+        .find(|line| line.contains("git commands cache"))
+        .expect("clear must report the git commands cache category");
+    assert!(
+        reported.contains("Cleared 1 git commands cache entry"),
+        "state clear must report the same count state get did: {reported}"
+    );
     assert!(
         !probe_store.exists(),
         "cache clear must remove the probe object store"

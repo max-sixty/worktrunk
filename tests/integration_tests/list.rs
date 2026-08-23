@@ -4068,7 +4068,7 @@ impl Drop for ReadOnlyObjectDirectory {
 /// read-only (a managed sandbox). Its merge and conflict probes write
 /// ephemeral objects — `merge-tree --write-tree` for the integration diff and
 /// `write-tree` against a temp index for the dirty-worktree conflict check —
-/// which `Repository::redirect_objects_for_observation` reroutes into a temporary
+/// which `Repository::redirect_objects_for_observation` reroutes into the probe
 /// object database. The analysis stays complete instead of erroring with
 /// "insufficient permission for adding an object".
 #[cfg(unix)]
@@ -4116,7 +4116,7 @@ fn test_list_full_survives_read_only_object_database(mut repo: TestRepo) {
     }
 
     // The merge analysis actually ran (not silently degraded): the integration
-    // probe wrote to the temporary store and produced a concrete diverged
+    // probe wrote to the probe object store and produced a concrete diverged
     // classification with the would-merge diff.
     let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
     let feature = items

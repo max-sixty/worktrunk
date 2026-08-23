@@ -798,12 +798,13 @@ pub fn collect(
 ) -> anyhow::Result<Option<super::model::ListData>> {
     // `wt list`'s merge and conflict probes write ephemeral Git objects
     // (`write-tree`, `commit-tree`, `merge-tree --write-tree`) that nothing ever
-    // references. Redirect them into a temporary object database (real database
-    // as a read-only alternate) so they don't accumulate as unreachable objects
-    // in the real store, and so the analysis still runs in a read-only checkout
-    // — see `Repository::redirect_objects_for_observation`. A `None` (no
-    // writable temp dir) leaves object-writing tasks on the real database,
-    // where they surface their own errors.
+    // references. Redirect them into the probe object store (real database as a
+    // read-only alternate) so they don't accumulate as unreachable objects in the
+    // real store, and so the analysis still runs in a read-only checkout — see
+    // `Repository::redirect_objects_for_observation`. A `None` (neither the
+    // persistent store nor a temporary one could be created) leaves
+    // object-writing tasks on the real database, where they surface their own
+    // errors.
     let redirected = repo.redirect_objects_for_observation();
     let repo = redirected.as_ref().unwrap_or(repo);
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
@@ -2223,7 +2224,7 @@ pub fn populate_item(
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
     // Mirror `collect()`: redirect this item's object-writing merge/conflict
-    // probes into a temporary object database, so their never-referenced output
+    // probes into the probe object store, so their never-referenced output
     // doesn't accumulate in the real store and the statusline still classifies
     // integration state in a read-only checkout. `wt list statusline` is a
     // separate entry point from `collect()` (its only callers are in

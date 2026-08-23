@@ -1135,11 +1135,6 @@ fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
     ))
 }
 
-/// Path to the `wt list` probe object store.
-fn probe_object_store(repo: &Repository) -> PathBuf {
-    repo.wt_dir().join("cache").join("probe-objects")
-}
-
 /// Count loose objects in the `wt list` probe object store.
 ///
 /// Counts objects rather than reporting the directory's existence, because
@@ -1147,7 +1142,7 @@ fn probe_object_store(repo: &Repository) -> PathBuf {
 /// existence check would report a cleared entry in essentially every repo. The
 /// clear side counts the same way, so `state get` and `state clear` agree.
 pub(super) fn count_probe_objects(repo: &Repository) -> usize {
-    let store = probe_object_store(repo);
+    let store = repo.probe_object_store_path();
     let Ok(fanouts) = std::fs::read_dir(&store) else {
         return 0;
     };
@@ -1173,7 +1168,7 @@ pub(super) fn count_probe_objects(repo: &Repository) -> usize {
 /// own category, and [`count_probe_objects`] feeds the same number into
 /// `state get`, which is what keeps the `state get` ↔ `state clear` parity.
 fn clear_probe_objects(repo: &Repository) -> anyhow::Result<usize> {
-    let store = probe_object_store(repo);
+    let store = repo.probe_object_store_path();
     if !store.exists() {
         return Ok(0);
     }

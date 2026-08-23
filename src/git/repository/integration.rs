@@ -1319,8 +1319,7 @@ mod read_only_object_store_tests {
         let (directory, _) = redirected.object_store_environment().unwrap();
         assert!(
             directory.ends_with("probe-objects"),
-            "expected the persistent store, got {}",
-            directory.display()
+            "expected the persistent store, got {directory:?}"
         );
         assert!(
             directory.join("info").is_dir() && directory.join("pack").is_dir(),
@@ -1349,25 +1348,40 @@ mod read_only_object_store_tests {
         read_only.set_mode(0o500);
         std::fs::set_permissions(&git_dir, read_only).unwrap();
 
+        // Root ignores the mode bits, which would fail the assertion below rather
+        // than skip it. Probe before relying on the restriction, as
+        // `tests/integration_tests/remove.rs` does.
+        let elevated = std::fs::write(git_dir.join(".write-probe"), b"x").is_ok();
+        if elevated {
+            let _ = std::fs::remove_file(git_dir.join(".write-probe"));
+            std::fs::set_permissions(&git_dir, original).unwrap();
+            crate::styling::eprintln!("Skipping - running with elevated privileges");
+            return;
+        }
+
         let redirected = repo.redirect_objects_for_observation();
-        let store = redirected
-            .as_ref()
-            .and_then(|repo| repo.object_store_environment())
-            .map(|(directory, _)| directory.to_path_buf());
+        let store = redirected.as_ref().and_then(|repo| {
+            repo.object_store_environment()
+                .map(|(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()))
+        });
 
         // Restore before asserting so a failure can't leave the fixture
         // undeletable.
         std::fs::set_permissions(&git_dir, original).unwrap();
 
-        let store = store.expect("a read-only git dir must still yield a store");
+        let (store, alternates) = store.expect("a read-only git dir must still yield a store");
         assert!(
             !store.ends_with("probe-objects"),
-            "expected the temporary fallback, got the persistent store at {}",
-            store.display()
+            "expected the temporary fallback, got the persistent store"
         );
         assert!(
             store.is_dir(),
             "the fallback store must exist while the repository holds it"
+        );
+        assert_eq!(
+            std::path::Path::new(&alternates),
+            repo.object_database_path(),
+            "the real database must remain the read-only alternate"
         );
     }
 
@@ -1405,6 +1419,18 @@ mod read_only_object_store_tests {
             let mut read_only = permissions.clone();
             read_only.set_mode(0o500);
             std::fs::set_permissions(path, read_only).unwrap();
+        }
+
+        // Root ignores the mode bits, so the persistent branch would be taken and
+        // the assertion would fail rather than skip.
+        let elevated = std::fs::write(store.join(".write-probe"), b"x").is_ok();
+        if elevated {
+            let _ = std::fs::remove_file(store.join(".write-probe"));
+            for (path, permissions) in originals {
+                std::fs::set_permissions(&path, permissions).unwrap();
+            }
+            crate::styling::eprintln!("Skipping - running with elevated privileges");
+            return;
         }
 
         let redirected = repo.redirect_objects_for_observation();
@@ -1446,7 +1472,7 @@ mod read_only_object_store_tests {
                 .to_string()
         };
 
-        // Redirected clone: the merge tree lands in the temporary store only.
+        // Redirected clone: the merge tree lands in the probe store only.
         let redirected = Repository::at(test.root_path())
             .unwrap()
             .with_probe_object_store()

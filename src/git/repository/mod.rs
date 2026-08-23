@@ -791,6 +791,16 @@ impl Repository {
         self.with_probe_object_store()
     }
 
+    /// Path to the persistent probe object store, `.git/wt/cache/probe-objects`.
+    ///
+    /// The one definition of this path. `wt config state cache` counts and clears
+    /// the same directory, and both sides of that parity plus the redirect must
+    /// agree: a second spelling that drifted would leave `state get` reporting 0
+    /// while the store grew with no user-visible way to reach it.
+    pub fn probe_object_store_path(&self) -> PathBuf {
+        crate::cache::cache_dir(self, "probe-objects")
+    }
+
     /// The persistent probe object store at `.git/wt/cache/probe-objects`,
     /// created on demand with the `info`/`pack` subdirectories git expects of an
     /// object database. `None` when the store is not writable, which sends the
@@ -807,7 +817,7 @@ impl Repository {
     /// `cache::sweep_lru` does not drop in, since it counts top-level `.json`
     /// files and this is a two-level fanout.
     fn persistent_probe_object_store(&self) -> Option<ProbeObjectStore> {
-        let store = self.wt_dir().join("cache").join("probe-objects");
+        let store = self.probe_object_store_path();
         // `info` and `pack` are what git's own `objects` layout provides; a
         // store lacking them still works for writes but warns on some paths.
         std::fs::create_dir_all(store.join("info")).ok()?;
