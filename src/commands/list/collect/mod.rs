@@ -797,13 +797,14 @@ pub fn collect(
     render_target: RenderTarget,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     // `wt list`'s merge and conflict probes write ephemeral Git objects
-    // (`write-tree`, `commit-tree`, `merge-tree --write-tree`). In a read-only
-    // checkout those writes fail; redirect them into a temporary object
-    // database (real database as a read-only alternate) so the analysis still
-    // runs — see `Repository::redirect_objects_if_read_only`. A `None` (writable
-    // store, or no writable temp dir) leaves object-writing tasks on the real
-    // database, where they surface their own errors.
-    let redirected = repo.redirect_objects_if_read_only();
+    // (`write-tree`, `commit-tree`, `merge-tree --write-tree`) that nothing ever
+    // references. Redirect them into a temporary object database (real database
+    // as a read-only alternate) so they don't accumulate as unreachable objects
+    // in the real store, and so the analysis still runs in a read-only checkout
+    // — see `Repository::redirect_objects_for_observation`. A `None` (no
+    // writable temp dir) leaves object-writing tasks on the real database,
+    // where they surface their own errors.
+    let redirected = repo.redirect_objects_for_observation();
     let repo = redirected.as_ref().unwrap_or(repo);
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });
@@ -2221,14 +2222,15 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
-    // Mirror `collect()`: in a read-only checkout, redirect this item's
-    // object-writing merge/conflict probes into a temporary object database so
-    // the statusline still classifies integration state. `wt list statusline`
-    // is a separate entry point from `collect()` (its only callers are in
-    // `commands/statusline.rs`) and renders on every Claude Code prompt inside
-    // exactly the managed read-only sandbox this targets. See
-    // `Repository::redirect_objects_if_read_only`.
-    let redirected = repo.redirect_objects_if_read_only();
+    // Mirror `collect()`: redirect this item's object-writing merge/conflict
+    // probes into a temporary object database, so their never-referenced output
+    // doesn't accumulate in the real store and the statusline still classifies
+    // integration state in a read-only checkout. `wt list statusline` is a
+    // separate entry point from `collect()` (its only callers are in
+    // `commands/statusline.rs`) and renders on every prompt, which makes it the
+    // hottest source of that accumulation. See
+    // `Repository::redirect_objects_for_observation`.
+    let redirected = repo.redirect_objects_for_observation();
     let repo = redirected.as_ref().unwrap_or(repo);
 
     // Populate commit data directly. The main `collect()` path batches this

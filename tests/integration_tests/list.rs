@@ -4068,7 +4068,7 @@ impl Drop for ReadOnlyObjectDirectory {
 /// read-only (a managed sandbox). Its merge and conflict probes write
 /// ephemeral objects — `merge-tree --write-tree` for the integration diff and
 /// `write-tree` against a temp index for the dirty-worktree conflict check —
-/// which `Repository::redirect_objects_if_read_only` reroutes into a temporary
+/// which `Repository::redirect_objects_for_observation` reroutes into a temporary
 /// object database. The analysis stays complete instead of erroring with
 /// "insufficient permission for adding an object".
 #[cfg(unix)]

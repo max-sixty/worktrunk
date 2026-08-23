@@ -977,7 +977,7 @@ pub struct TempIndex {
     log_ctx: String,
     /// Copied from the [`Repository`] so a redirected `wt list` writes the temp
     /// index's `write-tree` objects into the temporary store. `None` on the
-    /// normal persistent path. See [`Repository::redirect_objects_if_read_only`].
+    /// normal persistent path. See [`Repository::redirect_objects_for_observation`].
     object_store_environment: Option<(PathBuf, std::ffi::OsString)>,
 }
 

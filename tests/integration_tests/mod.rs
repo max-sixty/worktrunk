@@ -35,6 +35,7 @@ pub mod init;
 pub mod list;
 pub mod list_config;
 pub mod list_layout;
+pub mod list_object_churn;
 pub mod list_progressive;
 pub mod merge;
 pub mod nushell_default_config_dir;

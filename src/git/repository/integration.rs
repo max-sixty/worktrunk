@@ -1295,15 +1295,16 @@ mod read_only_object_store_tests {
         (test, main_sha, feature_sha)
     }
 
-    /// A writable object database must never redirect — the normal path is
-    /// left byte-for-byte unchanged.
+    /// A writable object database redirects too: these probe objects are never
+    /// referenced either way, and keeping them out of the real store is what
+    /// stops them accumulating there.
     #[test]
-    fn writable_object_database_is_not_redirected() {
+    fn writable_object_database_is_redirected_for_observation() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
         assert!(
-            repo.redirect_objects_if_read_only().is_none(),
-            "a writable object database must not trigger a redirect"
+            repo.redirect_objects_for_observation().is_some(),
+            "observational probes must redirect even on a writable database"
         );
     }
 

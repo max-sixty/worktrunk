@@ -661,7 +661,7 @@ pub struct Repository {
     /// When set, object-writing git plumbing is redirected into a temporary
     /// object database so observational commands run in a read-only checkout.
     /// `None` for the normal (persistent) path. See
-    /// [`Repository::redirect_objects_if_read_only`].
+    /// [`Repository::redirect_objects_for_observation`].
     temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
 }
 
@@ -736,36 +736,32 @@ impl Repository {
         })
     }
 
-    /// If this repository's object database is read-only, return a clone whose
-    /// object-writing git plumbing is redirected into a temporary object
-    /// database (with the real database as a read-only alternate); otherwise
-    /// return `Ok(None)` and let the caller keep using `self` unchanged.
+    /// Return a clone whose object-writing git plumbing is redirected into a
+    /// temporary object database (with the real database as a read-only
+    /// alternate), or `None` when no temporary store could be created — in
+    /// which case the caller keeps using `self` unchanged.
     ///
     /// Only *observational* commands may redirect. `wt list`'s merge and
     /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
     /// `merge-tree --write-tree`) that are never referenced, so writing them to
-    /// a throwaway store is harmless and lets the command run in a read-only
-    /// checkout. A *mutating* command must never redirect — its commit would be
-    /// written to the throwaway store and lost at process exit. Because a
-    /// read-only object database also blocks the ref/index/worktree writes
-    /// those commands need, keeping them on the persistent database makes them
-    /// fail loudly rather than silently succeed into a store that vanishes.
-    pub fn redirect_objects_if_read_only(&self) -> Option<Self> {
-        let objects = self.object_database_path();
-
-        // Probe effective writability by creating a file in the object
-        // database — the same thing git's object writers do, so this fails
-        // exactly when they would (a read-only mount and a `chmod`ed directory
-        // both surface here, unlike the owner-write permission bit). A
-        // successful probe file is dropped immediately.
-        if tempfile::Builder::new()
-            .prefix(".worktrunk-write-probe-")
-            .tempfile_in(&objects)
-            .is_ok()
-        {
-            return None;
-        }
-
+    /// a throwaway store is harmless. A *mutating* command must never
+    /// redirect — its commit would be written to the throwaway store and lost
+    /// at process exit.
+    ///
+    /// The redirect is unconditional rather than gated on a read-only object
+    /// database, because those never-referenced objects are exactly the ones
+    /// that should not persist. Writing them to the real database leaves an
+    /// unreachable tree (and a blob per non-gitignored untracked file) behind on
+    /// every invocation whose working tree changed since the last one, so a repo
+    /// carrying large untracked artifacts grows by their full size per probe
+    /// until a `git gc --prune` reclaims it. A throwaway store makes the probe's
+    /// output vanish at process exit, which is the intended lifetime.
+    ///
+    /// The tradeoff is losing cross-run reuse of these objects: a probe can no
+    /// longer find a tree an earlier invocation wrote, so identical content is
+    /// re-hashed rather than deduped. That costs the write either way — the
+    /// saving was only in the object file — while the unbounded growth is real.
+    pub fn redirect_objects_for_observation(&self) -> Option<Self> {
         self.with_temporary_object_directory()
     }
 
@@ -774,7 +770,7 @@ impl Repository {
     /// existing objects still resolve. Returns `None` when the temporary store
     /// can't be created (no writable temp dir), leaving the caller on the real
     /// database. This is the *mechanism*; the *policy* — whether to redirect at
-    /// all — lives in [`Self::redirect_objects_if_read_only`], the only
+    /// all — lives in [`Self::redirect_objects_for_observation`], the only
     /// production caller.
     fn with_temporary_object_directory(&self) -> Option<Self> {
         let alternates = self.object_database_path().into_os_string();
