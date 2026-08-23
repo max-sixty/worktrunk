@@ -35,7 +35,10 @@ updates:
     ignore:
       # `@astrojs/check` declares `peer typescript@"^5.0.0 || ^6.0.0"`, so a
       # TypeScript 7 lockfile makes `npm ci` fail ERESOLVE and takes the docs
-      # build down. Drop this once `@astrojs/check` accepts `^7`.
+      # build down. This blocks every future major, not just 7 — drop it once
+      # `@astrojs/check`'s peer range covers the current `typescript` major.
+      # The weekly pin-bump pass owns that check; see
+      # `.claude/skills/running-tend/SKILL.md`.
       - dependency-name: "typescript"
         update-types:
           - version-update:semver-major
