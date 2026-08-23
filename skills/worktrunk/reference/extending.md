@@ -145,9 +145,7 @@ git fetch --all --prune; wt step for-each -- sh -c '
   g=$(git rev-parse --git-dir)
   rebasing() { test -d "$g/rebase-merge" || test -d "$g/rebase-apply"; }
   rebasing && exit 0
-  git diff --quiet HEAD || {
-    git -c advice.diverging=false merge --ff-only --no-autostash @{u}; exit 0
-  }
+  git diff --quiet HEAD || { git merge --ff-only --no-autostash @{u}; exit 0; }
   git rebase @{u} --no-autostash || { rebasing && git rebase --abort; }
 ''''
 ```
@@ -157,7 +155,7 @@ git fetch --all --prune; wt step for-each -- sh -c '
 A sweep finds each worktree in whatever state you left it, so most of the script is guards:
 
 - `git fetch --all` exits non-zero when any single remote fails. With `&&`, one remote with lapsed credentials is enough to skip the whole sweep, so even worktrees whose refs fetched fine go unrebased. With `;` the sweep runs on what did fetch, and the fetch error still prints.
-- `git rebase` refuses to run in a worktree with a modified or staged tracked file, whether or not there is anything to rebase — so a worktree you are editing would fail the sweep. `git merge --ff-only` is the piece of the rebase git will still do there: it advances a branch that is simply behind, and otherwise changes nothing — a diverged branch, or an incoming file that collides with your edits, leaves the worktree exactly as it was, with the reason printed. Untracked files trigger neither the refusal nor the `git diff` guard, so a worktree carrying only new files still rebases. `-c advice.diverging=false` trims the diverged-branch refusal to one line.
+- `git rebase` refuses to run in a worktree with a modified or staged tracked file, whether or not there is anything to rebase — so a worktree you are editing would fail the sweep. `git merge --ff-only` is the piece of the rebase git will still do there: it advances a branch that is simply behind, and otherwise changes nothing — a diverged branch, or an incoming file that collides with your edits, leaves the worktree exactly as it was, with the reason printed. Untracked files trigger neither the refusal nor the `git diff` guard, so a worktree carrying only new files still rebases.
 - `rebasing` guards the abort as well as the skip. `git rebase` fails two ways: conflicting partway, which leaves a rebase in progress to abort, and refusing to start, which leaves nothing. After a refusal, an unconditional `git rebase --abort` would answer `fatal: no rebase in progress` — exit 128 in place of git's own message and exit code.
 - Both arms pass `--no-autostash`, because a global `rebase.autostash` or `merge.autostash` breaks what each arm relies on. An autostash that pops with conflicts leaves the markers in the worktree and still exits 0, so the sweep would report success on a worktree it had just left in conflict — and an autostashed tree is momentarily clean, so a fast-forward that should have refused goes through and the collision lands on the pop instead.
 
