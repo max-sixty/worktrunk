@@ -281,44 +281,27 @@ a weekly edit.
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
-`rust-overlay` revision knows about the new version. Nix isn't installed in
-the tend sandbox by default — install it with the Determinate Systems
-installer (single script, daemon-mode, no prompts), then update:
+`rust-overlay` revision knows about the new version. `tend-setup` installs Nix
+for this workflow, so `nix` is on the PATH with `nix-command` and `flakes`
+already enabled — don't install it in-session, the sandbox user has no sudo
+and every installer stops there:
 
 ```bash
-curl -fsSL https://install.determinate.systems/nix -o /tmp/nix-installer.sh
-sh /tmp/nix-installer.sh install --no-confirm --determinate
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-nix flake update --extra-experimental-features 'nix-command flakes'
+nix flake update
 ```
 
 Verify the new lock evaluates with the channel bump before committing:
 
 ```bash
-nix eval --extra-experimental-features 'nix-command flakes' \
-  .#devShells.x86_64-linux.default.name
+nix eval .#devShells.x86_64-linux.default.name
 ```
+
+If `nix` isn't on the PATH, the install step regressed — say so in the PR and
+leave `flake.lock` alone rather than hand-computing an entry.
 
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 `cargo msrv verify` passes.
-
-**When the installer can't run.** The Determinate installer escalates via
-`sudo`, so on a runner without passwordless sudo it stops at `sudo: a
-password is required`; `nix-portable` is no fallback there either, since it
-aborts on its own build self-test. Don't skip the lock — the bump isn't
-optional, because `nix flake check` can't resolve a channel the locked
-`rust-overlay` predates. Compute the entry instead: a `narHash` is SHA-256 of
-the NAR serialisation of the unpacked input in SRI form, and ~90 lines of
-Python reproduce it from the GitHub tarball with the top-level
-`<repo>-<rev>` directory stripped (length-prefixed strings padded to 8 bytes,
-directory entries sorted bytewise). **Validate the script against the entry
-already in `flake.lock` before trusting it on a new revision** — recompute
-the currently-locked rev and require a byte-for-byte match; that check is
-what makes the result trustworthy. Move only `rust-overlay`, say in the PR
-body that the lock was computed rather than generated, and point at
-`nightly`'s `nix-flake` job as the gate that actually proves it. Worked
-example: #3880.
 
 ## Weekly Maintenance: CI Pin Bumps
 

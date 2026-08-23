@@ -76,3 +76,36 @@ runs:
       run: |
         sudo timeout -k 30 300 apt-get update
         sudo timeout -k 30 300 apt-get install -y zsh fish
+
+    # For the weekly MSRV bump, which refreshes `flake.lock` after moving
+    # `rust-toolchain.toml` (see "Weekly Maintenance: MSRV & Toolchain" in the
+    # `running-tend` skill). The agent can't install Nix itself: tend runs it as
+    # a sandbox user created with `useradd` and never added to sudoers, so every
+    # installer stops at `sudo: a password is required`. This step runs as
+    # `runner`, which has sudo — the same reason the apt step above works.
+    #
+    # Multi-user is what carries it across the user boundary. On a runner with
+    # systemd the action installs the daemon, appends
+    # `/nix/var/nix/profiles/default/bin` to `$GITHUB_PATH`, and writes
+    # `experimental-features = nix-command flakes` to `/etc/nix/nix.conf`;
+    # tend's `setup-sandbox.sh` derives the sandbox PATH from the runner's,
+    # keeping every entry that isn't under the runner home, so `nix` arrives
+    # with flakes on and the daemon owns the store writes. A single-user install
+    # would land in `/home/runner/.nix-profile` and be dropped by that rewrite.
+    #
+    # Deliberately no `github_access_token`: the action would write it into
+    # world-readable `/etc/nix/nix.conf`, handing the sandbox a real credential
+    # — the one thing the proxy exists to prevent. `GITHUB_TOKEN: ""` blocks the
+    # env fallback that would do the same silently. Nothing is lost: the proxy
+    # injects the bot PAT for github.com, api.github.com, and
+    # codeload.github.com, so the agent's flake fetches are authenticated.
+    #
+    # Gated to the one workflow that needs it, so the other seven tend jobs
+    # don't pay the install. The generated `tend-*.yaml` files are overwritten
+    # by `uvx tend@latest init`, so a hand-added input there wouldn't survive —
+    # the workflow name is the gate that does.
+    - name: Install Nix (weekly flake.lock refresh)
+      if: github.workflow == 'tend-weekly'
+      uses: cachix/install-nix-action@v31
+      env:
+        GITHUB_TOKEN: ""
