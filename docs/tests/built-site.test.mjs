@@ -172,12 +172,6 @@ test('build preserves the public route contract', async () => {
   assert.equal(comparison.match(/<td data-label="Plain git">/g)?.length, 4);
   assert.match(homepage, /class="wt-positive"/);
   assert.match(homepage, /class="wt-negative"/);
-  assert.match(homepage, /<nav\b[^>]*data-contract="project-links"[^>]*aria-label="Project links"/);
-  assert.match(homepage, /href="https:\/\/crates\.io\/crates\/worktrunk"/);
-  assert.match(homepage, /href="https:\/\/twitter\.com\/intent\/tweet\?/);
-  assert.match(homepage, /href="https:\/\/www\.reddit\.com\/submit\?/);
-  assert.match(homepage, /href="https:\/\/www\.linkedin\.com\/sharing\/share-offsite\/\?/);
-
   const switchPage = await readFile(routeFile('/switch/'), 'utf8');
   assert.match(switchPage, /<nav aria-labelledby="starlight__on-this-page">/);
   assert.match(
@@ -225,6 +219,22 @@ test('build preserves the public route contract', async () => {
     const toc = page.match(/<nav aria-labelledby="starlight__on-this-page">([\s\S]*?)<\/nav>/)?.[1];
     assert.ok(toc, `${route} is missing its desktop table of contents`);
     for (const id of ids) assert.match(toc, new RegExp(`<a href="#${id}"`));
+  }
+});
+
+test('built pages omit low-value footer navigation', async () => {
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    assert.doesNotMatch(
+      html,
+      /class="[^"]*\bpagination-links\b/,
+      `${page} renders previous/next pagination`,
+    );
+    assert.doesNotMatch(
+      html,
+      /data-contract="project-links"/,
+      `${page} renders duplicate project links`,
+    );
   }
 });
 

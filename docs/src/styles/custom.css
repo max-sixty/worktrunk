@@ -97,53 +97,6 @@ h4 {
   letter-spacing: -0.025em;
 }
 
-/* Page sequence is quiet editorial navigation, not a pair of feature cards. */
-.pagination-links {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  border-block-start: 1px solid var(--wt-line);
-  padding-block-start: 0.9rem;
-}
-
-.pagination-links:empty {
-  display: none;
-}
-
-.pagination-links a {
-  min-width: 0;
-  border: 0;
-  border-radius: 0;
-  padding: 0.25rem 0;
-  background: transparent;
-  color: var(--wt-ink-muted);
-  font-family: var(--sl-font-mono);
-  font-size: 0.66rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  line-height: 1.35;
-  text-transform: uppercase;
-  box-shadow: none;
-}
-
-.pagination-links a:hover {
-  color: var(--wt-copper);
-}
-
-.pagination-links .link-title {
-  color: var(--wt-ink);
-  font-family: var(--sl-font);
-  font-size: 0.92rem;
-  font-weight: 500;
-  letter-spacing: 0;
-  line-height: 1.3;
-  text-transform: none;
-}
-
-.pagination-links svg {
-  width: 1rem;
-  color: var(--wt-copper);
-}
-
 .site-title {
   color: var(--wt-ink);
   font-family: 'Inter', system-ui, sans-serif;
@@ -163,7 +116,7 @@ h4 {
 
 header.header {
   border-block-end-color: color-mix(in srgb, var(--wt-line) 75%, transparent);
-  background: color-mix(in srgb, var(--wt-paper-raised) 92%, transparent);
+  background: var(--wt-paper-raised);
 }
 
 .right-group .social-icons::after {
