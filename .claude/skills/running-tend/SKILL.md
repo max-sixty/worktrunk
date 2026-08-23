@@ -303,6 +303,23 @@ Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 `cargo msrv verify` passes.
 
+**When the installer can't run.** The Determinate installer escalates via
+`sudo`, so on a runner without passwordless sudo it stops at `sudo: a
+password is required`; `nix-portable` is no fallback there either, since it
+aborts on its own build self-test. Don't skip the lock — the bump isn't
+optional, because `nix flake check` can't resolve a channel the locked
+`rust-overlay` predates. Compute the entry instead: a `narHash` is SHA-256 of
+the NAR serialisation of the unpacked input in SRI form, and ~90 lines of
+Python reproduce it from the GitHub tarball with the top-level
+`<repo>-<rev>` directory stripped (length-prefixed strings padded to 8 bytes,
+directory entries sorted bytewise). **Validate the script against the entry
+already in `flake.lock` before trusting it on a new revision** — recompute
+the currently-locked rev and require a byte-for-byte match; that check is
+what makes the result trustworthy. Move only `rust-overlay`, say in the PR
+body that the lock was computed rather than generated, and point at
+`nightly`'s `nix-flake` job as the gate that actually proves it. Worked
+example: #3880.
+
 ## Weekly Maintenance: CI Pin Bumps
 
 Pinned third-party versions in CI are invisible to Dependabot — it follows `Cargo.toml` deps and `uses: foo@vN` action refs, not inline `version:` strings. They drift unless this step bumps them.
