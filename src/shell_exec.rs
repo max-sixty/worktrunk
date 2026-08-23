@@ -3168,9 +3168,12 @@ mod tests {
         child.wait().unwrap();
 
         let start = Instant::now();
-        assert!(super::group_died_within(pgid, Duration::from_millis(200)));
+        // Grace far longer than any plausible scheduling stall, so returning
+        // early is structurally distinguishable from having slept it, and the
+        // bound below is a safety net rather than a race.
+        assert!(super::group_died_within(pgid, Duration::from_secs(30)));
         assert!(
-            start.elapsed() < Duration::from_millis(100),
+            start.elapsed() < Duration::from_secs(5),
             "an empty group must exit the grace loop on the first probe; took {:?}",
             start.elapsed()
         );
