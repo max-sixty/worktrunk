@@ -21,9 +21,7 @@ use std::path::Path;
 /// Count loose objects in `<gitdir>/objects`, ignoring `info/` and `pack/`.
 fn loose_object_count(git_dir: &Path) -> usize {
     let objects = git_dir.join("objects");
-    let Ok(entries) = std::fs::read_dir(&objects) else {
-        return 0;
-    };
+    let entries = std::fs::read_dir(&objects).unwrap();
     entries
         .filter_map(Result::ok)
         .filter(|entry| {
