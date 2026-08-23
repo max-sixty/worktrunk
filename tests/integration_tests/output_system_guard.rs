@@ -114,7 +114,8 @@ fn check_no_unexpected_stdout_writes() {
     let mut violations = Vec::new();
 
     // Recursively scan all .rs files under src/
-    scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
+    let scanned = scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
+    assert_scanned_something(scanned, &src_dir);
 
     if !violations.is_empty() {
         panic!(
@@ -127,21 +128,46 @@ fn check_no_unexpected_stdout_writes() {
     }
 }
 
-fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
+/// Both scans walk the tree with `Err(_) => return`, so an unreadable or
+/// relocated `src/` yields no violations and the guard passes having inspected
+/// nothing. The count each walk returns is what tells those apart: a real run
+/// reaches hundreds of files, so any zero is the scan failing to find the
+/// crate, never a crate that stopped writing output.
+fn assert_scanned_something(scanned: usize, src_dir: &Path) {
+    assert!(
+        scanned > 0,
+        "scanned no .rs files under {} — the guard passed without inspecting the crate.\n\
+         The walk swallows read errors, so this is a missing or unreadable scan root,\n\
+         not a clean result.",
+        src_dir.display()
+    );
+}
+
+/// Returns the number of `.rs` files the walk reached, allowlisted ones
+/// included — it measures the scan, not the verdict.
+fn scan_directory(
+    dir: &Path,
+    tokens: &[&str],
+    violations: &mut Vec<String>,
+    scan_root: &Path,
+) -> usize {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return 0,
     };
 
+    let mut scanned = 0;
     for entry in entries.flatten() {
         let path = entry.path();
 
         if path.is_dir() {
-            scan_directory(&path, tokens, violations, scan_root);
+            scanned += scan_directory(&path, tokens, violations, scan_root);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            scanned += 1;
             check_file(&path, tokens, violations, scan_root);
         }
     }
+    scanned
 }
 
 fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
@@ -228,6 +254,43 @@ const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
     "remove_dir.rs",
 ];
 
+/// Every allowlist entry names a file that still exists.
+///
+/// Both allowlists are matched by path string, so a rename leaves a dead entry
+/// behind rather than failing. That is worse than clutter: the exemption stays
+/// armed at the old path, so a *new* file arriving there — `src/help.rs` is the
+/// shape, a name a future refactor could plausibly reuse — inherits a
+/// permission nobody granted it, and the guard stays green while it writes to
+/// stdout. Pinning existence turns the rename into a failing test at the moment
+/// it happens, when the reviewer still knows whether the exemption should move
+/// with the file or go.
+#[test]
+fn allowlisted_paths_still_exist() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let stale: Vec<String> = [
+        ("STDOUT_ALLOWED_PATHS", STDOUT_ALLOWED_PATHS),
+        ("STD_STDERR_ALLOWED_PATHS", STD_STDERR_ALLOWED_PATHS),
+    ]
+    .iter()
+    .flat_map(|(list_name, paths)| {
+        paths
+            .iter()
+            .filter(|relative| !src_dir.join(relative).is_file())
+            .map(move |relative| format!("{list_name}: src/{relative}"))
+    })
+    .collect();
+
+    assert!(
+        stale.is_empty(),
+        "allowlist entries naming files that no longer exist:\n\n{}\n\n\
+         The entry exempts whatever file later occupies that path, so a stale one\n\
+         silently pre-approves stdout (or std's stderr macros) for code nobody reviewed.\n\
+         Move the entry to the file's new path, or drop it.",
+        stale.join("\n")
+    );
+}
+
 /// Narration on stderr goes out through anstream, at every site.
 ///
 /// `worktrunk::styling`'s `eprint!`/`eprintln!` are anstream's and strip ANSI
@@ -246,7 +309,8 @@ const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
 fn check_stderr_macros_come_from_styling() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
-    scan_stderr_macros(&src_dir, &src_dir, &mut violations);
+    let scanned = scan_stderr_macros(&src_dir, &src_dir, &mut violations);
+    assert_scanned_something(scanned, &src_dir);
     violations.sort();
 
     assert!(
@@ -261,20 +325,25 @@ fn check_stderr_macros_come_from_styling() {
     );
 }
 
-fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
+/// Returns the number of `.rs` files the walk reached — see
+/// [`assert_scanned_something`].
+fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) -> usize {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return 0,
     };
 
+    let mut scanned = 0;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scan_stderr_macros(&path, src_dir, violations);
+            scanned += scan_stderr_macros(&path, src_dir, violations);
         } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            scanned += 1;
             check_stderr_macros_in_file(&path, src_dir, violations);
         }
     }
+    scanned
 }
 
 fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec<String>) {
