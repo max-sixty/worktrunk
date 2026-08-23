@@ -128,16 +128,23 @@ fn check_no_unexpected_stdout_writes() {
     }
 }
 
+/// A floor on how much of the crate a `src/` walk must reach before its
+/// verdict means anything. `src/` holds ~200 `.rs` files, so this clears a
+/// partial walk — a workspace split that leaves a stub behind, a subtree that
+/// stops being readable — as well as an empty one.
+const MIN_SCANNED_FILES: usize = 100;
+
 /// Both scans walk the tree with `Err(_) => return`, so an unreadable or
 /// relocated `src/` yields no violations and the guard passes having inspected
 /// nothing. The count each walk returns is what tells those apart: a real run
-/// reaches hundreds of files, so any zero is the scan failing to find the
-/// crate, never a crate that stopped writing output.
+/// reaches hundreds of files, so a count near zero is the scan failing to find
+/// the crate, never a crate that stopped writing output.
 fn assert_scanned_something(scanned: usize, src_dir: &Path) {
     assert!(
-        scanned > 0,
-        "scanned no .rs files under {} — the guard passed without inspecting the crate.\n\
-         The walk swallows read errors, so this is a missing or unreadable scan root,\n\
+        scanned > MIN_SCANNED_FILES,
+        "scanned only {scanned} .rs files under {} — the guard passed without \
+         inspecting the crate.\n\
+         The walk swallows read errors, so this is a missing or unreadable scan root, \
          not a clean result.",
         src_dir.display()
     );
