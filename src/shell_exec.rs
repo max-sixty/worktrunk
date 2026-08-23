@@ -3185,19 +3185,24 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_escalation_preserves_term_exit_when_leader_unreaped() {
-        // Replays `kill_timed_out_tree`'s sequence: the caller holds the group
-        // leader unreaped while escalating, so the child's TERM-time exit
-        // leaves a zombie the liveness probe counts as alive, the grace runs
-        // to its deadline, and the final group SIGKILL fires anyway. The
-        // recorded exit must still be the SIGTERM — the sweep against an
-        // already-dead group may not alter it.
+    fn test_escalation_full_grace_and_inert_sweep_when_leader_unreaped() {
+        // Replays `kill_timed_out_tree`'s position: the caller holds the group
+        // leader unreaped while escalating. The child has already exited when
+        // escalation starts (stdout EOF is the barrier — the pipe closes when
+        // the process exits, so this needs no scheduling assumptions), but
+        // nobody reaps it, so the liveness probe counts the zombie, the grace
+        // runs to its deadline, and the final group SIGKILL fires against the
+        // dead group. The recorded exit must come through untouched — signals
+        // to a fully-exited group are discarded.
         use std::os::unix::process::CommandExt;
-        use std::os::unix::process::ExitStatusExt;
-        let mut cmd = std::process::Command::new("sleep");
-        cmd.arg("30").process_group(0);
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "exit 7"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0);
         let mut child = cmd.spawn().unwrap();
         let pid = child.id() as i32;
+        let mut eof = Vec::new();
+        child.stdout.take().unwrap().read_to_end(&mut eof).unwrap();
 
         let start = Instant::now();
         super::forward_signal_with_escalation(pid, signal_hook::consts::SIGTERM);
@@ -3208,9 +3213,9 @@ mod tests {
 
         let status = child.wait().unwrap();
         assert_eq!(
-            status.signal(),
-            Some(signal_hook::consts::SIGTERM),
-            "the post-grace SIGKILL must not change the recorded cause of death"
+            status.code(),
+            Some(7),
+            "the TERM and the post-grace SIGKILL must not alter the recorded exit"
         );
     }
 
