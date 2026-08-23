@@ -2321,7 +2321,7 @@ pub fn forward_signal_to_pid(pid: i32, sig: i32) {
 /// its own grace) before the SIGKILL, so an interrupted git still runs its
 /// TERM-time lockfile cleanup before force-kill.
 ///
-/// "Still remains" is [`process_group_alive`]'s answer, and that probe counts
+/// "Still remains" is `process_group_alive`'s answer, and that probe counts
 /// an exited-but-unreaped member as alive — it cannot tell a zombie from live
 /// work. The over-report errs in the safe direction on both sides:
 ///
@@ -2329,7 +2329,7 @@ pub fn forward_signal_to_pid(pid: i32, sig: i32) {
 ///   runs to its deadline and the final SIGKILL lands on a dead group, which
 ///   is a no-op — a signal to a fully-exited process is discarded and cannot
 ///   change its recorded exit status, so TERM-time cleanup that already ran is
-///   not undone. [`kill_timed_out_tree`] is permanently in this position: its
+///   not undone. `kill_timed_out_tree` is permanently in this position: its
 ///   caller holds the group leader unreaped throughout (see its doc), so on
 ///   that path the sweep always fires, harmlessly.
 /// - A member is genuinely alive at the deadline: the probe is accurate and
