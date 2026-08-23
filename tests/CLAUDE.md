@@ -48,8 +48,10 @@ When `codecov/patch` fails, investigate before declaring ready (the merge gate i
 
 ```bash
 task coverage
-cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; matches codecov line-for-line
+cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; same lines codecov counts
 ```
+
+Since cargo-llvm-cov 0.9.0 that column collapses consecutive misses into ranges (`12-18`, not `12, 13, …`), so expand a range before comparing it against a codecov line list.
 
 For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested.
 
