@@ -34,7 +34,10 @@
 //!   when implementation lives in different modules (`sha_cache` for parsed
 //!   results, `commands::picker::preview_cache` for rendered previews). The
 //!   `wt list` probe object store (`.git/wt/cache/probe-objects/`) belongs to
-//!   this category too: git re-derives its contents on the next probe
+//!   this category too: git re-derives its contents on the next probe. Both
+//!   sides count its loose objects (`count_probe_objects`), not the directory's
+//!   existence, since `wt list` creates the directory even when no probe writes
+//!   into it
 //! - Hints (git config `worktrunk.hints.*`)
 //!
 //! Each category has a `clear_*_reported` helper that clears it and prints its
@@ -1132,20 +1135,52 @@ fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
     ))
 }
 
-/// Remove the `wt list` probe object store, counting it as one entry when it
-/// held anything.
+/// Path to the `wt list` probe object store.
+fn probe_object_store(repo: &Repository) -> PathBuf {
+    repo.wt_dir().join("cache").join("probe-objects")
+}
+
+/// Count loose objects in the `wt list` probe object store.
+///
+/// Counts objects rather than reporting the directory's existence, because
+/// `wt list` creates the store whether or not a probe writes into it: an
+/// existence check would report a cleared entry in essentially every repo. The
+/// clear side counts the same way, so `state get` and `state clear` agree.
+pub(super) fn count_probe_objects(repo: &Repository) -> usize {
+    let store = probe_object_store(repo);
+    let Ok(fanouts) = std::fs::read_dir(&store) else {
+        return 0;
+    };
+    fanouts
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            // Loose object fanout directories are two hex characters, which
+            // also excludes the `info` and `pack` subdirectories.
+            name.len() == 2 && name.chars().all(|c| c.is_ascii_hexdigit())
+        })
+        .filter_map(|fanout| std::fs::read_dir(fanout.path()).ok())
+        .map(|objects| objects.filter_map(Result::ok).count())
+        .sum()
+}
+
+/// Remove the `wt list` probe object store, returning the number of objects it
+/// held.
 ///
 /// The store carries only probe output, so git re-derives what it needs on the
 /// next probe. It is reported under the git commands cache rather than as its
-/// own category, which keeps the `state get` ↔ `state clear` parity intact.
+/// own category, and [`count_probe_objects`] feeds the same number into
+/// `state get`, which is what keeps the `state get` ↔ `state clear` parity.
 fn clear_probe_objects(repo: &Repository) -> anyhow::Result<usize> {
-    let store = repo.wt_dir().join("cache").join("probe-objects");
+    let store = probe_object_store(repo);
     if !store.exists() {
         return Ok(0);
     }
+    let held = count_probe_objects(repo);
     std::fs::remove_dir_all(&store)
         .with_context(|| format!("Failed to remove probe object store {}", store.display()))?;
-    Ok(1)
+    Ok(held)
 }
 
 fn clear_vars_reported(repo: &Repository) -> anyhow::Result<bool> {
@@ -1268,7 +1303,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "ci_status": ci_status,
         "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries,
-        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo) + count_probe_objects(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1452,7 +1487,7 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
         "ci_status": ci_status_json(repo),
         "max_pr_number": MaxPrNumber::read(repo),
         "summaries": summaries_json(repo),
-        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo) + count_probe_objects(repo),
         "hints": repo.list_shown_hints(),
     });
 
@@ -1542,7 +1577,8 @@ fn render_summary_section(out: &mut String, repo: &Repository) -> anyhow::Result
 /// regardless of which module owns the entries.
 fn render_git_commands_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let cache_count = sha_cache::count_all(repo) + preview_cache::count_all(repo);
+    let cache_count =
+        sha_cache::count_all(repo) + preview_cache::count_all(repo) + count_probe_objects(repo);
     if cache_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {

@@ -1682,6 +1682,44 @@ fn test_state_cache_clear_with_entries(repo: TestRepo) {
     ");
 }
 
+/// `cache clear` removes the `wt list` probe object store.
+///
+/// The store is reported under the git commands cache rather than as its own
+/// category, which keeps the `state get` ↔ `state clear` parity: nothing
+/// disappears that `state get` never mentioned.
+#[rstest]
+fn test_state_cache_clear_removes_probe_objects(repo: TestRepo) {
+    let probe_store = repo.root_path().join(".git/wt/cache/probe-objects");
+    std::fs::create_dir_all(probe_store.join("info")).unwrap();
+    std::fs::create_dir_all(probe_store.join("pack")).unwrap();
+    // A loose object, as a probe would leave behind.
+    let fanout = probe_store.join("ab");
+    std::fs::create_dir_all(&fanout).unwrap();
+    std::fs::write(fanout.join("cdef"), b"probe output").unwrap();
+
+    let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert!(
+        !probe_store.exists(),
+        "cache clear must remove the probe object store"
+    );
+}
+
+/// A missing probe store is not an error, and is not reported as cleared.
+#[rstest]
+fn test_state_cache_clear_without_probe_objects(repo: TestRepo) {
+    let probe_store = repo.root_path().join(".git/wt/cache/probe-objects");
+    assert!(!probe_store.exists(), "precondition: no store yet");
+
+    let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("git commands cache"),
+        "an absent probe store must not report a cleared entry: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// `cache clear` must leave authoritative state (markers, vars,
 /// default-branch override) untouched — only regenerable caches are dropped.
 #[rstest]

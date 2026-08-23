@@ -1309,6 +1309,124 @@ mod read_only_object_store_tests {
         );
     }
 
+    /// The redirect uses the persistent store when the git dir allows it, so
+    /// probe objects survive for the next invocation to resolve against.
+    #[test]
+    fn redirect_prefers_the_persistent_probe_store() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let redirected = repo.redirect_objects_for_observation().unwrap();
+        let (directory, _) = redirected.object_store_environment().unwrap();
+        assert!(
+            directory.ends_with("probe-objects"),
+            "expected the persistent store, got {}",
+            directory.display()
+        );
+        assert!(
+            directory.join("info").is_dir() && directory.join("pack").is_dir(),
+            "the store must have git's own objects layout"
+        );
+    }
+
+    /// A git dir that cannot be written to falls back to a temporary store.
+    ///
+    /// The fallback is what keeps the probe working in a read-only checkout —
+    /// the case #3535 built the redirect for. It costs cross-run reuse, so it is
+    /// the second choice rather than the default.
+    #[cfg(unix)]
+    #[test]
+    fn redirect_falls_back_to_a_temporary_store_when_the_git_dir_is_read_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // `.git/wt` is where the persistent store would go; make its creation
+        // fail by removing write permission from the git dir itself.
+        let git_dir = test.root_path().join(".git");
+        let original = std::fs::metadata(&git_dir).unwrap().permissions();
+        let mut read_only = original.clone();
+        read_only.set_mode(0o500);
+        std::fs::set_permissions(&git_dir, read_only).unwrap();
+
+        let redirected = repo.redirect_objects_for_observation();
+        let store = redirected
+            .as_ref()
+            .and_then(|repo| repo.object_store_environment())
+            .map(|(directory, _)| directory.to_path_buf());
+
+        // Restore before asserting so a failure can't leave the fixture
+        // undeletable.
+        std::fs::set_permissions(&git_dir, original).unwrap();
+
+        let store = store.expect("a read-only git dir must still yield a store");
+        assert!(
+            !store.ends_with("probe-objects"),
+            "expected the temporary fallback, got the persistent store at {}",
+            store.display()
+        );
+        assert!(
+            store.is_dir(),
+            "the fallback store must exist while the repository holds it"
+        );
+    }
+
+    /// A probe store left over from a writable run must not defeat the fallback.
+    ///
+    /// `create_dir_all` returns `Ok(())` for a directory that already exists
+    /// whatever its mode, so it cannot answer "can git write here?". Without a
+    /// real write probe, a store created while the repo was writable keeps the
+    /// persistent branch after the repo goes read-only, and every probe then
+    /// fails with `insufficient permission for adding an object`. This is the
+    /// ordinary sandbox sequence: run `wt list`, then mount the repo read-only.
+    #[cfg(unix)]
+    #[test]
+    fn a_pre_existing_probe_store_still_falls_back_when_read_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Warm run while writable creates the persistent store.
+        let warm = repo.redirect_objects_for_observation().unwrap();
+        let (store, _) = warm.object_store_environment().unwrap();
+        let store = store.to_path_buf();
+        assert!(store.ends_with("probe-objects"), "expected the warm store");
+        drop(warm);
+
+        // Now clear the write bits on the store and its subdirectories, as a
+        // read-only mount would.
+        let targets = [store.join("info"), store.join("pack"), store.clone()];
+        let originals: Vec<_> = targets
+            .iter()
+            .map(|path| (path.clone(), std::fs::metadata(path).unwrap().permissions()))
+            .collect();
+        for (path, permissions) in &originals {
+            let mut read_only = permissions.clone();
+            read_only.set_mode(0o500);
+            std::fs::set_permissions(path, read_only).unwrap();
+        }
+
+        let redirected = repo.redirect_objects_for_observation();
+        let selected = redirected
+            .as_ref()
+            .and_then(|repo| repo.object_store_environment())
+            .map(|(directory, _)| directory.to_path_buf());
+
+        // Restore before asserting so a failure cannot leave the fixture
+        // undeletable.
+        for (path, permissions) in originals {
+            std::fs::set_permissions(&path, permissions).unwrap();
+        }
+
+        let selected = selected.expect("a read-only store must still yield a redirect");
+        assert_ne!(
+            selected, store,
+            "a read-only pre-existing store must not be reused; \
+             the temporary fallback exists for exactly this case"
+        );
+    }
+
     /// The safety property behind scoping the redirect to observational
     /// commands: a redirected merge tree is computed correctly but written only
     /// to the probe store, so it is *not* in the real object database. A

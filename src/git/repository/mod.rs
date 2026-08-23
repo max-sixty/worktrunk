@@ -658,11 +658,11 @@ pub struct Repository {
     git_common_dir: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
-    /// When set, object-writing git plumbing is redirected into a temporary
-    /// object database so observational commands run in a read-only checkout.
-    /// `None` for the normal (persistent) path. See
-    /// [`Repository::redirect_objects_for_observation`].
-    temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
+    /// When set, object-writing git plumbing is redirected into the probe object
+    /// store, keeping never-referenced probe output out of the real database.
+    /// `None` on the normal path, where object writes go to the real database.
+    /// See [`Repository::redirect_objects_for_observation`].
+    probe_object_redirect: Option<Arc<ProbeObjectRedirect>>,
 }
 
 /// A side object database that a redirected [`Repository`] writes new objects
@@ -674,7 +674,7 @@ pub struct Repository {
 /// also shares one `TempDir` lifetime, and its directory is removed when the
 /// last clone drops.
 #[derive(Debug)]
-struct TemporaryObjectDirectory {
+struct ProbeObjectRedirect {
     store: ProbeObjectStore,
     alternates: OsString,
 }
@@ -754,14 +754,14 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
-            temporary_object_directory: None,
+            probe_object_redirect: None,
         })
     }
 
     /// Return a clone whose object-writing git plumbing is redirected into a
-    /// temporary object database (with the real database as a read-only
-    /// alternate), or `None` when no temporary store could be created — in
-    /// which case the caller keeps using `self` unchanged.
+    /// probe object store (with the real database as a read-only alternate), or
+    /// `None` when no store could be created — in which case the caller keeps
+    /// using `self` unchanged.
     ///
     /// Only *observational* commands may redirect. `wt list`'s merge and
     /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
@@ -791,37 +791,55 @@ impl Repository {
         self.with_probe_object_store()
     }
 
-    /// Build a clone whose object writes are redirected into the probe object
-    /// store, with the real database as a read-only alternate so existing
-    /// objects still resolve. Prefers the persistent `.git/wt/cache/probe-objects`
-    /// and falls back to a temporary directory when the git dir is not
-    /// writable. Returns `None` when neither can be created, leaving the caller
-    /// on the real database.
+    /// The persistent probe object store at `.git/wt/cache/probe-objects`,
+    /// created on demand with the `info`/`pack` subdirectories git expects of an
+    /// object database. `None` when the store is not writable, which sends the
+    /// caller to a temporary store.
     ///
-    /// This is the *mechanism*. Which callers may use it is the policy, and it
-    /// lives in the call sites: only the observational `wt list` entry points
-    /// redirect, because a mutating command's commit would not be reachable
-    /// from the real database afterwards.
-    /// The persistent probe object store at `.git/wt/cache/probe-objects`, created on
-    /// demand with the `info`/`pack` subdirectories git expects of an object
-    /// database. `None` when the git dir is not writable, which sends the caller
-    /// to a temporary store.
-    ///
-    /// The store holds only probe output, so it is safe to delete at any time;
-    /// git re-derives what it needs on the next probe. It grows with distinct
-    /// working-tree states rather than without bound, since `write-tree` is
-    /// content-addressed and a repeated state re-resolves instead of writing.
+    /// The store holds only probe output, so it is safe to delete at any time and
+    /// git re-derives what it needs on the next probe. Nothing reclaims it
+    /// automatically, though: unreachable objects in `.git/objects` were
+    /// eventually collected by git's own auto-gc, whereas this store shrinks only
+    /// on `wt config state cache clear`. It grows with distinct working-tree
+    /// states, which over a repo's life is not bounded, so a churning artifact
+    /// still accumulates — moved somewhere `git gc` and `git fsck` do not account
+    /// for rather than eliminated. Bounding it is worth a follow-up;
+    /// `cache::sweep_lru` does not drop in, since it counts top-level `.json`
+    /// files and this is a two-level fanout.
     fn persistent_probe_object_store(&self) -> Option<ProbeObjectStore> {
         let store = self.wt_dir().join("cache").join("probe-objects");
         // `info` and `pack` are what git's own `objects` layout provides; a
         // store lacking them still works for writes but warns on some paths.
         std::fs::create_dir_all(store.join("info")).ok()?;
         std::fs::create_dir_all(store.join("pack")).ok()?;
+
+        // `create_dir_all` returns `Ok(())` for a directory that already exists
+        // whatever its mode, so it cannot answer "can git write here?" — a store
+        // created while the repo was writable would otherwise keep the
+        // persistent branch after the repo went read-only, which is the case the
+        // temporary fallback exists for. Probe the store the way git's object
+        // writers do, and drop the probe file immediately.
+        tempfile::Builder::new()
+            .prefix(".worktrunk-write-probe-")
+            .tempfile_in(&store)
+            .ok()?;
+
         Some(ProbeObjectStore::Persistent(
             canonicalize(&store).unwrap_or(store),
         ))
     }
 
+    /// Build a clone whose object writes are redirected into the probe object
+    /// store, with the real database as a read-only alternate so existing
+    /// objects still resolve. Prefers the persistent
+    /// `.git/wt/cache/probe-objects` and falls back to a temporary directory
+    /// when the git dir cannot be written to. Returns `None` when neither can be
+    /// created, leaving the caller on the real database.
+    ///
+    /// This is the *mechanism*. Which callers may use it is the policy, and that
+    /// lives in the call sites: only the observational `wt list` entry points
+    /// redirect, because a mutating command's commit would not be reachable from
+    /// the real database afterwards.
     fn with_probe_object_store(&self) -> Option<Self> {
         let alternates = self.object_database_path().into_os_string();
         let store = self.persistent_probe_object_store().or_else(|| {
@@ -833,8 +851,7 @@ impl Repository {
         })?;
 
         let mut clone = self.clone();
-        clone.temporary_object_directory =
-            Some(Arc::new(TemporaryObjectDirectory { store, alternates }));
+        clone.probe_object_redirect = Some(Arc::new(ProbeObjectRedirect { store, alternates }));
         Some(clone)
     }
 
@@ -855,15 +872,15 @@ impl Repository {
     /// repository, or `None` when object writes go to the real database.
     /// Copied into [`WorkingTree`]'s [`TempIndex`], which builds its own `Cmd`.
     pub(super) fn object_store_environment(&self) -> Option<(&Path, &OsStr)> {
-        self.temporary_object_directory
+        self.probe_object_redirect
             .as_ref()
-            .map(|temporary| (temporary.store.path(), temporary.alternates.as_os_str()))
+            .map(|redirect| (redirect.store.path(), redirect.alternates.as_os_str()))
     }
 
-    /// Add the temporary-object-database environment to `cmd` when this
-    /// repository is redirected; otherwise return `cmd` unchanged. Applied to
+    /// Add the probe-object-store environment to `cmd` when this repository is
+    /// redirected; otherwise return `cmd` unchanged. Applied to
     /// every git command the repository runs, so a redirected repository's
-    /// object writes all land in the temporary store.
+    /// object writes all land in the probe store.
     fn with_object_store_env(&self, cmd: Cmd) -> Cmd {
         match self.object_store_environment() {
             Some((directory, alternates)) => cmd
