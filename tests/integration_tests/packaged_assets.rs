@@ -52,6 +52,15 @@ fn embedded_assets_ship_in_package() {
     //    repo-root-relative forward-slash string.
     let mut assets = BTreeSet::new();
     scan_directory(&src_dir, manifest_dir, &mut assets);
+    // A walk that reaches no directory is the panic in `scan_directory`. This is
+    // the other way the discovery can come back empty: every file read, and the
+    // `include_str!` / `include_bytes!` / `#[template]` matching in `scan_file`
+    // recognizing none of them. The comparison below iterates `assets`, so an
+    // empty set checks nothing and passes.
+    assert!(
+        !assets.is_empty(),
+        "scanned src/ but found no embedded assets — the scanner is likely broken"
+    );
 
     // 2. The set of files `cargo publish` would put in the crates.io archive.
     let packaged = cargo_package_list(manifest_dir);
