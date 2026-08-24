@@ -12,7 +12,7 @@ call the canonical `hooks/wt.sh` below.
 worktrunk/                          ← repo root = marketplace root
 ├── .claude-plugin/marketplace.json ← Claude pointer  (source → ./plugins/worktrunk)
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
-├── .claude/skills/                  ← authored repo-local maintainer skills
+├── .claude/skills/                 ← authored repo-local maintainer skills
 ├── .agents/skills → ../.claude/skills
 │                                     Codex repo-skill pointer
 ├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
