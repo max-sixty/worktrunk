@@ -3,8 +3,7 @@
 #
 # The environment uses the `universal` image, caching, unrestricted internet,
 # and no variables or secrets. Configure its settings fields with these
-# commands. `dev/codex.sh` remains a supported forwarding entry point for
-# settings that still name that path:
+# commands:
 #
 #     bash .codex/cloud.sh setup
 #     bash .codex/cloud.sh maintain
