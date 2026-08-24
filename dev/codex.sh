@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# Compatibility entry point for existing Codex Cloud environment settings.
+# Supported forwarding entry point for Codex Cloud settings that use this path.
 
 exec "$(dirname "${BASH_SOURCE[0]}")/../.codex/cloud.sh" "$@"
