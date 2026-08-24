@@ -327,9 +327,9 @@ jq -n --arg cwd "$PWD" '{
 # Debug build on purpose. `tend-weekly` installs no `wt`, and its rust-cache
 # step is `save-if: false` under a key no workflow writes, so `--release`
 # means a cold optimized build of the whole dependency graph before the first
-# render. What this check reads — duplicate `(command, context)` pairs and the
-# subprocess count — is profile-independent; only the timing columns, which
-# this section doesn't triage, would be worth a release build.
+# render. The duplicate `(command, context)` pairs this check reads are
+# profile-independent; only the timing columns, which this section doesn't
+# triage, would be worth a release build.
 cargo run -- -vv list statusline --format=claude-code \
   < /tmp/statusline-input.json > /dev/null
 cargo run -- config state logs profile --format=json | jq .cache
@@ -344,26 +344,6 @@ Triage each duplicate:
   open an issue or fix it. Common shapes: `merge_base("main", "<sha>")` vs
   `merge_base("main", "branch")` keying separately;
   `worktree_at(cwd)` vs `worktree_at(porcelain_path)` not canonicalizing.
-- **Measurement artifact** — `-vv` is what produces the trace, and the
-  diagnostic collector that writes the bundle runs its own `git --version`,
-  `gh --version`, and `git worktree list --porcelain` (`src/diagnostic.rs`)
-  *after* the render, into the same trace. So the report reliably pairs those
-  with the render's calls on an otherwise clean run. Only a duplicate *within*
-  the render is a finding; the collector's calls are the trailing block in
-  `"$(git rev-parse --git-common-dir)/wt/logs/trace.log"`.
-
-Baseline: ~29 git subprocesses per render on a clean tree; a jump above
-~32 warrants investigation. `command_count` in the same JSON report is the
-number to read, minus the collector's three calls: the baseline was measured
-before the recipe used `-vv`, so it counts the render alone, and three is the
-whole width of the ~32 threshold.
-
-Discounting by hand is a stopgap — the durable fix is to give the collector's
-subprocesses a reserved context in `Profile::from_entries` and exclude it from
-both `command_count` and the duplicate bucketing, so the number means the
-render again. When that lands, delete this paragraph, the **Measurement
-artifact** bullet, and the discount clause in the paragraph above — the
-`~29`/`~32` baseline itself stays.
 
 ## Weekly Maintenance: LLM Model Names in Docs
 
