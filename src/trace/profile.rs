@@ -308,7 +308,9 @@ pub(super) fn command_label(command: &str, context: Option<&str>, result: &Trace
 /// Entries produced by the command being profiled.
 ///
 /// The diagnostic collector runs after that command and appends to the same
-/// trace under a reserved context. Every aggregate view uses this boundary.
+/// trace under a reserved context. Every subprocess aggregate uses this
+/// boundary — the timeline's `traced` span deliberately does not, since it
+/// reconciles against a `wall` that includes the collector.
 pub(super) fn profile_entries(entries: &[TraceEntry]) -> impl Iterator<Item = &TraceEntry> {
     entries
         .iter()
