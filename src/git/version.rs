@@ -140,6 +140,7 @@ mod tests {
             b"git version 2.43.0\nextra",
             b"git version 2.x.0\n",
             b"git version 2.43\n",
+            b"git version 4294967296.43.0\n",
             b"git version 2.43.0\xff\n",
         ] {
             assert!(parse_git_version(malformed).is_err());
