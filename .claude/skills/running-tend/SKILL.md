@@ -269,8 +269,8 @@ Files to update:
 | `.github/workflows/nightly.yaml` | `rustup override set nightly-<date>`, twice (`minimal-versions`, `check-unused-dependencies`) | a nightly from the last few weeks |
 
 Bump the nightly pins only when the pinned date is more than three months old.
-Cargo refuses a workspace whose `rust-version` exceeds the toolchain, so a pin
-left to drift past the new MSRV fails both jobs before they check anything.
+Cargo refuses a workspace whose `rust-version` exceeds the toolchain, so an
+MSRV bump past a stale pin fails both jobs before they check anything.
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
