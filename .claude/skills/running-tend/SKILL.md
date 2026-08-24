@@ -296,13 +296,24 @@ the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 
 Pinned third-party versions in CI are invisible to Dependabot — it follows `Cargo.toml` deps and `uses: foo@vN` action refs, not inline `version:` strings. They drift unless this step bumps them.
 
-For each weekly run, check upstream and bump:
+Each weekly run checks every pin below against upstream and bumps whatever has drifted. A bump that can turn a whole CI leg red — an OS image, a major version, a tool whose version moves snapshots — goes on its own branch and PR, so a red matrix decides only that bump instead of holding back the week's safe ones. The weekly runner is Linux, so that PR's own checks are the only place a macOS or Windows change gets tested: open it, then report what the checks said, red or green.
 
 - **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/{affected,ci,coverage,nightly}.yaml` and `.github/actions/{test,tend}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-affected`, `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. `cargo-affected` is pinned twice in `affected.yaml`; move both together. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
 - **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Five call sites: `coverage.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `.github/actions/{test,tend}-setup/action.yaml` — `tend-setup`'s copy is what puts `nu` in the agent's sandbox, so it moves with the others.
 - **Codex Cloud tools** — `dev/codex.sh` pins pre-commit, cargo-insta, cargo-nextest, Nushell, and PowerShell; `setup-web` pins Nushell and PowerShell. Keep cargo-insta, cargo-nextest, and Nushell level with `.github/actions/test-setup/action.yaml`, which pins the same three — the gate runs `--all-features`, so Nushell's version moves PTY snapshots. Nothing under `.github/` pins PowerShell (CI runs whatever the runner image ships), so bump that one on its own.
 - **Docs site packages** in `docs/package.json` are covered by Dependabot's `/docs` npm entry. Do not duplicate those bumps in this manual pin pass. The one thing that pass does own is the `ignore` entry for `typescript` majors in `.github/dependabot.yaml`: it suppresses the proposal Dependabot would otherwise make, so nothing else can surface it. Check `npm view @astrojs/check peerDependencies.typescript` against the current `typescript` major and delete the entry once the range covers it — the rule is version-agnostic, so left in place it blocks a major `@astrojs/check` fully supports just as silently as the TypeScript 7 it was added for (#3877).
-- **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
+- **Runner images** — every `runs-on:` label and matrix `os:`/`runner:` value in the workflows. A pin equals what its `-latest` label currently resolves to, which the availability table in `actions/runner-images` records:
+
+  ```bash
+  gh api repos/actions/runner-images/contents/README.md --jq '.content' \
+    | base64 -d | sed -n '/^| Image/,/^$/p'
+  ```
+
+  Bump any pin the table no longer lists against `-latest`, and update `ci.yaml`'s header comment, which records why each image is pinned. GitHub keeps two GA images per OS and begins deprecating the older one as soon as a newer goes GA, so a pin that has fallen off `-latest` is already scheduled out; the table's `deprecated` badge marks the deadline, not the moment to move.
+
+  A pin deliberately held back names, in that same comment, what the repo needs from the older image. Re-check that need against the newer image each week — upstream announces image changes as issues, so `gh search issues --repo actions/runner-images "<the need> <newer image>"` surfaces a reversal. The cited issue's own state is not the test: an announcement closes when its change ships, whichever way it went.
+
+  The `tend-*.yaml` workflows pin a runner too, but tend's generator writes them and `uvx tend@latest init` overwrites a hand edit; file a tend issue for those.
 
 Discovery shortcut: a recent green CI run on `main` flags cargo-install drift directly via workflow annotations. `gh run view <run-id> --json jobs --jq '.jobs[].databaseId' | xargs -I{} gh api repos/<owner>/<repo>/check-runs/{}/annotations` returns one warning per outdated pin.
 
