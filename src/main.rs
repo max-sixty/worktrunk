@@ -1179,17 +1179,24 @@ fn main() {
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ");
-    if command.is_some()
-        && let Err(error) = require_minimum_git()
-    {
+    let git_version_result = std::thread::scope(|scope| {
+        let git_version_check = command.is_some().then(|| scope.spawn(require_minimum_git));
+
+        // Fold the two cold-path rev-parses (`--git-common-dir` from
+        // `init_command_log`, the `prewarm_info` batch from `try_alias` →
+        // `project_config_path`) into one fork. Best-effort — failure leaves
+        // both on-demand callers unchanged. The independent version probe
+        // runs alongside it so the minimum-version gate adds no serial fork.
+        Repository::prewarm();
+
+        git_version_check.map(|check| match check.join() {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        })
+    });
+    if let Some(Err(error)) = git_version_result {
         handle_command_failure(error, verbose, &command_line);
     }
-
-    // Fold the two cold-path rev-parses (`--git-common-dir` from
-    // `init_command_log`, the `prewarm_info` batch from `try_alias` →
-    // `project_config_path`) into one fork. Best-effort — failure leaves both
-    // on-demand callers unchanged.
-    Repository::prewarm();
 
     {
         let _span = worktrunk::trace::Span::new("init_command_log");

@@ -5,6 +5,8 @@ use worktrunk::git::{
     add_hook_skip_hint,
 };
 
+use crate::common::{mock_commands::MockConfig, test_tempdir, wt_command};
+
 fn render_cases(cases: impl IntoIterator<Item = (&'static str, String)>) -> String {
     cases
         .into_iter()
@@ -459,7 +461,7 @@ fn multiline_error_helpers_normalize_line_endings() {
 #[test]
 #[cfg(unix)]
 fn git_unavailable_error_includes_command() {
-    let mut cmd = crate::common::wt_command();
+    let mut cmd = wt_command();
     cmd.arg("list")
         .env("PATH", "/nonexistent")
         .env_remove("GIT_EXEC_PATH");
@@ -471,4 +473,27 @@ fn git_unavailable_error_includes_command() {
         "stderr was:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn rejects_git_older_than_the_supported_minimum() {
+    let mock_bin = test_tempdir();
+    MockConfig::new("git")
+        .version("git version 2.42.4")
+        .write(mock_bin.path());
+
+    let mut paths = vec![mock_bin.path().to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+
+    let mut cmd = wt_command();
+    cmd.arg("list")
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin.path());
+    let output = cmd.output().unwrap();
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"\u{1b}[31m✗\u{1b}[39m \u{1b}[31mGit 2.42.4 is unsupported; Worktrunk requires Git 2.43.0 or newer\u{1b}[39m\n");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
 }

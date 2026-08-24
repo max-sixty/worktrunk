@@ -708,10 +708,10 @@ approved-commands = ['{hook}']
 ///
 /// Git 2.48 and newer honor `worktree.useRelativePaths` and enable the
 /// `extensions.relativeWorktrees` repository extension. Older supported Git
-/// versions ignore the setting and keep writing absolute registrations. Letting
-/// Git create the entry exercises the relative form where it is supported
-/// without fabricating repository metadata that the installed Git cannot
-/// remove.
+/// versions ignore the setting and keep writing absolute registrations. A
+/// hand-written relative entry would be unusable on Git 2.43, so Git creates
+/// the entry: this exercises the relative form where supported and the absolute
+/// form on older versions.
 #[rstest]
 fn test_remove_worktree_with_git_generated_registration_paths(mut repo: TestRepo) {
     repo.run_git(&["config", "worktree.useRelativePaths", "true"]);

@@ -23,10 +23,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use insta::assert_snapshot;
 use path_slash::PathExt as _;
-
-use crate::common::{mock_commands::MockConfig, test_tempdir, wt_command};
 
 #[test]
 fn vergen_env_vars_are_read_optionally() {
@@ -43,29 +40,6 @@ fn vergen_env_vars_are_read_optionally() {
          (#3123). Use `option_env!` and fall back to a default instead.",
         violations.join("\n")
     );
-}
-
-#[test]
-fn rejects_git_older_than_the_supported_minimum() {
-    let mock_bin = test_tempdir();
-    MockConfig::new("git")
-        .version("git version 2.42.4")
-        .write(mock_bin.path());
-
-    let mut paths = vec![mock_bin.path().to_path_buf()];
-    paths.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-
-    let mut cmd = wt_command();
-    cmd.arg("list")
-        .env("PATH", std::env::join_paths(paths).unwrap())
-        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin.path());
-    let output = cmd.output().unwrap();
-
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"\u{1b}[31m✗\u{1b}[39m \u{1b}[31mGit 2.42.4 is unsupported; Worktrunk requires Git 2.43.0 or newer\u{1b}[39m\n");
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
 }
 
 fn scan_directory(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {

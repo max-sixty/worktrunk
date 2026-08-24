@@ -1978,7 +1978,7 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
         let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
-        let path = crate::common::setup_minimal_path_with_git(&repo.root_path().join("test-bin"));
+        let path = crate::common::setup_minimal_path_with_git(&repo.home_path().join("test-bin"));
         let path_quoted = shell_quote(&path);
 
         // Script that explicitly removes wt from PATH but sets WORKTRUNK_BIN

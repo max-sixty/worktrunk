@@ -101,7 +101,7 @@ fn parse_git_version(stdout: &[u8]) -> anyhow::Result<GitInfo> {
         version: GitVersion {
             major: parse_component("major")?,
             minor: parse_component("minor")?,
-            patch: parse_component("patch")?,
+            patch: parse_component("patch").unwrap_or(0),
         },
         reported_version: reported_version.to_string(),
     })
@@ -115,6 +115,12 @@ mod tests {
     fn parses_supported_platform_version_formats() {
         for (input, expected, reported) in [
             ("git version 2.43.0\n", GitVersion::new(2, 43, 0), "2.43.0"),
+            ("git version 2.43\n", GitVersion::new(2, 43, 0), "2.43"),
+            (
+                "git version 2.45.GIT\n",
+                GitVersion::new(2, 45, 0),
+                "2.45.GIT",
+            ),
             (
                 "git version 2.50.1 (Apple Git-155)\n",
                 GitVersion::new(2, 50, 1),
@@ -139,7 +145,6 @@ mod tests {
             b"git version \n",
             b"git version 2.43.0\nextra",
             b"git version 2.x.0\n",
-            b"git version 2.43\n",
             b"git version 4294967296.43.0\n",
             b"git version 2.43.0\xff\n",
         ] {
