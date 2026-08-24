@@ -1,11 +1,30 @@
 use insta::assert_snapshot;
 use std::path::PathBuf;
+use std::process::Command;
+use tempfile::TempDir;
 use worktrunk::git::{
     Diagnostic, FailedCommand, GitError, HookErrorWithHint, HookType, RefType, WorktrunkError,
     add_hook_skip_hint,
 };
 
 use crate::common::{mock_commands::MockConfig, test_tempdir, wt_command};
+
+fn wt_with_git_version(version: &str) -> (TempDir, Command) {
+    let mock_bin = test_tempdir();
+    MockConfig::new("git")
+        .version(version)
+        .write(mock_bin.path());
+
+    let mut paths = vec![mock_bin.path().to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+
+    let mut cmd = wt_command();
+    cmd.env("PATH", std::env::join_paths(paths).unwrap())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin.path());
+    (mock_bin, cmd)
+}
 
 fn render_cases(cases: impl IntoIterator<Item = (&'static str, String)>) -> String {
     cases
@@ -477,23 +496,29 @@ fn git_unavailable_error_includes_command() {
 
 #[test]
 fn rejects_git_older_than_the_supported_minimum() {
-    let mock_bin = test_tempdir();
-    MockConfig::new("git")
-        .version("git version 2.42.4")
-        .write(mock_bin.path());
-
-    let mut paths = vec![mock_bin.path().to_path_buf()];
-    paths.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-
-    let mut cmd = wt_command();
-    cmd.arg("list")
-        .env("PATH", std::env::join_paths(paths).unwrap())
-        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", mock_bin.path());
+    let (_mock_bin, mut cmd) = wt_with_git_version("git version 2.42.4");
+    cmd.arg("list");
     let output = cmd.output().unwrap();
 
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"\u{1b}[31m✗\u{1b}[39m \u{1b}[31mGit 2.42.4 is unsupported; Worktrunk requires Git 2.43.0 or newer\u{1b}[39m\n");
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn shell_init_remains_available_on_older_git() {
+    let (_mock_bin, mut cmd) = wt_with_git_version("git version 2.42.4");
+    cmd.args(["config", "shell", "init", "nu"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "shell init failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("export def \"nu-complete wt\""),
+        "shell init must emit the Nushell integration:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }

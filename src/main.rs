@@ -921,6 +921,17 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
     }
 }
 
+/// Shell setup is Git-independent and may be evaluated or redirected during
+/// shell startup, so it remains available while the user upgrades Git.
+fn command_requires_supported_git(command: Option<&Commands>) -> bool {
+    !matches!(
+        command,
+        None | Some(Commands::Config {
+            action: ConfigCommand::Shell { .. },
+        })
+    )
+}
+
 fn dispatch_command(
     command: Commands,
     working_dir: Option<std::path::PathBuf>,
@@ -1180,7 +1191,8 @@ fn main() {
         .collect::<Vec<_>>()
         .join(" ");
     let git_version_result = std::thread::scope(|scope| {
-        let git_version_check = command.is_some().then(|| scope.spawn(require_minimum_git));
+        let git_version_check = command_requires_supported_git(command.as_ref())
+            .then(|| scope.spawn(require_minimum_git));
 
         // Fold the two cold-path rev-parses (`--git-common-dir` from
         // `init_command_log`, the `prewarm_info` batch from `try_alias` →
