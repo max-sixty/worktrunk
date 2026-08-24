@@ -165,18 +165,6 @@ pub enum FailureStrategy {
     Warn,
 }
 
-impl FailureStrategy {
-    /// Default strategy for a hook type: `pre-*` blocks (fail-fast), `post-*`
-    /// warns.
-    pub fn default_for(hook_type: HookType) -> Self {
-        if hook_type.is_pre() {
-            Self::FailFast
-        } else {
-            Self::Warn
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
     /// The repository, rooted at the worktree this operation acts on.
