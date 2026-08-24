@@ -278,9 +278,9 @@ Confirm it with `wt config alias dry-run <name>`: if the value is already substi
 
 To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](/extending/#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.
 
-## Installation fails with C compilation errors
+## What system dependencies are required?
 
-Worktrunk requires Git 2.34 or newer.
+Worktrunk requires Git 2.43 or newer.
 
 Installing with Cargo and the default features also requires a C99 compiler for bash syntax highlighting. If tree-sitter or C compilation fails (C99 mode, `le16toh` undefined), install without syntax highlighting:
 

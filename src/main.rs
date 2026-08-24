@@ -4,7 +4,8 @@ use color_print::cformat;
 use std::process;
 use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
-    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
+    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint,
+    require_minimum_git, set_base_path,
 };
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
@@ -920,6 +921,17 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
     }
 }
 
+/// Shell setup is Git-independent and may be evaluated or redirected during
+/// shell startup, so it remains available while the user upgrades Git.
+fn command_requires_supported_git(command: Option<&Commands>) -> bool {
+    !matches!(
+        command,
+        None | Some(Commands::Config {
+            action: ConfigCommand::Shell { .. },
+        })
+    )
+}
+
 fn dispatch_command(
     command: Commands,
     working_dir: Option<std::path::PathBuf>,
@@ -1174,16 +1186,30 @@ fn main() {
         logging::init(verbose);
     }
 
-    // Fold the two cold-path rev-parses (`--git-common-dir` from
-    // `init_command_log`, the `prewarm_info` batch from `try_alias` →
-    // `project_config_path`) into one fork. Best-effort — failure leaves both
-    // on-demand callers unchanged.
-    Repository::prewarm();
-
     let command_line = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(" ");
+    let git_version_result = std::thread::scope(|scope| {
+        let git_version_check = command_requires_supported_git(command.as_ref())
+            .then(|| scope.spawn(require_minimum_git));
+
+        // Fold the two cold-path rev-parses (`--git-common-dir` from
+        // `init_command_log`, the `prewarm_info` batch from `try_alias` →
+        // `project_config_path`) into one fork. Best-effort — failure leaves
+        // both on-demand callers unchanged. The independent version probe
+        // runs alongside it so the minimum-version gate adds no serial fork.
+        Repository::prewarm();
+
+        git_version_check.map(|check| match check.join() {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        })
+    });
+    if let Some(Err(error)) = git_version_result {
+        handle_command_failure(error, verbose, &command_line);
+    }
+
     {
         let _span = worktrunk::trace::Span::new("init_command_log");
         init_command_log(&command_line);

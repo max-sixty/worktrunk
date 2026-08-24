@@ -6,7 +6,7 @@ inputs:
     description: Install cargo-insta and cargo-nextest
     default: "true"
   install-shells:
-    description: Install zsh and fish for shell integration tests
+    description: Install zsh, fish, and nushell for shell integration tests
     default: "true"
 
 runs:
@@ -23,6 +23,11 @@ runs:
         echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
         echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
 
+    # `.config/tend.yaml`'s `sandbox_setup:` copies both binaries out of
+    # `$HOME/.cargo-install/<crate>/bin` — the root this action hardcodes — so
+    # the sandboxed agent can reach them (it can't see the runner's home on its
+    # PATH). Swapping this action for one with a different layout, or dropping
+    # these steps, breaks every tend workflow at that copy; update both sides.
     - name: Install cargo-insta
       if: inputs.install-cargo-tools == 'true'
       uses: baptiste0928/cargo-install@v3
@@ -77,12 +82,24 @@ runs:
         sudo timeout -k 30 300 apt-get update
         sudo timeout -k 30 300 apt-get install -y zsh fish
 
+    # The gate's `insta` step runs `--all-features`, which turns on
+    # `shell-integration-tests` — that needs `nu` as much as zsh and fish, and
+    # two tests `.expect()` it outright. `setup-nu` installs into a system
+    # location, so the agent inherits it (see "Sandbox toolchain" in
+    # .github/CLAUDE.md) with no `sandbox_setup:` line the way the runner-home
+    # installs above need. Level with `test-setup`'s pin.
+    - name: Install nushell
+      if: inputs.install-shells == 'true'
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.115.0'
+
     # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
     # agent can't install it: that user has no sudo, so it can't create /nix.
     # Installed here as `runner`, /nix/var/nix/profiles/default/bin lands on
-    # $GITHUB_PATH, and tend carries system PATH entries into the sandbox
-    # verbatim (only runner-home entries are rewritten), so the agent gets
-    # `nix`. ~4 s, so it isn't worth gating to the one workflow that needs it.
+    # $GITHUB_PATH — a system path, so the agent inherits `nix` on the same
+    # rule as `nu` above. ~4 s, so it isn't worth gating to the one workflow
+    # that needs it.
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       with:

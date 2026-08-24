@@ -706,7 +706,7 @@ expected path. Untracked and gitignored files remain at the original location.
 ## Dirty worktrees
 
 Linked worktrees relocate as-is — `git worktree move` carries uncommitted
-changes along. Only the main worktree skips when dirty (its `git checkout`
+changes along. Only the main worktree skips when dirty (its `git switch`
 refuses), unless `--commit` is passed.
 
 ## Skipped worktrees

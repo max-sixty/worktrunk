@@ -292,7 +292,7 @@ pub fn validate_candidates(
         // along with the worktree, so for linked worktrees we don't need to
         // require a clean state. The main worktree is different: it can't be
         // moved with `git worktree move`, and the fallback path runs
-        // `git checkout <default-branch>` which refuses to switch over
+        // `git switch <default-branch>` which refuses to switch over
         // uncommitted changes — so we still skip dirty main worktrees unless
         // `--commit` was passed.
         let worktree = repo.worktree_at(&candidate.wt.path);
@@ -658,7 +658,7 @@ impl<'a> RelocationExecutor<'a> {
 
     /// Main worktree can't use `git worktree move`; must create new + switch.
     ///
-    /// If `worktree add` fails after the initial checkout, the main worktree
+    /// If `worktree add` fails after the initial switch, the main worktree
     /// is left on `default_branch` rather than the original branch — the user
     /// can recover with `git switch -`. Restoring it here would be best-effort
     /// (no error surface) and the failure modes for `worktree add` (invalid
@@ -674,8 +674,8 @@ impl<'a> RelocationExecutor<'a> {
         let main_wt = self.repo.worktree_at(self.repo.repo_path()?);
 
         main_wt
-            .run_command(&["checkout", "--end-of-options", default_branch])
-            .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
+            .run_command(&["switch", "--end-of-options", default_branch])
+            .with_context(|| format!("Failed to switch to default branch '{default_branch}'"))?;
 
         let dest = candidate.expected_path.to_string_lossy();
         main_wt
