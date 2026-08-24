@@ -266,16 +266,11 @@ Files to update:
 | `Cargo.toml` | `rust-version` | `"1.93"` |
 | `tests/helpers/wt-perf/Cargo.toml` | `rust-version` | `"1.93"` |
 | `rust-toolchain.toml` | `channel` | `"1.93.0"` |
-| `.github/workflows/nightly.yaml` | `rustup override set nightly-<date>`, twice (`minimal-versions`, `check-unused-dependencies`) | a nightly at or above the new MSRV |
+| `.github/workflows/nightly.yaml` | `rustup override set nightly-<date>`, twice (`minimal-versions`, `check-unused-dependencies`) | a nightly from the last few weeks |
 
-The nightly pins are the ones that bite: cargo refuses a workspace whose
-`rust-version` exceeds the toolchain, so an MSRV bump past a stale pin fails
-both jobs before they check anything — and the failure follows the merge onto
-`main`, since `nightly.yaml`'s push trigger lists `**/Cargo.toml`. A nightly
-date's rustc version is in that day's `channel-rust-nightly.toml` under
-`static.rust-lang.org/dist/`, in the `[pkg.rustc]` block. Leave headroom
-rather than picking the first nightly that clears the new MSRV, so this isn't
-a weekly edit.
+Bump the nightly pins only when the pinned date is more than three months old.
+Cargo refuses a workspace whose `rust-version` exceeds the toolchain, so a pin
+left to drift past the new MSRV fails both jobs before they check anything.
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
