@@ -23,6 +23,11 @@ runs:
         echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
         echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
 
+    # `.config/tend.yaml`'s `sandbox_setup:` copies both binaries out of
+    # `$HOME/.cargo-install/<crate>/bin` — the root this action hardcodes — so
+    # the sandboxed agent can reach them (it can't see the runner's home on its
+    # PATH). Swapping this action for one with a different layout, or dropping
+    # these steps, breaks every tend workflow at that copy; update both sides.
     - name: Install cargo-insta
       if: inputs.install-cargo-tools == 'true'
       uses: baptiste0928/cargo-install@v3
