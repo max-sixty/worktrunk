@@ -102,9 +102,15 @@ runs:
       # Nothing is lost: tend's proxy overwrites `Authorization` on every
       # sandbox request to github.com, codeload.github.com, and api.github.com
       # with the bot's token, so flake fetches still authenticate.
+      #
+      # The `grep` runs under sudo like the `sed`, though the file is
+      # world-readable today: `grep` exits 2 when it can't read a file, and an
+      # `if` condition takes that as "no match", so a check that couldn't run
+      # would report success. After `sed -i` succeeds, root can read the file
+      # by construction.
       run: |
         sudo sed -i '/^access-tokens/d' /etc/nix/nix.conf
-        if grep -q 'access-tokens' /etc/nix/nix.conf; then
+        if sudo grep -q 'access-tokens' /etc/nix/nix.conf; then
           echo "::error::a GitHub token survived in /etc/nix/nix.conf"
           exit 1
         fi
