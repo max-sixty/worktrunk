@@ -826,14 +826,11 @@ pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 /// that [`log_output`] prepends to each block in `subprocess.log`, so the two
 /// render the command identically.
 fn command_header(cmd: &str, context: Option<&str>) -> String {
+    let context = crate::trace::emit::diagnostic_context().or(context);
     match context {
         Some(ctx) => format!("$ {cmd} [{ctx}]"),
         None => format!("$ {cmd}"),
     }
-}
-
-fn trace_context(context: Option<&str>) -> Option<&str> {
-    crate::trace::emit::diagnostic_context().or(context)
 }
 
 /// Log a command's captured stdin, stdout, and stderr to the debug targets.
@@ -1383,16 +1380,13 @@ impl Cmd {
     }
 
     fn log_run_start(&self, cmd_str: &str) {
-        tracing::debug!(
-            "{}",
-            command_header(cmd_str, trace_context(self.context.as_deref()))
-        );
+        tracing::debug!("{}", command_header(cmd_str, self.context.as_deref()));
     }
 
     fn log_stream_start(&self, cmd_str: &str, exec_mode: &str) {
         tracing::debug!(
             "{} (streaming, {})",
-            command_header(cmd_str, trace_context(self.context.as_deref())),
+            command_header(cmd_str, self.context.as_deref()),
             exec_mode
         );
     }
@@ -1400,7 +1394,7 @@ impl Cmd {
     fn log_delayed_stream_start(&self, cmd_str: &str, delay_ms: i64) {
         tracing::debug!(
             "{} (delayed stream, {}ms)",
-            command_header(cmd_str, trace_context(self.context.as_deref())),
+            command_header(cmd_str, self.context.as_deref()),
             delay_ms
         );
     }
