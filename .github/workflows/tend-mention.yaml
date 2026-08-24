@@ -432,7 +432,7 @@ jobs:
             install -m755 /home/runner/.cargo-install/cargo-insta/bin/cargo-insta ~/.local/bin/
             install -m755 /home/runner/.cargo-install/cargo-nextest/bin/cargo-nextest ~/.local/bin/
             uv tool install --quiet pre-commit
-            for t in cargo-insta cargo-nextest pre-commit nu; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; wt hook pre-merge cannot run"; exit 1; }; done
+            for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; see Sandbox toolchain in .github/CLAUDE.md"; exit 1; }; done
           prompt: >-
             ${{ steps.delay.outputs.seconds
             && format('This job started {0}s after the triggering event (over ~40s means it was queued). ',

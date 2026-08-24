@@ -83,14 +83,15 @@ running in that same `release` environment.
 
 The agent runs as `tend-sandbox`, whose PATH tend derives from the runner's by
 rewriting a leading `/home/runner` to `/home/tend-sandbox` and keeping an entry
-only where that directory exists. `useradd -m` seeds the sandbox home from
-`/etc/skel`, so an image-baked toolchain has a sibling there and survives;
-anything `tend-setup` installs at runtime into the runner's home has none and is
-dropped, unlogged. So a tool the agent needs has to land in a system location
-(`/opt/hostedtoolcache/...`, `/usr/local/bin`), which carries across verbatim —
-the route `nu` takes — or be copied in by `.config/tend.yaml`'s
-`sandbox_setup:`, which is what the pre-merge gate's `cargo-insta`,
-`cargo-nextest` and `pre-commit` take. Its closing probe asserts all four.
+only where the rewritten directory exists and the sandbox UID can traverse it.
+`useradd -m` seeds the sandbox home from `/etc/skel`, so an image-baked
+toolchain has a sibling there and survives; anything `tend-setup` installs at
+runtime into the runner's home has none and is dropped, unlogged. So a tool the
+agent needs has to land in a system location (`/opt/hostedtoolcache/...`,
+`/nix/var/nix/profiles/default/bin`), which carries across verbatim — the route
+`nu` and `nix` take — or be copied in by `.config/tend.yaml`'s `sandbox_setup:`,
+which is what the pre-merge gate's `cargo-insta`, `cargo-nextest` and
+`pre-commit` take. Its closing probe asserts every tool on both routes.
 
 ## Build environment
 

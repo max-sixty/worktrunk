@@ -6,15 +6,16 @@ setup:
 # the sandbox user once its PATH is built, with ~/.local/bin already first on it:
 # pre-commit installs into the sandbox's own home so uv's shim shebang resolves
 # there, and the cargo binaries are copied from where `tend-setup` already built
-# them, at the versions pinned there. The probe is the assertion — sandbox-setup
-# runs the block under `bash -eo pipefail`, so a tool that goes missing again
-# fails the job and files a tend-outage issue naming it.
+# them, at the versions pinned there. `nu` and `nix` take the system-location
+# route instead and need no line. The probe asserts all five: sandbox-setup
+# runs the block under `bash -eo pipefail`, so a tool that goes missing fails
+# the job and files a tend-outage issue naming it.
 sandbox_setup:
 - mkdir -p ~/.local/bin
 - install -m755 /home/runner/.cargo-install/cargo-insta/bin/cargo-insta ~/.local/bin/
 - install -m755 /home/runner/.cargo-install/cargo-nextest/bin/cargo-nextest ~/.local/bin/
 - uv tool install --quiet pre-commit
-- 'for t in cargo-insta cargo-nextest pre-commit nu; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; wt hook pre-merge cannot run"; exit 1; }; done'
+- 'for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; see Sandbox toolchain in .github/CLAUDE.md"; exit 1; }; done'
 secrets:
   allowed:
   - CODECOV_TOKEN

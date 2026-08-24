@@ -280,12 +280,13 @@ nix flake update rust-overlay
 nix eval .#devShells.x86_64-linux.default.name
 ```
 
-If `nix` isn't on the PATH, `tend-setup` regressed. Say so in the PR and leave
-`flake.lock` alone rather than hand-computing an entry.
+Commit `flake.lock` alongside the other toolchain changes once both commands
+succeed. A failure is reported in the PR, never worked around: leave the file
+alone if the update fails, `git checkout flake.lock` if the eval does, and
+hand-compute an entry in neither case.
 
-Commit `flake.lock` alongside the other toolchain changes. After bumping, run
-the full test suite (`cargo run -- hook pre-merge --yes`) and verify
-`cargo msrv verify` passes.
+After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
+and verify `cargo msrv verify` passes.
 
 ## Weekly Maintenance: CI Pin Bumps
 

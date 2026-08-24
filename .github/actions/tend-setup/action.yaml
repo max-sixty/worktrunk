@@ -96,10 +96,25 @@ runs:
 
     # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
     # agent can't install it: that user has no sudo, so it can't create /nix.
-    # Installed here as `runner`, /nix/var/nix/profiles/default/bin lands on
-    # $GITHUB_PATH — a system path, so the agent inherits `nix` on the same
-    # rule as `nu` above. ~4 s, so it isn't worth gating to the one workflow
-    # that needs it.
+    # `install-nix-action` runs as `runner` and puts
+    # /nix/var/nix/profiles/default/bin on $GITHUB_PATH — a system path, so the
+    # agent inherits `nix` on the same rule as `nu` above.
+    #
+    # Every tend workflow installs it, though only the weekly one runs `nix`.
+    # `.config/tend.yaml`'s probe asserts `nix` from inside the sandbox and
+    # runs everywhere, so gating this step to the weekly workflow would fail
+    # the rest. It costs 4 s of the action's ~50 s.
+    #
+    # The multi-user daemon install is what carries it across, so the ~1 s
+    # `nixbuild/nix-quick-install-action` is no substitute: it hands /nix to
+    # the runner and puts only $HOME/.nix-profile/bin on $GITHUB_PATH, which
+    # the /home/runner rewrite drops. Here root owns /nix and the sandbox user
+    # reaches the store through the daemon.
+    #
+    # Caching doesn't apply. Of the 4 s, the binary tarball is about half; the
+    # rest creates the nixbld users, /etc/nix and the daemon unit, which no
+    # restored /nix reproduces. Caching the store instead would serve only the
+    # weekly job's flake fetches, at the cost of a restore in every workflow.
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       with:
