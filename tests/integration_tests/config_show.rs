@@ -1034,7 +1034,8 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
-        cmd.env("PATH", "/usr/bin:/bin");
+        let path = crate::common::setup_minimal_path_with_git(&temp_home.path().join("bin"));
+        cmd.env("PATH", path);
         cmd.env(
             "ZDOTDIR",
             crate::common::canonicalize(temp_home.path())
@@ -1083,7 +1084,8 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
-        cmd.env("PATH", "/usr/bin:/bin");
+        let path = crate::common::setup_minimal_path_with_git(&temp_home.path().join("bin"));
+        cmd.env("PATH", path);
         cmd.env(
             "ZDOTDIR",
             crate::common::canonicalize(temp_home.path())

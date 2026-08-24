@@ -58,12 +58,11 @@ runs:
       shell: bash
       run: sudo apt-get update && sudo apt-get install -y zsh fish
 
-    - name: Install Git and shells (fish) - macOS
+    - name: Install shells (fish) - macOS
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        brew install fish git
-        echo "$(brew --prefix git)/bin" >> "$GITHUB_PATH"
+        brew install fish
         # bash and zsh are pre-installed on macOS
 
     - name: Install nushell
