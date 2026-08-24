@@ -3688,6 +3688,24 @@ fn test_plugin_layout_is_consolidated() {
     let read = |p: &str| fs::read_to_string(root.join(p)).unwrap();
     let json = |p: &str| serde_json::from_str::<serde_json::Value>(&read(p)).unwrap();
 
+    // Repo-local maintainer skills are authored once for Claude and exposed to
+    // Codex through its conventional .agents/skills discovery path. Windows
+    // checkouts with core.symlinks=false materialize the link as a plain file;
+    // that accepted limitation is documented in plugins/worktrunk/CLAUDE.md.
+    #[cfg(unix)]
+    {
+        let codex_skills = root.join(".agents/skills");
+        assert_eq!(
+            fs::read_link(&codex_skills).unwrap(),
+            std::path::Path::new("../.claude/skills"),
+            ".agents/skills must point at the authored Claude maintainer skills"
+        );
+        assert!(
+            codex_skills.join("running-tend/SKILL.md").is_file(),
+            ".agents/skills must resolve to the repo-local maintainer skills"
+        );
+    }
+
     // Repo root keeps ONLY the two loader-mandated marketplace pointers.
     assert!(
         !root.join(".claude-plugin/plugin.json").exists()

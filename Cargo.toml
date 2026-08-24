@@ -57,6 +57,7 @@ homepage = "https://worktrunk.dev"
 description = "A CLI for Git worktree management, designed for parallel AI agent workflows"
 license = "MIT OR Apache-2.0"
 default-run = "wt"
+exclude = [".agents/skills/**"]
 
 [package.metadata.release]
 # Allow releases from any branch (GitHub Actions uses detached HEAD)

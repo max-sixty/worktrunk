@@ -12,6 +12,9 @@ call the canonical `hooks/wt.sh` below.
 worktrunk/                          ← repo root = marketplace root
 ├── .claude-plugin/marketplace.json ← Claude pointer  (source → ./plugins/worktrunk)
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
+├── .claude/skills/                  ← authored repo-local maintainer skills
+├── .agents/skills → ../.claude/skills
+│                                     Codex repo-skill pointer
 ├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
 ├── hooks/hooks.json                ← Gemini activity hooks (call the wt.sh below)
 ├── skills/                         ← real dir; Gemini reads ${extensionPath}/skills directly
@@ -36,6 +39,13 @@ worktrunk/                          ← repo root = marketplace root
     └── (Codex activity hooks live *inline* in .codex-plugin/plugin.json's
         `hooks` key — see Known Limitations below)
 ```
+
+The repo-local maintainer skills are separate from the distributed plugin
+skills. `.claude/skills/` is their authored home, and the relative
+`.agents/skills` symlink lets Codex discover the same files. On Windows
+checkouts with `core.symlinks=false`, Git materializes the link as a plain file
+and Codex loads none of these repo-local skills. This limitation is accepted;
+installed plugins use the real-file mirror below and are unaffected.
 
 Path resolution differs by tool, all verified end-to-end against the real CLIs:
 

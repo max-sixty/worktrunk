@@ -30,7 +30,7 @@ Use consistently in docs, help text, and code comments:
 
 ## Skills
 
-Load relevant skills before starting; reload when scope changes mid-session. Project-local skills in `.claude/skills/`:
+Load relevant skills before starting; reload when scope changes mid-session. Project-local skills live in `.claude/skills/`, with `.agents/skills` linking Codex to the same files:
 
 - `writing-user-outputs` — before editing code that calls `warning_message`, `hint_message`, `error_message`, `info_message`, `eprintln`, `println`, or otherwise produces user-visible strings (CLI help, progress UI, snapshots).
 - `running-tend` — operating in CI or writing tend workflows.
