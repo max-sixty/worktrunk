@@ -44,11 +44,9 @@ If codecov fails **locally**, investigate with `task coverage` and
 `task` and `cargo-llvm-cov` are not installed in the `tend-setup` action.
 Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
-even `pwd` and `echo`. (Pre-built single-script installers like Determinate
-Nix's are fine — see **Weekly Maintenance: MSRV & Toolchain** for the one we
-use. The block is specifically about long-running cargo compiles.) Instead,
-query Codecov directly, following `tests/CLAUDE.md` → **Coverage
-Investigation** for the endpoints and their traps.
+even `pwd` and `echo`. Instead, query Codecov directly, following
+`tests/CLAUDE.md` → **Coverage Investigation** for the endpoints and their
+traps.
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
 artifact from the PR head's `coverage` workflow run — it contains a
@@ -271,23 +269,19 @@ Files to update:
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
-`rust-overlay` revision knows about the new version. Nix isn't installed in
-the tend sandbox by default — install it with the Determinate Systems
-installer (single script, daemon-mode, no prompts), then update:
+`rust-overlay` revision knows about the new version. `tend-setup` installs Nix
+with flakes enabled:
 
 ```bash
-curl -fsSL https://install.determinate.systems/nix -o /tmp/nix-installer.sh
-sh /tmp/nix-installer.sh install --no-confirm --determinate
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-nix flake update --extra-experimental-features 'nix-command flakes'
+# Name the input: a bare `nix flake update` also relocks nixpkgs, an
+# unrelated bump in a toolchain-scoped PR.
+nix flake update rust-overlay
+# Check the bumped channel still evaluates
+nix eval .#devShells.x86_64-linux.default.name
 ```
 
-Verify the new lock evaluates with the channel bump before committing:
-
-```bash
-nix eval --extra-experimental-features 'nix-command flakes' \
-  .#devShells.x86_64-linux.default.name
-```
+If `nix` isn't on the PATH, `tend-setup` regressed. Say so in the PR and leave
+`flake.lock` alone rather than hand-computing an entry.
 
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
