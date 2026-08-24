@@ -273,21 +273,19 @@ is needed. After updating the toolchain, refresh `flake.lock` so the locked
 with flakes enabled:
 
 ```bash
+# Name the input: a bare `nix flake update` also relocks nixpkgs, an
+# unrelated bump in a toolchain-scoped PR.
 nix flake update rust-overlay
 # Check the bumped channel still evaluates
 nix eval .#devShells.x86_64-linux.default.name
 ```
 
-Name the input. A bare `nix flake update` also relocks nixpkgs, which lands an
-unrelated bump in a PR scoped to the toolchain and hands the `nix-flake` job a
-nixpkgs nobody chose to move.
+If `nix` isn't on the PATH, `tend-setup` regressed. Say so in the PR and leave
+`flake.lock` alone rather than hand-computing an entry.
 
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 `cargo msrv verify` passes.
-
-If `nix` isn't on the PATH, `tend-setup` regressed. Say so in the PR and leave
-`flake.lock` alone rather than hand-computing an entry.
 
 ## Weekly Maintenance: CI Pin Bumps
 

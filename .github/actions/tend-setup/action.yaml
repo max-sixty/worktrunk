@@ -78,13 +78,11 @@ runs:
         sudo timeout -k 30 300 apt-get install -y zsh fish
 
     # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
-    # agent can't install it itself: that user has no sudo, so it can't create
-    # /nix. Installing here, as `runner`, puts /nix/var/nix/profiles/default/bin
-    # on $GITHUB_PATH, and tend carries system PATH entries into the sandbox
-    # verbatim (only runner-home entries get rewritten to the sandbox's own
-    # home), so the agent inherits `nix` with no `sandbox_path:` entry in
-    # .config/tend.yaml. It costs ~4 s, so every tend workflow pays it rather
-    # than gating on which one is running.
+    # agent can't install it: that user has no sudo, so it can't create /nix.
+    # Installed here as `runner`, /nix/var/nix/profiles/default/bin lands on
+    # $GITHUB_PATH, and tend carries system PATH entries into the sandbox
+    # verbatim (only runner-home entries are rewritten), so the agent gets
+    # `nix`. ~4 s, so it isn't worth gating to the one workflow that needs it.
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       with:
@@ -93,25 +91,20 @@ runs:
 
     - name: Strip the job token from /etc/nix/nix.conf
       shell: bash
-      # Runs while `runner` is still the only unprivileged user on the box.
       # The step above writes `access-tokens = github.com=<job token>` into
-      # /etc/nix/nix.conf whenever it can see one, and its action.yml passes
-      # `GITHUB_TOKEN: ${{ github.token }}` unconditionally, so no input
-      # suppresses it (install-nix.sh falls through to the job token when
-      # `github_access_token` is empty). The installer creates /etc/nix at
-      # mode 0555 and nix.conf at 0644, so the sandboxed agent could read a
-      # token carrying this job's `contents: write` and `pull-requests:
-      # write`. Deleting the line here closes that: the sandbox user isn't
-      # created until the tend action runs, so nothing untrusted can read the
-      # file in between.
+      # world-readable /etc/nix/nix.conf whenever it can see a token, and its
+      # action.yml passes `GITHUB_TOKEN: ${{ github.token }}` unconditionally.
+      # `github_access_token: ""` doesn't suppress it; install-nix.sh falls
+      # through to the job token, which on tend-weekly carries `contents:
+      # write`. Deleting the line here is enough, because the sandbox user
+      # doesn't exist until the tend action runs.
       #
-      # Nix loses nothing by it. tend's proxy overwrites `Authorization` on
-      # every sandbox request to github.com, codeload.github.com, and
-      # api.github.com with the bot's real token, whether or not nix sends
-      # one, so `github:` flake inputs still authenticate.
+      # Nothing is lost: tend's proxy overwrites `Authorization` on every
+      # sandbox request to github.com, codeload.github.com, and api.github.com
+      # with the bot's token, so flake fetches still authenticate.
       run: |
         sudo sed -i '/^access-tokens/d' /etc/nix/nix.conf
-        if sudo grep -q 'access-tokens' /etc/nix/nix.conf; then
+        if grep -q 'access-tokens' /etc/nix/nix.conf; then
           echo "::error::a GitHub token survived in /etc/nix/nix.conf"
           exit 1
         fi
