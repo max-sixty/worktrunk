@@ -369,8 +369,9 @@ whole width of the ~32 threshold.
 Discounting by hand is a stopgap — the durable fix is to give the collector's
 subprocesses a reserved context in `Profile::from_entries` and exclude it from
 both `command_count` and the duplicate bucketing, so the number means the
-render again. Delete this paragraph and the two notes above it when that
-lands.
+render again. When that lands, delete this paragraph, the **Measurement
+artifact** bullet, and the discount clause in the paragraph above — the
+`~29`/`~32` baseline itself stays.
 
 ## Weekly Maintenance: LLM Model Names in Docs
 
