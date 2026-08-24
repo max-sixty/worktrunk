@@ -79,6 +79,7 @@
 //! so it stays segmentable and joins back to this record via `seq`.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::fmt::Display;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -122,6 +123,41 @@ pub fn thread_id() -> u64 {
 /// construction (outside any verbosity gate) so the sequence is dense
 /// regardless of whether the file layers are active. Starts at 1.
 static CMD_SEQ: AtomicU64 = AtomicU64::new(1);
+
+/// Reserved context for subprocesses that build the `-vv` diagnostic report.
+///
+/// The raw trace retains these records, while aggregate profiles exclude them
+/// so they describe the command being diagnosed rather than its collector.
+pub const DIAGNOSTIC_CONTEXT: &str = "(diagnostic)";
+
+thread_local! {
+    static IN_DIAGNOSTIC_CONTEXT: Cell<bool> = const { Cell::new(false) };
+}
+
+struct DiagnosticContextGuard {
+    previous: bool,
+}
+
+impl Drop for DiagnosticContextGuard {
+    fn drop(&mut self) {
+        IN_DIAGNOSTIC_CONTEXT.set(self.previous);
+    }
+}
+
+/// Run `f` with subprocess trace records assigned to [`DIAGNOSTIC_CONTEXT`].
+///
+/// The override is thread-local so command work still completing on another
+/// thread keeps its original context. Nested scopes restore the prior state.
+pub fn with_diagnostic_context<T>(f: impl FnOnce() -> T) -> T {
+    let previous = IN_DIAGNOSTIC_CONTEXT.replace(true);
+    let _guard = DiagnosticContextGuard { previous };
+    f()
+}
+
+/// Active trace-context override for the current thread, if any.
+pub(crate) fn diagnostic_context() -> Option<&'static str> {
+    IN_DIAGNOSTIC_CONTEXT.get().then_some(DIAGNOSTIC_CONTEXT)
+}
 
 /// Emit a completed-command record (`ok=true`/`ok=false`).
 ///
@@ -244,7 +280,7 @@ impl CommandTrace {
     /// the captured start time brackets the subprocess.
     pub fn new(context: Option<&str>, cmd: &str) -> Self {
         Self {
-            context: context.map(ToOwned::to_owned),
+            context: diagnostic_context().or(context).map(ToOwned::to_owned),
             cmd: cmd.to_owned(),
             start_ts_us: now_us(),
             start: Instant::now(),
@@ -420,6 +456,23 @@ mod tests {
         drop(failed);
 
         CommandTrace::record_failed(None, "git nope", false, "precondition");
+    }
+
+    #[test]
+    fn diagnostic_context_overrides_and_restores_command_context() {
+        let assert_context = |expected: &str| {
+            let mut trace = CommandTrace::new(Some("worktree"), "git status");
+            assert_eq!(trace.context(), Some(expected));
+            trace.complete(true);
+        };
+
+        assert_context("worktree");
+        with_diagnostic_context(|| {
+            assert_context(DIAGNOSTIC_CONTEXT);
+            with_diagnostic_context(|| assert_context(DIAGNOSTIC_CONTEXT));
+            assert_context(DIAGNOSTIC_CONTEXT);
+        });
+        assert_context("worktree");
     }
 
     // A guard that reaches drop without complete()/fail() is a spawn site that

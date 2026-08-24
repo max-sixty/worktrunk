@@ -330,6 +330,15 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
         return;
     }
 
+    // The collector runs after the command and writes to the same trace. Mark
+    // all of its subprocesses at the source so aggregate profiles can exclude
+    // them without recognizing individual commands or relying on their order.
+    worktrunk::trace::emit::with_diagnostic_context(|| {
+        write_diagnostic(command_line, error_msg);
+    });
+}
+
+fn write_diagnostic(command_line: &str, error_msg: Option<&str>) {
     // Use Repository::current() which honors the -C flag
     let Ok(repo) = Repository::current() else {
         return;
