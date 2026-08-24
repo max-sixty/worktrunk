@@ -15,6 +15,7 @@ pub mod remote_ref;
 pub mod remove;
 mod repository;
 mod url;
+mod version;
 
 #[cfg(test)]
 mod test;
@@ -87,6 +88,8 @@ pub use repository::{
 pub use url::parse_owner_repo;
 pub use url::{GitRemoteUrl, GitRepoInfo, GitRepoProvider};
 pub(crate) use url::{canonical_url_path_segment, url_path_segments_eq};
+pub use version::{git_version, require_minimum_git};
+
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).

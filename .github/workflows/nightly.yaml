@@ -2,8 +2,8 @@ name: nightly
 # Slower checks that aren't worth running on every PR but should run before a
 # release. Jobs:
 #   - feature-powerset: feature-flag unification, check + test suite (motivated by #2442)
-#   - full-tests: full nextest suite on the linux/macos/windows matrix — the
-#     cargo-affected safety net (see the job comment and ci.yaml's affected block)
+#   - full-tests: full nextest suite on the standard OS matrix and Git 2.43.0 —
+#     the cargo-affected safety net (see the job comment and ci.yaml's affected block)
 #   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
 #   - check-unused-dependencies: cargo-udeps on nightly toolchain
 #   - minimal-versions: cargo check against minimum-version dep resolution
@@ -157,8 +157,9 @@ jobs:
     # means affected missed something, and that must not redden main — nightly
     # failures are non-blocking and Tend-fixable. Complements feature-powerset
     # (Linux, feature combos) and release-target (cross triples) by covering
-    # the standard 3-OS matrix that neither runs. At the affected-only flip,
-    # ci.yaml's `test` job is deleted and this becomes the sole full run.
+    # the standard 3-OS matrix that neither runs. A fourth row runs the same
+    # job with the minimum supported Git. At the affected-only flip, ci.yaml's
+    # `test` job is deleted and this becomes the sole full run.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     strategy:
@@ -167,6 +168,9 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
+          - os: ubuntu-24.04
+            name: git-2.43.0
+            git: '2.43.0'
           - os: macos-15
             name: macos
           - os: windows-2022
@@ -177,6 +181,24 @@ jobs:
       uses: actions/checkout@v7
 
     - uses: ./.github/actions/test-setup
+
+    - name: Install Git 2.43.0
+      if: matrix.git == '2.43.0'
+      shell: bash
+      run: |
+        sudo apt-get update
+        git_package_version="$(apt-cache madison git | awk '$3 ~ /^1:2[.]43[.]0-/ { print $3; exit }')"
+        if [ -z "$git_package_version" ]; then
+          echo "::error::Ubuntu package sources do not provide Git 2.43.0"
+          exit 1
+        fi
+        sudo apt-get install -y --allow-downgrades \
+          "git=$git_package_version" "git-man=$git_package_version"
+        echo "/usr/bin" >> "$GITHUB_PATH"
+
+    - name: Verify minimum Git
+      if: matrix.git == '2.43.0'
+      run: test "$(git --version)" = "git version 2.43.0"
 
     - name: Install wt
       uses: baptiste0928/cargo-install@v3

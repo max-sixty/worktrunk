@@ -467,7 +467,7 @@ fn git_unavailable_error_includes_command() {
     let output = cmd.output().expect("run wt without git");
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("Failed to execute: git"),
+        String::from_utf8_lossy(&output.stderr).contains("Failed to run git --version"),
         "stderr was:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );

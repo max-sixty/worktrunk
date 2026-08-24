@@ -4,7 +4,8 @@ use color_print::cformat;
 use std::process;
 use worktrunk::config::{set_config_overrides, set_config_path};
 use worktrunk::git::{
-    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint, set_base_path,
+    ErrorExt, Repository, WorktrunkError, current_or_recover, cwd_removed_hint,
+    require_minimum_git, set_base_path,
 };
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
@@ -1174,16 +1175,22 @@ fn main() {
         logging::init(verbose);
     }
 
+    let command_line = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if command.is_some()
+        && let Err(error) = require_minimum_git()
+    {
+        handle_command_failure(error, verbose, &command_line);
+    }
+
     // Fold the two cold-path rev-parses (`--git-common-dir` from
     // `init_command_log`, the `prewarm_info` batch from `try_alias` →
     // `project_config_path`) into one fork. Best-effort — failure leaves both
     // on-demand callers unchanged.
     Repository::prewarm();
 
-    let command_line = std::env::args_os()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ");
     {
         let _span = worktrunk::trace::Span::new("init_command_log");
         init_command_log(&command_line);
