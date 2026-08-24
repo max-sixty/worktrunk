@@ -44,11 +44,9 @@ If codecov fails **locally**, investigate with `task coverage` and
 `task` and `cargo-llvm-cov` are not installed in the `tend-setup` action.
 Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
-even `pwd` and `echo`. (Pre-built single-script installers like Determinate
-Nix's are fine — see **Weekly Maintenance: MSRV & Toolchain** for the one we
-use. The block is specifically about long-running cargo compiles.) Instead,
-query Codecov directly, following `tests/CLAUDE.md` → **Coverage
-Investigation** for the endpoints and their traps.
+even `pwd` and `echo`. Instead, query Codecov directly, following
+`tests/CLAUDE.md` → **Coverage Investigation** for the endpoints and their
+traps.
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
 artifact from the PR head's `coverage` workflow run — it contains a
@@ -282,31 +280,24 @@ a weekly edit.
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
 `rust-overlay` revision knows about the new version. `tend-setup` installs Nix
-for this workflow, so `nix` is on the PATH with `nix-command` and `flakes`
-already enabled — don't install it in-session, the sandbox user has no sudo
-and every installer stops there:
+with flakes enabled:
 
 ```bash
 nix flake update rust-overlay
-```
-
-Name the input: a bare `nix flake update` relocks nixpkgs too, which lands an
-unrelated bump in a PR scoped to the toolchain and the pins, and hands the
-`nix-flake` job a nixpkgs nobody chose to move. Bump nixpkgs on its own when
-it's worth doing.
-
-Verify the new lock evaluates with the channel bump before committing:
-
-```bash
+# Check the bumped channel still evaluates
 nix eval .#devShells.x86_64-linux.default.name
 ```
 
-If `nix` isn't on the PATH, the install step regressed — say so in the PR and
-leave `flake.lock` alone rather than hand-computing an entry.
+Name the input. A bare `nix flake update` also relocks nixpkgs, which lands an
+unrelated bump in a PR scoped to the toolchain and hands the `nix-flake` job a
+nixpkgs nobody chose to move.
 
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 `cargo msrv verify` passes.
+
+If `nix` isn't on the PATH, `tend-setup` regressed. Say so in the PR and leave
+`flake.lock` alone rather than hand-computing an entry.
 
 ## Weekly Maintenance: CI Pin Bumps
 
