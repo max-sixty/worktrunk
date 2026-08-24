@@ -305,11 +305,13 @@ Each weekly run checks every pin below against upstream and bumps whatever has d
 - **Runner images** — every `runs-on:` label and matrix `os:`/`runner:` value in the workflows. A pin equals what its `-latest` label currently resolves to, per the availability table in `actions/runner-images`:
 
   ```bash
-  gh api repos/actions/runner-images/contents/README.md --jq '.content' \
-    | base64 -d | sed -n '/^| Image/,/^$/p'
+  gh api repos/actions/runner-images/contents/README.md \
+    -H 'Accept: application/vnd.github.raw' | sed -n '/^| Image/,/^$/p'
   ```
 
-  Bump any pin the table no longer lists against `-latest`, and update `ci.yaml`'s header comment, which records why each image is pinned. GitHub keeps two GA images per OS and begins deprecating the older one as soon as a newer goes GA, so a pin that has fallen off `-latest` is already the next one due; the table's `deprecated` badge marks the deadline, not the moment to move.
+  Bump any pin the table no longer lists against `-latest`, and update `ci.yaml`'s header comment, which records the reason for each image it names. GitHub keeps two GA images per OS and begins deprecating the older one as soon as a newer goes GA, so a pin that has fallen off `-latest` is already the next one due; the table's `deprecated` badge marks that deadline, not the moment to move, and a row badged `preview` is not a bump target.
+
+  A variant label — `-arm`, `-intel`, `-large` — has no `-latest` of its own; it follows its base image's row.
 
   Where a pin is deliberately held back, that comment says what the repo needs from the older image. Re-check that need against the newer image each week — upstream announces image changes as issues, so `gh search issues --repo actions/runner-images "<the need> <newer image>"` surfaces a reversal. Reading the cited issue's state is not the test — an announcement closes when its change ships, in either direction.
 
