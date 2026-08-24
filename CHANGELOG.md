@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **`wt step copy-ignored` refused a tree that crossed Windows' 260-character path limit**: the containment check canonicalizes the destination and the worktree root, and `dunce` strips the `\\?\` prefix only from paths of 260 characters or fewer — so a deep `node_modules` came back spelled `\\?\C:\…` while its root stayed `C:\…`, which `starts_with` reads as a different drive. The canonicalizer now returns one spelling at any length, and the copy proceeds as it does elsewhere. (fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting)
+- **`wt step copy-ignored` refused a tree that crossed Windows' 260-character path limit**: the containment check canonicalizes the destination and the worktree root, and `dunce` strips the `\\?\` prefix only from paths of 260 characters or fewer — so a deep `node_modules` came back spelled `\\?\C:\…` while its root stayed `C:\…`, which `starts_with` reads as a different drive. The canonicalizer now returns one spelling at any length, and the copy proceeds as it does elsewhere. The same split silently dropped the subdirectory that `wt switch` (and `remove`, `merge`, `step relocate`) `cd`s you into from a directory that deep, landing you at the worktree root instead; both call sites now share the one canonicalizer. (fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting)
 
 ## 0.74.0
 

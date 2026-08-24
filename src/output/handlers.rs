@@ -30,7 +30,7 @@ use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
     execute_branch_deletion, remove_worktree_with_cleanup, stage_worktree_removal,
 };
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{canonicalize_with_parents, format_path_for_display};
 use worktrunk::progress::{Progress, format_stats_paren};
 use worktrunk::remove_dir::remove_dir_with_progress;
 use worktrunk::styling::{
@@ -998,10 +998,13 @@ pub(crate) fn resolve_subdir_in_target(
     cwd: &Path,
 ) -> PathBuf {
     if let Some(source_root) = source_root {
-        // Canonicalize both paths to handle symlinks (e.g., /var -> /private/var on macOS)
-        let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-        let source_root =
-            dunce::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+        // Canonicalize both paths to handle symlinks (e.g., /var -> /private/var
+        // on macOS). Through `canonicalize_with_parents` rather than `dunce`
+        // directly, so a cwd past Windows' 260-character limit is spelled like
+        // the short worktree root containing it — otherwise `strip_prefix` below
+        // fails and the shell silently lands at the target root (#3898).
+        let cwd = canonicalize_with_parents(cwd);
+        let source_root = canonicalize_with_parents(source_root);
         if let Ok(relative) = cwd.strip_prefix(&source_root)
             && !relative.as_os_str().is_empty()
         {
@@ -2547,6 +2550,28 @@ prunable gitdir file points to non-existent location
         let cwd = source.join("apps/gateway");
         let result = resolve_subdir_in_target(&target, Some(&source), &cwd);
         assert_eq!(result, target.join("apps/gateway"));
+    }
+
+    #[test]
+    fn test_resolve_subdir_in_target_subdir_deeper_than_windows_max_path() {
+        // A cwd nested past Windows' 260-character path limit comes back from
+        // `dunce` spelled `\\?\C:\…` while its short worktree root stays `C:\…`,
+        // so `strip_prefix` fails and the shell lands at the target root with no
+        // error rather than at the mirrored subdirectory (#3898). Off Windows
+        // the depth is unremarkable and this just exercises a deep tree.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+
+        let mut relative = PathBuf::from("node_modules");
+        while source.join(&relative).as_os_str().len() < 320 {
+            relative.push("nested-dependency-directory");
+        }
+        std::fs::create_dir_all(source.join(&relative)).unwrap();
+        std::fs::create_dir_all(target.join(&relative)).unwrap();
+
+        let result = resolve_subdir_in_target(&target, Some(&source), &source.join(&relative));
+        assert_eq!(result, target.join(&relative));
     }
 
     #[test]
