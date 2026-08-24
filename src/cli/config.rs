@@ -237,7 +237,7 @@ pub enum ApprovalsCommand {
     #[command(
         after_long_help = r#"Shows every command the project config declares — hooks, aliases, and commit-message guidance — grouped into APPROVED and UNAPPROVED sections. Approvals recorded for commands no longer in the project config (edited or removed since approval) are listed separately.
 
-Reading is all it does: no prompt, no write. `--format=json` emits the same four distinctions as a structured payload — see [Reading approval state](@/config.md#reading-approval-state).
+Reading is all it does: no prompt, no write. `--format=json` emits the same four distinctions as a structured payload — see [Reading approval state](/config/#reading-approval-state).
 
 ## Examples
 
@@ -263,7 +263,7 @@ $ wt config approvals list --format=json | jq -r .state
 By default, shows only unapproved commands. Use `--all` to review all commands
 including previously approved ones.
 
-`--yes` writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval. A caller that wants to look before granting them can list those first — see [Reading approval state](@/config.md#reading-approval-state).
+`--yes` writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval. A caller that wants to look before granting them can list those first — see [Reading approval state](/config/#reading-approval-state).
 
 ## Examples
 
@@ -636,7 +636,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
     /// Inspect and preview aliases
     #[command(
-        after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for the configuration format.
+        after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for the configuration format.
 
 ## Examples
 
@@ -690,11 +690,11 @@ $ wt config plugins opencode install
 
 ## Keys
 
-- **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](@/config.md#wt-config-state-cache)
-- **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
-- **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
-- **vars**: [experimental] [Custom variables per branch](@/config.md#wt-config-state-vars)
-- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
+- **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](/config/#wt-config-state-cache)
+- **default-branch**: [The repository's default branch (`main`, `master`, etc.)](/config/#wt-config-state-default-branch)
+- **marker**: [Custom status marker for a branch (shown in `wt list`)](/config/#wt-config-state-marker)
+- **vars**: [experimental] [Custom variables per branch](/config/#wt-config-state-vars)
+- **logs**: [Operation and debug logs](/config/#wt-config-state-logs)
 
 ## Examples
 
@@ -806,7 +806,7 @@ untouched."#)]
 
 ## What's cached
 
-- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](@/list.md#ci-status), plus the largest PR/MR number seen (sizes the CI column)
+- **CI status** — GitHub/GitLab CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status), plus the largest PR/MR number seen (sizes the CI column)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
 - **Hints** — one-time hints already shown in this repo
@@ -845,7 +845,7 @@ $ wt config state cache clear
 $ git rebase $(wt config state default-branch)
 ```
 
-In a hook or alias template, prefer the `{{ default_branch }}` [template variable](@/hook.md#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
+In a hook or alias template, prefer the `{{ default_branch }}` [template variable](/hook/#template-variables); `$(wt config state default-branch)` is for plain shell scripts.
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
 
@@ -881,7 +881,7 @@ If none of these match, detection fails; set it explicitly with `wt config state
     #[command(
         name = "previous-branch",
         hide = true,
-        after_long_help = r#"**Deprecated** — the previous branch is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+        after_long_help = r#"**Deprecated** — the previous branch is now part of [`wt config state cache`](/config/#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
 Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `git checkout -`.
 
@@ -987,7 +987,7 @@ $ wt config state logs clear
     /// One-time hints shown in this repo
     #[command(
         hide = true,
-        after_long_help = r#"**Deprecated** — hints are now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+        after_long_help = r#"**Deprecated** — hints are now part of [`wt config state cache`](/config/#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
 Some hints show once per repo on first use, then are recorded in git config
 as `worktrunk.hints.<name>`, a count of times the hint has been shown.
@@ -1019,9 +1019,9 @@ $ wt config state hints clear NAME   # re-show specific hint
     #[command(
         name = "ci-status",
         hide = true,
-        after_long_help = r#"**Deprecated** — the CI status cache is now part of [`wt config state cache`](@/config.md#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
+        after_long_help = r#"**Deprecated** — the CI status cache is now part of [`wt config state cache`](/config/#wt-config-state-cache). This subcommand still works but prints a deprecation notice.
 
-Status values, display symbols, and fetch behavior: [`wt list` CI status](@/list.md#ci-status).
+Status values, display symbols, and fetch behavior: [`wt list` CI status](/list/#ci-status).
 
 Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
     )]
@@ -1049,7 +1049,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
+- **Agent tracking** — The [Claude Code](/claude-code/) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage
@@ -1100,7 +1100,7 @@ $ wt config state vars set env=production --branch=main
 
 ## Template access
 
-Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+Variables are available in [hook templates](/hook/#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
 ```toml
 [post-start]

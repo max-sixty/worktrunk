@@ -26,19 +26,18 @@ filterset = "binary_id(=worktrunk) | binary_id(=worktrunk::bin/wt)"
 
 # tests/integration_tests/readme_sync.rs reads each of these at runtime (via
 # fs::read_to_string) and asserts the committed copies stay in sync — both the
-# sources (README.md, docs/content markdown, docs/config.toml's site title and
-# description, src/cli/mod.rs, src/llm.rs, the skill references, Taskfile.yaml)
+# sources (README.md, docs/src/content/docs Markdown, src/cli/mod.rs,
+# src/llm.rs, the skill references, Taskfile.yaml)
 # and the generated artifacts it regenerates and compares against (the
-# dev/*.example.toml files, docs/static/llms.txt, the agent-skills index.json).
+# dev/*.example.toml files, docs/public/llms.txt, the agent-skills index.json).
 # Editing any of them flips the test, but coverage can't link a runtime-read
 # file to it.
 [[workspace.metadata.affected.rule]]
 globs = [
     "README.md",
     "docs/**/*.md",
-    "docs/config.toml",
-    "docs/static/llms.txt",
-    "docs/static/.well-known/agent-skills/index.json",
+    "docs/public/llms.txt",
+    "docs/public/.well-known/agent-skills/index.json",
     "dev/*.toml",
     "src/cli/mod.rs",
     "src/llm.rs",
@@ -244,14 +243,18 @@ sha2 = "0.11"
 # breaking-change rollout (see `test_codename_outputs_are_stable` and
 # `src/config/expansion.rs::codename`). We use only the static wordlists,
 # not the random-name generator, so `default-rng` and `clap` stay off.
-petname = { version = "=3.1.0", default-features = false, features = ["default-words"] }
+petname = { version = "=3.2.0", default-features = false, features = ["default-words"] }
 # PINNED EXACT to match `petname`: its caret dependency otherwise permits a
 # different proc-macro version, but the generated code and runtime re-exports
 # require an exact match. Keep both pins in lockstep.
 petname-macros = "=3.2.0"
 
 tempfile = "3.27"
-wait-timeout = "0.2"
+
+# Timed waits on child processes (`Cmd::timeout`, `Cmd::delayed_stream`, the
+# picker's pager). Replaced `wait-timeout`, whose SIGCHLD handler aborts the
+# process when its self-pipe write fails — see "Timed waits" in `shell_exec`.
+shared_child = "1.1"
 
 # Interactive picker (`wt switch`) TUI stack, pulled in only by the `cli`
 # feature's `dep:` entries. These are platform-neutral (skim 4.x is the
@@ -279,7 +282,7 @@ wait-timeout = "0.2"
 # not panic on push/pop keyboard enhancement flags failure") and is
 # Windows-green again. Kept as an exact pin; it can relax to a range now that
 # the keyboard-enhancement path no longer regresses the legacy console.
-skim = { version = "=5.6.4", optional = true, default-features = false, features = ["frizbee"] }
+skim = { version = "=5.6.5", optional = true, default-features = false, features = ["frizbee"] }
 # Pinned to skim's ratatui line so the `Line` type `display()` returns is the
 # same one skim consumes. `ansi-to-tui` parses ANSI SGR codes into ratatui spans.
 # Floor is 0.30.1: 0.30.0 is a broken release (its `#[instability::unstable]`
@@ -321,7 +324,6 @@ criterion = "0.8"
 portable-pty = "0.9"
 regex = "1.12.3"
 vt100 = "0.16.2"
-ansi-to-html = "0.2.3"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
 jsonschema = { version = "0.49", default-features = false }

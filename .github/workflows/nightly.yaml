@@ -379,12 +379,11 @@ jobs:
       run: cargo test --test integration crate_io_archive_builds_and_versions_without_git -- --ignored
 
   link-check:
-    # The pre-commit `lychee-system` hook (manual stage) over every tracked
-    # .md/.txt file. It lives here, not in PR CI: link health depends on the
-    # outside world (429s, bot-blocking, transient outages), so it was the
-    # flakiest PR check — and link rot isn't PR-correlated anyway; links
-    # break when external sites change, not when code does. A failure opens
-    # the nightly-failure issue instead of reddening an unrelated PR.
+    # The shared docs action verifies and builds the site before the pre-commit
+    # `lychee-system` hook checks every tracked .md/.txt file. Lychee remains in
+    # the nightly workflow rather than required PR CI because external link
+    # health depends on 429s, bot-blocking, and transient outages. A scheduled
+    # docs or link failure opens the nightly-failure issue.
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
@@ -394,6 +393,9 @@ jobs:
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v7
+
+    - name: 🕷️ Check and build docs
+      uses: ./.github/actions/docs-build
 
     - name: Install lychee
       uses: baptiste0928/cargo-install@v3

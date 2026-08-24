@@ -496,7 +496,7 @@ impl JsonCi {
             // they're deliberately not surfaced here — `wt list --json` stays
             // scoped to CI/review status. Add them (with
             // `skip_serializing_if = "Option::is_none"` plus a row in the
-            // docs/content/list.md ci-object table) if a JSON consumer needs them.
+            // docs/src/content/docs/list.md ci-object table) if a JSON consumer needs them.
         }
     }
 }

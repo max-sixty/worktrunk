@@ -742,46 +742,6 @@ impl LocalContent {
     }
 }
 
-/// The local-checkout-backed preview tabs — present for a row with a local
-/// worktree, absent for a listed PR/MR row (`--prs`), which has no local copy.
-/// Grouping them names *why* they're empty on a `--prs` row (no checkout), so
-/// the difference reads as a data fact rather than a row-type policy.
-#[derive(Debug, Clone, Copy, Default)]
-struct LocalTabs {
-    unified_diff: bool,
-    working_tree: bool,
-    branch_diff: bool,
-    upstream: bool,
-    summary: bool,
-}
-
-impl LocalTabs {
-    /// A local row. The subsidiary diff tabs (`working_tree`, `branch_diff`,
-    /// `upstream`) follow the live [`LocalContent`] signals — available while
-    /// loading, dim once their diff is known empty; `unified_diff` dims only
-    /// when both component signals are empty because their net changes can
-    /// cancel. `upstream` also requires the
-    /// synchronous `has_upstream` floor (no tracking ref → dim with no loading
-    /// window). `summary` requires the process-wide `[commit.generation]` flag
-    /// *and* something to summarize: its pane is generated from the combined diff
-    /// (`crate::summary::compute_combined_diff` = commits ahead of the comparison
-    /// base + tracked working-tree changes), so it uses `branch_diff` and the
-    /// tracked-only `summary_working_tree` signal — dimming in concert with its
-    /// actual input rather than the untracked-inclusive working pane.
-    fn worktree(content: LocalContent, has_upstream: bool, summaries_enabled: bool) -> Self {
-        let working_tree = content.working_tree.unwrap_or(true);
-        let summary_working_tree = content.summary_working_tree.unwrap_or(true);
-        let branch_diff = content.branch_diff.unwrap_or(true);
-        Self {
-            unified_diff: working_tree || branch_diff,
-            working_tree,
-            branch_diff,
-            upstream: has_upstream && content.upstream_diverged.unwrap_or(true),
-            summary: summaries_enabled && (summary_working_tree || branch_diff),
-        }
-    }
-}
-
 /// Which preview tabs have renderable content for the selected row.
 ///
 /// Empty tabs are de-emphasized in the bar (number dimmed). Skim computes a
@@ -789,9 +749,9 @@ impl LocalTabs {
 /// `loading_placeholder`). Two genuine axes drive availability, and `--prs`
 /// touches neither — it only decides whether a PR row is *listed* at all:
 ///
-/// - The local-checkout tabs ([`LocalTabs`]): the three subsidiary diff tabs
-///   (`working_tree` / `branch_diff` / `upstream`) follow the row's live
-///   [`LocalContent`] exactly; `unified_diff` uses their conservative union,
+/// - The local-checkout tabs: the three subsidiary diff tabs (`working_tree` /
+///   `branch_diff` / `upstream`) follow the row's live [`LocalContent`]
+///   exactly; `unified_diff` uses the first two's conservative union,
 ///   since opposing working and committed changes can cancel only after its
 ///   net diff is computed. Tabs stay available while loading and dim once
 ///   known empty, the same shape as the `pr` tab. `upstream` also
@@ -800,8 +760,8 @@ impl LocalTabs {
 ///   `summary` requires the process-wide `[commit.generation]` flag *and* a
 ///   non-empty combined diff — its pane's content source — so it uses the
 ///   `branch_diff` plus tracked-working signals and dims alongside the "no
-///   changes to summarize" pane, not only when summaries are disabled. A `--prs` row has
-///   no local checkout, so all five local tabs are empty.
+///   changes to summarize" pane, not only when summaries are disabled. A
+///   `--prs` row has no local checkout, so all five local tabs are empty.
 /// - The PR-backed tabs: `pr` and `comments` are available together, gated by
 ///   `has_pr`. On a worktree row that's the live status slot (primed from the CI
 ///   cache, then refreshed by the `CiStatus` task — see
@@ -816,49 +776,33 @@ impl LocalTabs {
 /// `--prs` row).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabAvailability {
-    unified_diff: bool,
     working_tree: bool,
-    log: bool,
     branch_diff: bool,
     upstream: bool,
     summary: bool,
     pr: bool,
-    comments: bool,
 }
 
 impl TabAvailability {
-    /// Build from the two genuine axes: which local-checkout tabs the row has,
-    /// and whether it has a PR. Centralizing the mapping pins the invariants the
-    /// task depends on — `log` is always present, and the PR-backed tabs (`pr`,
-    /// `comments`) both follow `has_pr` — so they can't drift between a worktree
-    /// row and a listed-PR row.
-    fn from_axes(local: LocalTabs, has_pr: bool) -> Self {
-        Self {
-            unified_diff: local.unified_diff,
-            working_tree: local.working_tree,
-            log: true,
-            branch_diff: local.branch_diff,
-            upstream: local.upstream,
-            summary: local.summary,
-            pr: has_pr,
-            comments: has_pr,
-        }
-    }
-
-    /// A worktree-backed row: the local-checkout tabs follow [`LocalTabs`]
-    /// (diff tabs gated by the live [`LocalContent`] + the `has_upstream` floor);
-    /// the PR-backed tabs follow the live PR status (see
-    /// [`pr_tab_available`]).
+    /// A worktree-backed row: diff tabs follow the live [`LocalContent`] plus
+    /// the `has_upstream` floor; PR-backed tabs follow the live PR status (see
+    /// [`pr_tab_available`]). Derived tabs are handled by [`Self::contains`].
     pub(super) fn worktree(
         content: LocalContent,
         has_upstream: bool,
         summaries_enabled: bool,
         has_pr: bool,
     ) -> Self {
-        Self::from_axes(
-            LocalTabs::worktree(content, has_upstream, summaries_enabled),
-            has_pr,
-        )
+        let working_tree = content.working_tree.unwrap_or(true);
+        let summary_working_tree = content.summary_working_tree.unwrap_or(true);
+        let branch_diff = content.branch_diff.unwrap_or(true);
+        Self {
+            working_tree,
+            branch_diff,
+            upstream: has_upstream && content.upstream_diverged.unwrap_or(true),
+            summary: summaries_enabled && (summary_working_tree || branch_diff),
+            pr: has_pr,
+        }
     }
 
     /// A listed PR/MR row (`--prs`): no local checkout, so the local-checkout
@@ -867,21 +811,26 @@ impl TabAvailability {
     /// `prs::compute_pr_log`). The differences from a worktree row are only the
     /// genuine data ones — no local checkout, and a PR that's always present.
     pub(super) fn listed_pr() -> Self {
-        Self::from_axes(LocalTabs::default(), true)
+        Self {
+            working_tree: false,
+            branch_diff: false,
+            upstream: false,
+            summary: false,
+            pr: true,
+        }
     }
 
     /// Whether `mode` has content for this row. Empty tabs remain directly
     /// selectable with Alt-N, but sequential cycling skips them.
     fn contains(self, mode: PreviewMode) -> bool {
         match mode {
-            PreviewMode::UnifiedDiff => self.unified_diff,
+            PreviewMode::UnifiedDiff => self.working_tree || self.branch_diff,
             PreviewMode::WorkingTree => self.working_tree,
             PreviewMode::BranchDiff => self.branch_diff,
-            PreviewMode::Log => self.log,
+            PreviewMode::Log => true,
             PreviewMode::UpstreamDiff => self.upstream,
             PreviewMode::Summary => self.summary,
-            PreviewMode::Pr => self.pr,
-            PreviewMode::Comments => self.comments,
+            PreviewMode::Pr | PreviewMode::Comments => self.pr,
         }
     }
 
@@ -943,55 +892,21 @@ pub(super) fn render_preview_tabs(
     let reset = Reset;
 
     let tabs = [
-        Tab {
-            number: 1,
-            label: "diff",
-            is_active: mode == PreviewMode::UnifiedDiff,
-            has_content: avail.unified_diff,
-        },
-        Tab {
-            number: 2,
-            label: "working",
-            is_active: mode == PreviewMode::WorkingTree,
-            has_content: avail.working_tree,
-        },
-        Tab {
-            number: 3,
-            label: "committed",
-            is_active: mode == PreviewMode::BranchDiff,
-            has_content: avail.branch_diff,
-        },
-        Tab {
-            number: 4,
-            label: "log",
-            is_active: mode == PreviewMode::Log,
-            has_content: avail.log,
-        },
-        Tab {
-            number: 5,
-            label: "remote⇅",
-            is_active: mode == PreviewMode::UpstreamDiff,
-            has_content: avail.upstream,
-        },
-        Tab {
-            number: 6,
-            label: "summary",
-            is_active: mode == PreviewMode::Summary,
-            has_content: avail.summary,
-        },
-        Tab {
-            number: 7,
-            label: "pr",
-            is_active: mode == PreviewMode::Pr,
-            has_content: avail.pr,
-        },
-        Tab {
-            number: 8,
-            label: "comments",
-            is_active: mode == PreviewMode::Comments,
-            has_content: avail.comments,
-        },
-    ];
+        (1, "diff", PreviewMode::UnifiedDiff),
+        (2, "working", PreviewMode::WorkingTree),
+        (3, "committed", PreviewMode::BranchDiff),
+        (4, "log", PreviewMode::Log),
+        (5, "remote⇅", PreviewMode::UpstreamDiff),
+        (6, "summary", PreviewMode::Summary),
+        (7, "pr", PreviewMode::Pr),
+        (8, "comments", PreviewMode::Comments),
+    ]
+    .map(|(number, label, tab_mode)| Tab {
+        number,
+        label,
+        is_active: mode == tab_mode,
+        has_content: avail.contains(tab_mode),
+    });
 
     // Prefer the full bar; fall back to compact only when it would overflow the
     // pane (`visual_width` measures the styled string with ANSI stripped).
@@ -2203,10 +2118,10 @@ mod tests {
     fn diff_tabs_dim_only_once_known_empty() {
         let has = |avail: TabAvailability| {
             (
-                avail.unified_diff,
-                avail.working_tree,
-                avail.branch_diff,
-                avail.upstream,
+                avail.contains(PreviewMode::UnifiedDiff),
+                avail.contains(PreviewMode::WorkingTree),
+                avail.contains(PreviewMode::BranchDiff),
+                avail.contains(PreviewMode::UpstreamDiff),
             )
         };
 
@@ -2252,7 +2167,8 @@ mod tests {
     #[test]
     fn summary_tab_tracks_combined_diff_content() {
         let summary = |content, summaries_enabled| {
-            TabAvailability::worktree(content, true, summaries_enabled, false).summary
+            TabAvailability::worktree(content, true, summaries_enabled, false)
+                .contains(PreviewMode::Summary)
         };
 
         // Summaries disabled dims the tab regardless of content.

@@ -10,11 +10,11 @@ Env CLAUDE_CODE_OAUTH_TOKEN "{{CLAUDE_CODE_OAUTH_TOKEN}}"
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 # Switch to existing worktree
 Type "wt switch alpha"
+Show
+Sleep 300ms
 Enter
 Sleep 1.5s
 
@@ -28,3 +28,5 @@ Type "wt switch --execute claude --create dashboard -- 'Add settings page'"
 Sleep 500ms
 Enter
 Sleep 6s
+
+Hide

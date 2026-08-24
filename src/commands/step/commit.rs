@@ -1,11 +1,8 @@
 //! `wt step commit` — commit working tree changes.
 
-use std::path::Path;
-
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, TempIndex};
 use worktrunk::styling::println;
 
 use super::super::command_approval::{approve_or_skip, resolve_template_for_preview};
@@ -82,16 +79,19 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     // For --dry-run, stage to a copy of the index so the preview reflects what a real
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
     // path. StageMode::None has nothing to stage, so we use the existing index as-is.
+    let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
     let temp_index = if dry_run {
-        stage
-            .unwrap_or(env.resolved().commit.stage())
-            .add_args()
-            .map(|args| stage_to_temp_index(&env.repo, args))
+        (stage_mode != StageMode::None)
+            .then(|| {
+                let temp = env.repo.current_worktree().temp_index()?;
+                temp.stage(stage_mode)?;
+                Ok::<_, anyhow::Error>(temp)
+            })
             .transpose()?
     } else {
         None
     };
-    let index_override = temp_index.as_ref().map(|temp| Path::new(temp.path()));
+    let index_override = temp_index.as_ref().map(|temp| temp.path());
 
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
@@ -108,43 +108,4 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
         project_append.as_deref(),
     )?;
     print_dry_run(&prompt, &commit_config, &message)
-}
-
-/// Stage into the worktree's shared temporary-index abstraction.
-///
-/// Returning [`TempIndex`] keeps the copied index alive while the caller builds
-/// the prompt, then removes it on drop without touching the user's real index.
-fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<TempIndex> {
-    let temp = repo.current_worktree().temp_index()?;
-    let output = temp
-        .git(add_args.iter().copied())
-        .run()
-        .context("Failed to stage changes into temp index")?;
-    if !output.status.success() {
-        return Err(
-            worktrunk::git::CommandError::from_failed_output("git", add_args, &output).into(),
-        );
-    }
-    Ok(temp)
-}
-
-#[cfg(test)]
-mod tests {
-    use worktrunk::git::{CommandError, Repository};
-    use worktrunk::testing::TestRepo;
-
-    /// A failing `git add` into the temp index (here: an invalid pathspec)
-    /// must surface as a typed `CommandError`.
-    #[test]
-    fn stage_to_temp_index_failure_is_command_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        let err = match super::stage_to_temp_index(&repo, &["add", "--", ":(bad"]) {
-            Ok(_) => panic!("invalid pathspec should fail"),
-            Err(err) => err,
-        };
-        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git add -- :(bad");
-    }
 }

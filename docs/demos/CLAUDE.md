@@ -9,8 +9,8 @@ docs/demos/
   shared/          # Python library, themes, fixtures
   vhs-keystrokes/  # Custom VHS binary (gitignored, built on demand)
 
-docs/static/assets/  # Output GIFs (gitignored, shared with fetch-assets)
-  docs/            # Doc site demos (1600x900)
+docs/public/assets/  # Output GIFs (gitignored, shared with fetch-assets)
+  docs/            # Doc site demos (1600x900; wt-core-mobile is 576x432)
     light/         # Light theme variants
     dark/          # Dark theme variants
   social/          # Social media demos (1200x700)
@@ -34,13 +34,14 @@ Regenerate a single demo:
 ```bash
 ./docs/demos/build social --only wt-switch
 ./docs/demos/build docs --only wt-merge
+./docs/demos/build docs --only wt-core-mobile
 ```
 
 **Available demos:**
 
 | Target | Demos |
 |--------|-------|
-| docs | wt-core, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-switch-picker, wt-zellij-omnibus |
+| docs | wt-core, wt-core-mobile, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-switch-picker, wt-zellij-omnibus |
 | social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-switch-picker, wt-core, wt-zellij-omnibus |
 
 ## Snapshot testing
@@ -122,7 +123,7 @@ After building, publish to the assets repo:
 task publish-assets
 ```
 
-This copies `docs/static/assets/{docs,social}/` to the `worktrunk-assets` repo (sibling directory), commits, and pushes. The script clones the repo via `gh` if missing.
+This copies `docs/public/assets/{docs,social}/` to the `worktrunk-assets` repo (sibling directory), commits, and pushes. The script clones the repo via `gh` if missing.
 
 To fetch published assets (without rebuilding):
 
@@ -130,7 +131,7 @@ To fetch published assets (without rebuilding):
 task fetch-assets
 ```
 
-Both build and fetch output to the same location (`docs/static/assets/`), so local builds override fetched assets.
+Both build and fetch output to the same location (`docs/public/assets/`), so local builds override fetched assets.
 
 ## Modifying the VHS fork
 
@@ -199,6 +200,7 @@ Branch setup (from shared infrastructure):
 
 The docs build generates both light and dark GIF variants in separate directories:
 - `docs/light/wt-core.gif` / `docs/dark/wt-core.gif`
+- `docs/light/wt-core-mobile.gif` / `docs/dark/wt-core-mobile.gif` (576×432 responsive homepage source)
 - `docs/light/wt-merge.gif` / `docs/dark/wt-merge.gif`
 - `docs/light/wt-switch-picker.gif` / `docs/dark/wt-switch-picker.gif`
 
@@ -281,10 +283,10 @@ Key fields in `.claude.json` for suppressing notifications:
 Inline viewing options:
 ```bash
 # Quick Look (macOS)
-qlmanage -p docs/static/assets/docs/light/wt-switch-picker.gif
+qlmanage -p docs/public/assets/docs/light/wt-switch-picker.gif
 
 # iTerm2 inline images
-imgcat docs/static/assets/docs/light/wt-switch-picker.gif
+imgcat docs/public/assets/docs/light/wt-switch-picker.gif
 ```
 
 ## Reviewing demo GIFs

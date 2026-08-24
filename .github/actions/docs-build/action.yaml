@@ -1,0 +1,40 @@
+name: docs build
+description: Install, build, and verify the Astro documentation site
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: docs/package-lock.json
+
+    - name: Install docs dependencies
+      shell: bash
+      run: npm ci
+      working-directory: docs
+
+    - name: Fetch docs assets
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
+        cp -r /tmp/worktrunk-assets/assets docs/public/
+
+    - name: Check docs source
+      shell: bash
+      run: npm run check && npm test
+      working-directory: docs
+
+    - name: Build docs
+      shell: bash
+      run: npm run build
+      working-directory: docs
+
+    - name: Test built site
+      shell: bash
+      run: npm run test:site
+      working-directory: docs

@@ -7,7 +7,7 @@ Usage:
     ./build docs --only wt-merge    # Build specific demo for docs
     ./build social --only wt-zellij-omnibus --shell  # Debug shell for social demo
 
-Output is written to docs/static/assets/{mode}/{theme}/, ensuring docs and social
+Output is written to docs/public/assets/{mode}/{theme}/, ensuring docs and social
 builds don't overwrite each other. The assets repo mirrors this structure.
 """
 
@@ -45,6 +45,7 @@ from shared import (  # noqa: E402
     setup_demo_output,
     record_theme,
     SIZE_DOCS,
+    SIZE_DOCS_MOBILE,
     SIZE_SOCIAL,
     record_text,
     record_snapshot,
@@ -57,7 +58,7 @@ from shared.validation import (  # noqa: E402
 )
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
-OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
+OUT_DIR = SCRIPT_DIR.parent / "public" / "assets"
 TAPES_DIR = SCRIPT_DIR / "tapes"
 SNAPSHOTS_DIR = SCRIPT_DIR / "snapshots"
 
@@ -308,11 +309,12 @@ url = "http://localhost:{{ branch | hash_port }}"
 # =============================================================================
 
 # Format: (tape_file, output_name, setup_func)
-# All demos in a mode use that mode's default size.
+# Demos use their mode's default size unless TARGETS provides a named override.
 # Note: setup_func must be a named function (not lambda) for multiprocessing.
 
 DOCS_DEMOS = [
     ("wt-core.tape", "wt-core", prepare_with_hooks),
+    ("wt-core-mobile.tape", "wt-core-mobile", prepare_with_hooks),
     ("wt-switch.tape", "wt-switch", prepare_switch),
     ("wt-list.tape", "wt-list", prepare_with_hooks),
     ("wt-commit.tape", "wt-commit", prepare_merge_demo),
@@ -344,6 +346,7 @@ TARGETS = {
     "docs": {
         "demos": DOCS_DEMOS,
         "size": SIZE_DOCS,
+        "sizes": {"wt-core-mobile": SIZE_DOCS_MOBILE},
         "themes": ["light", "dark"],
     },
     "social": {
@@ -612,6 +615,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
     target_config = TARGETS[target]
     demos = target_config["demos"]
     demo_size = target_config["size"]
+    demo_sizes = target_config.get("sizes", {})
     themes = target_config["themes"]
 
     # Filter demos if --only specified
@@ -658,7 +662,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                 setup_func,
                 mode_out_dir,
                 themes,
-                demo_size,
+                demo_sizes.get(output_name, demo_size),
                 vhs_binary,
                 args.text,
                 args.snapshot,
@@ -687,7 +691,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                         setup_func,
                         mode_out_dir,
                         themes,
-                        demo_size,
+                        demo_sizes.get(output_name, demo_size),
                         vhs_binary,
                         args.text,
                         args.snapshot,

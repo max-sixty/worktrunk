@@ -7,7 +7,8 @@
 //!
 //! # Web docs generation (`--help-page`)
 //!
-//! Each command page flows through several transforms before becoming web docs:
+//! Each command page flows through a small set of transforms before becoming
+//! portable Markdown:
 //!
 //! ```text
 //! cli.rs (source of truth)
@@ -18,32 +19,27 @@
 //! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
 //!         │
 //!         ▼
-//! convert_dollar_console_to_terminal() — ```console with $ → {% terminal() %} shortcode
-//! console→bash replacement             — remaining ```console → ```bash
-//!         │
-//!         ▼
 //! post_process_for_html()        — text replacements on after_long_help markdown:
 //!         │                        [experimental] → badge <span>
 //!         │                        `#` green → colored <span>
 //!         │                        plain URLs → markdown links
 //!         ▼
-//! --help-page stdout             — markdown with embedded HTML spans
+//! --help-page stdout             — Markdown with small semantic HTML spans
 //!         │
 //!         ▼  (readme_sync.rs test captures and writes to docs/)
 //!         │
-//! convert_command_reference_to_html()  — backtick-fenced --help blocks → {% terminal() %}
-//! expand_command_placeholders()        — ```bash wt list``` → snapshot terminal blocks
+//! expand_command_placeholders()        — command placeholders → snapshot console blocks
 //!         │
 //!         ▼
-//! docs/content/{command}.md      — final markdown consumed by Zola
+//! docs/src/content/docs/{command}.md — final Markdown consumed by Astro
 //! ```
 //!
 //! **Manually-written pages** (faq.md, llm-commits.md) bypass this pipeline.
 //! They use `<span class="badge-experimental"></span>` directly for badges.
 //!
-//! **Skill reference files** mirror docs/ content via `transform_docs_for_skill()`,
-//! which strips Zola syntax (terminal shortcodes, badge `<span>` → `[experimental]`)
-//! for plain-markdown consumption.
+//! **Skill reference files** mirror docs content via `transform_docs_for_skill()`,
+//! which strips site-only elements such as demo figures and converts badge
+//! `<span>` elements back to `[experimental]`.
 
 use std::ffi::OsString;
 use std::process;
@@ -52,15 +48,15 @@ use ansi_str::AnsiStr;
 use clap::error::ErrorKind;
 use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
-    SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
+    SUBDOC_MARKER_PREFIX,
 };
 use worktrunk::styling::{ColorChoice, eprintln, print, println};
 
 use crate::cli;
 
-/// Output format for a `--help-page`. Web pages keep Zola shortcodes, HTML
-/// spans, and demo GIF figures for the docs site; plain pages strip those for
-/// skill reference files that need portable markdown.
+/// Output format for a `--help-page`. Web pages keep semantic HTML spans and
+/// demo GIF figures for the docs site; plain pages strip those for skill
+/// reference files that need portable Markdown.
 #[derive(Clone, Copy)]
 enum PageMode {
     Web,
@@ -68,32 +64,6 @@ enum PageMode {
 }
 
 impl PageMode {
-    /// The page's one color choice, declared globally for the stdout it
-    /// prints to. The embedded `--help` reference block always renders with
-    /// escapes and the stream decides what survives: web keeps them for the
-    /// docs pipeline to turn into HTML spans, plain strips them for the
-    /// portable markdown skill files read. Both generators read a pipe rather
-    /// than a tty, so without the global web's escapes would be stripped
-    /// every time.
-    fn color(self) -> ColorChoice {
-        match self {
-            Self::Web => ColorChoice::Always,
-            Self::Plain => ColorChoice::Never,
-        }
-    }
-
-    /// Transform freshly-combined raw help into mode-appropriate markdown. Web
-    /// rewrites `$`-prefixed console blocks into `{% terminal() %}`
-    /// shortcodes; both modes relabel plain ``` ```console ``` fences as
-    /// ``` ```bash ``` for syntax highlighting.
-    fn transform_raw(self, text: String) -> String {
-        let text = match self {
-            Self::Web => convert_dollar_console_to_terminal(&text),
-            Self::Plain => text,
-        };
-        text.replace("```console\n", "```bash\n")
-    }
-
     /// Transform the body (everything before subdoc placeholders). Web expands
     /// demo GIFs into `<picture>` figures and converts CLI markers into HTML
     /// spans; plain strips demo placeholders so they don't leak as comments.
@@ -284,21 +254,17 @@ pub fn maybe_handle_help_with_pager(
     }
 }
 
-/// The help reference block, rendered with ANSI codes for the page's stdout
-/// stream to keep or strip.
+/// The help reference block, normalized for portable Markdown output.
 fn help_reference(command_path: &[&str], width: Option<usize>) -> String {
     let output = help_reference_inner(command_path, width);
-    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
-    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
-    // (colors), not OSC sequences - hyperlinks leak through as garbage. The plain
-    // stream drops them anyway, so the strip runs unconditionally.
+    // Clap turns Markdown links into OSC 8 hyperlinks even when color is disabled.
+    // Escape sequences are not valid portable Markdown, so retain their visible
+    // labels and discard the terminal-only control bytes.
     worktrunk::styling::strip_osc8_hyperlinks(&output)
 }
 
-/// Normalize fences in clap-rendered help output for downstream markdown
-/// consumers. `--help-md` and `help_reference_inner` both run this; the lone
-/// `console`→`bash` use in `PageMode::transform_raw` doesn't, because its input
-/// is `after_long_help` markdown which never contains clap's `text` blocks.
+/// Normalize fences in clap-rendered help output for downstream Markdown
+/// consumers. `--help-md` and `help_reference_inner` both run this.
 fn normalize_clap_help_fences(text: &str) -> String {
     text
         // clap's default for usage blocks — strip the language for plain markdown
@@ -475,11 +441,12 @@ Commands with schemas: list"
 /// ```
 /// ```
 ///
-/// This is used to generate docs/content/merge.md etc from the source.
+/// This is used to generate docs/src/content/docs/merge.md etc from the source.
 fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
-    // This page's stdout is a pipe to a generator rather than a tty, so the
-    // mode decides its color.
-    mode.color().write_global();
+    // Help pages are portable Markdown, so terminal color escapes never enter
+    // the generated source. The website adds syntax and prompt styling when
+    // it renders fenced blocks.
+    ColorChoice::Never.write_global();
 
     let mut cmd = cli::build_command();
     cmd = crate::completion::inject_hook_subcommands(cmd);
@@ -500,7 +467,7 @@ Commands with pages: merge, switch, remove, list"
     };
 
     let parent_name = format!("wt {}", subcommand);
-    let raw_help = mode.transform_raw(combine_command_docs(sub));
+    let raw_help = combine_command_docs(sub);
 
     // Subdocs are expanded separately so the main command reference comes first.
     let (main_content, subdoc_content) = match raw_help.find(SUBDOC_MARKER_PREFIX) {
@@ -548,15 +515,14 @@ Commands with pages: merge, switch, remove, list"
 /// | `` `#` green `` | `<span style='color:#0a0'>#</span> green` |
 /// | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS) |
 /// | plain URL | markdown link |
-/// | approval prompt code block | `{% terminal() %}` with colored symbols and gutter |
+/// | approval prompt code block | unchanged portable Markdown |
 ///
-/// Only runs on `after_long_help` markdown — not on terminal reference blocks (those go
-/// through ANSI-to-HTML via `convert_command_reference_to_html` in readme_sync.rs).
+/// Only runs on `after_long_help` Markdown, not on terminal reference blocks.
 ///
 /// The terminal counterpart is `md_help::colorize_status_symbols()`.
 fn post_process_for_html(text: &str) -> String {
     // First pass: move [experimental] from heading lines to a separate line after
-    // the heading. This keeps the badge outside Zola's heading anchor link.
+    // the heading. This keeps the badge out of the generated anchor slug.
     // Terminal help keeps [experimental] on the heading line (different render path).
     let text = move_experimental_from_headings(text);
 
@@ -578,35 +544,6 @@ fn post_process_for_html(text: &str) -> String {
             "Open an issue at https://github.com/max-sixty/worktrunk.",
             "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
         )
-        // Approval prompt: plain code block → terminal shortcode with colored symbols
-        // and gutter. CLI shows a plain ``` block; web shows styled terminal output
-        // matching the actual CLI appearance (yellow ▲, dim ○, cyan ❯, gutter bar).
-        .replace(
-            "```\n\
-             ▲ repo needs approval to execute 3 commands:\n\
-             \n\
-             ○ pre-start install:\n\
-             \x20\x20\x20npm ci\n\
-             ○ pre-start build:\n\
-             \x20\x20\x20cargo build --release\n\
-             ○ pre-start env:\n\
-             \x20\x20\x20echo 'PORT={{ branch | hash_port }}' > .env.local\n\
-             \n\
-             ❯ Allow and remember? [y/N]\n\
-             ```",
-            "{% terminal() %}\n\
-             <span class=\"y\">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>\n\
-             \n\
-             <span class=\"d\">○</span> pre-start <b>install</b>:\n\
-             <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">npm</span> ci</span>\n\
-             <span class=\"d\">○</span> pre-start <b>build</b>:\n\
-             <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">cargo</span> build <span class=\"c\">--release</span></span>\n\
-             <span class=\"d\">○</span> pre-start <b>env</b>:\n\
-             <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">echo</span> <span class=\"g\">'PORT={{ branch | hash_port }}'</span> <span class=\"c\">></span> .env.local</span>\n\
-             \n\
-             <span class=\"c\">❯</span> Allow and remember? <b>[y/N]</b>\n\
-             {% end %}",
-        )
 }
 
 /// Move `[experimental]` from heading lines to a separate line after the heading.
@@ -618,9 +555,9 @@ fn post_process_for_html(text: &str) -> String {
 /// [experimental]
 /// ```
 ///
-/// This keeps the badge outside Zola's `<a class="zola-anchor">` wrapper so it's
-/// not part of the heading link. The `[experimental]` is then replaced with the
-/// badge `<span>` by the caller's `.replace()` chain.
+/// This keeps the badge out of the heading text and therefore out of its slug.
+/// The `[experimental]` is then replaced with the badge `<span>` by the
+/// caller's `.replace()` chain.
 fn move_experimental_from_headings(text: &str) -> String {
     if !text.contains(" [experimental]") {
         return text.to_string();
@@ -770,10 +707,10 @@ fn format_subcommand_section(
     // full_command is "wt config create"
     let full_command = format!("{} {}", parent_name, subcommand_name);
 
-    let raw_help = mode.transform_raw(combine_command_docs(sub));
+    let raw_help = combine_command_docs(sub);
 
     // Extract [experimental] marker from content start → badge after heading.
-    // Web mode: placed after heading as HTML badge so Zola's anchor link doesn't wrap it.
+    // Web mode: placed after the heading so it does not affect the anchor slug.
     // Plain mode: kept as [experimental] text.
     let (has_experimental, raw_help) = match raw_help.strip_prefix("[experimental] ") {
         Some(rest) => (true, rest.to_string()),

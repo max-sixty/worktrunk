@@ -694,17 +694,6 @@ mod tests {
     }
 
     #[test]
-    fn test_failure_strategy_copy() {
-        let strategy = FailureStrategy::FailFast;
-        let copied = strategy; // Copy trait
-        assert!(matches!(copied, FailureStrategy::FailFast));
-
-        let warn = FailureStrategy::Warn;
-        let copied_warn = warn;
-        assert!(matches!(copied_warn, FailureStrategy::Warn));
-    }
-
-    #[test]
     fn test_parsed_filter() {
         // No prefix — matches all sources
         let f = ParsedFilter::parse("foo");

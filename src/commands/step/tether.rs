@@ -42,7 +42,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 ///
 /// `working_dir` is the global `-C <path>` flag — applied as the child's
 /// current directory so the tethered command can run from a subdirectory (a
-/// dev server in `frontend/`, zola in `docs/`), the same way `-C` works for
+/// dev server in `frontend/`, Astro in `docs/`), the same way `-C` works for
 /// custom subcommands. The reaper still watches the captured cwd (the worktree
 /// root), not `working_dir`, so a relative `-C docs` server is still torn down
 /// when the worktree is removed.

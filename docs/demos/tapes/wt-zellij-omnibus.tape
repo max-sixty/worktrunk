@@ -49,12 +49,12 @@ Sleep 500ms
 Type "clear"
 Enter
 Sleep 500ms
-Show
-Sleep 500ms
 
 # ==== TAB 1: Interactive picker and Claude agent ====
 # wt switch (no args) - opens interactive picker
 Type "wt switch"
+Show
+Sleep 300ms
 Enter
 Sleep 1.5s
 

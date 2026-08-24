@@ -791,14 +791,7 @@ impl<'a> WorkingTree<'a> {
             "--pathspec-from-file=-",
             "--pathspec-file-nul",
         ];
-        let add_output = idx
-            .git(add_args)
-            .stdin_bytes(output.stdout)
-            .run()
-            .context("Failed to stage untracked files")?;
-        if !add_output.status.success() {
-            return Err(CommandError::from_failed_output("git", &add_args, &add_output).into());
-        }
+        idx.run_command_with_input(add_args, output.stdout)?;
 
         let mut args = vec![
             "diff".to_string(),
@@ -808,16 +801,10 @@ impl<'a> WorkingTree<'a> {
             "--".to_string(),
         ];
         args.extend(paths);
-        let output = idx
-            .git(&args)
-            .run()
-            .context("Failed to compute untracked diff stats")?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
-        }
+        let output = idx.run_command(&args)?;
 
         let mut stats = LineDiff::default();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
+        for line in output.lines() {
             if let Some((added, deleted)) = parse_numstat_line(line) {
                 stats.added += added;
                 stats.deleted += deleted;
@@ -859,9 +846,6 @@ impl<'a> WorkingTree<'a> {
             // Windows: deleting a still-open file leaves the name pending.
             std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
         }
-        // Validate UTF-8 once so `TempIndex::path` is infallible.
-        temp.to_str()
-            .context("Temporary index path is not valid UTF-8")?;
 
         Ok(TempIndex {
             temp,
@@ -871,6 +855,18 @@ impl<'a> WorkingTree<'a> {
                 |(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()),
             ),
         })
+    }
+
+    /// Write a tree containing the index plus every working-tree change.
+    ///
+    /// A temporary index keeps the user's staging state unchanged. `--sparse`
+    /// is intentional here: this is a complete worktree snapshot for conflict
+    /// detection, so untracked files outside a sparse-checkout definition must
+    /// participate too.
+    pub fn write_worktree_tree(&self) -> anyhow::Result<String> {
+        let index = self.temp_index()?;
+        index.stage_worktree_snapshot()?;
+        index.write_tree()
     }
 
     /// Determine whether there are staged changes in the index.
@@ -986,9 +982,50 @@ pub struct TempIndex {
 }
 
 impl TempIndex {
-    /// UTF-8 path to the temp index file. Validated at construction.
-    pub fn path(&self) -> &str {
-        self.temp.to_str().expect("validated in temp_index()")
+    /// Path to the temporary index file.
+    pub fn path(&self) -> &Path {
+        &self.temp
+    }
+
+    /// Stage the paths selected by `mode` into this temporary index.
+    ///
+    /// Uses the same `git add` mode as [`WorkingTree::stage`], minus its
+    /// unmerged-paths gate. All-files mode also scopes the add to the worktree
+    /// root (`-- .`) and, when the system temp directory sits inside the
+    /// worktree, excludes Worktrunk's own temporary indexes.
+    ///
+    /// [`StageMode`]: crate::config::StageMode
+    pub fn stage(&self, mode: crate::config::StageMode) -> anyhow::Result<()> {
+        let Some(add_args) = mode.add_args() else {
+            return Ok(());
+        };
+        let mut args: Vec<String> = add_args.iter().map(|arg| (*arg).to_string()).collect();
+        if mode == crate::config::StageMode::All {
+            args.extend(["--".to_string(), ".".to_string()]);
+            self.append_temp_index_exclusion(&mut args)?;
+        }
+        self.run_command(args)?;
+        Ok(())
+    }
+
+    /// Stage a complete working-tree snapshot, crossing sparse boundaries.
+    fn stage_worktree_snapshot(&self) -> anyhow::Result<()> {
+        let mut args = vec![
+            "add".to_string(),
+            "-A".to_string(),
+            "--sparse".to_string(),
+            "--".to_string(),
+            ".".to_string(),
+        ];
+        self.append_temp_index_exclusion(&mut args)?;
+        self.run_command(args)?;
+        Ok(())
+    }
+
+    /// Write the temporary index as a tree and return its object id.
+    fn write_tree(&self) -> anyhow::Result<String> {
+        self.run_command(["write-tree"])
+            .map(|output| output.trim().to_string())
     }
 
     /// Register untracked files in the temporary index without adding their
@@ -1010,6 +1047,12 @@ impl TempIndex {
             "--".to_string(),
             ".".to_string(),
         ];
+        self.append_temp_index_exclusion(&mut args)?;
+        self.run_command(args)?;
+        Ok(())
+    }
+
+    fn append_temp_index_exclusion(&self, args: &mut Vec<String>) -> anyhow::Result<()> {
         let temp_dir = canonicalize_with_parents(
             self.temp
                 .parent()
@@ -1023,14 +1066,33 @@ impl TempIndex {
                 ":(top,exclude,glob){relative}{separator}{TEMP_INDEX_PREFIX}*"
             ));
         }
-        let output = self
-            .git(&args)
+        Ok(())
+    }
+
+    fn run_command(
+        &self,
+        args: impl IntoIterator<Item = impl Into<String>>,
+    ) -> anyhow::Result<String> {
+        self.run_command_with_input(args, Vec::new())
+    }
+
+    fn run_command_with_input(
+        &self,
+        args: impl IntoIterator<Item = impl Into<String>>,
+        stdin: Vec<u8>,
+    ) -> anyhow::Result<String> {
+        let args: Vec<String> = args.into_iter().map(Into::into).collect();
+        let mut command = self.command(args.iter().cloned());
+        if !stdin.is_empty() {
+            command = command.stdin_bytes(stdin);
+        }
+        let output = command
             .run()
-            .context("Failed to register untracked files")?;
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
         if !output.status.success() {
             return Err(CommandError::from_failed_output("git", &args, &output).into());
         }
-        Ok(())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1038,7 +1100,7 @@ impl TempIndex {
     /// Wires `current_dir` to the worktree root, the worktree's logging
     /// context, and `GIT_INDEX_FILE`. The caller adds the subcommand and
     /// chooses `.run()` / `.stream()`.
-    pub fn git<I, S>(&self, args: I) -> Cmd
+    pub(super) fn command<I, S>(&self, args: I) -> Cmd
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -1301,8 +1363,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn untracked_diff_stats_crosses_sparse_checkout_boundary() {
+    fn sparse_checkout_with_untracked_file() -> TestRepo {
         let test = TestRepo::with_initial_commit();
         std::fs::create_dir_all(test.root_path().join("visible")).unwrap();
         std::fs::create_dir_all(test.root_path().join("hidden")).unwrap();
@@ -1316,10 +1377,49 @@ mod tests {
         std::fs::create_dir_all(test.root_path().join("hidden")).unwrap();
         std::fs::write(test.root_path().join("hidden/loose.txt"), "loose\n").unwrap();
 
+        test
+    }
+
+    #[test]
+    fn untracked_diff_stats_crosses_sparse_checkout_boundary() {
+        let test = sparse_checkout_with_untracked_file();
+
         let repo = Repository::at(test.root_path()).unwrap();
         let stats = repo.current_worktree().untracked_diff_stats().unwrap();
         assert_eq!(stats.added, 1);
         assert_eq!(stats.deleted, 0);
+    }
+
+    #[test]
+    fn temp_index_stage_all_preserves_sparse_checkout_boundary() {
+        let test = sparse_checkout_with_untracked_file();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let idx = repo.current_worktree().temp_index().unwrap();
+        let err = idx
+            .stage(crate::config::StageMode::All)
+            .expect_err("temporary staging must mirror real git add -A");
+        let cmd_err = crate::git::CommandError::find_in(&err)
+            .expect("sparse-boundary refusal should remain a CommandError");
+        assert_eq!(cmd_err.command_string(), "git add -A -- .");
+    }
+
+    #[test]
+    fn write_worktree_tree_crosses_sparse_checkout_boundary() {
+        let test = sparse_checkout_with_untracked_file();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let tree = repo.current_worktree().write_worktree_tree().unwrap();
+        let files = test.git_output(&["ls-tree", "-r", "--name-only", &tree]);
+        assert_eq!(
+            files.lines().collect::<Vec<_>>(),
+            [
+                "file.txt",
+                "hidden/loose.txt",
+                "hidden/tracked.txt",
+                "visible/tracked.txt",
+            ]
+        );
     }
 
     #[test]
@@ -1365,11 +1465,8 @@ mod tests {
 
         // (b) git add -A against the resulting temp index produces a tree
         // containing the working-tree files.
-        idx.git(["add", "-A"]).run().unwrap();
-        let write_tree = idx.git(["write-tree"]).run().unwrap();
-        let tree_sha = String::from_utf8_lossy(&write_tree.stdout)
-            .trim()
-            .to_string();
+        idx.stage(crate::config::StageMode::All).unwrap();
+        let tree_sha = idx.write_tree().unwrap();
         let ls_tree = Cmd::new("git")
             .args(["ls-tree", "-r", "--name-only", &tree_sha])
             .current_dir(test.root_path())

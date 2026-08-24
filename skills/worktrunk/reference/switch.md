@@ -6,7 +6,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 ## Examples
 
-```bash
+```console
 $ wt switch feature-auth           # Switch to worktree
 $ wt switch -                      # Previous worktree (like cd -)
 $ wt switch --create new-feature   # Create new branch and worktree
@@ -29,7 +29,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 4. Runs [pre-start hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
 5. Spawns [post-start](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
 
-```bash
+```console
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
@@ -50,7 +50,7 @@ Worktrees are addressed by branch name, and every argument that takes one also a
 | `pr:{N}` | GitHub PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
-```bash
+```console
 $ wt switch -                           # Back to previous
 $ wt switch ^                           # Default branch worktree
 $ wt switch --create fix --base=@       # Branch from current HEAD
@@ -119,7 +119,7 @@ pager = "delta --paging=never --width=$COLUMNS"
 
 The `pr:<number>` / `mr:<number>` shortcut and the PR/MR's web URL both resolve to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
-```bash
+```console
 $ wt switch pr:101                                  # GitHub PR #101
 $ wt switch https://github.com/owner/repo/pull/101  # ...the same PR, by URL
 $ wt switch mr:101                                  # GitLab MR !101

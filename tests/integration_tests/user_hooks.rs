@@ -3982,7 +3982,7 @@ approved-commands = ["echo project-hook"]
 // convention — `<!-- wt hook pre-merge (docs-example) -->` in `src/cli/mod.rs`.
 // ============================================================================
 
-/// `wt hook pre-merge` example for `docs/content/hook.md` — two named
+/// `wt hook pre-merge` example for `docs/src/content/docs/hook.md` — two named
 /// pre-merge hooks (test, lint) running mocked `cargo` commands.
 #[rstest]
 fn test_docs_hook_pre_merge(repo: TestRepo) {

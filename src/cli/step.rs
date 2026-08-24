@@ -69,7 +69,7 @@ pub struct SquashArgs {
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
-        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
+        after_long_help = r#"See [LLM-generated commit messages](/llm-commits/) for configuration and prompt customization.
 
 ## Options
 
@@ -111,7 +111,7 @@ Three sections are printed: the rendered prompt, the shell command that would in
     ///
     /// Stages changes and generates message with LLM.
     #[command(
-        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
+        after_long_help = r#"See [LLM-generated commit messages](/llm-commits/) for configuration and prompt customization.
 
 ## Options
 
@@ -175,7 +175,7 @@ The first matching row wins:
 
 A branch that merged the target into itself still rebases: the target is its ancestor, but the merge commit in between keeps the first row from applying.
 
-When the target's local ref lags its upstream, the rows are measured against that upstream, which the result then names in place of the argument. [`wt merge`](@/merge.md) covers why.
+When the target's local ref lags its upstream, the rows are measured against that upstream, which the result then names in place of the argument. [`wt merge`](/merge/) covers why.
 
 ## Conflicts
 
@@ -432,7 +432,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
     ///
     /// Prints the result to stdout for use in scripts and shell substitutions.
     #[command(
-        after_long_help = r#"All [hook template variables and filters](@/hook.md#template-variables) are available.
+        after_long_help = r#"All [hook template variables and filters](/hook/#template-variables) are available.
 
 ## Examples
 
@@ -514,13 +514,13 @@ $ wt step for-each -- sh -c 'echo $HOME && git pull'
 
 ## Template variables
 
-Variables substitute into each argv element before exec. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+Variables substitute into each argv element before exec. See [`wt hook` template variables](/hook/#template-variables) for the complete list and filters.
 
 ```console
 $ wt step for-each -- echo 'Branch: {{ branch }}'
 ```
 
-Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](@/extending.md#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
+Each element is expanded fresh in every worktree, so `{{ branch }}` is that worktree's branch. An alias wrapping for-each renders templates earlier, in the invoking worktree; [deferring expansion in an alias](/extending/#deferring-expansion-to-a-nested-wt-command) shows how to keep a variable per-worktree.
 
 ## Examples
 
@@ -620,7 +620,7 @@ $ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 
 ## JSON output
 
-`--format=json` prints one object per candidate to stdout. The two modes report different things, and name their fields accordingly: a live run reports `branch_outcome`, the executed outcome, using the vocabulary [`wt remove`](@/remove.md#json-output) documents; `--dry-run` reports `branch_deleted`, its prediction of whether the removal would take the branch, since it runs nothing to have an outcome. A dry run also carries `reason` and `target` (why the candidate qualifies, and what it was measured against).
+`--format=json` prints one object per candidate to stdout. The two modes report different things, and name their fields accordingly: a live run reports `branch_outcome`, the executed outcome, using the vocabulary [`wt remove`](/remove/#json-output) documents; `--dry-run` reports `branch_deleted`, its prediction of whether the removal would take the branch, since it runs nothing to have an outcome. A dry run also carries `reason` and `target` (why the candidate qualifies, and what it was measured against).
 
 ## Examples
 

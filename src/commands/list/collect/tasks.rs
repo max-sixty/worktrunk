@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use anyhow::Context;
 use worktrunk::git::{
     ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository, select_comparison_base,
 };
@@ -739,17 +738,8 @@ impl Task for WorkingTreeConflictsTask {
             // Stage all dirty + untracked entries into a temp index so
             // `write-tree` produces a tree representing the full working
             // state. Real index untouched. See `WorkingTree::temp_index`.
-            let idx = wt.temp_index().map_err(|e| ctx.error(Self::KIND, &e))?;
-            idx.git(["add", "-A"])
-                .run()
-                .context("Failed to stage working tree changes")
-                .map_err(|e| ctx.error(Self::KIND, &e))?;
-            let output = idx
-                .git(["write-tree"])
-                .run()
-                .context("Failed to write tree from temporary index")
-                .map_err(|e| ctx.error(Self::KIND, &e))?;
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
+            wt.write_worktree_tree()
+                .map_err(|e| ctx.error(Self::KIND, &e))?
         } else {
             wt.run_command(&["write-tree"])
                 .map(|s| s.trim().to_string())
