@@ -128,10 +128,11 @@ fn check_no_unexpected_stdout_writes() {
 }
 
 fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
+    // A directory the walk can't read contributes no violations, so swallowing
+    // the error lets the guard pass over a tree it never inspected — a missing
+    // or relocated `src/` reads as a clean crate. Surface it instead.
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -228,6 +229,43 @@ const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
     "remove_dir.rs",
 ];
 
+/// Every allowlist entry names a file that still exists.
+///
+/// Both allowlists are matched by path string, so a rename leaves a dead entry
+/// behind rather than failing. That is worse than clutter: the exemption stays
+/// armed at the old path, so a *new* file arriving there — `src/help.rs` is the
+/// shape, a name a future refactor could plausibly reuse — inherits a
+/// permission nobody granted it, and the guard stays green while it writes to
+/// stdout. Pinning existence turns the rename into a failing test at the moment
+/// it happens, when the reviewer still knows whether the exemption should move
+/// with the file or go.
+#[test]
+fn allowlisted_paths_still_exist() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let stale: Vec<String> = [
+        ("STDOUT_ALLOWED_PATHS", STDOUT_ALLOWED_PATHS),
+        ("STD_STDERR_ALLOWED_PATHS", STD_STDERR_ALLOWED_PATHS),
+    ]
+    .iter()
+    .flat_map(|(list_name, paths)| {
+        paths
+            .iter()
+            .filter(|relative| !src_dir.join(relative).is_file())
+            .map(move |relative| format!("{list_name}: src/{relative}"))
+    })
+    .collect();
+
+    assert!(
+        stale.is_empty(),
+        "allowlist entries naming files that no longer exist:\n\n{}\n\n\
+         The entry exempts whatever file later occupies that path, so a stale one\n\
+         silently pre-approves stdout (or std's stderr macros) for code nobody reviewed.\n\
+         Move the entry to the file's new path, or drop it.",
+        stale.join("\n")
+    );
+}
+
 /// Narration on stderr goes out through anstream, at every site.
 ///
 /// `worktrunk::styling`'s `eprint!`/`eprintln!` are anstream's and strip ANSI
@@ -262,10 +300,8 @@ fn check_stderr_macros_come_from_styling() {
 }
 
 fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
 
     for entry in entries.flatten() {
         let path = entry.path();

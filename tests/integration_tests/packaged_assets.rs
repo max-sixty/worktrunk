@@ -52,10 +52,6 @@ fn embedded_assets_ship_in_package() {
     //    repo-root-relative forward-slash string.
     let mut assets = BTreeSet::new();
     scan_directory(&src_dir, manifest_dir, &mut assets);
-    assert!(
-        !assets.is_empty(),
-        "scanned src/ but found no embedded assets — the scanner is likely broken"
-    );
 
     // 2. The set of files `cargo publish` would put in the crates.io archive.
     let packaged = cargo_package_list(manifest_dir);
@@ -93,9 +89,12 @@ fn embedded_assets_ship_in_package() {
 }
 
 fn scan_directory(dir: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
+    // A directory the walk can't read yields no assets, so swallowing the
+    // error lets an unreadable or relocated `src/` read as a crate that embeds
+    // nothing — every violation below goes unchecked. Surface it instead.
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
