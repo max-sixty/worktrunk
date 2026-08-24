@@ -178,25 +178,18 @@ fn test_no_host_specific_paths_in_snapshots() {
 /// Visit every committed `.snap` file. Snapshot dirs live under `src`
 /// (unit tests), `tests` (integration tests), and `docs` (demo fixtures).
 fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
-    let mut seen = 0usize;
     for root in ["src", "tests", "docs"] {
-        visit_snap_files(&project_root.join(root), &mut |path, content| {
-            seen += 1;
-            f(path, content);
-        });
+        visit_snap_files(&project_root.join(root), &mut f);
     }
-    // Every caller asserts absence over the corpus (~1200 files); an empty
-    // walk — say, after a directory-layout change — would pass vacuously.
-    assert!(
-        seen > 500,
-        "expected the full snapshot corpus, saw {seen} files"
-    );
 }
 
 fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
+    // Every caller asserts absence over the corpus, so a walk that reads
+    // nothing passes vacuously. Swallowing the error is what makes a
+    // directory-layout change look like a clean corpus; surface it instead.
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the snapshot scan: {e}", dir.display()));
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {

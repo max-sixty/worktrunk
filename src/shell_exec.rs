@@ -1053,6 +1053,12 @@ fn run_with_timeout_impl(
 /// that exited on the deadline's other side is a zombie that keeps its pid
 /// reserved until the caller's own `wait()`. The pid cannot name a different
 /// process group by the time the signal lands.
+///
+/// The same unreaped zombie means the escalation's liveness probe reads the
+/// group as alive for the entire grace, so its final SIGKILL fires even when
+/// every member exited on the TERM. Accepted: that sweep is a no-op against a
+/// dead group (see [`forward_signal_with_escalation`]), and holding the zombie
+/// is what pins the pgid.
 #[cfg(unix)]
 fn kill_timed_out_tree(pid: u32) {
     forward_signal_with_escalation(pid as i32, signal_hook::consts::SIGTERM);
@@ -2257,6 +2263,12 @@ impl Cmd {
 // Signal forwarding helpers (Unix only)
 // ============================================================================
 
+/// One `killpg(pgid, 0)` liveness probe. Only `ESRCH` proves the group empty;
+/// everything else counts as alive. That makes the probe conservative in one
+/// specific way: an exited-but-unreaped member (a zombie) still registers —
+/// Linux answers `Ok`, macOS `EPERM` — so a group whose members all exited
+/// keeps reading alive until someone reaps them. See
+/// [`forward_signal_with_escalation`] for why that over-report is safe.
 #[cfg(unix)]
 fn process_group_alive(pgid: i32) -> bool {
     match nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None) {
@@ -2266,10 +2278,25 @@ fn process_group_alive(pgid: i32) -> bool {
     }
 }
 
+/// Poll [`process_group_alive`] until the group is gone or `grace` expires,
+/// returning `true` when the group died within the grace. The first probe is
+/// immediate, so an already-empty group costs no sleep at all, and a group
+/// whose members exit (and are reaped) mid-grace is noticed within one poll
+/// interval rather than at the deadline.
 #[cfg(unix)]
-fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
-    std::thread::sleep(grace);
-    !process_group_alive(pgid)
+fn group_died_within(pgid: i32, grace: Duration) -> bool {
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+    let deadline = Instant::now() + grace;
+    loop {
+        if !process_group_alive(pgid) {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        std::thread::sleep(remaining.min(POLL_INTERVAL));
+    }
 }
 
 /// Single-shot signal delivery to a specific PID. Used in shared-pgroup mode
@@ -2288,32 +2315,55 @@ pub fn forward_signal_to_pid(pid: i32, sig: i32) {
     let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix_sig);
 }
 
+/// Signal a child process group and sweep stragglers: send `sig` (SIGINT or
+/// SIGTERM; anything else is ignored), give the group a 200 ms grace to exit,
+/// and SIGKILL whatever still remains. SIGINT inserts a SIGTERM round (with
+/// its own grace) before the SIGKILL, so an interrupted git still runs its
+/// TERM-time lockfile cleanup before force-kill.
+///
+/// "Still remains" is `process_group_alive`'s answer, and that probe counts
+/// an exited-but-unreaped member as alive — it cannot tell a zombie from live
+/// work. The over-report errs in the safe direction on both sides:
+///
+/// - Every member already exited, the leader just isn't reaped yet: the grace
+///   runs to its deadline and the final SIGKILL lands on a dead group, which
+///   is a no-op — a signal to a fully-exited process is discarded and cannot
+///   change its recorded exit status, so TERM-time cleanup that already ran is
+///   not undone. `kill_timed_out_tree` is permanently in this position: its
+///   caller holds the group leader unreaped throughout (see its doc), so on
+///   that path the sweep always fires, harmlessly.
+/// - A member is genuinely alive at the deadline: the probe is accurate and
+///   the SIGKILL is the intended escalation. For a SIGSTOP'd member it is the
+///   only signal that works — a stopped process runs no TERM handler, so the
+///   sweep is what keeps teardown bounded.
+///
+/// Callers whose children are reaped concurrently — `Cmd::stream`'s main
+/// thread waiting while the signal-forwarder thread runs this, tether's
+/// supervisor — get the accurate reading: the poll loop returns at the first
+/// probe after the reap, so escalating over a cooperative child costs one
+/// poll interval, not the full grace. A reap does unpin the pgid, leaving the
+/// microseconds between a probe that read alive and the following `killpg` as
+/// the accepted recycling exposure — unchanged from the fixed-sleep
+/// predecessor, and shared by every killpg-after-grace design.
 #[cfg(unix)]
 pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
+    use nix::sys::signal::Signal;
+
     let pgid = nix::unistd::Pid::from_raw(pgid);
-    let initial_signal = match sig {
-        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
-        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+    let chain: &[Signal] = match sig {
+        signal_hook::consts::SIGINT => &[Signal::SIGINT, Signal::SIGTERM],
+        signal_hook::consts::SIGTERM => &[Signal::SIGTERM],
         _ => return,
     };
 
-    let _ = nix::sys::signal::killpg(pgid, initial_signal);
-
-    let grace = std::time::Duration::from_millis(200);
-    // Escalate if process doesn't exit gracefully
-    if sig == signal_hook::consts::SIGINT {
-        if !wait_for_exit(pgid.as_raw(), grace) {
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
-            if !wait_for_exit(pgid.as_raw(), grace) {
-                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
-            }
-        }
-    } else {
-        // SIGTERM - escalate directly to SIGKILL
-        if !wait_for_exit(pgid.as_raw(), grace) {
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+    let grace = Duration::from_millis(200);
+    for step in chain {
+        let _ = nix::sys::signal::killpg(pgid, *step);
+        if group_died_within(pgid.as_raw(), grace) {
+            return;
         }
     }
+    let _ = nix::sys::signal::killpg(pgid, Signal::SIGKILL);
 }
 
 #[cfg(test)]
@@ -3101,6 +3151,80 @@ mod tests {
         // Use a signal number that's not SIGINT or SIGTERM
         super::forward_signal_with_escalation(1, 999);
         // No panic = success (function returns early for unknown signals)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_group_died_within_immediate_for_reaped_group() {
+        // A reaped child leaves an empty group: the first (immediate) probe
+        // reads ESRCH and the grace loop returns without sleeping. This pins
+        // the early exit that keeps escalation cheap for the callers whose
+        // children are reaped concurrently (signal forwarder, tether).
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", ":"]).process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let pgid = child.id() as i32;
+        child.wait().unwrap();
+
+        let start = Instant::now();
+        // Grace far longer than any plausible scheduling stall, so returning
+        // early is structurally distinguishable from having slept it, and the
+        // bound below is a safety net rather than a race.
+        assert!(super::group_died_within(pgid, Duration::from_secs(30)));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "an empty group must exit the grace loop on the first probe; took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_group_died_within_times_out_on_live_group() {
+        // Probing our own (live) process group runs the full grace and
+        // reports the group still alive.
+        let pgid = nix::unistd::getpgrp().as_raw();
+        let grace = Duration::from_millis(50);
+        let start = Instant::now();
+        assert!(!super::group_died_within(pgid, grace));
+        assert!(start.elapsed() >= grace);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_escalation_full_grace_and_inert_sweep_when_leader_unreaped() {
+        // Replays `kill_timed_out_tree`'s position: the caller holds the group
+        // leader unreaped while escalating. The child has already exited when
+        // escalation starts (stdout EOF is the barrier — the pipe closes when
+        // the process exits, so this needs no scheduling assumptions), but
+        // nobody reaps it, so the liveness probe counts the zombie, the grace
+        // runs to its deadline, and the final group SIGKILL fires against the
+        // dead group. The recorded exit must come through untouched — signals
+        // to a fully-exited group are discarded.
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "exit 7"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let pid = child.id() as i32;
+        let mut eof = Vec::new();
+        child.stdout.take().unwrap().read_to_end(&mut eof).unwrap();
+
+        let start = Instant::now();
+        super::forward_signal_with_escalation(pid, signal_hook::consts::SIGTERM);
+        assert!(
+            start.elapsed() >= Duration::from_millis(200),
+            "with the leader unreaped the group must read alive for the whole grace"
+        );
+
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(7),
+            "the TERM and the post-grace SIGKILL must not alter the recorded exit"
+        );
     }
 
     #[test]

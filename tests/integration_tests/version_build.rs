@@ -43,9 +43,12 @@ fn vergen_env_vars_are_read_optionally() {
 }
 
 fn scan_directory(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
+    // Swallowing this error would let a missing or relocated `src/` read as a
+    // crate with no `env!("VERGEN_…")` in it — the vacuous pass that makes this
+    // guard, the one standing between a bare `env!` and another #3123, useless.
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {

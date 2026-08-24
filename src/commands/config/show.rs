@@ -421,7 +421,7 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
         "{}",
         info_message(cformat!("{cmd}: <bold>{version}</>"))
     )?;
-    if let Ok(git_version) = crate::diagnostic::git_version() {
+    if let Ok(git_version) = worktrunk::git::git_version() {
         writeln!(
             out,
             "{}",

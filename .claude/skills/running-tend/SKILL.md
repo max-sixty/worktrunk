@@ -44,11 +44,9 @@ If codecov fails **locally**, investigate with `task coverage` and
 `task` and `cargo-llvm-cov` are not installed in the `tend-setup` action.
 Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
-even `pwd` and `echo`. (Pre-built single-script installers like Determinate
-Nix's are fine — see **Weekly Maintenance: MSRV & Toolchain** for the one we
-use. The block is specifically about long-running cargo compiles.) Instead,
-query Codecov directly, following `tests/CLAUDE.md` → **Coverage
-Investigation** for the endpoints and their traps.
+even `pwd` and `echo`. Instead, query Codecov directly, following
+`tests/CLAUDE.md` → **Coverage Investigation** for the endpoints and their
+traps.
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
 artifact from the PR head's `coverage` workflow run — it contains a
@@ -271,23 +269,19 @@ Files to update:
 
 `flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
 is needed. After updating the toolchain, refresh `flake.lock` so the locked
-`rust-overlay` revision knows about the new version. Nix isn't installed in
-the tend sandbox by default — install it with the Determinate Systems
-installer (single script, daemon-mode, no prompts), then update:
+`rust-overlay` revision knows about the new version. `tend-setup` installs Nix
+with flakes enabled:
 
 ```bash
-curl -fsSL https://install.determinate.systems/nix -o /tmp/nix-installer.sh
-sh /tmp/nix-installer.sh install --no-confirm --determinate
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-nix flake update --extra-experimental-features 'nix-command flakes'
+# Name the input: a bare `nix flake update` also relocks nixpkgs, an
+# unrelated bump in a toolchain-scoped PR.
+nix flake update rust-overlay
+# Check the bumped channel still evaluates
+nix eval .#devShells.x86_64-linux.default.name
 ```
 
-Verify the new lock evaluates with the channel bump before committing:
-
-```bash
-nix eval --extra-experimental-features 'nix-command flakes' \
-  .#devShells.x86_64-linux.default.name
-```
+If `nix` isn't on the PATH, `tend-setup` regressed. Say so in the PR and leave
+`flake.lock` alone rather than hand-computing an entry.
 
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
@@ -300,10 +294,9 @@ Pinned third-party versions in CI are invisible to Dependabot — it follows `Ca
 For each weekly run, check upstream and bump:
 
 - **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/{affected,ci,coverage,nightly}.yaml` and `.github/actions/{test,tend}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-affected`, `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. `cargo-affected` is pinned twice in `affected.yaml`; move both together. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
-- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Four call sites: `coverage.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
+- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Five call sites: `coverage.yaml` (`code-coverage`), `nightly.yaml` (`feature-powerset`), `benchmarks.yaml` (`benchmarks`), and `.github/actions/{test,tend}-setup/action.yaml` — `tend-setup`'s copy is what puts `nu` in the agent's sandbox, so it moves with the others.
 - **Codex Cloud tools** — `dev/codex.sh` pins pre-commit, cargo-insta, cargo-nextest, Nushell, and PowerShell; `setup-web` pins Nushell and PowerShell. Keep cargo-insta, cargo-nextest, and Nushell level with `.github/actions/test-setup/action.yaml`, which pins the same three — the gate runs `--all-features`, so Nushell's version moves PTY snapshots. Nothing under `.github/` pins PowerShell (CI runs whatever the runner image ships), so bump that one on its own.
-- **Docs site packages** in `docs/package.json` are covered by Dependabot's
-  `/docs` npm entry. Do not duplicate those bumps in this manual pin pass.
+- **Docs site packages** in `docs/package.json` are covered by Dependabot's `/docs` npm entry. Do not duplicate those bumps in this manual pin pass. The one thing that pass does own is the `ignore` entry for `typescript` majors in `.github/dependabot.yaml`: it suppresses the proposal Dependabot would otherwise make, so nothing else can surface it. Check `npm view @astrojs/check peerDependencies.typescript` against the current `typescript` major and delete the entry once the range covers it — the rule is version-agnostic, so left in place it blocks a major `@astrojs/check` fully supports just as silently as the TypeScript 7 it was added for (#3877).
 - **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
 
 Discovery shortcut: a recent green CI run on `main` flags cargo-install drift directly via workflow annotations. `gh run view <run-id> --json jobs --jq '.jobs[].databaseId' | xargs -I{} gh api repos/<owner>/<repo>/check-runs/{}/annotations` returns one warning per outdated pin.

@@ -495,6 +495,16 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     pass_coverage_env_to_pty_cmd(cmd);
 }
 
+/// Build a minimal PATH that keeps the test process's Git while excluding
+/// user-installed tools such as `wt`, `claude`, and `codex`.
+#[cfg(unix)]
+pub fn setup_minimal_path_with_git(bin_dir: &Path) -> String {
+    std::fs::create_dir_all(bin_dir).unwrap();
+    let git = which::which("git").expect("git must be installed to run tests");
+    std::os::unix::fs::symlink(git, bin_dir.join("git")).unwrap();
+    format!("{}:/usr/bin:/bin", bin_dir.display())
+}
+
 /// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
 ///
 /// PTY tests use `cmd.env_clear()` for isolation, which removes LLVM_PROFILE_FILE.

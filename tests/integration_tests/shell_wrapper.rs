@@ -1978,13 +1978,15 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
         let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
+        let path = crate::common::setup_minimal_path_with_git(&repo.home_path().join("test-bin"));
+        let path_quoted = shell_quote(&path);
 
         // Script that explicitly removes wt from PATH but sets WORKTRUNK_BIN
         let script = match shell {
             "fish" => format!(
                 r#"
                 # Clear PATH to ensure wt is not found via PATH
-                set -x PATH /usr/bin /bin
+                set -x PATH {}
                 set -x WORKTRUNK_BIN {}
                 set -x WORKTRUNK_CONFIG_PATH {}
                 set -x WORKTRUNK_APPROVALS_PATH {}
@@ -1993,12 +1995,12 @@ approved-commands = ["echo 'bash background'"]
                 wt switch --create fallback-test
                 echo "__PWD__ $PWD"
                 "#,
-                wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
+                path_quoted, wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
             ),
             _ => format!(
                 r#"
                 # Clear PATH to ensure wt is not found via PATH
-                export PATH="/usr/bin:/bin"
+                export PATH={}
                 export WORKTRUNK_BIN={}
                 export WORKTRUNK_CONFIG_PATH={}
                 export WORKTRUNK_APPROVALS_PATH={}
@@ -2007,7 +2009,7 @@ approved-commands = ["echo 'bash background'"]
                 wt switch --create fallback-test
                 echo "__PWD__ $PWD"
                 "#,
-                wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
+                path_quoted, wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
             ),
         };
 

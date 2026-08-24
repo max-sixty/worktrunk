@@ -596,7 +596,12 @@ fn test_remove_refuses_foreign_repository_at_worktree_path(mut repo: TestRepo) {
 /// test never depends on how git derives the id.
 fn registration_dir(worktree: &Path) -> PathBuf {
     let dot_git = std::fs::read_to_string(worktree.join(".git")).unwrap();
-    PathBuf::from(dot_git.trim().strip_prefix("gitdir: ").unwrap())
+    let path = PathBuf::from(dot_git.trim().strip_prefix("gitdir: ").unwrap());
+    if path.is_relative() {
+        worktree.join(path)
+    } else {
+        path
+    }
 }
 
 /// A registration whose directory now holds a *sibling worktree of the same
@@ -698,38 +703,32 @@ approved-commands = ['{hook}']
     );
 }
 
-/// A registration recording its worktree with a *relative* `gitdir` entry is
-/// recognized, and that worktree removes normally.
+/// A registration using Git's configured path format is recognized and the
+/// worktree removes normally.
 ///
-/// git writes the relative form under `worktree.useRelativePaths` and resolves
-/// either, so the gate resolves an entry against the registration directory as
-/// git does. Rewriting the entry rather than setting the config keeps this
-/// independent of the git version that introduced the option — and git reads the
-/// rewritten entry back, which is what makes it the same form git would write.
+/// Git 2.48 and newer honor `worktree.useRelativePaths` and enable the
+/// `extensions.relativeWorktrees` repository extension. Older supported Git
+/// versions ignore the setting and keep writing absolute registrations. A
+/// hand-written relative entry would be unusable on Git 2.43, so Git creates
+/// the entry: this exercises the relative form where supported and the absolute
+/// form on older versions.
 #[rstest]
-fn test_remove_worktree_with_relative_registration_gitdir(mut repo: TestRepo) {
+fn test_remove_worktree_with_git_generated_registration_paths(mut repo: TestRepo) {
+    repo.run_git(&["config", "worktree.useRelativePaths", "true"]);
     let worktree_path = repo.add_worktree("feature");
     let registration = registration_dir(&worktree_path);
-
-    // From `<repo>/.git/worktrees/<id>`, four levels up is the directory the
-    // worktree sits in, under the default `../{{ repo }}.{{ branch }}` layout.
-    let relative = Path::new("../../../..")
-        .join(worktree_path.file_name().unwrap())
-        .join(".git");
+    let gitdir = std::fs::read_to_string(registration.join("gitdir")).unwrap();
+    let relative_extension_enabled = repo
+        .git_command()
+        .args(["config", "--get", "extensions.relativeWorktrees"])
+        .run()
+        .unwrap()
+        .status
+        .success();
     assert_eq!(
-        dunce::canonicalize(registration.join(&relative)).unwrap(),
-        dunce::canonicalize(worktree_path.join(".git")).unwrap(),
-        "the relative entry must resolve to this worktree's own .git",
-    );
-    std::fs::write(
-        registration.join("gitdir"),
-        relative.to_slash_lossy().as_ref(),
-    )
-    .unwrap();
-    assert!(
-        repo.git_output(&["worktree", "list", "--porcelain"])
-            .contains(&worktree_path.to_slash_lossy().to_string()),
-        "git must still resolve the worktree from the relative entry",
+        Path::new(gitdir.trim()).is_relative(),
+        relative_extension_enabled,
+        "Git must write a relative registration exactly when it enables the repository extension",
     );
 
     assert_cmd_snapshot!(make_snapshot_cmd(

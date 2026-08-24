@@ -53,6 +53,12 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           bot_name: worktrunk-bot
           model: opus
+          sandbox_setup: |
+            mkdir -p ~/.local/bin
+            install -m755 /home/runner/.cargo-install/cargo-insta/bin/cargo-insta ~/.local/bin/
+            install -m755 /home/runner/.cargo-install/cargo-nextest/bin/cargo-nextest ~/.local/bin/
+            uv tool install --quiet pre-commit
+            for t in cargo-insta cargo-nextest pre-commit nu; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; wt hook pre-merge cannot run"; exit 1; }; done
           prompt: |
             /tend-ci-runner:triage ${{ github.event.issue.number }}
 

@@ -326,7 +326,7 @@ pub fn run_hook(
             hook_type,
             &extra_vars,
             name_filters,
-            FailureStrategy::default_for(hook_type),
+            FailureStrategy::FailFast,
         )
     } else {
         run_post_hook(
