@@ -87,10 +87,10 @@ only where that directory exists. `useradd -m` seeds the sandbox home from
 `/etc/skel`, so an image-baked toolchain has a sibling there and survives;
 anything `tend-setup` installs at runtime into the runner's home has none and is
 dropped, unlogged. So a tool the agent needs has to land in a system location
-(`/opt/hostedtoolcache/...`, `/usr/local/bin`), which carries across verbatim, or
-be copied in by `.config/tend.yaml`'s `sandbox_setup:` — which is what the
-pre-merge gate's `cargo-insta`, `cargo-nextest` and `pre-commit` take, and what
-its closing probe asserts.
+(`/opt/hostedtoolcache/...`, `/usr/local/bin`), which carries across verbatim —
+the route `nu` takes — or be copied in by `.config/tend.yaml`'s
+`sandbox_setup:`, which is what the pre-merge gate's `cargo-insta`,
+`cargo-nextest` and `pre-commit` take. Its closing probe asserts all four.
 
 ## Build environment
 

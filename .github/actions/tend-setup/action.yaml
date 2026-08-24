@@ -6,7 +6,7 @@ inputs:
     description: Install cargo-insta and cargo-nextest
     default: "true"
   install-shells:
-    description: Install zsh and fish for shell integration tests
+    description: Install zsh, fish, and nushell for shell integration tests
     default: "true"
 
 runs:
@@ -81,3 +81,15 @@ runs:
       run: |
         sudo timeout -k 30 300 apt-get update
         sudo timeout -k 30 300 apt-get install -y zsh fish
+
+    # The gate's `insta` step runs `--all-features`, which turns on
+    # `shell-integration-tests` — that needs `nu` as much as zsh and fish, and
+    # two tests `.expect()` it outright. `hustcer/setup-nu` installs under
+    # /opt/hostedtoolcache, a system path the sandbox PATH derivation carries
+    # across verbatim, so this needs no `sandbox_setup:` line the way the
+    # runner-home installs above do. Level with `test-setup`'s pin.
+    - name: Install nushell
+      if: inputs.install-shells == 'true'
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.115.0'
