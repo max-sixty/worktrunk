@@ -353,33 +353,39 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
     // directory (named at the start of every `-vv` run), and the report body
     // points at them directly (subprocess_log_path in the template above;
     // the performance profile section names `trace.jsonl` as its source).
-    let report = DiagnosticReport::collect(&repo, command_line, context);
+    // Everything below spawns subprocesses for the report itself, into the same
+    // trace as the command being reported on. `diagnostic_scope` records them
+    // under the reserved diagnostic context so the next process to read
+    // `trace.jsonl` back profiles the command rather than its collector.
+    worktrunk::trace::emit::diagnostic_scope(|| {
+        let report = DiagnosticReport::collect(&repo, command_line, context);
 
-    match report.write_diagnostic_file(&repo) {
-        Some(path) => {
-            let path_display = format_path_for_display(&path);
-            eprintln!(
-                "{}",
-                info_message(format!(
-                    "Diagnostics and performance profile saved @ {path_display}"
-                ))
-            );
-
-            // Only show gh command if gh is installed
-            if is_gh_installed() {
-                let issue_url = "https://github.com/max-sixty/worktrunk/issues/new";
+        match report.write_diagnostic_file(&repo) {
+            Some(path) => {
+                let path_display = format_path_for_display(&path);
                 eprintln!(
                     "{}",
-                    hint_message(cformat!(
-                        "To report a bug, open an issue (<underline>{issue_url}</>) and attach a secret gist: <underline>gh gist create --web {path_display}</>"
+                    info_message(format!(
+                        "Diagnostics and performance profile saved @ {path_display}"
                     ))
                 );
+
+                // Only show gh command if gh is installed
+                if is_gh_installed() {
+                    let issue_url = "https://github.com/max-sixty/worktrunk/issues/new";
+                    eprintln!(
+                        "{}",
+                        hint_message(cformat!(
+                            "To report a bug, open an issue (<underline>{issue_url}</>) and attach a secret gist: <underline>gh gist create --web {path_display}</>"
+                        ))
+                    );
+                }
+            }
+            None => {
+                eprintln!("{}", warning_message("Failed to write diagnostic file"));
             }
         }
-        None => {
-            eprintln!("{}", warning_message("Failed to write diagnostic file"));
-        }
-    }
+    })
 }
 
 /// Check if the GitHub CLI (gh) is installed.

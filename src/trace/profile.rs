@@ -34,6 +34,7 @@ use serde::Serialize;
 
 use crate::styling::format_heading;
 
+use super::emit::DIAGNOSTIC_CONTEXT;
 use super::{TraceEntry, TraceEntryKind, TraceResult};
 
 /// How many individual calls [`Profile::slowest`] retains.
@@ -302,6 +303,14 @@ pub(super) fn command_label(command: &str, context: Option<&str>, result: &Trace
     label
 }
 
+/// Whether this entry records the `-vv` diagnostic collector's own work rather
+/// than the command being profiled. The collector writes into the same trace
+/// after the command finishes, so every count, total and duplicate bucket here
+/// skips it — see [`crate::trace::emit::DIAGNOSTIC_CONTEXT`].
+fn is_diagnostic(entry: &TraceEntry) -> bool {
+    entry.context.as_deref() == Some(DIAGNOSTIC_CONTEXT)
+}
+
 /// Microseconds of an entry's duration (zero for instant events).
 fn entry_dur_us(entry: &TraceEntry) -> u64 {
     match &entry.kind {
@@ -315,9 +324,14 @@ fn entry_dur_us(entry: &TraceEntry) -> u64 {
 impl Profile {
     /// Build a profile from parsed trace entries.
     pub fn from_entries(entries: &[TraceEntry]) -> Self {
-        let min_start = entries.iter().filter_map(|e| e.start_time_us).min();
+        let min_start = entries
+            .iter()
+            .filter(|e| !is_diagnostic(e))
+            .filter_map(|e| e.start_time_us)
+            .min();
         let max_end = entries
             .iter()
+            .filter(|e| !is_diagnostic(e))
             .filter_map(|e| e.start_time_us.map(|s| s + entry_dur_us(e)))
             .max();
         let traced = match (min_start, max_end) {
@@ -336,6 +350,9 @@ impl Profile {
         let mut slowest: Vec<Slow> = Vec::new();
 
         for entry in entries {
+            if is_diagnostic(entry) {
+                continue;
+            }
             match &entry.kind {
                 TraceEntryKind::Command {
                     command,
@@ -677,6 +694,9 @@ impl CacheReport {
         let mut pair_durations: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
 
         for entry in entries {
+            if is_diagnostic(entry) {
+                continue;
+            }
             if let TraceEntryKind::Command {
                 command,
                 duration,
@@ -1056,6 +1076,70 @@ mod tests {
         assert_eq!(cache.same_context_duplicates[0].command, "git status");
         assert_eq!(cache.same_context_extra_calls, 1);
         assert_eq!(cache.same_context_extra, Duration::from_millis(1));
+    }
+
+    #[test]
+    fn profile_excludes_the_diagnostic_collector() {
+        // The `-vv` collector appends its own calls to the same trace after the
+        // command finishes, so a profile read back from `trace.jsonl` must
+        // count the command's two calls and neither of the collector's.
+        let entries = vec![
+            cmd("git status", Some("main"), 0, 5_000, 1, true),
+            cmd("git rev-parse HEAD", Some("main"), 6_000, 1_000, 1, true),
+            cmd(
+                "git --version",
+                Some(DIAGNOSTIC_CONTEXT),
+                8_000,
+                2_000,
+                1,
+                true,
+            ),
+            cmd(
+                "git worktree list --porcelain",
+                Some(DIAGNOSTIC_CONTEXT),
+                11_000,
+                40_000,
+                1,
+                true,
+            ),
+        ];
+        let profile = Profile::from_entries(&entries);
+
+        assert_eq!(profile.command_count, 2);
+        assert_eq!(profile.command_total, Duration::from_millis(6));
+        // The collector's 40ms tail is outside the traced window too.
+        assert_eq!(profile.traced, Duration::from_millis(7));
+        assert!(
+            !profile
+                .by_context
+                .iter()
+                .any(|c| c.context == DIAGNOSTIC_CONTEXT),
+            "collector context leaked into the attribution table: {:?}",
+            profile.by_context
+        );
+    }
+
+    #[test]
+    fn cache_report_excludes_the_diagnostic_collector() {
+        // The collector re-runs `git worktree list --porcelain`, which the
+        // command already ran. Pairing the two would report a cache miss that
+        // no change to the command could fix.
+        let worktree_list = "git worktree list --porcelain";
+        let entries = vec![
+            cmd(worktree_list, Some("main"), 0, 5_000, 1, true),
+            cmd(
+                worktree_list,
+                Some(DIAGNOSTIC_CONTEXT),
+                6_000,
+                4_000,
+                1,
+                true,
+            ),
+        ];
+        let cache = CacheReport::from_entries(&entries);
+
+        assert_eq!(cache.same_context_extra_calls, 0);
+        assert!(cache.same_context_duplicates.is_empty());
     }
 
     #[test]

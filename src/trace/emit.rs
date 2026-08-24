@@ -29,7 +29,10 @@
 //! `trace.jsonl`. `stdin` (command records, [`CommandTrace::reads_stdin`])
 //! marks a command that consumed stdin the `cmd` string doesn't capture, so the
 //! cache analysis in `super::profile` can skip it — `trace.jsonl` carries it;
-//! the human line omits it.
+//! the human line omits it. `context` is normally the worktree a command reads,
+//! but inside [`diagnostic_scope`] it is [`DIAGNOSTIC_CONTEXT`] instead, marking
+//! the `-vv` collector's own subprocesses so a profile read back from the file
+//! measures the command rather than its reporter.
 //!
 //! This split — structured fields at the emission site, rendering at the
 //! layer — means emit sites carry no string-formatting noise.
@@ -79,6 +82,7 @@
 //! so it stays segmentable and joins back to this record via `seq`.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::fmt::Display;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -122,6 +126,50 @@ pub fn thread_id() -> u64 {
 /// construction (outside any verbosity gate) so the sequence is dense
 /// regardless of whether the file layers are active. Starts at 1.
 static CMD_SEQ: AtomicU64 = AtomicU64::new(1);
+
+/// Context recorded for the subprocesses the `-vv` diagnostic collector spawns
+/// for the report itself.
+///
+/// The collector runs *after* the command it reports on and writes into the
+/// same `trace.jsonl`. A profile rendered in-process is unaffected — it is read
+/// before the collector spawns anything — but a profile read back from the file
+/// afterwards (`wt config state logs profile`, and so the statusline
+/// performance recipe) would otherwise count the collector's own `git
+/// --version`, `gh --version` and `git worktree list --porcelain` as the
+/// command's work, and pair them with the command's own calls as same-context
+/// duplicates. Records made inside [`diagnostic_scope`] carry this reserved
+/// context and [`crate::trace::profile`] excludes it, so the numbers keep
+/// meaning the command. The records still appear in `trace.log`,
+/// `subprocess.log` and the timeline, where a bug report wants to see them.
+///
+/// Parenthesized like `profile`'s `(none)` bucket, so it can't be confused with
+/// the worktree names that fill every other context.
+pub const DIAGNOSTIC_CONTEXT: &str = "(diagnostic)";
+
+thread_local! {
+    /// Whether this thread is currently inside [`diagnostic_scope`].
+    static IN_DIAGNOSTIC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Resets [`IN_DIAGNOSTIC`] when the scope ends, including on unwind.
+struct DiagnosticGuard;
+
+impl Drop for DiagnosticGuard {
+    fn drop(&mut self) {
+        IN_DIAGNOSTIC.set(false);
+    }
+}
+
+/// Run `f` with every subprocess this thread traces recorded under
+/// [`DIAGNOSTIC_CONTEXT`] instead of its own context.
+///
+/// Thread-local rather than process-global: threads still finishing the
+/// command's own work must keep their real context.
+pub fn diagnostic_scope<T>(f: impl FnOnce() -> T) -> T {
+    IN_DIAGNOSTIC.set(true);
+    let _guard = DiagnosticGuard;
+    f()
+}
 
 /// Emit a completed-command record (`ok=true`/`ok=false`).
 ///
@@ -243,8 +291,15 @@ impl CommandTrace {
     /// Begin tracing a command. Call immediately before spawning the child so
     /// the captured start time brackets the subprocess.
     pub fn new(context: Option<&str>, cmd: &str) -> Self {
+        // Inside the diagnostic collector every spawn is the report's own work,
+        // whichever worktree it happens to read — see [`DIAGNOSTIC_CONTEXT`].
+        let context = if IN_DIAGNOSTIC.get() {
+            Some(DIAGNOSTIC_CONTEXT.to_owned())
+        } else {
+            context.map(ToOwned::to_owned)
+        };
         Self {
-            context: context.map(ToOwned::to_owned),
+            context,
             cmd: cmd.to_owned(),
             start_ts_us: now_us(),
             start: Instant::now(),
