@@ -250,7 +250,11 @@ petname = { version = "=3.2.0", default-features = false, features = ["default-w
 petname-macros = "=3.2.0"
 
 tempfile = "3.27"
-wait-timeout = "0.2"
+
+# Timed waits on child processes (`Cmd::timeout`, `Cmd::delayed_stream`, the
+# picker's pager). Replaced `wait-timeout`, whose SIGCHLD handler aborts the
+# process when its self-pipe write fails — see "Timed waits" in `shell_exec`.
+shared_child = "1.1"
 
 # Interactive picker (`wt switch`) TUI stack, pulled in only by the `cli`
 # feature's `dep:` entries. These are platform-neutral (skim 4.x is the

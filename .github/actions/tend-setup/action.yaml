@@ -76,3 +76,41 @@ runs:
       run: |
         sudo timeout -k 30 300 apt-get update
         sudo timeout -k 30 300 apt-get install -y zsh fish
+
+    # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
+    # agent can't install it: that user has no sudo, so it can't create /nix.
+    # Installed here as `runner`, /nix/var/nix/profiles/default/bin lands on
+    # $GITHUB_PATH, and tend carries system PATH entries into the sandbox
+    # verbatim (only runner-home entries are rewritten), so the agent gets
+    # `nix`. ~4 s, so it isn't worth gating to the one workflow that needs it.
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Strip the job token from /etc/nix/nix.conf
+      shell: bash
+      # The step above writes `access-tokens = github.com=<job token>` into
+      # world-readable /etc/nix/nix.conf whenever it can see a token, and its
+      # action.yml passes `GITHUB_TOKEN: ${{ github.token }}` unconditionally.
+      # `github_access_token: ""` doesn't suppress it; install-nix.sh falls
+      # through to the job token, which on tend-weekly carries `contents:
+      # write`. Deleting the line here is enough, because the sandbox user
+      # doesn't exist until the tend action runs.
+      #
+      # Nothing is lost: tend's proxy overwrites `Authorization` on every
+      # sandbox request to github.com, codeload.github.com, and api.github.com
+      # with the bot's token, so flake fetches still authenticate.
+      #
+      # The `grep` runs under sudo like the `sed`, though the file is
+      # world-readable today: `grep` exits 2 when it can't read a file, and an
+      # `if` condition takes that as "no match", so a check that couldn't run
+      # would report success. After `sed -i` succeeds, root can read the file
+      # by construction.
+      run: |
+        sudo sed -i '/^access-tokens/d' /etc/nix/nix.conf
+        if sudo grep -q 'access-tokens' /etc/nix/nix.conf; then
+          echo "::error::a GitHub token survived in /etc/nix/nix.conf"
+          exit 1
+        fi

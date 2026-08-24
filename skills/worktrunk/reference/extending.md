@@ -140,16 +140,26 @@ A repo-level variable like `{{ default_branch }}` needs no deferral: it is ident
 ```toml
 [aliases]
 up = '''
-git fetch --all --prune && wt step for-each -- sh -c '
+git fetch --all --prune; wt step for-each -- sh -c '
   git rev-parse --verify -q @{u} >/dev/null || exit 0
   g=$(git rev-parse --git-dir)
-  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
-  git update-index --refresh -q >/dev/null || true
-  git rebase @{u} --no-autostash || git rebase --abort
+  rebasing() { test -d "$g/rebase-merge" || test -d "$g/rebase-apply"; }
+  rebasing && exit 0
+  git diff --quiet HEAD || { git merge --ff-only --no-autostash @{u}; exit 0; }
+  git rebase @{u} --no-autostash || { rebasing || exit 0; git rebase --abort; }
 ''''
 ```
 
-`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, refresh the index to drop stale stat entries, then rebase and auto-abort on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
+`wt up` fetches every remote, then brings each worktree up to date with its upstream: skip if there is no upstream or a rebase is already in progress, fast-forward if a tracked file is modified or staged, otherwise rebase, aborting on conflict. It rebases onto git-native `@{u}` rather than a `{{ … }}` template, so git resolves each worktree's own upstream and there is nothing to defer.
+
+A sweep finds each worktree in whatever state you left it, so most of the script is guards:
+
+- `git fetch --all` exits non-zero when any single remote fails. With `&&`, one remote with lapsed credentials is enough to skip the whole sweep, so even worktrees whose refs fetched fine go unrebased. With `;` the sweep runs on what did fetch, and the fetch error still prints.
+- `git rebase` refuses to run in a worktree with a modified or staged tracked file, whether or not there is anything to rebase — so a worktree you are editing would fail the sweep. `git merge --ff-only` is the piece of the rebase git will still do there: it advances a branch that is simply behind, and otherwise changes nothing — a diverged branch, or an incoming file that collides with your edits, leaves the worktree exactly as it was, with the reason printed. Untracked files trigger neither the refusal nor the `git diff` guard, so a worktree carrying only new files still rebases — unless one of them has the same name as a file the incoming commits add, which git declines to overwrite.
+- `rebasing` tells the two ways `git rebase` fails apart. Conflicting partway leaves a rebase in progress, which the abort winds back. Refusing to start — a tracked file modified under you, an untracked file in the way of an incoming one, a `pre-rebase` hook saying no — leaves nothing to abort and nothing to clean up, so the sweep moves on; an unconditional `git rebase --abort` there would answer `fatal: no rebase in progress` and exit 128 in place of git's own message.
+- Both arms pass `--no-autostash`, because a global `rebase.autostash` or `merge.autostash` breaks what each arm relies on. An autostash that pops with conflicts leaves the markers in the worktree and still exits 0, so the sweep would report success on a worktree it had just left in conflict — and an autostashed tree is momentarily clean, so a fast-forward that should have refused goes through and the collision lands on the pop instead.
+
+So the sweep exits non-zero only when it leaves a worktree needing attention — an abort that itself failed. Everything git declines to do, it declines atomically, and the sweep carries on to the next worktree with git's reason in the output. That matters where the alias is a hook step, since a failing step stops the rest of the pipeline.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
