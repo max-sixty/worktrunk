@@ -15,7 +15,7 @@
 use std::time::Duration;
 
 use super::parse::{TraceEntry, TraceEntryKind};
-use super::profile::{Align, command_label, fmt_dur, render_table};
+use super::profile::{Align, command_label, fmt_dur, profile_entries, render_table};
 
 /// Duration of an entry (zero for instant events).
 fn duration_of(e: &TraceEntry) -> Duration {
@@ -74,8 +74,7 @@ pub fn render_timeline(entries: &[TraceEntry], wall: Duration) -> String {
     );
 
     // Summary: subprocess totals + traced span + true process wall.
-    let cmds: Vec<(Duration, String)> = sorted
-        .iter()
+    let cmds: Vec<(Duration, String)> = profile_entries(entries)
         .filter_map(|e| match &e.kind {
             TraceEntryKind::Command {
                 command,
@@ -134,7 +133,7 @@ pub fn render_timeline(entries: &[TraceEntry], wall: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trace::TraceResult;
+    use crate::trace::{TraceResult, emit::DIAGNOSTIC_CONTEXT};
 
     fn span(name: &str, ts_us: u64, dur_us: u64, tid: u64) -> TraceEntry {
         TraceEntry {
@@ -224,6 +223,34 @@ mod tests {
         1 subprocess totaling 1.00ms (slowest: 1.00ms git foo (ok=false))
         traced: 1.00ms (first → last record)
         wall:   2.00ms (spawn → wait; +1.00ms untraced prelude/epilogue)
+        "
+        );
+    }
+
+    #[test]
+    fn diagnostic_commands_render_without_changing_the_summary() {
+        let entries = vec![
+            cmd("git status", Some("repo"), 0, 1_000, 1, true),
+            cmd(
+                "gh --version",
+                Some(DIAGNOSTIC_CONTEXT),
+                1_000,
+                5_000,
+                1,
+                true,
+            ),
+        ];
+
+        insta::assert_snapshot!(
+            render_timeline(&entries, Duration::from_millis(7)),
+            @"
+          ts(ms)     dur  tid  kind  name
+           0.000  1.00ms    1  cmd   git status [repo]
+           1.000  5.00ms    1  cmd   gh --version [(diagnostic)]
+
+        1 subprocess totaling 1.00ms (slowest: 1.00ms git status [repo])
+        traced: 6.00ms (first → last record)
+        wall:   7.00ms (spawn → wait; +1.00ms untraced prelude/epilogue)
         "
         );
     }

@@ -308,9 +308,8 @@ pub(super) fn command_label(command: &str, context: Option<&str>, result: &Trace
 /// Entries produced by the command being profiled.
 ///
 /// The diagnostic collector runs after that command and appends to the same
-/// trace under a reserved context. Keeping the filter here makes every profile
-/// metric and the standalone cache report agree on the boundary.
-fn profile_entries(entries: &[TraceEntry]) -> impl Iterator<Item = &TraceEntry> {
+/// trace under a reserved context. Every aggregate view uses this boundary.
+pub(super) fn profile_entries(entries: &[TraceEntry]) -> impl Iterator<Item = &TraceEntry> {
     entries
         .iter()
         .filter(|entry| entry.context.as_deref() != Some(DIAGNOSTIC_CONTEXT))
