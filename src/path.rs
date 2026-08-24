@@ -170,7 +170,20 @@ pub fn expand_tilde(path: &Path) -> Cow<'_, Path> {
 /// and `WorkingTree::ensure_holds_this_worktree` compares a worktree
 /// registration's recorded path against the directory sitting at it to decide
 /// whether removal may delete that directory.
+///
+/// On Windows the result never carries a `\\?\` prefix, because every caller
+/// compares it against another result of this function. `dunce` strips that
+/// prefix only from paths of 260 characters or fewer, so a deep path and the
+/// short root containing it come back spelled `\\?\C:\…` and `C:\…` — one
+/// `Prefix::VerbatimDisk` component and one `Prefix::Disk`, which
+/// [`Path::starts_with`] reads as unrelated drives. That split made
+/// `wt step copy-ignored` refuse to copy a deep `node_modules` tree into a
+/// worktree it was squarely inside (#3898).
 pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
+    strip_verbatim_disk_prefix(resolve_with_parents(path))
+}
+
+fn resolve_with_parents(path: &Path) -> PathBuf {
     if let Ok(canonical) = canonicalize(path) {
         return canonical;
     }
@@ -194,6 +207,39 @@ pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
         result.push(component);
     }
     result
+}
+
+/// Drop the `\\?\` prefix from a canonicalized drive path. A no-op off Windows.
+///
+/// Only a `VerbatimDisk` prefix is stripped: `\\?\UNC\server\share` names a
+/// share, and cutting the same four characters off it would leave the relative
+/// `UNC\server\share`. Unlike `dunce`, length is not a reason to keep the
+/// prefix — [`canonicalize_with_parents`] feeds comparisons and messages, not
+/// the legacy APIs the 260-character limit protects, and `std::fs` re-applies a
+/// verbatim prefix itself for any path it opens.
+#[cfg(windows)]
+fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let verbatim_disk = matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_))
+    );
+    if !verbatim_disk {
+        return path;
+    }
+    // A non-UTF-8 path can't be sliced safely — keeping it verbatim is the
+    // answer `dunce` gives for the same case.
+    let stripped = path
+        .to_str()
+        .and_then(|s| s.get(r"\\?\".len()..))
+        .map(PathBuf::from);
+    stripped.unwrap_or(path)
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
@@ -597,6 +643,47 @@ mod tests {
         assert_eq!(
             canonical.file_name().unwrap().to_str().unwrap(),
             "nonexistent-test-dir-12345"
+        );
+    }
+
+    /// A path long enough that `dunce` keeps its `\\?\` prefix must still
+    /// compare as a descendant of the short root it sits under — the split that
+    /// made `wt step copy-ignored` refuse a deep `node_modules` tree (#3898).
+    #[test]
+    #[cfg(windows)]
+    fn canonicalize_with_parents_agrees_across_the_verbatim_threshold() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = tmp.path();
+
+        // 260 characters is `dunce`'s cutoff for stripping the prefix; overshoot
+        // it so the deep end is unambiguously on the other side.
+        let mut deep = root.to_path_buf();
+        while deep.as_os_str().len() < 320 {
+            deep.push("nested-dependency-directory");
+        }
+        std::fs::create_dir_all(&deep).expect("create deep tree");
+
+        // Pin the mechanism, so a `dunce` that stopped splitting the two
+        // spellings shows up here rather than leaving the assertion below
+        // passing for a reason it was not written for.
+        let verbatim = |p: &Path| {
+            dunce::canonicalize(p)
+                .expect("canonicalize")
+                .to_string_lossy()
+                .starts_with(r"\\?\")
+        };
+        assert!(verbatim(&deep), "expected dunce to keep the prefix here");
+        assert!(!verbatim(root), "expected dunce to strip the prefix here");
+
+        // The path `ensure_path_within_root` actually checks is a destination
+        // directory that has not been created yet, so ask about a child.
+        let canonical_root = canonicalize_with_parents(root);
+        let canonical_deep = canonicalize_with_parents(&deep.join("not-yet-created"));
+        assert!(
+            canonical_deep.starts_with(&canonical_root),
+            "{} should sit under {}",
+            canonical_deep.display(),
+            canonical_root.display()
         );
     }
 

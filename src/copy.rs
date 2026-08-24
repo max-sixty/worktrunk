@@ -528,6 +528,44 @@ mod tests {
     }
 
     #[test]
+    fn test_copy_dir_recursive_copies_a_tree_deeper_than_windows_max_path() {
+        // A `node_modules` tree nests deep enough to push the destination past
+        // Windows' 260-character path limit. The containment check canonicalizes
+        // both ends, and used to get one spelling for the long destination and
+        // another for its short root — so the copy was refused as "outside" a
+        // worktree it was inside (#3898). Off Windows the depth is unremarkable
+        // and this just exercises a deep tree.
+        let dir = tempfile::tempdir().unwrap();
+        let src_root = dir.path().join("src");
+        let dest_root = dir.path().join("dest");
+
+        let mut relative = PathBuf::from("node_modules");
+        while dest_root.join(&relative).as_os_str().len() < 320 {
+            relative.push("nested-dependency-directory");
+        }
+        let deep_src = src_root.join(&relative);
+        fs::create_dir_all(&deep_src).unwrap();
+        // The real destination root is an existing worktree.
+        fs::create_dir_all(&dest_root).unwrap();
+        fs::write(deep_src.join("payload.txt"), b"deep file").unwrap();
+
+        let skipped = copy_dir_recursive(
+            &src_root.join("node_modules"),
+            &dest_root.join("node_modules"),
+            Some(&dest_root),
+            false,
+            &Progress::disabled(),
+        )
+        .expect("a tree inside the destination root should copy");
+
+        assert_eq!(skipped, 0);
+        assert_eq!(
+            fs::read(dest_root.join(&relative).join("payload.txt")).unwrap(),
+            b"deep file"
+        );
+    }
+
+    #[test]
     fn test_copy_dir_recursive_missing_source_root_errors() {
         // A subdirectory that vanishes mid-walk is skipped, but the root the
         // caller named is not — its absence is a real error, and nothing is
