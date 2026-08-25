@@ -731,23 +731,23 @@ mod tests {
         // ordinary content — and a fenced `<!-- wt list -->` would additionally
         // arm the chop marker for whatever block came next.
         let result = render_markdown_flush("```html\n<!-- a comment -->\n<p>body</p>\n```", None);
-        assert!(
-            result.contains("<!-- a comment -->"),
-            "fenced comment should render as content: {result:?}"
-        );
-        assert!(result.contains("<p>body</p>"), "{result:?}");
+        assert_snapshot!(result, @"
+        [2m<!-- a comment -->[0m
+        [2m<p>body</p>[0m
+        ");
 
         // The gutter path renders it too, and the marker inside the fence does
         // not leak into the following block.
         let guttered =
             render_markdown_in_help("```\n<!-- wt list -->\n```\n\n```console\n$ wt\n```");
-        assert!(
-            guttered.contains("<!-- wt list -->"),
-            "fenced marker should render as content: {guttered:?}"
-        );
+        assert_snapshot!(guttered, @"
+        [107m [0m [2m<!-- wt list -->[0m
+
+        [107m [0m [2m[0m[2m[34mwt[0m
+        ");
 
         // Outside a fence it is still a marker, not content.
-        assert_eq!(render_markdown_in_help("<!-- wt list -->"), "");
+        assert_snapshot!(render_markdown_in_help("<!-- wt list -->"), @"");
     }
 
     #[test]
