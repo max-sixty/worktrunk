@@ -850,10 +850,16 @@ impl<'a> WorkingTree<'a> {
         // a shared system temp directory. A missing `<gitdir>/index` is
         // semantically an empty index (nothing staged), so only that case
         // closes and removes the 0-byte file before Git creates a valid index.
-        let mut temp_file = tempfile::Builder::new()
-            .prefix(TEMP_INDEX_PREFIX)
-            .tempfile()
-            .context("Failed to create temporary index")?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(TEMP_INDEX_PREFIX);
+        let mut temp_file = match builder.tempfile() {
+            Ok(file) => file,
+            Err(temp_error) => builder.tempfile_in(&git_dir).with_context(|| {
+                format!(
+                    "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
+                )
+            })?,
+        };
         let mut real_index_file = match std::fs::File::open(&real_index) {
             Ok(file) => Some(file),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -892,6 +898,13 @@ impl<'a> WorkingTree<'a> {
         // still covers the whole worktree because TempIndex runs at its root.
         index.run_command(["add".to_string(), "-u".to_string(), "--sparse".to_string()])?;
         index.write_tree()
+    }
+
+    /// Write a tree containing the current index state without changing the
+    /// real index. Copying the index keeps a missing real index absent while
+    /// avoiding a working-tree scan for staged-only changes.
+    pub fn write_index_tree(&self) -> anyhow::Result<String> {
+        self.temp_index()?.write_tree()
     }
 
     /// Determine whether there are staged changes in the index.
