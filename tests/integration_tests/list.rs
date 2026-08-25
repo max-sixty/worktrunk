@@ -4200,7 +4200,12 @@ fn test_list_tolerates_missing_index(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_preserves_inherited_object_directory(mut repo: TestRepo) {
+#[case::relative(false)]
+#[case::absolute(true)]
+fn test_list_preserves_inherited_object_directory(
+    mut repo: TestRepo,
+    #[case] use_absolute_path: bool,
+) {
     repo.write_test_config("[list]\njson-schema = 2\n");
     repo.commit("Initial commit");
     repo.add_worktree("feature");
@@ -4212,9 +4217,15 @@ fn test_list_preserves_inherited_object_directory(mut repo: TestRepo) {
     std::fs::create_dir_all(objects.join("info")).unwrap();
     std::fs::create_dir_all(objects.join("pack")).unwrap();
 
+    let object_directory = if use_absolute_path {
+        external_objects.to_string_lossy().into_owned()
+    } else {
+        ".git/external-objects".to_owned()
+    };
+
     let output = repo
         .wt_command()
-        .env("GIT_OBJECT_DIRECTORY", ".git/external-objects")
+        .env("GIT_OBJECT_DIRECTORY", object_directory)
         .args(["list", "--format=json"])
         .current_dir(repo.root_path())
         .output()
