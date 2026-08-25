@@ -1030,8 +1030,9 @@ fn execute_switch(
 
                     // Safety: unset unsafe upstream when creating a new branch from a remote
                     // tracking branch. When `git worktree add -b feature origin/main` runs,
-                    // git sets feature to track origin/main. This is dangerous because
-                    // `git push` would push to main instead of the feature branch.
+                    // git sets feature to track origin/main. That is dangerous under
+                    // `push.default = upstream`, where a bare `git push` pushes the new work
+                    // to main; under the default `simple` it refuses the push instead.
                     // See: https://github.com/max-sixty/worktrunk/issues/713
                     if *create_branch
                         && let Some(base) = base_branch
