@@ -52,11 +52,11 @@ fn embedded_assets_ship_in_package() {
     //    repo-root-relative forward-slash string.
     let mut assets = BTreeSet::new();
     scan_directory(&src_dir, manifest_dir, &mut assets);
-    // A walk that reaches no directory is the panic in `scan_directory`. This is
-    // the other way the discovery can come back empty: every file read, and the
-    // `include_str!` / `include_bytes!` / `#[template]` matching in `scan_file`
-    // recognizing none of them. The comparison below iterates `assets`, so an
-    // empty set checks nothing and passes.
+    // `scan_directory` and `scan_file` panic when the tree or one of its files
+    // can't be read. This catches the remaining way discovery comes back empty:
+    // every file read, and the `include_str!` / `include_bytes!` / `#[template]`
+    // matching recognizing none of them. The comparison below iterates `assets`,
+    // so an empty set checks nothing and passes.
     assert!(
         !assets.is_empty(),
         "scanned src/ but found no embedded assets — the scanner is likely broken"
@@ -115,9 +115,12 @@ fn scan_directory(dir: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>
 }
 
 fn scan_file(path: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
+    // Returning here would drop whatever this file embeds while the rest keep
+    // `assets` non-empty, so the empty-scan assert above wouldn't catch it
+    // either. A `.rs` file under `src/` that isn't readable UTF-8 is broken in a
+    // way the crate wouldn't compile through.
+    let contents = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", path.display()));
     let source_dir = path.parent().unwrap_or(manifest_dir);
 
     for line in contents.lines() {

@@ -178,15 +178,29 @@ fn test_no_host_specific_paths_in_snapshots() {
 /// Visit every committed `.snap` file. Snapshot dirs live under `src`
 /// (unit tests), `tests` (integration tests), and `docs` (demo fixtures).
 fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
+    let mut seen = 0usize;
     for root in ["src", "tests", "docs"] {
-        visit_snap_files(&project_root.join(root), &mut f);
+        visit_snap_files(&project_root.join(root), &mut |path, content| {
+            seen += 1;
+            f(path, content);
+        });
     }
+    // Every caller asserts *absence* over the corpus, so a walk that yields
+    // nothing passes vacuously. The panic in `visit_snap_files` covers a root
+    // that can't be read; this covers the corpus moving out from under these
+    // three roots while all three still exist and read fine.
+    assert!(
+        seen > 0,
+        "walked src/, tests/ and docs/ and found no .snap files — the corpus has \
+         moved, so every assertion these callers make is passing over nothing"
+    );
 }
 
 fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
-    // Every caller asserts absence over the corpus, so a walk that reads
-    // nothing passes vacuously. Swallowing the error is what makes a
-    // directory-layout change look like a clean corpus; surface it instead.
+    // A root that can't be read yields no snapshots, and every caller asserts
+    // absence, so swallowing the error would let an unreadable directory read as
+    // a clean corpus. `for_each_snapshot` covers the separate case where the
+    // roots read fine and simply hold nothing.
     let entries = fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{} unreadable during the snapshot scan: {e}", dir.display()));
 
