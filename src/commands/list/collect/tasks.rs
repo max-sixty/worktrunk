@@ -609,10 +609,10 @@ impl Task for WorkingTreeDiffTask {
 /// Uses default_branch (local main) for consistency with other Main subcolumn symbols.
 /// Shows whether merging to your local main would conflict.
 ///
-/// **Skip-when-dirty optimization:** for worktree items, peek at the shared
-/// porcelain cache. When the worktree is dirty (and has no unmerged
-/// entries), `WorkingTreeConflictsTask` will produce a `Some(Some(_))`
-/// dirty-tree result that is authoritative for the WouldConflict tier
+/// **Skip-when-tracked-dirty optimization:** for worktree items, peek at the
+/// shared porcelain cache. When the worktree has tracked changes (and has no
+/// unmerged entries), `WorkingTreeConflictsTask` will produce a
+/// `Some(Some(_))` tracked-tree result that is authoritative for the WouldConflict tier
 /// (`tier_would_conflict` short-circuits on `Some(Some(_))` and ignores the
 /// HEAD probe). Returning
 /// the redundant HEAD probe in that case would mean a second `git merge-tree`
@@ -635,15 +635,15 @@ impl Task for MergeTreeConflictsTask {
                 has_merge_tree_conflicts: false,
             });
         };
-        // Skip-when-dirty: defer to WorkingTreeConflictsTask. Only when the
-        // worktree is dirty without unmerged entries — the unmerged path
+        // Skip when tracked changes let WorkingTreeConflictsTask provide the
+        // authoritative result. The unmerged path
         // returns `Some(None)` from WorkingTreeConflictsTask, which falls
         // back to this HEAD probe.
         if let Some(wt) = ctx.branch_ref.working_tree(&ctx.repo) {
             let porcelain = wt
                 .status_porcelain_cached()
                 .map_err(|e| ctx.error(Self::KIND, &e))?;
-            if !porcelain.trim().is_empty() && !has_unmerged_entries(&porcelain) {
+            if has_tracked_changes(&porcelain) && !has_unmerged_entries(&porcelain) {
                 return Ok(TaskResult::MergeTreeConflicts {
                     item_idx: ctx.item_idx,
                     has_merge_tree_conflicts: false,
@@ -671,14 +671,13 @@ impl Task for MergeTreeConflictsTask {
 
 /// Task 6b (worktree only): Working tree conflict check
 ///
-/// For dirty worktrees, builds a tree SHA from the index (plus untracked
-/// files if present) via `git write-tree`, then checks for merge conflicts
-/// against the default branch. Much cheaper than `git stash create` (~15ms
-/// vs ~50-265ms) because it reads the index directly instead of creating a
-/// full stash commit with working-tree diffing.
+/// For worktrees with tracked changes, builds a tree SHA from the index plus
+/// unstaged tracked changes, then checks for merge conflicts against the
+/// default branch. Untracked files remain visible in status but do not
+/// participate in this best-effort conflict estimate.
 ///
-/// Returns None if working tree is clean (caller should fall back to
-/// MergeTreeConflicts).
+/// Returns None if the working tree has no usable tracked snapshot (caller
+/// falls back to MergeTreeConflicts).
 pub struct WorkingTreeConflictsTask;
 
 impl Task for WorkingTreeConflictsTask {
@@ -703,10 +702,8 @@ impl Task for WorkingTreeConflictsTask {
             .status_porcelain_cached()
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
-        let is_dirty = !status_output.trim().is_empty();
-
-        if !is_dirty {
-            // Clean working tree - return None to signal "use commit-based check"
+        if !has_tracked_changes(&status_output) {
+            // A clean or untracked-only worktree uses the commit-based check.
             return Ok(TaskResult::WorkingTreeConflicts {
                 item_idx: ctx.item_idx,
                 has_working_tree_conflicts: None,
@@ -725,26 +722,12 @@ impl Task for WorkingTreeConflictsTask {
             });
         }
 
-        // Porcelain format: XY where X=index, Y=working-tree.
-        // Fast path when all changes are staged (Y is space for every line):
-        // write-tree on the real index is sufficient.
-        // Slow path when there are unstaged modifications (Y != ' ') or
-        // untracked files ('??'): copy index, `git add -A`, write-tree.
-        let needs_working_tree = status_output
-            .lines()
-            .any(|l| l.starts_with("??") || l.as_bytes().get(1) != Some(&b' '));
-
-        let tree_sha = if needs_working_tree {
-            // Stage all dirty + untracked entries into a temp index so
-            // `write-tree` produces a tree representing the full working
-            // state. Real index untouched. See `WorkingTree::temp_index`.
-            wt.write_worktree_tree()
-                .map_err(|e| ctx.error(Self::KIND, &e))?
-        } else {
-            wt.run_command(&["write-tree"])
-                .map(|s| s.trim().to_string())
-                .map_err(|e| ctx.error(Self::KIND, &e))?
-        };
+        // Stage tracked changes into a temp index so the real index stays
+        // untouched. This also avoids creating a missing real index as a side
+        // effect of `git write-tree`. Untracked entries are ignored.
+        let tree_sha = wt
+            .write_tracked_worktree_tree()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let base_sha = ctx
             .resolve_sha(&base)
@@ -1073,6 +1056,11 @@ fn has_unmerged_entries(status_output: &str) -> bool {
     })
 }
 
+/// Whether porcelain status contains a staged or unstaged tracked path.
+fn has_tracked_changes(status_output: &str) -> bool {
+    status_output.lines().any(|line| !line.starts_with("??"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1125,5 +1113,11 @@ mod tests {
         assert!(!has_unmerged_entries("D  src/old.rs"));
         assert!(!has_unmerged_entries("?? untracked.txt"));
         assert!(!has_unmerged_entries(""));
+    }
+
+    #[test]
+    fn tracked_changes_ignore_untracked_porcelain_entries() {
+        assert!(!has_tracked_changes("?? artifact.bin"));
+        assert!(has_tracked_changes("?? artifact.bin\n M src/main.rs"));
     }
 }

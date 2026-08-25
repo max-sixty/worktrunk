@@ -71,16 +71,17 @@ pub(crate) enum TaskResult {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
     },
-    /// Potential merge conflicts including working tree changes
+    /// Potential merge conflicts including tracked working tree changes
     ///
-    /// For dirty worktrees, uses `git stash create` to get a tree object that
-    /// includes uncommitted changes, then runs merge-tree against that.
-    /// Returns None if working tree is clean (fall back to MergeTreeConflicts).
+    /// Copies the index, stages unstaged tracked changes with `git add -u`, and
+    /// runs merge-tree against the resulting tree. Returns None when there are
+    /// no tracked changes or the index is unmerged (fall back to
+    /// MergeTreeConflicts).
     WorkingTreeConflicts {
         item_idx: usize,
-        /// None = working tree clean (use MergeTreeConflicts result)
-        /// Some(true) = dirty working tree would conflict
-        /// Some(false) = dirty working tree would not conflict
+        /// None = no tracked result (use MergeTreeConflicts result)
+        /// Some(true) = tracked working tree state would conflict
+        /// Some(false) = tracked working tree state would not conflict
         has_working_tree_conflicts: Option<bool>,
     },
     /// Git operation in progress, `None` when there is none

@@ -2,6 +2,27 @@ use std::path::PathBuf;
 
 use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktree};
 
+#[cfg(unix)]
+#[test]
+fn alternate_object_directory_uses_git_c_style_quoting() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let path = OsStr::from_bytes(b"a:b\n\r\t\x08\x0c\\\"\x01\xff");
+    let quoted = super::quote_alternate_object_directory(path);
+    assert_eq!(
+        quoted.into_vec(),
+        b"\"a:b\\n\\r\\t\\b\\f\\\\\\\"\\001\\377\""
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn alternate_object_directory_uses_git_c_style_quoting() {
+    let quoted = super::quote_alternate_object_directory(std::ffi::OsStr::new("a;b\n\r\t\\\""));
+    assert_eq!(quoted, "\"a;b\\n\\r\\t\\\\\\\"\"");
+}
+
 #[test]
 fn test_parse_worktree_list() {
     let output = "worktree /path/to/main
@@ -389,7 +410,7 @@ fn repo_path_error_when_is_bare_fails() {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
         cache: Arc::new(RepoCache::default()),
-        temporary_object_directory: None,
+        temporary_object_store: None,
     };
 
     let err = repo.repo_path().unwrap_err();
@@ -432,7 +453,7 @@ fn repo_path_ignores_non_local_core_worktree() {
         discovery_path: tmp.path().to_path_buf(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
-        temporary_object_directory: None,
+        temporary_object_store: None,
     };
 
     // Should fall through to parent(git_common_dir), ignoring the bulk value.
@@ -655,7 +676,7 @@ fn is_builtin_fsmonitor_enabled_variants() {
             discovery_path: PathBuf::from("/nonexistent/repo"),
             git_common_dir: PathBuf::from("/nonexistent/.git"),
             cache: Arc::new(cache),
-            temporary_object_directory: None,
+            temporary_object_store: None,
         }
     }
 

@@ -187,11 +187,10 @@ fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
 }
 
 /// A user may point TMPDIR inside the repository (common in hermetic build
-/// environments). Temporary indexes share an excluded temp namespace so
-/// concurrent panes cannot see them as untracked files. Genuine untracked
-/// content still appears.
+/// environments). Worktrunk's temporary indexes and object databases must not
+/// appear as untracked files. Genuine untracked content still appears.
 #[rstest]
-fn test_picker_dry_run_tempdir_inside_worktree_has_no_index_artifacts(
+fn test_picker_dry_run_tempdir_inside_worktree_has_no_worktrunk_artifacts(
     #[from(main_only_repo)] repo: TestRepo,
 ) {
     // Brackets also prove the exclusion quotes Git pathspec glob metacharacters
@@ -235,7 +234,7 @@ fn test_picker_dry_run_tempdir_inside_worktree_has_no_index_artifacts(
         );
         assert!(
             !content.contains("local-[tmp]/"),
-            "mode {mode} must not include temporary-index artifacts: {content:?}"
+            "mode {mode} must not include Worktrunk's temporary artifacts: {content:?}"
         );
     }
 }

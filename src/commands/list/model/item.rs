@@ -57,8 +57,9 @@ pub struct WorktreeData {
     pub has_conflicts: Option<bool>,
     /// Result of `WorkingTreeConflicts` task (`--full` mode only). Outer `None`
     /// = task hasn't run yet. Outer `Some(None)` = task ran but working tree
-    /// was clean, so fall back to the committed-HEAD merge-tree check.
-    /// Outer `Some(Some(b))` = dirty working tree, `b` is the conflict result.
+    /// had no tracked result, so fall back to the committed-HEAD merge-tree
+    /// check. Outer `Some(Some(b))` = tracked working tree state was probed,
+    /// `b` is the conflict result.
     pub has_working_tree_conflicts: Option<Option<bool>>,
     /// Git operation in progress. Outer `None` = not yet loaded;
     /// `Some(None)` = loaded, no operation in progress.

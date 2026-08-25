@@ -3329,7 +3329,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 
 ///
 /// This specifically tests the WorkingTreeConflicts task which:
-/// 1. Uses `git write-tree` to snapshot the index (with temp index for unstaged/untracked)
+/// 1. Uses a temp index plus `git write-tree` to snapshot tracked changes
 /// 2. Runs merge-tree against the default branch to detect conflicts
 ///
 /// Both kinds of conflicts are checked in both `wt list` and `wt list --full`:
@@ -3369,9 +3369,8 @@ fn test_list_working_tree_conflicts(mut repo: TestRepo) {
     });
 }
 
-/// A dirty worktree may contain untracked files outside its sparse-checkout
-/// definition. The temporary-index snapshot must still include the visible
-/// tracked change and produce the working-tree conflict result.
+/// A tracked file modified outside the sparse-checkout definition must still
+/// participate in the working-tree conflict result.
 #[rstest]
 fn test_list_working_tree_conflicts_cross_sparse_checkout_boundary(mut repo: TestRepo) {
     repo.write_test_config("[list]\njson-schema = 2\n");
@@ -3384,14 +3383,13 @@ fn test_list_working_tree_conflicts_cross_sparse_checkout_boundary(mut repo: Tes
     repo.commit("Add sparse fixture");
 
     let feature = repo.add_worktree("feature");
-    std::fs::write(repo.root_path().join("visible/shared.txt"), "main\n").unwrap();
-    repo.commit("Change shared file on main");
+    std::fs::write(repo.root_path().join("hidden/tracked.txt"), "main\n").unwrap();
+    repo.commit("Change hidden file on main");
 
     repo.run_git_in(&feature, &["sparse-checkout", "init", "--cone"]);
     repo.run_git_in(&feature, &["sparse-checkout", "set", "visible"]);
-    std::fs::write(feature.join("visible/shared.txt"), "feature\n").unwrap();
     std::fs::create_dir_all(feature.join("hidden")).unwrap();
-    std::fs::write(feature.join("hidden/loose.txt"), "loose\n").unwrap();
+    std::fs::write(feature.join("hidden/tracked.txt"), "feature\n").unwrap();
 
     let output = repo
         .wt_command()
@@ -3413,6 +3411,154 @@ fn test_list_working_tree_conflicts_cross_sparse_checkout_boundary(mut repo: Tes
         .find(|item| item["branch"] == "feature")
         .expect("feature row");
     assert_eq!(feature["default_branch"]["merge_conflicts"], true);
+}
+
+/// A staged deletion can leave the temporary index empty. The conflict probe
+/// must still write that empty tree and detect a modify/delete conflict.
+#[rstest]
+fn test_list_working_tree_conflicts_with_staged_deletion_of_all_files(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    std::fs::write(repo.root_path().join("shared.txt"), "base\n").unwrap();
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+
+    repo.run_git_in(&feature_path, &["rm", "shared.txt"]);
+    std::fs::write(repo.root_path().join("shared.txt"), "main\n").unwrap();
+    repo.commit("Change on main");
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row");
+    assert_eq!(feature["default_branch"]["merge_conflicts"], true);
+}
+
+/// Untracked paths stay visible as changes but do not participate in the
+/// advisory merge-conflict estimate.
+#[rstest]
+fn test_list_ignores_untracked_paths_for_conflict_estimate(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+
+    std::fs::write(repo.root_path().join("collision.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "collision.txt"]);
+    repo.run_git(&["commit", "-m", "Add collision path"]);
+    std::fs::write(feature_path.join("collision.txt"), "untracked\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row");
+    assert_eq!(feature["worktree"]["changes"]["untracked"], true);
+    assert_eq!(feature["default_branch"]["merge_conflicts"], false);
+}
+
+/// Ignoring untracked paths must still fall back to the committed conflict
+/// probe rather than treating an untracked-only worktree as conflict-free.
+#[rstest]
+fn test_list_untracked_only_preserves_committed_conflict(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    std::fs::write(repo.root_path().join("shared.txt"), "base\n").unwrap();
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+
+    std::fs::write(feature_path.join("shared.txt"), "feature\n").unwrap();
+    repo.run_git_in(&feature_path, &["add", "shared.txt"]);
+    repo.run_git_in(&feature_path, &["commit", "-m", "Change on feature"]);
+    std::fs::write(repo.root_path().join("shared.txt"), "main\n").unwrap();
+    repo.commit("Change on main");
+    std::fs::write(feature_path.join("artifact.bin"), "untracked\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row");
+    assert_eq!(feature["worktree"]["changes"]["untracked"], true);
+    assert_eq!(feature["default_branch"]["merge_conflicts"], true);
+}
+
+/// Every object produced by an observational merge probe is process-scoped,
+/// including blobs and trees for changing tracked worktree content.
+#[rstest]
+fn test_list_does_not_persist_observation_objects(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+    repo.commit("Main diverges");
+
+    let before = repo.git_output(&["count-objects", "-v"]);
+    std::fs::write(feature_path.join("file.txt"), "feature\n").unwrap();
+    std::fs::write(feature_path.join("artifact.bin"), "untracked\n").unwrap();
+
+    for args in [
+        &["list", "--format=json"][..],
+        &["list", "statusline", "--format=json"][..],
+    ] {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .current_dir(&feature_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} should succeed; stderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert_eq!(
+        repo.git_output(&["count-objects", "-v"]),
+        before,
+        "observational probes must leave the real object database unchanged"
+    );
 }
 
 ///
@@ -3750,8 +3896,7 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    // Untracked content forces WorkingTreeConflictsTask to run merge-tree
-    // against the null OID rather than short-circuiting on a clean tree.
+    // Untracked content forces WorkingTreeDiffTask to inspect the unborn tree.
     std::fs::write(orphan_path.join("untracked.txt"), "content\n").unwrap();
 
     let output = repo
@@ -4013,6 +4158,78 @@ fn test_list_tolerates_missing_index(mut repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_list_preserves_inherited_object_directory(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    repo.commit("Initial commit");
+    repo.add_worktree("feature");
+    let feature_sha = repo.git_output(&["rev-parse", "feature"]);
+
+    let objects = repo.root_path().join(".git/objects");
+    let external_objects = repo.home_path().join("external-objects");
+    std::fs::rename(&objects, &external_objects).unwrap();
+    std::fs::create_dir_all(objects.join("info")).unwrap();
+    std::fs::create_dir_all(objects.join("pack")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("GIT_OBJECT_DIRECTORY", &external_objects)
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should preserve GIT_OBJECT_DIRECTORY; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row");
+    assert_eq!(feature["head"]["sha"], feature_sha);
+}
+
+#[rstest]
+fn test_list_preserves_inherited_object_alternates(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    repo.commit("Initial commit");
+    repo.add_worktree_with_commit("feature", "feature.txt", "feature\n", "Add feature");
+
+    let feature_sha = repo.git_output(&["rev-parse", "feature"]);
+    let object_path = std::path::Path::new(&feature_sha[..2]).join(&feature_sha[2..]);
+    let objects = repo.root_path().join(".git/objects");
+    let alternate = repo.home_path().join("alternate-objects");
+    std::fs::create_dir_all(alternate.join(object_path.parent().unwrap())).unwrap();
+    std::fs::rename(objects.join(&object_path), alternate.join(&object_path)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &alternate)
+        .args(["list", "--format=json"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should preserve inherited alternates; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row");
+    assert_eq!(feature["head"]["sha"], feature_sha);
+}
+
 /// Recursively strips write permission from a repository's object database and
 /// restores the original modes on drop, so a test can exercise the read-only
 /// sandbox path without leaving an unremovable directory behind.
@@ -4068,7 +4285,7 @@ impl Drop for ReadOnlyObjectDirectory {
 /// read-only (a managed sandbox). Its merge and conflict probes write
 /// ephemeral objects — `merge-tree --write-tree` for the integration diff and
 /// `write-tree` against a temp index for the dirty-worktree conflict check —
-/// which `Repository::redirect_objects_if_read_only` reroutes into a temporary
+/// which `Repository::redirect_objects_for_observation` reroutes into a temporary
 /// object database. The analysis stays complete instead of erroring with
 /// "insufficient permission for adding an object".
 #[cfg(unix)]

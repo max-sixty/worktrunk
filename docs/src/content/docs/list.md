@@ -188,7 +188,7 @@ The single highest-priority state describing the branch's relation to the defaul
 | `∅` | `"orphan"` | No common ancestor with the default branch |
 | `_` | `"empty"` | Same commit as the default branch, working tree clean — safe to remove; row dimmed |
 | `⊂` | `"integrated"` | Content [integrated](/remove/#branch-cleanup) into the default branch or merge target via different history; the matching check is in `integration_reason`; row dimmed |
-| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes uncommitted changes |
+| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes tracked uncommitted changes |
 | `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
 | `↕` | `"diverged"` | Both ahead of and behind the default branch |
 | `↑` | `"ahead"` | Has commits the default branch doesn't |

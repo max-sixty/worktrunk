@@ -351,6 +351,10 @@ pub(super) struct RepoCache {
     /// (working-tree diff + conflict detection) share one subprocess per worktree
     /// instead of spawning `git status` twice.
     pub(super) status_porcelain: DashMap<PathBuf, String>,
+    /// Process-scoped object databases created by observational repository
+    /// clones. Original clones consult this shared set so Worktrunk's own
+    /// temporary directories never appear as untracked worktree content.
+    pub(super) observation_object_directories: DashMap<PathBuf, ()>,
 }
 
 /// Result of resolving a worktree name.
@@ -625,6 +629,68 @@ pub fn normalize_selector(name: &str) -> &str {
     if trimmed.is_empty() { name } else { trimmed }
 }
 
+/// Quote one path for Git's C-style alternate-object-directory list.
+#[cfg(unix)]
+fn quote_alternate_object_directory(path: &OsStr) -> OsString {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut quoted = Vec::with_capacity(path.as_bytes().len() + 2);
+    quoted.push(b'"');
+    for &byte in path.as_bytes() {
+        match byte {
+            b'\\' | b'"' => {
+                quoted.push(b'\\');
+                quoted.push(byte);
+            }
+            b'\n' => quoted.extend_from_slice(b"\\n"),
+            b'\r' => quoted.extend_from_slice(b"\\r"),
+            b'\t' => quoted.extend_from_slice(b"\\t"),
+            b'\x08' => quoted.extend_from_slice(b"\\b"),
+            b'\x0c' => quoted.extend_from_slice(b"\\f"),
+            b' '..=b'~' => quoted.push(byte),
+            _ => {
+                quoted.push(b'\\');
+                quoted.push(b'0' + ((byte >> 6) & 0o7));
+                quoted.push(b'0' + ((byte >> 3) & 0o7));
+                quoted.push(b'0' + (byte & 0o7));
+            }
+        }
+    }
+    quoted.push(b'"');
+    OsString::from_vec(quoted)
+}
+
+#[cfg(not(unix))]
+fn quote_alternate_object_directory(path: &OsStr) -> OsString {
+    let mut quoted = String::from("\"");
+    for ch in path.to_string_lossy().chars() {
+        match ch {
+            '\\' | '"' => {
+                quoted.push('\\');
+                quoted.push(ch);
+            }
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted.into()
+}
+
+/// Prepend the real object database while preserving inherited alternates.
+fn alternate_object_directories(primary: &Path) -> OsString {
+    let mut alternates = quote_alternate_object_directory(primary.as_os_str());
+    if let Some(inherited) =
+        std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES").filter(|value| !value.is_empty())
+    {
+        alternates.push(if cfg!(windows) { ";" } else { ":" });
+        alternates.push(inherited);
+    }
+    alternates
+}
+
 /// Repository state for git operations.
 ///
 /// Represents the shared state of a git repository (the `.git` directory).
@@ -659,23 +725,33 @@ pub struct Repository {
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
     /// When set, object-writing git plumbing is redirected into a temporary
-    /// object database so observational commands run in a read-only checkout.
-    /// `None` for the normal (persistent) path. See
-    /// [`Repository::redirect_objects_if_read_only`].
-    temporary_object_directory: Option<Arc<TemporaryObjectDirectory>>,
+    /// object database. `None` for the normal persistent path. See
+    /// [`Repository::redirect_objects_for_observation`].
+    /// Held behind an `Arc` so list's parallel repository clones share one
+    /// store, removed when the last clone drops.
+    temporary_object_store: Option<Arc<TemporaryObjectStore>>,
 }
 
-/// A throwaway object database that a redirected [`Repository`] writes new
-/// objects into, with the real database (plus any inherited alternates) as
-/// read-only alternates so existing objects still resolve.
+/// A process-scoped object database plus its visibility registration.
 ///
-/// Held behind an `Arc` so cloning a `Repository` — as `wt list` does for its
-/// parallel tasks — shares one store and one `TempDir` lifetime; the directory
-/// is removed when the last clone drops.
+/// The shared registration lets repository clones that do not carry the
+/// redirect exclude Worktrunk's own directory from untracked-file views. It
+/// must disappear with the last redirected clone so a subsequently-created
+/// user path at the same location is visible again.
 #[derive(Debug)]
-struct TemporaryObjectDirectory {
+struct TemporaryObjectStore {
     directory: tempfile::TempDir,
     alternates: OsString,
+    registered_path: PathBuf,
+    cache: Arc<RepoCache>,
+}
+
+impl Drop for TemporaryObjectStore {
+    fn drop(&mut self) {
+        self.cache
+            .observation_object_directories
+            .remove(&self.registered_path);
+    }
 }
 
 impl Repository {
@@ -732,86 +808,66 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
-            temporary_object_directory: None,
+            temporary_object_store: None,
         })
     }
 
-    /// If this repository's object database is read-only, return a clone whose
-    /// object-writing git plumbing is redirected into a temporary object
-    /// database (with the real database as a read-only alternate); otherwise
-    /// return `Ok(None)` and let the caller keep using `self` unchanged.
+    /// Return a clone whose object-writing git plumbing is redirected into a
+    /// temporary object database.
     ///
     /// Only *observational* commands may redirect. `wt list`'s merge and
     /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
     /// `merge-tree --write-tree`) that are never referenced, so writing them to
     /// a throwaway store is harmless and lets the command run in a read-only
-    /// checkout. A *mutating* command must never redirect — its commit would be
-    /// written to the throwaway store and lost at process exit. Because a
-    /// read-only object database also blocks the ref/index/worktree writes
-    /// those commands need, keeping them on the persistent database makes them
-    /// fail loudly rather than silently succeed into a store that vanishes.
-    pub fn redirect_objects_if_read_only(&self) -> Option<Self> {
-        let objects = self.object_database_path();
-
-        // Probe effective writability by creating a file in the object
-        // database — the same thing git's object writers do, so this fails
-        // exactly when they would (a read-only mount and a `chmod`ed directory
-        // both surface here, unlike the owner-write permission bit). A
-        // successful probe file is dropped immediately.
-        if tempfile::Builder::new()
-            .prefix(".worktrunk-write-probe-")
-            .tempfile_in(&objects)
-            .is_ok()
-        {
-            return None;
-        }
-
-        self.with_temporary_object_directory()
-    }
-
-    /// Build a clone whose object writes are redirected into a fresh temporary
-    /// object database, with the real database as a read-only alternate so
-    /// existing objects still resolve. Returns `None` when the temporary store
-    /// can't be created (no writable temp dir), leaving the caller on the real
-    /// database. This is the *mechanism*; the *policy* — whether to redirect at
-    /// all — lives in [`Self::redirect_objects_if_read_only`], the only
-    /// production caller.
-    fn with_temporary_object_directory(&self) -> Option<Self> {
-        let alternates = self.object_database_path().into_os_string();
+    /// checkout. A *mutating* command must never redirect because its commit
+    /// would disappear with the store.
+    pub fn redirect_objects_for_observation(&self) -> anyhow::Result<Self> {
+        let alternate = self.object_database_path();
         let directory = tempfile::Builder::new()
             .prefix("worktrunk-list-objects-")
             .tempdir()
-            .ok()?;
+            .context("Failed to create temporary object database")?;
+        let alternates = alternate_object_directories(&alternate);
+        let registered_path = directory.path().to_path_buf();
+        self.cache
+            .observation_object_directories
+            .insert(registered_path.clone(), ());
 
         let mut clone = self.clone();
-        clone.temporary_object_directory = Some(Arc::new(TemporaryObjectDirectory {
+        clone.temporary_object_store = Some(Arc::new(TemporaryObjectStore {
             directory,
             alternates,
+            registered_path,
+            cache: Arc::clone(&self.cache),
         }));
-        Some(clone)
+        Ok(clone)
     }
 
-    /// Absolute path to this repository's shared object database — the store a
-    /// redirected repository probes for writability and names as its read-only
-    /// alternate.
-    ///
-    /// This is the common dir's `objects`, shared by every linked worktree. It
-    /// does not resolve an inherited `GIT_OBJECT_DIRECTORY` (set only when `wt`
-    /// runs under a git alias); that combined with a read-only store and a
-    /// `wt list` is vanishingly rare, and the redirect degrades to reading the
-    /// common store rather than failing.
+    /// Absolute path to the effective object database that a redirected
+    /// repository names as its read-only alternate.
     fn object_database_path(&self) -> PathBuf {
-        let objects = self.git_common_dir.join("objects");
+        let objects = std::env::var_os("GIT_OBJECT_DIRECTORY")
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| self.discovery_path.clone())
+                        .join(path)
+                }
+            })
+            .unwrap_or_else(|| self.git_common_dir.join("objects"));
         canonicalize(&objects).unwrap_or(objects)
     }
 
-    /// The `(object-directory, alternates)` environment for a redirected
-    /// repository, or `None` when object writes go to the real database.
+    /// The object-directory environment for a redirected repository, or `None`
+    /// when object writes go to the real database.
     /// Copied into [`WorkingTree`]'s [`TempIndex`], which builds its own `Cmd`.
     pub(super) fn object_store_environment(&self) -> Option<(&Path, &OsStr)> {
-        self.temporary_object_directory
+        self.temporary_object_store
             .as_ref()
-            .map(|temporary| (temporary.directory.path(), temporary.alternates.as_os_str()))
+            .map(|store| (store.directory.path(), store.alternates.as_os_str()))
     }
 
     /// Add the temporary-object-database environment to `cmd` when this

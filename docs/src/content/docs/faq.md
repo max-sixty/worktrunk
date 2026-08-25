@@ -163,7 +163,7 @@ None of this is tracked by git or pushed to remotes.
 
 ### 5. Temporary files (automatic)
 
-Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index-*`. They let `wt list`, `wt statusline`, `wt step diff`, and `wt switch` include untracked files without changing the real index. The files are removed when the command exits normally.
+Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index-*`. They let `wt list`, `wt statusline`, `wt step diff`, and `wt switch` include untracked files without changing the real index. `wt list` also creates a `$TMPDIR/worktrunk-list-objects-*` directory so its merge probes do not add unreachable objects to the repository. These files and directories are removed when the command exits normally.
 
 ### What Worktrunk does NOT create
 

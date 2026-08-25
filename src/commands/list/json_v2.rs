@@ -332,8 +332,9 @@ pub struct JsonDefaultBranch {
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub integration: Tri<JsonIntegration>,
 
-    /// A merge into the default branch would conflict (local `merge-tree`
-    /// simulation); null while unresolved.
+    /// A merge into the default branch would conflict based on committed
+    /// content and tracked worktree changes (local `merge-tree` simulation);
+    /// null while unresolved.
     pub merge_conflicts: Option<bool>,
 }
 

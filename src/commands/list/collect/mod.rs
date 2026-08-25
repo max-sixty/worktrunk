@@ -273,19 +273,19 @@
 //!
 //! ### Cached via tree SHA
 //!
-//! `WorkingTreeConflicts` uses `git write-tree` to snapshot the index as a tree SHA,
-//! then checks for merge conflicts via `has_merge_conflicts_by_tree_with_base_sha`. The tree SHA is
-//! content-addressed and stable — identical index state produces the same SHA.
+//! `WorkingTreeConflicts` snapshots tracked changes as a tree SHA, then checks
+//! for merge conflicts via `has_merge_conflicts_by_tree_with_base_sha`. The tree
+//! SHA is content-addressed and stable — identical tracked state produces the
+//! same SHA.
 //!
-//! When there are unstaged modifications or untracked files, the task copies the
-//! index to a temp file, runs `git add -A` to stage all working tree content,
-//! then `write-tree`.
+//! When tracked changes exist, the task copies the index to a temp file, runs
+//! `git add -u`, then `write-tree`. Untracked files remain part of the worktree
+//! status but do not participate in this advisory conflict estimate.
 //!
 //! The cache key is `(base_commit_sha, branch_head_sha+tree_sha)`. The branch HEAD
 //! SHA captures the merge-base dependency. On cache miss, `has_merge_conflicts_by_tree_with_base_sha`
-//! creates an ephemeral commit via `git commit-tree` for merge-tree; on cache hit,
-//! no commit is created. This makes the cache-hit path a single `git write-tree`
-//! (~15ms) instead of the previous `git stash create` (~50-265ms).
+//! creates an ephemeral commit via `git commit-tree` for merge-tree; on cache
+//! hit, no commit is created.
 //!
 //! ### Fundamentally uncacheable
 //!
@@ -797,14 +797,11 @@ pub fn collect(
     render_target: RenderTarget,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     // `wt list`'s merge and conflict probes write ephemeral Git objects
-    // (`write-tree`, `commit-tree`, `merge-tree --write-tree`). In a read-only
-    // checkout those writes fail; redirect them into a temporary object
-    // database (real database as a read-only alternate) so the analysis still
-    // runs — see `Repository::redirect_objects_if_read_only`. A `None` (writable
-    // store, or no writable temp dir) leaves object-writing tasks on the real
-    // database, where they surface their own errors.
-    let redirected = repo.redirect_objects_if_read_only();
-    let repo = redirected.as_ref().unwrap_or(repo);
+    // (`write-tree`, `commit-tree`, `merge-tree --write-tree`) that nothing
+    // references. Redirect them into a temporary object database so they leave
+    // no unreachable objects behind and still work in a read-only checkout.
+    let redirected = repo.redirect_objects_for_observation()?;
+    let repo = &redirected;
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });
     worktrunk::trace::instant("List collect started");
@@ -2221,15 +2218,10 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
-    // Mirror `collect()`: in a read-only checkout, redirect this item's
-    // object-writing merge/conflict probes into a temporary object database so
-    // the statusline still classifies integration state. `wt list statusline`
-    // is a separate entry point from `collect()` (its only callers are in
-    // `commands/statusline.rs`) and renders on every Claude Code prompt inside
-    // exactly the managed read-only sandbox this targets. See
-    // `Repository::redirect_objects_if_read_only`.
-    let redirected = repo.redirect_objects_if_read_only();
-    let repo = redirected.as_ref().unwrap_or(repo);
+    // Mirror `collect()`: statusline has a separate entry point but runs the
+    // same object-writing merge/conflict probes.
+    let redirected = repo.redirect_objects_for_observation()?;
+    let repo = &redirected;
 
     // Populate commit data directly. The main `collect()` path batches this
     // across all items pre-skeleton; the single-item statusline path has no

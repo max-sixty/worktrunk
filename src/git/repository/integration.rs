@@ -1295,16 +1295,64 @@ mod read_only_object_store_tests {
         (test, main_sha, feature_sha)
     }
 
-    /// A writable object database must never redirect — the normal path is
-    /// left byte-for-byte unchanged.
+    #[cfg(unix)]
     #[test]
-    fn writable_object_database_is_not_redirected() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
+    fn redirected_objects_resolve_a_repo_path_containing_a_colon() {
+        let parent = crate::testing::test_tempdir();
+        let test = TestRepo::at(&parent.path().join("repo:with-colon"));
+        test.commit("Initial commit");
+
+        let redirected = test.repo.redirect_objects_for_observation().unwrap();
         assert!(
-            repo.redirect_objects_if_read_only().is_none(),
-            "a writable object database must not trigger a redirect"
+            redirected
+                .run_command_check(&["cat-file", "-e", "HEAD"])
+                .unwrap(),
+            "the real object database must remain readable through the redirect"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn redirected_objects_resolve_a_repo_path_containing_a_newline() {
+        let parent = crate::testing::test_tempdir();
+        let test = TestRepo::at(&parent.path().join("repo\nwith-newline"));
+        test.commit("Initial commit");
+
+        let redirected = test.repo.redirect_objects_for_observation().unwrap();
+        assert!(
+            redirected
+                .run_command_check(&["cat-file", "-e", "HEAD"])
+                .unwrap(),
+            "the real object database must remain readable through the redirect"
+        );
+    }
+
+    #[test]
+    fn redirected_object_directory_unregisters_on_drop() {
+        let test = TestRepo::with_initial_commit();
+        let redirected = test.repo.redirect_objects_for_observation().unwrap();
+        let directory = redirected
+            .object_store_environment()
+            .unwrap()
+            .0
+            .to_path_buf();
+        assert!(
+            test.repo
+                .cache
+                .observation_object_directories
+                .contains_key(&directory)
+        );
+
+        drop(redirected);
+
+        assert!(
+            !test
+                .repo
+                .cache
+                .observation_object_directories
+                .contains_key(&directory)
+        );
+        assert!(!directory.exists());
     }
 
     /// The safety property behind scoping the redirect to observational
@@ -1329,7 +1377,7 @@ mod read_only_object_store_tests {
         // Redirected clone: the merge tree lands in the temporary store only.
         let redirected = Repository::at(test.root_path())
             .unwrap()
-            .with_temporary_object_directory()
+            .redirect_objects_for_observation()
             .unwrap();
         let ephemeral_tree = merge_tree(&redirected);
 

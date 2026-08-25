@@ -1,5 +1,6 @@
 //! WorkingTree - a borrowed handle for worktree-specific git operations.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -26,6 +27,17 @@ fn escape_pathspec_glob_literal(path: &str) -> String {
         escaped.push(ch);
         escaped
     })
+}
+
+/// Exclude one Worktrunk-owned temporary directory inside a worktree.
+fn temporary_path_exclusion(worktree_root: &Path, temporary_path: &Path) -> Option<String> {
+    let temporary_path = canonicalize_with_parents(temporary_path);
+    let worktree_root = canonicalize_with_parents(worktree_root);
+    temporary_path
+        .strip_prefix(worktree_root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .map(|relative| format!(":(top,exclude,literal){}", relative.to_slash_lossy()))
 }
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
@@ -408,15 +420,32 @@ impl<'a> WorkingTree<'a> {
         match self.repo.cache.status_porcelain.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let stdout = self.run_command(&[
+                let exclusions = self.observation_path_exclusions()?;
+                let mut args = vec![
                     "--no-optional-locks",
                     "status",
                     "--porcelain",
                     "--untracked-files=normal",
-                ])?;
+                ];
+                if !exclusions.is_empty() {
+                    args.extend(["--", "."]);
+                    args.extend(exclusions.iter().map(String::as_str));
+                }
+                let stdout = self.run_command(&args)?;
                 Ok(e.insert(stdout).clone())
             }
         }
+    }
+
+    fn observation_path_exclusions(&self) -> anyhow::Result<Vec<String>> {
+        let worktree_root = self.root()?;
+        Ok(self
+            .repo
+            .cache
+            .observation_object_directories
+            .iter()
+            .filter_map(|entry| temporary_path_exclusion(&worktree_root, entry.key()))
+            .collect())
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -763,8 +792,13 @@ impl<'a> WorkingTree<'a> {
     }
 
     fn untracked_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let output =
-            self.run_command_output(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+        let exclusions = self.observation_path_exclusions()?;
+        let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z"];
+        if !exclusions.is_empty() {
+            args.extend(["--", "."]);
+            args.extend(exclusions.iter().map(String::as_str));
+        }
+        let output = self.run_command_output(&args)?;
         if !output.status.success() {
             return Err(CommandError::from_failed_output(
                 "git",
@@ -854,18 +888,20 @@ impl<'a> WorkingTree<'a> {
             object_store_environment: self.repo.object_store_environment().map(
                 |(directory, alternates)| (directory.to_path_buf(), alternates.to_os_string()),
             ),
+            observation_path_exclusions: self.observation_path_exclusions()?,
         })
     }
 
-    /// Write a tree containing the index plus every working-tree change.
+    /// Write a tree containing the index plus tracked working-tree changes.
     ///
-    /// A temporary index keeps the user's staging state unchanged. `--sparse`
-    /// is intentional here: this is a complete worktree snapshot for conflict
-    /// detection, so untracked files outside a sparse-checkout definition must
-    /// participate too.
-    pub fn write_worktree_tree(&self) -> anyhow::Result<String> {
+    /// A temporary index keeps the user's staging state unchanged. The conflict
+    /// probe is advisory and leaves untracked paths out of its synthetic tree.
+    pub fn write_tracked_worktree_tree(&self) -> anyhow::Result<String> {
         let index = self.temp_index()?;
-        index.stage_worktree_snapshot()?;
+        // With no pathspec, `add -u` also accepts an empty index (a staged
+        // deletion of every tracked file, or a missing real index). The command
+        // still covers the whole worktree because TempIndex runs at its root.
+        index.run_command(["add".to_string(), "-u".to_string(), "--sparse".to_string()])?;
         index.write_tree()
     }
 
@@ -967,7 +1003,7 @@ impl<'a> WorkingTree<'a> {
 /// operations there. Today the callers are
 /// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
 /// untracked, used by `wt list --full` / `wt statusline`),
-/// `WorkingTreeConflictsTask` (write-tree of dirty + untracked, for
+/// `WorkingTreeConflictsTask` (write-tree of tracked changes, for
 /// merge-conflict probing), `wt step diff` (diff vs target merge-base with
 /// untracked), `wt step commit --dry-run` (mirror its `--stage` mode without
 /// changing the user's index), and the `wt switch` unified/working preview tabs.
@@ -977,8 +1013,11 @@ pub struct TempIndex {
     log_ctx: String,
     /// Copied from the [`Repository`] so a redirected `wt list` writes the temp
     /// index's `write-tree` objects into the temporary store. `None` on the
-    /// normal persistent path. See [`Repository::redirect_objects_if_read_only`].
-    object_store_environment: Option<(PathBuf, std::ffi::OsString)>,
+    /// normal persistent path. See [`Repository::redirect_objects_for_observation`].
+    object_store_environment: Option<(PathBuf, OsString)>,
+    /// Exact Worktrunk-owned temporary directories to hide from untracked
+    /// previews when the configured temp directory is inside this worktree.
+    observation_path_exclusions: Vec<String>,
 }
 
 impl TempIndex {
@@ -1004,20 +1043,6 @@ impl TempIndex {
             args.extend(["--".to_string(), ".".to_string()]);
             self.append_temp_index_exclusion(&mut args)?;
         }
-        self.run_command(args)?;
-        Ok(())
-    }
-
-    /// Stage a complete working-tree snapshot, crossing sparse boundaries.
-    fn stage_worktree_snapshot(&self) -> anyhow::Result<()> {
-        let mut args = vec![
-            "add".to_string(),
-            "-A".to_string(),
-            "--sparse".to_string(),
-            "--".to_string(),
-            ".".to_string(),
-        ];
-        self.append_temp_index_exclusion(&mut args)?;
         self.run_command(args)?;
         Ok(())
     }
@@ -1066,6 +1091,7 @@ impl TempIndex {
                 ":(top,exclude,glob){relative}{separator}{TEMP_INDEX_PREFIX}*"
             ));
         }
+        args.extend(self.observation_path_exclusions.iter().cloned());
         Ok(())
     }
 
@@ -1405,20 +1431,19 @@ mod tests {
     }
 
     #[test]
-    fn write_worktree_tree_crosses_sparse_checkout_boundary() {
+    fn tracked_worktree_tree_crosses_sparse_checkout_boundary() {
         let test = sparse_checkout_with_untracked_file();
+        std::fs::write(test.root_path().join("hidden/tracked.txt"), "changed\n").unwrap();
 
         let repo = Repository::at(test.root_path()).unwrap();
-        let tree = repo.current_worktree().write_worktree_tree().unwrap();
+        let tree = repo
+            .current_worktree()
+            .write_tracked_worktree_tree()
+            .unwrap();
         let files = test.git_output(&["ls-tree", "-r", "--name-only", &tree]);
         assert_eq!(
             files.lines().collect::<Vec<_>>(),
-            [
-                "file.txt",
-                "hidden/loose.txt",
-                "hidden/tracked.txt",
-                "visible/tracked.txt",
-            ]
+            ["file.txt", "hidden/tracked.txt", "visible/tracked.txt"]
         );
     }
 

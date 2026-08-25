@@ -220,7 +220,7 @@
           "description": "How committed content is integrated; absent when determined\nnot-integrated, null when undetermined (dirty trees skip the\nexpensive checks)."
         },
         "merge_conflicts": {
-          "description": "A merge into the default branch would conflict (local `merge-tree`\nsimulation); null while unresolved.",
+          "description": "A merge into the default branch would conflict based on committed\ncontent and tracked worktree changes (local `merge-tree` simulation);\nnull while unresolved.",
           "type": [
             "boolean",
             "null"
