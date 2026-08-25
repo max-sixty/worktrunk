@@ -3561,6 +3561,47 @@ fn test_list_does_not_persist_observation_objects(mut repo: TestRepo) {
     );
 }
 
+/// A broken system temporary-directory setting must not prevent either list
+/// entry point from rendering. Probe objects fall back to a temporary directory
+/// in Git's metadata and still disappear when the command exits.
+#[cfg(unix)]
+#[rstest]
+fn test_list_survives_unavailable_system_temp_directory(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+    repo.commit("Main diverges");
+    std::fs::write(feature_path.join("file.txt"), "feature\n").unwrap();
+
+    let before = repo.git_output(&["count-objects", "-v"]);
+    let missing_temp = repo.root_path().join("missing-temp");
+    assert!(!missing_temp.exists());
+    for args in [
+        &["list", "--format=json"][..],
+        &["list", "statusline", "--format=json"][..],
+    ] {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .current_dir(&feature_path)
+            .env("TMPDIR", &missing_temp)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} should fall back from an unavailable TMPDIR; stderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert_eq!(
+        repo.git_output(&["count-objects", "-v"]),
+        before,
+        "fallback probe objects must not enter the real object database"
+    );
+}
+
 ///
 /// Even with --full, if the working tree is clean, we skip the working-tree check
 /// and just use the commit-level conflict detection.

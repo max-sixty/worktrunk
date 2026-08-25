@@ -722,12 +722,21 @@ impl Task for WorkingTreeConflictsTask {
             });
         }
 
-        // Stage tracked changes into a temp index so the real index stays
-        // untouched. This also avoids creating a missing real index as a side
-        // effect of `git write-tree`. Untracked entries are ignored.
-        let tree_sha = wt
-            .write_tracked_worktree_tree()
-            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        // A staged-only snapshot already lives in the real index. `write-tree`
+        // writes its tree into the redirected object store without scanning the
+        // worktree. Unstaged tracked changes need a temporary index so the
+        // user's staging state stays untouched. Untracked entries are ignored.
+        let has_unstaged_tracked_changes = status_output
+            .lines()
+            .any(|line| !line.starts_with("??") && line.as_bytes().get(1) != Some(&b' '));
+        let tree_sha = if has_unstaged_tracked_changes {
+            wt.write_tracked_worktree_tree()
+                .map_err(|e| ctx.error(Self::KIND, &e))?
+        } else {
+            wt.run_command(&["write-tree"])
+                .map(|output| output.trim().to_string())
+                .map_err(|e| ctx.error(Self::KIND, &e))?
+        };
 
         let base_sha = ctx
             .resolve_sha(&base)

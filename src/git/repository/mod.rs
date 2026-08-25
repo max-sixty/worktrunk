@@ -819,14 +819,23 @@ impl Repository {
     /// conflict probes create ephemeral objects (`write-tree`, `commit-tree`,
     /// `merge-tree --write-tree`) that are never referenced, so writing them to
     /// a throwaway store is harmless and lets the command run in a read-only
-    /// checkout. A *mutating* command must never redirect because its commit
-    /// would disappear with the store.
+    /// checkout. If the system temporary directory is unavailable, the store
+    /// falls back to the Git common directory. A *mutating* command must never
+    /// redirect because its commit would disappear with the store.
     pub fn redirect_objects_for_observation(&self) -> anyhow::Result<Self> {
         let alternate = self.object_database_path();
-        let directory = tempfile::Builder::new()
-            .prefix("worktrunk-list-objects-")
-            .tempdir()
-            .context("Failed to create temporary object database")?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("worktrunk-list-objects-");
+        let directory = match builder.tempdir() {
+            Ok(directory) => directory,
+            Err(temp_error) => builder
+                .tempdir_in(&self.git_common_dir)
+                .with_context(|| {
+                    format!(
+                        "Failed to create temporary object database in the system temp directory or Git common directory; system temp error: {temp_error}"
+                    )
+                })?,
+        };
         let alternates = alternate_object_directories(&alternate);
         let registered_path = directory.path().to_path_buf();
         self.cache

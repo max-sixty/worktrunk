@@ -427,10 +427,7 @@ impl<'a> WorkingTree<'a> {
                     "--porcelain",
                     "--untracked-files=normal",
                 ];
-                if !exclusions.is_empty() {
-                    args.extend(["--", "."]);
-                    args.extend(exclusions.iter().map(String::as_str));
-                }
+                args.extend(exclusions.iter().map(String::as_str));
                 let stdout = self.run_command(&args)?;
                 Ok(e.insert(stdout).clone())
             }
@@ -794,18 +791,10 @@ impl<'a> WorkingTree<'a> {
     fn untracked_diff_stats(&self) -> anyhow::Result<LineDiff> {
         let exclusions = self.observation_path_exclusions()?;
         let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z"];
-        if !exclusions.is_empty() {
-            args.extend(["--", "."]);
-            args.extend(exclusions.iter().map(String::as_str));
-        }
+        args.extend(exclusions.iter().map(String::as_str));
         let output = self.run_command_output(&args)?;
         if !output.status.success() {
-            return Err(CommandError::from_failed_output(
-                "git",
-                &["ls-files", "--others", "--exclude-standard", "-z"],
-                &output,
-            )
-            .into());
+            return Err(CommandError::from_failed_output("git", &args, &output).into());
         }
 
         let paths: Vec<String> = output
