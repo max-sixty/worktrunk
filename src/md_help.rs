@@ -85,7 +85,10 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
         // HTML comments are expansion markers for web docs (see readme_sync.rs) and
         // don't render. A `<!-- wt list … -->` marker tags the captured `wt list`
         // output that immediately follows, so the next code block is chopped (below).
-        if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+        // Only outside a fence: inside one the same text is content the block is
+        // showing, and the picker's `pr`/comments panes render arbitrary forge
+        // markdown, where a fenced HTML sample would otherwise lose the line.
+        if !in_code_block && trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
             let inner = trimmed
                 .trim_start_matches("<!--")
                 .trim_end_matches("-->")
@@ -717,6 +720,34 @@ mod tests {
     fn test_render_markdown_in_help_html_comment() {
         let result = render_markdown_in_help("<!-- comment -->\nvisible");
         assert_snapshot!(result, @"visible");
+    }
+
+    #[test]
+    fn test_html_comment_inside_a_code_block_is_content() {
+        // The comment branch used to run before the fence check, so a fenced
+        // line that happened to be an HTML comment was swallowed instead of
+        // rendered. The picker's `pr` and comments panes render arbitrary forge
+        // markdown through this function, where a fenced HTML sample is
+        // ordinary content — and a fenced `<!-- wt list -->` would additionally
+        // arm the chop marker for whatever block came next.
+        let result = render_markdown_flush("```html\n<!-- a comment -->\n<p>body</p>\n```", None);
+        assert!(
+            result.contains("<!-- a comment -->"),
+            "fenced comment should render as content: {result:?}"
+        );
+        assert!(result.contains("<p>body</p>"), "{result:?}");
+
+        // The gutter path renders it too, and the marker inside the fence does
+        // not leak into the following block.
+        let guttered =
+            render_markdown_in_help("```\n<!-- wt list -->\n```\n\n```console\n$ wt\n```");
+        assert!(
+            guttered.contains("<!-- wt list -->"),
+            "fenced marker should render as content: {guttered:?}"
+        );
+
+        // Outside a fence it is still a marker, not content.
+        assert_eq!(render_markdown_in_help("<!-- wt list -->"), "");
     }
 
     #[test]
