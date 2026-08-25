@@ -212,7 +212,10 @@ fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
         // `flatten()` here would drop a per-entry error — a file removed
         // mid-walk, a failing `stat` — and skip a snapshot without saying so.
         let entry = entry.unwrap_or_else(|e| {
-            panic!("{} unreadable during the snapshot scan: {e}", dir.display())
+            panic!(
+                "an entry in {} unreadable during the snapshot scan: {e}",
+                dir.display()
+            )
         });
         let path = entry.path();
         if path.is_dir() {
