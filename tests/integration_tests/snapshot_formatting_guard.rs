@@ -178,22 +178,26 @@ fn test_no_host_specific_paths_in_snapshots() {
 /// Visit every committed `.snap` file. Snapshot dirs live under `src`
 /// (unit tests), `tests` (integration tests), and `docs` (demo fixtures).
 fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
-    let mut seen = 0usize;
+    // Every caller asserts *absence* over the corpus, so snapshots that stop
+    // being walked pass vacuously. The panic in `visit_snap_files` covers a root
+    // that can't be read; this covers one that reads fine and has stopped
+    // holding snapshots. Per root rather than in aggregate, because a layout
+    // change moves one root and leaves the others: `tests` alone holds the large
+    // majority of the corpus, so an aggregate non-empty check would survive
+    // losing it. That makes each root load-bearing — a root that legitimately
+    // stops holding snapshots belongs out of this list, not exempted from it.
     for root in ["src", "tests", "docs"] {
+        let mut seen = 0usize;
         visit_snap_files(&project_root.join(root), &mut |path, content| {
             seen += 1;
             f(path, content);
         });
+        assert!(
+            seen > 0,
+            "{root}/ holds no .snap files — the corpus has moved, so these \
+             assertions are now passing over whatever is left of it"
+        );
     }
-    // Every caller asserts *absence* over the corpus, so a walk that yields
-    // nothing passes vacuously. The panic in `visit_snap_files` covers a root
-    // that can't be read; this covers the corpus moving out from under these
-    // three roots while all three still exist and read fine.
-    assert!(
-        seen > 0,
-        "walked src/, tests/ and docs/ and found no .snap files — the corpus has \
-         moved, so every assertion these callers make is passing over nothing"
-    );
 }
 
 fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
@@ -204,12 +208,22 @@ fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
     let entries = fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{} unreadable during the snapshot scan: {e}", dir.display()));
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        // `flatten()` here would drop a per-entry error — a file removed
+        // mid-walk, a failing `stat` — and skip a snapshot without saying so.
+        let entry = entry.unwrap_or_else(|e| {
+            panic!("{} unreadable during the snapshot scan: {e}", dir.display())
+        });
         let path = entry.path();
         if path.is_dir() {
             visit_snap_files(&path, f);
         } else if path.extension().and_then(|s| s.to_str()) == Some("snap") {
-            let content = fs::read_to_string(&path).unwrap();
+            let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "{} unreadable during the snapshot scan: {e}",
+                    path.display()
+                )
+            });
             f(&path, &content);
         }
     }

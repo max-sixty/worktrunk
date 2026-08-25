@@ -104,7 +104,12 @@ fn scan_directory(dir: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>
     let entries = fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        // `flatten()` here would drop a per-entry error, so a file that never
+        // reaches `scan_file` takes whatever it embeds with it while the rest
+        // keep `assets` non-empty — past both the panic and the assert.
+        let entry = entry
+            .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
         let path = entry.path();
         if path.is_dir() {
             scan_directory(&path, manifest_dir, assets);
