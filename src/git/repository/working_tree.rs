@@ -854,11 +854,9 @@ impl<'a> WorkingTree<'a> {
         builder.prefix(TEMP_INDEX_PREFIX);
         let mut temp_file = match builder.tempfile() {
             Ok(file) => file,
-            Err(temp_error) => builder.tempfile_in(&git_dir).with_context(|| {
-                format!(
-                    "Failed to create temporary index in the system temp directory or Git directory; system temp error: {temp_error}"
-                )
-            })?,
+            Err(_) => builder.tempfile_in(&git_dir).context(
+                "Failed to create temporary index in the system temp directory or Git directory",
+            )?,
         };
         let mut real_index_file = match std::fs::File::open(&real_index) {
             Ok(file) => Some(file),

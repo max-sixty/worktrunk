@@ -828,13 +828,11 @@ impl Repository {
         builder.prefix("worktrunk-list-objects-");
         let directory = match builder.tempdir() {
             Ok(directory) => directory,
-            Err(temp_error) => builder
+            Err(_) => builder
                 .tempdir_in(&self.git_common_dir)
-                .with_context(|| {
-                    format!(
-                        "Failed to create temporary object database in the system temp directory or Git common directory; system temp error: {temp_error}"
-                    )
-                })?,
+                .context(
+                    "Failed to create temporary object database in the system temp directory or Git common directory",
+                )?,
         };
         let alternates = alternate_object_directories(&alternate);
         let registered_path = directory.path().to_path_buf();
