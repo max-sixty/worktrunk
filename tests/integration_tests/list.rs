@@ -4166,14 +4166,14 @@ fn test_list_preserves_inherited_object_directory(mut repo: TestRepo) {
     let feature_sha = repo.git_output(&["rev-parse", "feature"]);
 
     let objects = repo.root_path().join(".git/objects");
-    let external_objects = repo.home_path().join("external-objects");
+    let external_objects = repo.root_path().join(".git/external-objects");
     std::fs::rename(&objects, &external_objects).unwrap();
     std::fs::create_dir_all(objects.join("info")).unwrap();
     std::fs::create_dir_all(objects.join("pack")).unwrap();
 
     let output = repo
         .wt_command()
-        .env("GIT_OBJECT_DIRECTORY", &external_objects)
+        .env("GIT_OBJECT_DIRECTORY", ".git/external-objects")
         .args(["list", "--format=json"])
         .current_dir(repo.root_path())
         .output()

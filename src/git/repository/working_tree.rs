@@ -1389,6 +1389,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn observation_object_directory_is_excluded_from_status_and_diff() {
+        let test = TestRepo::with_initial_commit();
+        let observation_directory = test
+            .root_path()
+            .join("local-tmp/worktrunk-list-objects-test");
+        std::fs::create_dir_all(observation_directory.join("info")).unwrap();
+        std::fs::write(observation_directory.join("info/alternates"), "temporary\n").unwrap();
+        std::fs::write(test.root_path().join("untracked.txt"), "user\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        repo.cache
+            .observation_object_directories
+            .insert(observation_directory.clone(), ());
+        let wt = repo.current_worktree();
+
+        let status = wt.status_porcelain_cached().unwrap();
+        assert!(status.contains("?? untracked.txt"));
+        assert!(!status.contains("worktrunk-list-objects-test"));
+
+        let stats = wt.working_tree_diff_stats_with_untracked().unwrap();
+        assert_eq!(stats.added, 1);
+        assert_eq!(stats.deleted, 0);
+    }
+
     fn sparse_checkout_with_untracked_file() -> TestRepo {
         let test = TestRepo::with_initial_commit();
         std::fs::create_dir_all(test.root_path().join("visible")).unwrap();
