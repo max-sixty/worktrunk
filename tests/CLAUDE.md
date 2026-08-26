@@ -566,7 +566,8 @@ custom verifier must fail for every violation it claims to check—diagnostic
 Several guards read `src/`, or the snapshot corpus, as text rather than
 compiling it: no stray `println!` outside the allowlist, no `eprintln!` that
 resolves to std's macro instead of anstream's, no bare `env!("VERGEN_…")`, no
-`include_str!` of a path the package won't ship, no host path in a `.snap`.
+`include_str!` of a path the package won't ship, no host path in a `.snap`, and
+nothing but `src/testing/mod.rs` spawning `wt` through `CARGO_BIN_EXE_wt`.
 Each one asserts *absence* over what its walk handed it.
 
 That polarity is what makes the failure mode silent. A file that drops out of
@@ -577,11 +578,10 @@ test passes green over less than it claims.
 So that walk lives once, in `tests/common/source_scan.rs`, and panics on every
 read rather than skipping; its module docstring carries the rest. Other tests
 recurse through directories for their own reasons, and this is about the ones
-whose assertion is absence. A read that
-returns early is the shape to look for. `Err(_) => return` and `let Ok(..)
-else { return }` are the obvious two, and `entries.flatten()` is the one that
-hides, because it drops a per-entry `io::Error` without looking like a `return`
-at all.
+whose assertion is absence. A read that returns early is the shape to look
+for. `Err(_) => return` and `let Ok(..) else { return }` are the obvious two,
+and `entries.flatten()` is the one that hides, because it drops a per-entry
+`io::Error` without looking like a `return` at all.
 
 Each guard also proves its walk reached something, since a walk that reads
 cleanly and yields nothing passes just as green. `visit_files` returns the

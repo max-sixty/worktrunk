@@ -7,7 +7,6 @@
 //!
 //! Every read below panics rather than skipping, so the walk either covers the
 //! tree or says which read stopped it.
-//!
 use std::fs;
 use std::path::Path;
 
