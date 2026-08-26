@@ -561,6 +561,35 @@ the pragmatic user experience when the complete rendering is the contract. A
 custom verifier must fail for every violation it claims to check—diagnostic
 `println!` output is not an oracle.
 
+### Guards that scan source text
+
+Several guards read `src/`, or the snapshot corpus, as text rather than
+compiling it: no stray `println!` outside the allowlist, no `eprintln!` that
+resolves to std's macro instead of anstream's, no bare `env!("VERGEN_…")`, no
+`include_str!` of a path the package won't ship, no host path in a `.snap`.
+Each one asserts *absence* over what its walk handed it.
+
+That polarity is what makes the failure mode silent. A file that drops out of
+the walk is indistinguishable from a file with nothing wrong in it: the
+violation it carried is never looked for, `violations` stays empty, and the
+test passes green over less than it claims.
+
+So the walk lives once, in `tests/common/source_scan.rs`, and panics on every
+read rather than skipping; its module docstring carries the rest. A read that
+returns early is the shape to look for. `Err(_) => return` and `let Ok(..)
+else { return }` are the obvious two, and `entries.flatten()` is the one that
+hides, because it drops a per-entry `io::Error` without looking like a `return`
+at all.
+
+Each guard also proves its walk reached something, since a walk that reads
+cleanly and yields nothing passes just as green. `visit_files` returns the
+number of files it visited, for the guards that check nothing else which would
+fail over an empty walk. Where a guard already asserts something an empty walk
+could not satisfy, that assertion is the proof, and a count beside it would be
+a second mechanism for one guarantee. A guard walking several roots counts per
+root: a layout change moves one root and leaves the others, which an aggregate
+count survives.
+
 ### Snapshot env drift: cosmetic vs. a leak
 
 `insta_cmd` snapshots record the test's environment variables in an `env:`

@@ -8,6 +8,7 @@ pub use worktrunk::testing::mock_commands;
 pub use worktrunk::testing::*;
 
 pub mod list_snapshots;
+pub mod source_scan;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
@@ -1442,16 +1443,11 @@ mod tests {
     }
 
     fn scan_for_needle(dir: &Path, needle: &str, root: &Path, offenders: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                scan_for_needle(&path, needle, root, offenders);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
-                && std::fs::read_to_string(&path).unwrap().contains(needle)
-            {
+        super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
+            if contents.contains(needle) {
                 offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
             }
-        }
+        });
     }
 
     /// Every PTY spawn routes through [`configure_pty_command`] (directly or

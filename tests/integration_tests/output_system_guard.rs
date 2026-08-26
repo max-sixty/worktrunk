@@ -33,13 +33,13 @@
 //! what that buys — narration redirected to a file carries no escapes.
 
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 
 use path_slash::PathExt as _;
 use rstest::rstest;
 
+use crate::common::source_scan::visit_files;
 use crate::common::{TestRepo, repo};
 
 /// Paths (relative to src/) that are allowed to use println!/print! for stdout.
@@ -125,7 +125,8 @@ fn check_no_unexpected_stdout_writes() {
     let mut violations = Vec::new();
 
     // Recursively scan all .rs files under src/
-    scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
+    let scanned = scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
+    assert!(scanned > 0, "scanned no files under {}", src_dir.display());
 
     if !violations.is_empty() {
         panic!(
@@ -139,25 +140,24 @@ fn check_no_unexpected_stdout_writes() {
     }
 }
 
-fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
-    // A directory the walk can't read contributes no violations, so swallowing
-    // the error lets the guard pass over a tree it never inspected — a missing
-    // or relocated `src/` reads as a clean crate. Surface it instead.
-    let entries = fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-
-        if path.is_dir() {
-            scan_directory(&path, tokens, violations, scan_root);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_file(&path, tokens, violations, scan_root);
-        }
-    }
+fn scan_directory(
+    dir: &Path,
+    tokens: &[&str],
+    violations: &mut Vec<String>,
+    scan_root: &Path,
+) -> usize {
+    visit_files(dir, "rs", "src/ scan", &mut |path, contents| {
+        check_file(path, contents, tokens, violations, scan_root)
+    })
 }
 
-fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
+fn check_file(
+    path: &Path,
+    contents: &str,
+    tokens: &[&str],
+    violations: &mut Vec<String>,
+    scan_root: &Path,
+) {
     // Get path relative to src/ for matching against STDOUT_ALLOWED_PATHS
     let relative_path = path
         .strip_prefix(scan_root)
@@ -168,11 +168,6 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_r
     if STDOUT_ALLOWED_PATHS.contains(&relative_path.as_ref()) {
         return;
     }
-
-    let contents = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
 
     let relative_path = path
         .strip_prefix(env!("CARGO_MANIFEST_DIR"))
@@ -297,7 +292,8 @@ fn allowlisted_paths_still_exist() {
 fn check_stderr_macros_come_from_styling() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
-    scan_stderr_macros(&src_dir, &src_dir, &mut violations);
+    let scanned = scan_stderr_macros(&src_dir, &src_dir, &mut violations);
+    assert!(scanned > 0, "scanned no files under {}", src_dir.display());
     violations.sort();
 
     assert!(
@@ -313,21 +309,18 @@ fn check_stderr_macros_come_from_styling() {
     );
 }
 
-fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
-    let entries = fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("{} unreadable during the src/ scan: {e}", dir.display()));
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_stderr_macros(&path, src_dir, violations);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_stderr_macros_in_file(&path, src_dir, violations);
-        }
-    }
+fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) -> usize {
+    visit_files(dir, "rs", "src/ scan", &mut |path, contents| {
+        check_stderr_macros_in_file(path, contents, src_dir, violations)
+    })
 }
 
-fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec<String>) {
+fn check_stderr_macros_in_file(
+    path: &Path,
+    contents: &str,
+    src_dir: &Path,
+    violations: &mut Vec<String>,
+) {
     let relative_path = path
         .strip_prefix(src_dir)
         .map(|p| p.to_slash_lossy())
@@ -336,11 +329,7 @@ fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec
         return;
     }
 
-    let contents = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let imported = styling_imports(&contents);
+    let imported = styling_imports(contents);
 
     for (line_num, line) in contents.lines().enumerate() {
         // A doc comment quoting `eprintln!` is prose, not a write.
