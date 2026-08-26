@@ -3484,6 +3484,60 @@ fn test_list_ignores_untracked_paths_for_conflict_estimate(mut repo: TestRepo) {
     assert_eq!(feature["default_branch"]["merge_conflicts"], false);
 }
 
+/// `HEAD±` describes the whole working tree in every list mode. A move whose
+/// destination is still untracked changes no lines, while an unrelated new file
+/// contributes its added lines.
+#[rstest]
+fn test_list_counts_untracked_files_and_move_deltas_by_default(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let source = (1..=100)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(repo.root_path().join("source.txt"), format!("{source}\n")).unwrap();
+    repo.run_git(&["add", "source.txt"]);
+    repo.run_git(&["commit", "-m", "Add source"]);
+
+    std::fs::create_dir(repo.root_path().join("moved")).unwrap();
+    std::fs::rename(
+        repo.root_path().join("source.txt"),
+        repo.root_path().join("moved/source.txt"),
+    )
+    .unwrap();
+    std::fs::write(repo.root_path().join("new.txt"), "one\ntwo\n").unwrap();
+
+    for args in [
+        &["list", "--format=json"][..],
+        &["list", "--full", "--format=json"][..],
+    ] {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} should succeed; stderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let main = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["branch"] == "main")
+            .expect("main row");
+        assert_eq!(
+            main["worktree"]["changes"]["diff"],
+            serde_json::json!({ "added": 2, "deleted": 0 }),
+            "entry: {main}"
+        );
+    }
+}
+
 /// Ignoring untracked paths must still fall back to the committed conflict
 /// probe rather than treating an untracked-only worktree as conflict-free.
 #[rstest]

@@ -51,7 +51,7 @@ exit_code: 0
 + feature-a                                  [2m↑[22m              
 + feature-b                                  [2m↑[22m              
 + feature-c                                  [2m↑[22m              
-+ feature/implement-oauth2-social-login    [36m?[39m [2m–[22m              
++ feature/implement-oauth2-social-login    [36m?[39m [2m–[22m       [32m+1[0m     
 
 ----- stderr -----
 

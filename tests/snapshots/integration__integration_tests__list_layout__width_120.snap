@@ -60,7 +60,7 @@ exit_code: 0
 + feature-a                                  [2m↑[22m                 [32m↑1[0m        [32m+1[0m                [2m1b87d47[0m  [2m16h[0m   [2mAdd feature-a…[0m
 + feature-b                                  [2m↑[22m                 [32m↑1[0m        [32m+1[0m                [2mf62940f[0m  [2m16h[0m   [2mAdd feature-b…[0m
 + feature-c                                  [2m↑[22m                 [32m↑1[0m        [32m+1[0m                [2m345c7c9[0m  [2m16h[0m   [2mAdd feature-c…[0m
-+ feature/implement-oauth2-social-login    [36m?[39m [2m–[22m                                             [2m05a4a45[0m  [2m16h[0m   [2mInitial commit[0m
++ feature/implement-oauth2-social-login    [36m?[39m [2m–[22m       [32m+1[0m                                    [2m05a4a45[0m  [2m16h[0m   [2mInitial commit[0m
 
 ----- stderr -----
 

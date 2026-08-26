@@ -60,7 +60,7 @@ exit_code: 0
 + feature-a      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-a  [2m1b87d47[0m  [2m16h[0m   [2mAdd feature-a file[0m
 + feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940f[0m  [2m16h[0m   [2mAdd feature-b file[0m
 + feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c9[0m  [2m16h[0m   [2mAdd feature-c file[0m
-+ feature    [36m+[39m[36m![39m[36m?[39m [2m↑[22m       [32m+2[0m   [31m-3[0m   [32m↑1[0m        [32m+4[0m                ../repo.feature    [2mda422a1[0m  [2m1d[0m    [2mAdd files[0m
++ feature    [36m+[39m[36m![39m[36m?[39m [2m↑[22m       [32m+3[0m   [31m-3[0m   [32m↑1[0m        [32m+4[0m                ../repo.feature    [2mda422a1[0m  [2m1d[0m    [2mAdd files[0m
 
 ----- stderr -----
 

@@ -383,7 +383,6 @@ pub fn work_items_for_worktree(
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
-        include_untracked_in_working_diff: options.include_untracked_in_working_diff,
     };
 
     let has_commits = wt.has_commits();
@@ -495,9 +494,6 @@ pub fn work_items_for_branch(
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
-        // Branches have no working tree; the flag is only consumed by
-        // WorkingTreeDiffTask, which doesn't run for branch items.
-        include_untracked_in_working_diff: false,
     };
 
     let mut items = Vec::with_capacity(11);

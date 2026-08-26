@@ -470,11 +470,6 @@ pub struct CollectOptions {
     /// plain ref snapshot and let per-row tasks fall back to per-pair
     /// queries. `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
-
-    /// Whether `WorkingTreeDiffTask` should include untracked files in
-    /// `HEAD±`. Set by `wt list --full` and `wt statusline`; consumed
-    /// in `tasks.rs` where the cost/cutover rationale lives.
-    pub include_untracked_in_working_diff: bool,
 }
 
 impl CollectOptions {
@@ -503,7 +498,6 @@ impl CollectOptions {
             default_branch: None,
             integration_targets: None,
             snapshot: None,
-            include_untracked_in_working_diff: false,
         }
     }
 }
@@ -897,61 +891,49 @@ pub fn collect(
     let url_template = url_template_cell.into_inner().flatten();
 
     // Resolve show flags: merge CLI overrides with config (warmed in parallel phase)
-    let (
-        show_branches,
-        show_remotes,
-        show_full,
-        collect_deadline,
-        list_width,
-        progressive_handler,
-        include_untracked_in_working_diff,
-    ) = match show_config {
-        ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            collect_deadline,
-            list_width,
-            progressive_handler,
-        } => (
-            show_branches,
-            show_remotes,
-            // Picker is the only `Resolved` caller and is `wt list --full`: it
-            // fetches every field for its preview tabs regardless of which
-            // columns render. Like default `wt list` (but unlike `--full`) it
-            // opts out of the untracked-inclusive working diff — the last tuple
-            // field — so the two `show_full`-shaped values aren't the same bucket.
-            true,
-            collect_deadline,
-            list_width,
-            progressive_handler,
-            false,
-        ),
-        ShowConfig::DeferredToParallel {
-            cli_branches,
-            cli_remotes,
-            cli_full,
-        } => {
-            let config = repo.config();
-            let show_branches = cli_branches || config.list.branches();
-            let show_remotes = cli_remotes || config.list.remotes();
-            let show_full = cli_full || config.list.full();
-            // Resolve the collect budget from merged config (--full disables it)
-            let collect_deadline = if show_full {
-                None
-            } else {
-                config.list.timeout().map(|d| std::time::Instant::now() + d)
-            };
-            (
+    let (show_branches, show_remotes, show_full, collect_deadline, list_width, progressive_handler) =
+        match show_config {
+            ShowConfig::Resolved {
                 show_branches,
                 show_remotes,
-                show_full,
                 collect_deadline,
-                None,
-                None,
-                show_full,
-            )
-        }
-    };
+                list_width,
+                progressive_handler,
+            } => (
+                show_branches,
+                show_remotes,
+                // Picker is the only `Resolved` caller and fetches every field for
+                // its preview tabs regardless of which columns render.
+                true,
+                collect_deadline,
+                list_width,
+                progressive_handler,
+            ),
+            ShowConfig::DeferredToParallel {
+                cli_branches,
+                cli_remotes,
+                cli_full,
+            } => {
+                let config = repo.config();
+                let show_branches = cli_branches || config.list.branches();
+                let show_remotes = cli_remotes || config.list.remotes();
+                let show_full = cli_full || config.list.full();
+                // Resolve the collect budget from merged config (--full disables it)
+                let collect_deadline = if show_full {
+                    None
+                } else {
+                    config.list.timeout().map(|d| std::time::Instant::now() + d)
+                };
+                (
+                    show_branches,
+                    show_remotes,
+                    show_full,
+                    collect_deadline,
+                    None,
+                    None,
+                )
+            }
+        };
 
     // The picker (`wt switch`) drives a skim TUI that owns the terminal while
     // collect runs on a background thread. Any stderr write from collect
@@ -1392,7 +1374,6 @@ pub fn collect(
         default_branch: default_branch.clone(),
         integration_targets: None,
         snapshot: None,
-        include_untracked_in_working_diff,
     };
 
     // Track expected results per item - populated as spawns are queued
