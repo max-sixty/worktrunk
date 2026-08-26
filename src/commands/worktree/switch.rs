@@ -959,7 +959,28 @@ fn execute_switch(
                     // branch as the *value* of `-b`, which is safe even when
                     // the branch name starts with `-`.
                     let worktree_path_str = worktree_path.to_string_lossy();
-                    let mut args: Vec<&str> = vec!["worktree", "add"];
+                    let mut args: Vec<&str> = Vec::new();
+
+                    // Safety: for an explicitly requested branch, default
+                    // `branch.autoSetupMerge` to `simple` rather than git's
+                    // `true`. Under `true`, `git worktree add -b feature
+                    // origin/main` sets `feature` to track `origin/main`, so a
+                    // bare `git push` under `push.default = upstream` pushes the
+                    // new work to `main` (#713). `simple` is git's own narrower
+                    // mode: it sets tracking only when the new branch's name
+                    // matches the remote branch's, which is exactly the case
+                    // where inherited tracking is correct. An explicit setting
+                    // wins — `wt` picks a different default, it does not override
+                    // the user's configuration.
+                    //
+                    // Only the `--create` paths need it. The DWIM paths below
+                    // create `feature` from `origin/feature`, where the names
+                    // match and `simple` and `true` agree.
+                    if *create_branch && repo.config_value("branch.autoSetupMerge")?.is_none() {
+                        args.extend(["-c", "branch.autoSetupMerge=simple"]);
+                    }
+
+                    args.extend(["worktree", "add"]);
 
                     // For DWIM fallback: when the branch doesn't exist locally,
                     // git worktree add relies on DWIM to auto-create it from a
@@ -1026,20 +1047,6 @@ fn execute_switch(
                             base_branch.clone(),
                         )
                         .into());
-                    }
-
-                    // Safety: unset unsafe upstream when creating a new branch from a remote
-                    // tracking branch. When `git worktree add -b feature origin/main` runs,
-                    // git sets feature to track origin/main. That is dangerous under
-                    // `push.default = upstream`, where a bare `git push` pushes the new work
-                    // to main; under the default `simple` it refuses the push instead.
-                    // See: https://github.com/max-sixty/worktrunk/issues/713
-                    if *create_branch
-                        && let Some(base) = base_branch
-                        && repo.is_remote_tracking_branch(base)
-                    {
-                        // Unset the upstream to prevent accidental pushes
-                        branch_handle.unset_upstream()?;
                     }
 
                     // `--base pr:N` / `--base mr:N` against a same-repo PR/MR: the

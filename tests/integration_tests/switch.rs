@@ -358,7 +358,7 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     );
 
     // The new branch must exist and must NOT track the remote base
-    // (same safety property as test_switch_create_from_remote_base_no_upstream).
+    // (same safety property as test_switch_create_from_remote_base_upstream).
     let branch_output = repo.git_output(&["branch", "--list", "new-wt"]);
     assert!(branch_output.contains("new-wt"), "branch should be created");
 
@@ -373,38 +373,75 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     );
 }
 
-/// When creating a new branch from a remote tracking branch (e.g., origin/main),
-/// the new branch should NOT track the remote base branch.
-/// This prevents accidental `git push` to the base branch (e.g., pushing to main).
-/// This is the bug fix for GitHub issue #713.
+/// `--create` from a remote tracking branch defaults `branch.autoSetupMerge` to
+/// git's `simple` rather than git's own `true`, so the new branch inherits the
+/// base's upstream only when the two share a name. Under `true`, a branch
+/// created from `origin/release` tracks `origin/release`, and a bare `git push`
+/// under `push.default = upstream` pushes the new work to `release` — GitHub
+/// issue #713.
+///
+/// An explicit `branch.autoSetupMerge` wins: `wt` picks a different default, it
+/// does not override the setting. The previous implementation — a post-hoc
+/// `git branch --unset-upstream` — overrode every setting, and failed the whole
+/// command with exit 128 whenever the user's config meant git had set no
+/// upstream for it to unset.
 #[rstest]
-fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] repo: TestRepo) {
-    // Create a new branch with --base pointing to a remote tracking branch
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "my-feature", "--base=origin/main"])
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "switch should succeed");
+fn test_switch_create_from_remote_base_upstream(#[from(repo_with_remote)] repo: TestRepo) {
+    // `release` on origin only, so it can serve as a remote base whose name a
+    // new branch either shares or doesn't.
+    repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&["fetch", "origin"]);
 
-    // Verify the branch was created
-    let branch_output = repo.git_output(&["branch", "--list", "my-feature"]);
-    assert!(
-        branch_output.contains("my-feature"),
-        "branch should be created"
-    );
+    let create = |branch: &str| {
+        let output = repo
+            .wt_command()
+            .args(["switch", "--create", branch, "--base=origin/release"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch --create {branch} should succeed; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let branches = repo.git_output(&["branch", "--list", branch]);
+        assert!(branches.contains(branch), "{branch} should be created");
+    };
+    let upstream = |branch: &str| -> Option<String> {
+        let output = repo
+            .git_command()
+            .args([
+                "rev-parse",
+                "--abbrev-ref",
+                &format!("{branch}@{{upstream}}"),
+            ])
+            .run()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
 
-    // Verify the branch does NOT have an upstream (no tracking)
-    // Using rev-parse to check for upstream - should fail for untracked branches
-    let upstream_check = repo
-        .git_command()
-        .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
-        .run()
-        .unwrap();
+    // Different name: no upstream, so a bare `git push` cannot reach `release`.
+    create("my-feature");
+    assert_eq!(upstream("my-feature"), None);
 
-    assert!(
-        !upstream_check.status.success(),
-        "branch should NOT have upstream tracking (to prevent accidental push to origin/main)"
+    // Same name: the tracking git would set points at the branch's own remote
+    // counterpart, which is what tracking is for — it stays.
+    create("release");
+    assert_eq!(upstream("release").as_deref(), Some("origin/release"));
+
+    // `false` means git sets no upstream at all; nothing to undo, nothing to fail.
+    repo.run_git(&["config", "branch.autoSetupMerge", "false"]);
+    create("no-auto-setup");
+    assert_eq!(upstream("no-auto-setup"), None);
+
+    // `always` is the user asking for git's inheriting behaviour explicitly.
+    repo.run_git(&["config", "branch.autoSetupMerge", "always"]);
+    create("explicit-always");
+    assert_eq!(
+        upstream("explicit-always").as_deref(),
+        Some("origin/release")
     );
 }
 
