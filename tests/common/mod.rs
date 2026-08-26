@@ -1430,8 +1430,19 @@ mod tests {
         let needle = ["CARGO_BIN_EXE_", "wt\""].concat();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut offenders = Vec::new();
+        // Counted per root rather than in aggregate: the sole offender lives
+        // under `src`, so the equality below is satisfied by that root alone
+        // and would pass unchanged if `tests` or `benches` stopped yielding
+        // `.rs` files — the absence claim silently narrowing to one third of
+        // what it names. See "Guards that scan source text" in
+        // `tests/CLAUDE.md`.
         for dir in ["src", "tests", "benches"] {
-            scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+            let seen = scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+            assert!(
+                seen > 0,
+                "{dir}/ holds no .rs files — this guard asserts absence, so it \
+                 would now be passing over nothing there"
+            );
         }
         assert_eq!(
             offenders,
@@ -1442,15 +1453,21 @@ mod tests {
         );
     }
 
-    fn scan_for_needle(dir: &Path, needle: &str, root: &Path, offenders: &mut Vec<PathBuf>) {
-        // The count is discarded: asserting the offender list *equals* one named
-        // file already fails over an empty walk.
-        let _ =
-            super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
-                if contents.contains(needle) {
-                    offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
-                }
-            });
+    /// Collect files under `dir` containing `needle`, returning how many `.rs`
+    /// files were read. `#[must_use]` for the same reason `visit_files` is:
+    /// the caller asserts absence, so it has to answer for coverage.
+    #[must_use]
+    fn scan_for_needle(
+        dir: &Path,
+        needle: &str,
+        root: &Path,
+        offenders: &mut Vec<PathBuf>,
+    ) -> usize {
+        super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
+            if contents.contains(needle) {
+                offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
+            }
+        })
     }
 
     /// Every PTY spawn routes through [`configure_pty_command`] (directly or
