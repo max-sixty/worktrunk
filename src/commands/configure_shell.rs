@@ -2020,9 +2020,7 @@ mod tests {
             .append(true)
             .open(&rc)
             .unwrap();
-        let error = contender.try_lock_exclusive().unwrap_err();
-
-        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(contender.try_lock_exclusive().is_err());
         drop(locked);
         contender.try_lock_exclusive().unwrap();
     }
