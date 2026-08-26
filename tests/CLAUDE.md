@@ -574,8 +574,10 @@ the walk is indistinguishable from a file with nothing wrong in it: the
 violation it carried is never looked for, `violations` stays empty, and the
 test passes green over less than it claims.
 
-So the walk lives once, in `tests/common/source_scan.rs`, and panics on every
-read rather than skipping; its module docstring carries the rest. A read that
+So that walk lives once, in `tests/common/source_scan.rs`, and panics on every
+read rather than skipping; its module docstring carries the rest. Other tests
+recurse through directories for their own reasons, and this is about the ones
+whose assertion is absence. A read that
 returns early is the shape to look for. `Err(_) => return` and `let Ok(..)
 else { return }` are the obvious two, and `entries.flatten()` is the one that
 hides, because it drops a per-entry `io::Error` without looking like a `return`

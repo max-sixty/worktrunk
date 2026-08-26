@@ -3828,9 +3828,11 @@ fn test_plugin_layout_is_consolidated() {
          Codex's installer drops symlinks"
     );
     let mut dirs = vec![plugin_skills];
+    let mut mirrored = 0usize;
     while let Some(dir) = dirs.pop() {
         for entry in fs::read_dir(&dir).unwrap() {
             let entry = entry.unwrap();
+            mirrored += 1;
             assert!(
                 !entry.path().is_symlink(),
                 "{} is a symlink — the plugin skills mirror must hold only regular files \
@@ -3842,11 +3844,21 @@ fn test_plugin_layout_is_consolidated() {
             }
         }
     }
+    // The assertion above is absence, so an empty mirror satisfies it over
+    // nothing — see "Guards that scan source text" in `tests/CLAUDE.md`.
+    assert!(
+        mirrored > 0,
+        "plugins/worktrunk/skills is empty — the mirror never generated, so the \
+         symlink invariant above just passed over nothing"
+    );
+
     // Every repo-root skill dir carries a SKILL.md, since the convention scan
     // silently ignores a directory without one.
+    let mut skill_dirs = 0usize;
     for entry in fs::read_dir(root.join("skills")).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_dir() {
+            skill_dirs += 1;
             assert!(
                 entry.path().join("SKILL.md").exists(),
                 "skills/{} has no SKILL.md — Claude's convention scan silently ignores it",
@@ -3854,6 +3866,7 @@ fn test_plugin_layout_is_consolidated() {
             );
         }
     }
+    assert!(skill_dirs > 0, "skills/ holds no skill directories");
 
     // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
     // Claude Code auto-fires WorktreeRemove on session exit for any worktree
