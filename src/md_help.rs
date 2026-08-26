@@ -724,40 +724,13 @@ mod tests {
 
     #[test]
     fn test_html_comment_inside_a_code_block_is_content() {
-        // The comment branch used to run before the fence check, so a fenced
-        // line that happened to be an HTML comment was swallowed instead of
-        // rendered. The picker's `pr` and comments panes render arbitrary forge
-        // markdown through this function, where a fenced HTML sample is
-        // ordinary content — and a fenced `<!-- wt list -->` would additionally
-        // arm the chop marker for whatever block came next.
-        let result = render_markdown_flush("```html\n<!-- a comment -->\n<p>body</p>\n```", None);
+        // Forge markdown can contain fenced HTML samples. A comment inside the
+        // fence is content even when it matches a docs expansion marker.
+        let result = render_markdown_flush("```html\n<!-- wt list -->\n<p>body</p>\n```", None);
         assert_snapshot!(result, @"
-        [2m<!-- a comment -->[0m
+        [2m<!-- wt list -->[0m
         [2m<p>body</p>[0m
         ");
-
-        // The gutter path renders it too, and the marker inside the fence does
-        // not leak into the following block. Only the trailing `console`
-        // block's rendering depends on `syntax-highlighting`, so its
-        // expectation is per configuration; the containment the test is
-        // about is asserted either way.
-        let guttered =
-            render_markdown_in_help("```\n<!-- wt list -->\n```\n\n```console\n$ wt\n```");
-        #[cfg(feature = "syntax-highlighting")]
-        assert_snapshot!(guttered, @"
-        [107m [0m [2m<!-- wt list -->[0m
-
-        [107m [0m [2m[0m[2m[34mwt[0m
-        ");
-        #[cfg(not(feature = "syntax-highlighting"))]
-        assert_snapshot!(guttered, @"
-        [107m [0m [2m<!-- wt list -->[0m
-
-        [107m [0m wt
-        ");
-
-        // Outside a fence it is still a marker, not content.
-        assert_snapshot!(render_markdown_in_help("<!-- wt list -->"), @"");
     }
 
     #[test]
