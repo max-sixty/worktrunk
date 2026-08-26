@@ -737,13 +737,23 @@ mod tests {
         ");
 
         // The gutter path renders it too, and the marker inside the fence does
-        // not leak into the following block.
+        // not leak into the following block. Only the trailing `console`
+        // block's rendering depends on `syntax-highlighting`, so its
+        // expectation is per configuration; the containment the test is
+        // about is asserted either way.
         let guttered =
             render_markdown_in_help("```\n<!-- wt list -->\n```\n\n```console\n$ wt\n```");
+        #[cfg(feature = "syntax-highlighting")]
         assert_snapshot!(guttered, @"
         [107m [0m [2m<!-- wt list -->[0m
 
         [107m [0m [2m[0m[2m[34mwt[0m
+        ");
+        #[cfg(not(feature = "syntax-highlighting"))]
+        assert_snapshot!(guttered, @"
+        [107m [0m [2m<!-- wt list -->[0m
+
+        [107m [0m wt
         ");
 
         // Outside a fence it is still a marker, not content.
