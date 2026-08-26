@@ -18,7 +18,7 @@
 
 - **Long Windows paths compare consistently**: paths beyond 260 characters could retain a `\\?\` prefix and appear to be on another drive. `copy-ignored` then refused them, while switch, remove, merge, and relocate landed at the worktree root instead of the original subdirectory. ([#3899](https://github.com/max-sixty/worktrunk/pull/3899), fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting and verifying the fix)
 
-- **Shell configuration rechecks before it writes**: overlapping installs lock and reread rc files; Fish completion installs preserve files created after preview; uninstall applies only previewed rc removals and rejects changed Worktrunk-owned files. ([#3853](https://github.com/max-sixty/worktrunk/pull/3853))
+- **Shell configuration rechecks before it writes**: overlapping installs lock and reread rc files; Fish completion installs preserve files created after preview; uninstall applies only previewed rc removals and rejects changed Worktrunk-owned files. ([#3853](https://github.com/max-sixty/worktrunk/pull/3853), [#3924](https://github.com/max-sixty/worktrunk/pull/3924))
 
 - **`-vv` profiles exclude their own collector commands**: command counts and cache summaries no longer include duplicate-looking work performed only to assemble the diagnostic report; raw traces still retain it. ([#3900](https://github.com/max-sixty/worktrunk/pull/3900))
 

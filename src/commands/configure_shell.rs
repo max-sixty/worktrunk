@@ -683,24 +683,7 @@ fn configure_shell_file(
         // Append through one open file handle. Replacing an rc file from the
         // snapshot above would discard edits made in the meantime and would
         // also sever hard links and file metadata that belong to the user.
-        let mut file = fs::OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(path)
-            .map_err(|e| {
-                format!(
-                    "Failed to open {} for writing: {}",
-                    format_path_for_display(path),
-                    e
-                )
-            })?;
-        file.lock_exclusive().map_err(|e| {
-            format!(
-                "Failed to lock {} for writing: {}",
-                format_path_for_display(path),
-                e
-            )
-        })?;
+        let mut file = open_locked_rc_file(path)?;
         let action =
             if append_shell_integration_if_missing(&mut file, path, shell, cmd, &config_line)? {
                 ConfigAction::Added
@@ -760,6 +743,54 @@ fn configure_shell_file(
     }
 }
 
+fn open_locked_rc_file(path: &Path) -> Result<fs::File, String> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| {
+            format!(
+                "Failed to open {} for writing: {}",
+                format_path_for_display(path),
+                e
+            )
+        })?;
+    file.lock_exclusive().map_err(|e| {
+        format!(
+            "Failed to lock {} for writing: {}",
+            format_path_for_display(path),
+            e
+        )
+    })?;
+    Ok(file)
+}
+
+/// Offer an rc-file addition in one successful write.
+///
+/// `write_all` can append part of its buffer and then fail on a later write,
+/// hiding how much of the shell line reached the file. A single short write is
+/// instead an error of its own. Never truncate the user-owned file in response:
+/// no portable operation can keep a later concurrent append out of that race.
+fn write_append_buffer(target: &mut impl Write, addition: &[u8]) -> io::Result<()> {
+    let written = loop {
+        match target.write(addition) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => break result?,
+        }
+    };
+    if written == addition.len() {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::WriteZero,
+        format!(
+            "only {written} of {} bytes were written; the file may end with a partial Worktrunk shell integration line",
+            addition.len()
+        ),
+    ))
+}
+
 /// Recheck an open rc file and append the integration line if it is still absent.
 ///
 /// The caller holds the file's exclusive lock. Re-reading through the same
@@ -784,7 +815,7 @@ fn append_shell_integration_if_missing(
     // Add a blank line before config, then the config line with its own newline.
     // Offer the whole addition as one buffer rather than split formatted writes.
     let addition = format!("\n{config_line}\n");
-    file.write_all(addition.as_bytes()).map_err(|e| {
+    write_append_buffer(file, addition.as_bytes()).map_err(|e| {
         format!(
             "Failed to write to {}: {}",
             format_path_for_display(path),
@@ -1976,6 +2007,102 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&rc).unwrap(), expected);
         assert_eq!(fs::read_to_string(&hard_link).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_configure_shell_opens_rc_with_exclusive_lock() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".zshrc");
+        fs::write(&rc, "export EDITOR=hx\n").unwrap();
+
+        let locked = open_locked_rc_file(&rc).unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(&rc)
+            .unwrap();
+        let error = contender.try_lock_exclusive().unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        drop(locked);
+        contender.try_lock_exclusive().unwrap();
+    }
+
+    #[test]
+    fn test_append_write_retries_interrupt_and_reports_incomplete_writes() {
+        struct ScriptedAppend {
+            content: Vec<u8>,
+            max_write: usize,
+            next_error: Option<io::ErrorKind>,
+            calls: usize,
+        }
+
+        impl Write for ScriptedAppend {
+            fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+                self.calls += 1;
+                if let Some(kind) = self.next_error.take() {
+                    return Err(io::Error::new(kind, "injected write error"));
+                }
+                let written = buffer.len().min(self.max_write);
+                self.content.extend_from_slice(&buffer[..written]);
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let original = b"export EDITOR=hx\n";
+        let addition = b"\nif command -v wt; then eval ...\n";
+        let mut short = ScriptedAppend {
+            content: original.to_vec(),
+            max_write: 12,
+            next_error: None,
+            calls: 0,
+        };
+
+        let error = write_append_buffer(&mut short, addition).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+        assert!(
+            error
+                .to_string()
+                .contains("partial Worktrunk shell integration line")
+        );
+        assert_eq!(
+            short.content,
+            [original.as_slice(), &addition[..12]].concat()
+        );
+        assert_eq!(short.calls, 1, "a short append must not write again");
+
+        let mut interrupted = ScriptedAppend {
+            content: original.to_vec(),
+            max_write: usize::MAX,
+            next_error: Some(io::ErrorKind::Interrupted),
+            calls: 0,
+        };
+
+        write_append_buffer(&mut interrupted, addition).unwrap();
+
+        assert_eq!(
+            interrupted.content,
+            [original.as_slice(), addition.as_slice()].concat()
+        );
+        assert_eq!(interrupted.calls, 2);
+
+        let mut failed = ScriptedAppend {
+            content: original.to_vec(),
+            max_write: usize::MAX,
+            next_error: Some(io::ErrorKind::StorageFull),
+            calls: 0,
+        };
+
+        let error = write_append_buffer(&mut failed, addition).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+        assert_eq!(failed.content, original);
+        assert_eq!(failed.calls, 1);
     }
 
     #[test]
