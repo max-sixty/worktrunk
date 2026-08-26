@@ -169,9 +169,9 @@ impl PrEntry {
         }
     }
 
-    /// The `pr:{N}` / `mr:{N}` shortcut. Doubles as the row's selection
-    /// `output()` and as the preview-cache key prefix — git forbids `:` in ref
-    /// names, so it can never collide with a worktree row's branch-name key.
+    /// The `pr:{N}` / `mr:{N}` selection shortcut returned by the row's
+    /// `output()`. Preview caching uses the structured [`PickerRowKey`], not
+    /// this user-facing address token.
     fn output_token(&self) -> String {
         format!("{}{}", self.kind.syntax(), self.number)
     }

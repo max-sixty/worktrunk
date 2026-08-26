@@ -564,7 +564,7 @@ pub struct BranchRef {
 ///   worktrees have no ref and Git can force-check out one branch more than
 ///   once;
 /// - a branch-only item is identified by its full ref, so a local branch named
-///   `origin/foo` cannot collide with `refs/remotes/origin/foo`;
+///   `origin/foo` cannot collide with `refs/remotes/origin/foo`.
 ///
 /// The key identifies the item, not its current content. Caches whose values
 /// depend on a commit or tree must include that content signature separately.

@@ -430,10 +430,9 @@ impl ListItem {
     ///
     /// Kept separate from [`Self::branch_name`] and [`Self::display_name`]:
     /// both are presentation fallbacks and can collapse distinct rows. The
-    /// key follows [`BranchRefKey`]'s canonical rules — worktree path for
-    /// a worktree, full ref for a branch-only row, and commit SHA only for a
-    /// detached item with no worktree. It is captured when the row kind is
-    /// established, so this accessor performs no filesystem work.
+    /// key follows [`BranchRefKey`]'s canonical rules — worktree path for a
+    /// worktree, full ref for a branch-only row. It is captured when the row
+    /// kind is established, so this accessor performs no filesystem work.
     pub fn key(&self) -> BranchRefKey {
         self.identity.clone()
     }
