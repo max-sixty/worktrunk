@@ -836,8 +836,9 @@ impl<'a> WorkingTree<'a> {
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
-    /// Working-tree diff stats vs HEAD that also count untracked files,
-    /// matching the diff `wt step diff` shows.
+    /// Working-tree diff stats vs HEAD that also count untracked files.
+    /// The scope matches `wt step diff`; explicit rename detection keeps
+    /// `HEAD±` stable across user Git configuration.
     ///
     /// Untracked paths enter a temporary index as intent-to-add entries, which
     /// lets one diff pair them with tracked deletions as renames without writing
