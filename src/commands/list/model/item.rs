@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use color_print::cformat;
 use worktrunk::git::{
-    InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff, check_integration,
+    BranchRefKey, InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff,
+    check_integration,
 };
 
 use super::state::{Divergence, MainState, OperationState, WorktreeState};
@@ -231,6 +232,10 @@ impl BranchScope {
 #[derive(Clone)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
+    /// Canonical identity captured when the row kind is established. Keeping
+    /// this on the model makes key lookup pure: picker rendering must not
+    /// resolve filesystem paths while building its first frame.
+    pub(crate) identity: BranchRefKey,
     pub head: String,
     /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
     /// for ambiguous prefixes. Always populated when there is a HEAD commit
@@ -384,7 +389,12 @@ impl ListItem {
     }
 
     fn new_branch_with_scope(head: String, branch: String, scope: BranchScope) -> Self {
+        let identity = match scope {
+            BranchScope::Local => BranchRefKey::local_branch(&branch),
+            BranchScope::Remote => BranchRefKey::remote_branch(&branch),
+        };
         Self {
+            identity,
             head,
             short_sha: String::new(),
             branch: Some(branch),
@@ -414,6 +424,38 @@ impl ListItem {
 
     pub fn branch_name(&self) -> &str {
         self.branch.as_deref().unwrap_or("(detached)")
+    }
+
+    /// Stable identity for this row's Git item.
+    ///
+    /// Kept separate from [`Self::branch_name`] and [`Self::display_name`]:
+    /// both are presentation fallbacks and can collapse distinct rows. The
+    /// key follows [`BranchRefKey`]'s canonical rules — worktree path for
+    /// a worktree, full ref for a branch-only row, and commit SHA only for a
+    /// detached item with no worktree. It is captured when the row kind is
+    /// established, so this accessor performs no filesystem work.
+    pub fn key(&self) -> BranchRefKey {
+        self.identity.clone()
+    }
+
+    /// Replace this row's kind with a worktree while preserving the identity
+    /// invariant. Used when a progressively built or synthetic row changes
+    /// shape after its initial branch construction.
+    pub(crate) fn reclassify_as_worktree(&mut self, data: WorktreeData) {
+        self.identity = BranchRefKey::worktree(&data.path);
+        self.kind = ItemKind::Worktree(Box::new(data));
+    }
+
+    /// Replace this row's kind with a branch while preserving the identity
+    /// invariant. In particular, picker removal morphs use this to stop a
+    /// former worktree row from retaining its path identity.
+    pub(crate) fn reclassify_as_branch(&mut self, scope: BranchScope) {
+        self.identity = match (scope, self.branch.as_deref()) {
+            (BranchScope::Local, Some(branch)) => BranchRefKey::local_branch(branch),
+            (BranchScope::Remote, Some(branch)) => BranchRefKey::remote_branch(branch),
+            (_, None) => BranchRefKey::detached_commit(&self.head),
+        };
+        self.kind = ItemKind::Branch(scope);
     }
 
     /// Short display name for this item — the branch if present, otherwise
@@ -1063,6 +1105,22 @@ mod tests {
         let counts = item.counts.unwrap();
         assert_eq!(counts.ahead, 5);
         assert_eq!(counts.behind, 3);
+    }
+
+    #[test]
+    fn reclassification_updates_list_item_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let mut item = ListItem::new_branch("abc123".into(), "feature".into());
+        assert_eq!(item.key(), BranchRefKey::local_branch("feature"));
+
+        item.reclassify_as_worktree(WorktreeData {
+            path: root.path().to_path_buf(),
+            ..Default::default()
+        });
+        assert_eq!(item.key(), BranchRefKey::worktree(root.path()));
+
+        item.reclassify_as_branch(BranchScope::Remote);
+        assert_eq!(item.key(), BranchRefKey::remote_branch("feature"));
     }
 
     #[test]

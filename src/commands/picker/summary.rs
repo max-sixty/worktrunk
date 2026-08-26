@@ -55,7 +55,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::commands::list::model::{ItemKind, WorktreeData};
+    use crate::commands::list::model::WorktreeData;
     use std::fs;
     use worktrunk::testing::TestRepo;
 
@@ -110,10 +110,10 @@ mod tests {
 
     fn feature_item(head: &str, path: &std::path::Path) -> ListItem {
         let mut item = ListItem::new_branch(head.to_string(), "feature".to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        item.reclassify_as_worktree(WorktreeData {
             path: path.to_path_buf(),
             ..Default::default()
-        }));
+        });
         item
     }
 

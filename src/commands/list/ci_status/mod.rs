@@ -310,7 +310,7 @@ pub enum CiSource {
 /// A PR/MR reference: number plus the forge's display sigil.
 ///
 /// Displays as `#3035` (GitHub, Gitea, Azure DevOps) or `!3035` (GitLab).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PrRef {
     pub number: u64,
     /// Display sigil: `#` (GitHub, Gitea, Azure DevOps) or `!` (GitLab)

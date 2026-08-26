@@ -1,6 +1,6 @@
 //! Git operations and repository management
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Submodules
 mod ci_platform;
@@ -32,6 +32,7 @@ mod test;
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
 // - git diff --shortstat (accesses pack files and indexes via mmap)
+use crate::path::canonicalize_with_parents;
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -555,6 +556,74 @@ pub struct BranchRef {
     pub worktree_path: Option<PathBuf>,
 }
 
+/// Stable identity for the Git item represented by a [`BranchRef`].
+///
+/// This is deliberately separate from every adjacent string representation:
+///
+/// - a worktree is identified by its canonical path, because detached
+///   worktrees have no ref and Git can force-check out one branch more than
+///   once;
+/// - a branch-only item is identified by its full ref, so a local branch named
+///   `origin/foo` cannot collide with `refs/remotes/origin/foo`;
+/// - a detached item without a worktree is identified by its full commit SHA.
+///
+/// The key identifies the item, not its current content. Caches whose values
+/// depend on a commit or tree must include that content signature separately.
+/// Likewise, user-facing selectors and display labels are representations of
+/// an item, not substitutes for this key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BranchRefKey(BranchRefKeyKind);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum BranchRefKeyKind {
+    Worktree(PathBuf),
+    Ref(String),
+    DetachedCommit(String),
+}
+
+impl BranchRefKey {
+    /// Key a worktree by the same canonical-path identity used by repository
+    /// worktree caches and path comparisons.
+    pub fn worktree(path: impl AsRef<Path>) -> Self {
+        Self(BranchRefKeyKind::Worktree(canonicalize_with_parents(
+            path.as_ref(),
+        )))
+    }
+
+    /// Key a local branch without a worktree by its unambiguous full ref.
+    pub fn local_branch(branch: &str) -> Self {
+        Self(BranchRefKeyKind::Ref(format!("refs/heads/{branch}")))
+    }
+
+    /// Key a remote-tracking branch by its unambiguous full ref.
+    pub fn remote_branch(branch: &str) -> Self {
+        Self(BranchRefKeyKind::Ref(format!("refs/remotes/{branch}")))
+    }
+
+    /// Key a detached ref that has no worktree by its full commit SHA.
+    pub fn detached_commit(commit_sha: &str) -> Self {
+        Self(BranchRefKeyKind::DetachedCommit(commit_sha.to_string()))
+    }
+
+    fn full_ref(full_ref: &str) -> Self {
+        Self(BranchRefKeyKind::Ref(full_ref.to_string()))
+    }
+}
+
+impl std::fmt::Display for BranchRefKey {
+    /// Tagged diagnostic form. Equality and hashing use the structured key;
+    /// this string exists only for logs and test-only cache inventories.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            BranchRefKeyKind::Worktree(path) => {
+                write!(f, "worktree:{}", path.to_string_lossy())
+            }
+            BranchRefKeyKind::Ref(full_ref) => write!(f, "ref:{full_ref}"),
+            BranchRefKeyKind::DetachedCommit(sha) => write!(f, "commit:{sha}"),
+        }
+    }
+}
+
 impl BranchRef {
     /// Create a BranchRef for a local branch without a worktree.
     pub fn local_branch(branch: &str, commit_sha: &str) -> Self {
@@ -629,6 +698,21 @@ impl BranchRef {
         self.full_ref
             .as_deref()
             .is_some_and(|r| r.starts_with("refs/remotes/"))
+    }
+
+    /// Canonical identity for this worktree, branch, or detached commit.
+    ///
+    /// Worktree identity takes precedence over ref identity: a worktree owns
+    /// mutable index and working-tree state, and two force-checkouts of the
+    /// same branch therefore remain distinct items.
+    pub fn key(&self) -> BranchRefKey {
+        if let Some(path) = &self.worktree_path {
+            BranchRefKey::worktree(path)
+        } else if let Some(full_ref) = &self.full_ref {
+            BranchRefKey::full_ref(full_ref)
+        } else {
+            BranchRefKey::detached_commit(&self.commit_sha)
+        }
     }
 }
 
@@ -992,6 +1076,52 @@ mod tests {
         assert_eq!(local.short_name(), Some("origin/foo"));
         assert!(remote.is_remote());
         assert!(!local.is_remote());
+    }
+
+    #[test]
+    fn branch_ref_key_preserves_git_item_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let first_path = root.path().join("first");
+        let second_path = root.path().join("second");
+        std::fs::create_dir_all(&first_path).unwrap();
+        std::fs::create_dir_all(&second_path).unwrap();
+
+        // Worktree state belongs to the checkout, not to its branch or commit.
+        // Two detached worktrees at one commit and two force-checkouts of one
+        // branch therefore remain distinct keys.
+        let detached_at_first = BranchRef {
+            full_ref: None,
+            commit_sha: "abc".into(),
+            worktree_path: Some(first_path.clone()),
+        };
+        let detached_at_second = BranchRef {
+            full_ref: None,
+            commit_sha: "abc".into(),
+            worktree_path: Some(second_path.clone()),
+        };
+        assert_ne!(detached_at_first.key(), detached_at_second.key());
+
+        let branch_at_first = BranchRef {
+            full_ref: Some("refs/heads/feature".into()),
+            commit_sha: "abc".into(),
+            worktree_path: Some(first_path.clone()),
+        };
+        let branch_at_second = BranchRef {
+            full_ref: Some("refs/heads/feature".into()),
+            commit_sha: "abc".into(),
+            worktree_path: Some(second_path),
+        };
+        assert_ne!(branch_at_first.key(), branch_at_second.key());
+
+        // Equivalent path spellings converge on the same checkout identity.
+        let same_path = BranchRefKey::worktree(first_path.join("."));
+        assert_eq!(branch_at_first.key(), same_path);
+
+        // A short name is presentation; the full ref is identity.
+        assert_ne!(
+            BranchRef::local_branch("origin/foo", "abc").key(),
+            BranchRef::remote_branch("origin/foo", "abc").key()
+        );
     }
 
     #[test]

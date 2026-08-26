@@ -1622,6 +1622,7 @@ mod tests {
 
         // Create test data with specific widths to verify position calculation
         let item = ListItem {
+            identity: worktrunk::git::BranchRefKey::worktree("/test/path"),
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
             branch: Some("feature".to_string()),
@@ -1747,6 +1748,7 @@ mod tests {
 
         // Create minimal data - most columns will be empty
         let item = ListItem {
+            identity: worktrunk::git::BranchRefKey::worktree("/test"),
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
             branch: Some("main".to_string()),
@@ -1890,6 +1892,7 @@ mod tests {
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
         use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
+            identity: worktrunk::git::BranchRefKey::worktree("/test/wt"),
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
             branch: Some(branch.to_string()),
@@ -2415,6 +2418,7 @@ mod tests {
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
         use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
         super::super::model::ListItem {
+            identity: worktrunk::git::BranchRefKey::worktree(path),
             head: "abc12345".to_string(),
             short_sha: "abc1234".to_string(),
             branch: Some(branch.to_string()),
@@ -2575,6 +2579,7 @@ mod tests {
                 ..Default::default()
             });
             super::super::model::ListItem {
+                identity: worktrunk::git::BranchRefKey::worktree(path),
                 head: "a620bcfe".to_string(),
                 short_sha: "a620bcf".to_string(),
                 branch: Some(branch.to_string()),

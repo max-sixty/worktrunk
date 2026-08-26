@@ -1542,7 +1542,7 @@ mod tests {
     #[test]
     fn test_working_diff_placeholder_when_not_loaded() {
         use super::super::layout::ColumnLayout;
-        use super::super::model::{ItemKind, ListItem};
+        use super::super::model::ListItem;
         use worktrunk::styling::{ADDITION, DELETION};
 
         let col = ColumnLayout {
@@ -1569,7 +1569,7 @@ mod tests {
 
         // Worktree item with working_tree_diff: None → placeholder
         let mut wt_item = ListItem::new_branch("abc123".into(), "feat".into());
-        wt_item.kind = ItemKind::Worktree(Box::default());
+        wt_item.reclassify_as_worktree(Default::default());
         let cell = col.render_cell(&wt_item, &cell_layout(col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
 

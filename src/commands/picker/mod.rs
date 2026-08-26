@@ -129,7 +129,7 @@ use crate::output::print_json;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
-use super::list::model::{BranchScope, ItemKind, ListItem};
+use super::list::model::{BranchScope, ListItem};
 use super::list::progressive::RenderTarget;
 use super::list::render::PLACEHOLDER;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -819,7 +819,7 @@ fn build_morph_branch_row(
     default_branch: Option<&str>,
 ) -> (String, LocalContent) {
     let mut branch_item = worktree_item.clone();
-    branch_item.kind = ItemKind::Branch(BranchScope::Local);
+    branch_item.reclassify_as_branch(BranchScope::Local);
     branch_item.status_symbols = Default::default();
     branch_item.refresh_status_symbols(default_branch);
     let line = layout
@@ -1418,8 +1418,9 @@ impl PipelineFactory {
         // the skeleton handler's inventory reads all share this one snapshot.
         let spawn_repo = if rebuild_repo {
             // A refresh recomputes previews too, not just the row inventory.
-            // The in-memory preview cache is keyed by `(branch, mode)` with no
-            // SHA — the working-tree diff has no stable hash to key on — so a
+            // The in-memory preview cache is keyed by `(row identity, mode)`
+            // with no content signature — the working-tree diff has no stable
+            // hash to key on — so a
             // warm entry outlives the branch's commits or working tree moving
             // and would re-serve a stale diff / log / summary. `refresh`
             // supersedes the prior spawn's still-in-flight producers, rebinds
@@ -1459,6 +1460,7 @@ impl PipelineFactory {
                 shared_items: Arc::clone(&self.shared_items),
                 shortcut_table: Arc::clone(&self.shortcut_table),
                 rendered_slots: OnceLock::new(),
+                row_keys: OnceLock::new(),
                 pr_status_slots: OnceLock::new(),
                 comments_fetched: OnceLock::new(),
                 local_content_slots: OnceLock::new(),
@@ -1725,16 +1727,16 @@ pub fn handle_picker(
         current_worktree.root(),
         current_worktree.head_sha(),
     ) {
-        use super::list::model::{ItemKind, ListItem, WorktreeData};
+        use super::list::model::{ListItem, WorktreeData};
         // UnifiedDiff resolves its comparison base from the row's HEAD. An
         // empty placeholder would let this speculative producer cache an
         // error before collection's real row gets a chance to fill the same
         // key, so the warm-up only runs with a resolved commit.
         let mut item = ListItem::new_branch(head, branch);
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        item.reclassify_as_worktree(WorktreeData {
             path,
             ..Default::default()
-        }));
+        });
         // num_items doesn't matter for Right (dims independent of it); for
         // Down it only affects height, which doesn't alter pager wrapping.
         let dims = state
@@ -2526,7 +2528,9 @@ fn switch_pipeline_repo(repo: &Repository, is_recovered: bool) -> anyhow::Result
 
 #[cfg(test)]
 pub mod tests {
-    use super::items::{LocalCheckout, LocalContent, PickerRow, worktree_output_token};
+    use super::items::{
+        LocalCheckout, LocalContent, PickerRow, PickerRowKey, worktree_output_token,
+    };
     use super::{
         AltXRemover, PickerAction, RemovalEffect, RemoveTarget, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, parse_removal_target,
@@ -2534,7 +2538,7 @@ pub mod tests {
         resolve_shortcut_branch, resolve_shortcut_url, summary_command_and_hint,
         switch_pipeline_repo,
     };
-    use crate::commands::list::model::{BranchScope, ItemKind, ListItem, WorktreeData};
+    use crate::commands::list::model::{BranchScope, ListItem, WorktreeData};
     use crate::commands::worktree::RemovalPlan;
     use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
@@ -3120,6 +3124,7 @@ pub mod tests {
     /// Build a `PickerRow` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
         let item = Arc::new(item);
+        let row_key = PickerRowKey::local(&item);
         let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         let output_token = worktree_output_token(&item, branch_name);
         Arc::new(PickerRow {
@@ -3128,6 +3133,7 @@ pub mod tests {
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch_name.to_string(),
             output_token,
+            row_key,
             preview_cache: Arc::new(dashmap::DashMap::new()),
             pr_status,
             notifier: super::preview_notify::PreviewNotifier::detached(),
@@ -3147,21 +3153,21 @@ pub mod tests {
     fn detached_picker_item(path: &Path) -> Arc<dyn SkimItem> {
         let mut item = ListItem::new_branch("abc123".to_string(), "(detached)".to_string());
         item.branch = None;
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        item.reclassify_as_worktree(WorktreeData {
             path: path.to_path_buf(),
             detached: true,
             ..Default::default()
-        }));
+        });
         picker_item("(detached)", item)
     }
 
     /// Build a `PickerRow` standing in for a branched-worktree row.
     fn branched_picker_item(branch: &str, path: &Path) -> Arc<dyn SkimItem> {
         let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        item.reclassify_as_worktree(WorktreeData {
             path: path.to_path_buf(),
             ..Default::default()
-        }));
+        });
         picker_item(branch, item)
     }
 
@@ -3190,11 +3196,12 @@ pub mod tests {
         Arc<std::sync::atomic::AtomicBool>,
     ) {
         let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        item.reclassify_as_worktree(WorktreeData {
             path: path.to_path_buf(),
             ..Default::default()
-        }));
+        });
         let item_arc = Arc::new(item);
+        let row_key = PickerRowKey::local(&item_arc);
         let rendered = Arc::new(Mutex::new(format!("+ {branch}")));
         let local_content = Arc::new(Mutex::new(LocalContent::default()));
         let morphed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3204,6 +3211,7 @@ pub mod tests {
             rendered: Arc::clone(&rendered),
             branch_name: branch.to_string(),
             output_token: worktree_output_token(&item_arc, branch),
+            row_key,
             preview_cache: Arc::new(dashmap::DashMap::new()),
             pr_status: Arc::new(Mutex::new(None)),
             notifier: super::preview_notify::PreviewNotifier::detached(),
@@ -3497,7 +3505,7 @@ pub mod tests {
 
     /// A refresh (`alt-r`, `spawn(true)`) drops the warm in-memory preview cache
     /// so each rebuilt row recomputes against the fresh repo; the initial spawn
-    /// (`spawn(false)`) keeps it warm. The probe entry is keyed under a branch
+    /// (`spawn(false)`) keeps it warm. The probe entry uses a branch-ref identity
     /// with no row, so the background precompute never re-fills it — the entry's
     /// fate is the clear alone, not a race with recompute.
     #[test]
@@ -3507,7 +3515,13 @@ pub mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let factory = test_factory(repo);
-        let ghost = ("ghost-branch".to_string(), PreviewMode::WorkingTree);
+        let ghost = (
+            PickerRowKey::local(&ListItem::new_branch(
+                "0000000".to_string(),
+                "ghost-branch".to_string(),
+            )),
+            PreviewMode::WorkingTree,
+        );
 
         // Initial spawn (`false`) preserves warm previews.
         factory
@@ -4204,10 +4218,10 @@ pub mod tests {
         use ansi_str::AnsiStr;
 
         let mut worktree_item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        worktree_item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        worktree_item.reclassify_as_worktree(WorktreeData {
             path: Path::new("/tmp/wt.feature").to_path_buf(),
             ..Default::default()
-        }));
+        });
         let layout = crate::commands::list::layout::calculate_layout_with_width(
             std::slice::from_ref(&worktree_item),
             &crate::commands::list::columns::all_tasks(),
@@ -4242,7 +4256,7 @@ pub mod tests {
             local,
             LocalContent::from_item(&{
                 let mut b = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-                b.kind = ItemKind::Branch(BranchScope::Local);
+                b.reclassify_as_branch(BranchScope::Local);
                 b
             }),
             "the morphed row's diff signals are the branch's (working_tree empty)"

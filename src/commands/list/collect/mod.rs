@@ -306,17 +306,17 @@ mod tasks;
 mod types;
 
 use anyhow::Context;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
 use anstyle::Style;
 use color_print::cformat;
 use crossbeam_channel as chan;
-use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
+use worktrunk::git::{BranchRefKey, ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, terminal_width, truncate_visible,
     warning_message,
@@ -1042,23 +1042,42 @@ pub fn collect(
         Vec::new()
     };
 
+    // Resolve every worktree identity exactly once. These keys serve both path
+    // comparisons and the ListItem model, so picker skeleton construction does
+    // not repeat filesystem canonicalization for every row.
+    let worktree_keys: HashMap<PathBuf, BranchRefKey> = worktrees
+        .iter()
+        .map(|wt| (wt.path.clone(), BranchRefKey::worktree(&wt.path)))
+        .collect();
+
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
     // by letting git resolve the actual worktree root rather than using prefix matching.
-    // Canonicalize both paths to handle symlinks (e.g., macOS /var -> /private/var).
-    let current_worktree_path = repo.current_worktree().root().ok().and_then(|root| {
+    let current_worktree_key = repo
+        .current_worktree()
+        .root()
+        .ok()
+        .map(BranchRefKey::worktree);
+    let current_worktree_path = current_worktree_key.as_ref().and_then(|current_key| {
         worktrees
             .iter()
-            .find(|wt| canonicalize(&wt.path).map(|p| p == root).unwrap_or(false))
+            .find(|wt| worktree_keys.get(&wt.path) == Some(current_key))
             .map(|wt| wt.path.clone())
     });
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    let primary_path = repo.primary_worktree()?;
-    let main_worktree = primary_path
+    let primary_key = repo
+        .primary_worktree()?
         .as_ref()
-        .and_then(|p| worktrees.iter().find(|wt| wt.path == *p))
+        .map(BranchRefKey::worktree);
+    let main_worktree = primary_key
+        .as_ref()
+        .and_then(|key| {
+            worktrees
+                .iter()
+                .find(|wt| worktree_keys.get(&wt.path) == Some(key))
+        })
         .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
@@ -1115,9 +1134,9 @@ pub fn collect(
             sha.as_str()
         });
 
-    // Pre-canonicalize main_worktree.path for is_main comparison
-    // (paths from git worktree list may differ based on symlinks or working directory)
-    let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
+    let main_worktree_key = worktree_keys
+        .get(&main_worktree.path)
+        .expect("main worktree came from the keyed worktree inventory");
 
     // Branches living in more than one worktree. Every row on such a branch
     // is flagged, including the one `wt` resolves to: that choice is git's
@@ -1129,17 +1148,12 @@ pub fn collect(
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
         .map(|wt| {
-            // Canonicalize paths for comparison - git worktree list may return different
-            // path representations depending on symlinks or which directory you run from
-            let wt_canonical = canonicalize(&wt.path).ok();
-            let is_main = match (&wt_canonical, &main_worktree_canonical) {
-                (Some(wt_c), Some(main_c)) => wt_c == main_c,
-                // Fallback to direct comparison if canonicalization fails
-                _ => wt.path == main_worktree.path,
-            };
-            let is_current = current_worktree_path
-                .as_ref()
-                .is_some_and(|cp| wt_canonical.as_ref() == Some(cp));
+            let identity = worktree_keys
+                .get(&wt.path)
+                .expect("sorted worktree came from the keyed worktree inventory")
+                .clone();
+            let is_main = &identity == main_worktree_key;
+            let is_current = current_worktree_key.as_ref() == Some(&identity);
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
 
@@ -1157,6 +1171,7 @@ pub fn collect(
 
             // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {
+                identity,
                 head: wt.head.clone(),
                 short_sha: String::new(),
                 branch: wt.branch.clone(),
@@ -2171,6 +2186,7 @@ pub fn build_worktree_item(
     is_previous: bool,
 ) -> ListItem {
     ListItem {
+        identity: BranchRefKey::worktree(&wt.path),
         head: wt.head.clone(),
         short_sha: String::new(),
         branch: wt.branch.clone(),
