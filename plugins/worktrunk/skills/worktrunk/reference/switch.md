@@ -19,7 +19,7 @@ $ wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL
 
 The `--create` flag creates a new branch from `--base` — the default branch unless specified. Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
-A branch created from a remote base — `--base origin/release`, or a bare `--base release` that exists only on a remote — is deliberately left with no upstream. Git would otherwise have it track the base, so under `push.default = upstream` a bare `git push` would push the new work to `release`. Publish it with `git push --set-upstream origin <branch>`, or set git's `push.autoSetupRemote = true` once, after which a bare `git push` from the new worktree publishes the branch and configures its tracking.
+`--create` from a remote base is the exception: that branch is deliberately left with no upstream. Git would otherwise have it track the base rather than a remote branch of its own name — `origin/release` for `--base origin/release`, and the same for a bare `--base release` that exists only on a remote — so under `push.default = upstream` a bare `git push` would push the new work to `release`. Publish the branch with `git push --set-upstream origin <branch>`, or set git's `push.autoSetupRemote = true` once, after which a bare `git push` from the new worktree publishes it and configures its tracking.
 
 ## Creating worktrees
 
