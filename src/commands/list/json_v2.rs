@@ -1074,7 +1074,7 @@ mod tests {
     #[test]
     fn test_remote_row_splits_branch_and_remote() {
         let mut item = item_with("origin/feature");
-        item.reclassify_as_branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "origin/feature".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert_eq!(json["branch"], "feature");
         assert_eq!(json["remote"], "origin");
@@ -1102,7 +1102,7 @@ mod tests {
         // "main", not the raw "origin/main", so it gets no self-referential
         // relation object.
         let mut item = item_with("origin/main");
-        item.reclassify_as_branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "origin/main".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert_eq!(json["branch"], "main");
         assert!(json.get("default_branch").is_none());
@@ -1314,7 +1314,7 @@ mod tests {
     #[test]
     fn test_remote_row_without_slash_keeps_name() {
         let mut item = item_with("weird");
-        item.reclassify_as_branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "weird".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert_eq!(json["branch"], "weird");
         assert!(json.get("remote").is_none());

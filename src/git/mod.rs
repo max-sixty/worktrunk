@@ -556,7 +556,7 @@ pub struct BranchRef {
     pub worktree_path: Option<PathBuf>,
 }
 
-/// Stable identity for the Git item represented by a [`BranchRef`].
+/// Stable identity for a worktree or branch-only item.
 ///
 /// This is deliberately separate from every adjacent string representation:
 ///
@@ -565,7 +565,6 @@ pub struct BranchRef {
 ///   once;
 /// - a branch-only item is identified by its full ref, so a local branch named
 ///   `origin/foo` cannot collide with `refs/remotes/origin/foo`;
-/// - a detached item without a worktree is identified by its full commit SHA.
 ///
 /// The key identifies the item, not its current content. Caches whose values
 /// depend on a commit or tree must include that content signature separately.
@@ -578,7 +577,6 @@ pub struct BranchRefKey(BranchRefKeyKind);
 enum BranchRefKeyKind {
     Worktree(PathBuf),
     Ref(String),
-    DetachedCommit(String),
 }
 
 impl BranchRefKey {
@@ -599,15 +597,6 @@ impl BranchRefKey {
     pub fn remote_branch(branch: &str) -> Self {
         Self(BranchRefKeyKind::Ref(format!("refs/remotes/{branch}")))
     }
-
-    /// Key a detached ref that has no worktree by its full commit SHA.
-    pub fn detached_commit(commit_sha: &str) -> Self {
-        Self(BranchRefKeyKind::DetachedCommit(commit_sha.to_string()))
-    }
-
-    fn full_ref(full_ref: &str) -> Self {
-        Self(BranchRefKeyKind::Ref(full_ref.to_string()))
-    }
 }
 
 impl std::fmt::Display for BranchRefKey {
@@ -619,7 +608,6 @@ impl std::fmt::Display for BranchRefKey {
                 write!(f, "worktree:{}", path.to_string_lossy())
             }
             BranchRefKeyKind::Ref(full_ref) => write!(f, "ref:{full_ref}"),
-            BranchRefKeyKind::DetachedCommit(sha) => write!(f, "commit:{sha}"),
         }
     }
 }
@@ -698,21 +686,6 @@ impl BranchRef {
         self.full_ref
             .as_deref()
             .is_some_and(|r| r.starts_with("refs/remotes/"))
-    }
-
-    /// Canonical identity for this worktree, branch, or detached commit.
-    ///
-    /// Worktree identity takes precedence over ref identity: a worktree owns
-    /// mutable index and working-tree state, and two force-checkouts of the
-    /// same branch therefore remain distinct items.
-    pub fn key(&self) -> BranchRefKey {
-        if let Some(path) = &self.worktree_path {
-            BranchRefKey::worktree(path)
-        } else if let Some(full_ref) = &self.full_ref {
-            BranchRefKey::full_ref(full_ref)
-        } else {
-            BranchRefKey::detached_commit(&self.commit_sha)
-        }
     }
 }
 
@@ -1089,49 +1062,19 @@ mod tests {
         // Worktree state belongs to the checkout, not to its branch or commit.
         // Two detached worktrees at one commit and two force-checkouts of one
         // branch therefore remain distinct keys.
-        let detached_at_first = BranchRef {
-            full_ref: None,
-            commit_sha: "abc".into(),
-            worktree_path: Some(first_path.clone()),
-        };
-        let detached_at_second = BranchRef {
-            full_ref: None,
-            commit_sha: "abc".into(),
-            worktree_path: Some(second_path.clone()),
-        };
-        assert_ne!(detached_at_first.key(), detached_at_second.key());
-
-        let detached_without_worktree = BranchRef {
-            full_ref: None,
-            commit_sha: "abc".into(),
-            worktree_path: None,
-        };
-        assert_eq!(
-            detached_without_worktree.key(),
-            BranchRefKey::detached_commit("abc")
+        assert_ne!(
+            BranchRefKey::worktree(&first_path),
+            BranchRefKey::worktree(second_path)
         );
-        assert_eq!(detached_without_worktree.key().to_string(), "commit:abc");
-
-        let branch_at_first = BranchRef {
-            full_ref: Some("refs/heads/feature".into()),
-            commit_sha: "abc".into(),
-            worktree_path: Some(first_path.clone()),
-        };
-        let branch_at_second = BranchRef {
-            full_ref: Some("refs/heads/feature".into()),
-            commit_sha: "abc".into(),
-            worktree_path: Some(second_path),
-        };
-        assert_ne!(branch_at_first.key(), branch_at_second.key());
 
         // Equivalent path spellings converge on the same checkout identity.
         let same_path = BranchRefKey::worktree(first_path.join("."));
-        assert_eq!(branch_at_first.key(), same_path);
+        assert_eq!(BranchRefKey::worktree(&first_path), same_path);
 
         // A short name is presentation; the full ref is identity.
         assert_ne!(
-            BranchRef::local_branch("origin/foo", "abc").key(),
-            BranchRef::remote_branch("origin/foo", "abc").key()
+            BranchRefKey::local_branch("origin/foo"),
+            BranchRefKey::remote_branch("origin/foo")
         );
     }
 

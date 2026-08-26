@@ -446,15 +446,16 @@ impl ListItem {
         self.kind = ItemKind::Worktree(Box::new(data));
     }
 
-    /// Replace this row's kind with a branch while preserving the identity
-    /// invariant. In particular, picker removal morphs use this to stop a
-    /// former worktree row from retaining its path identity.
-    pub(crate) fn reclassify_as_branch(&mut self, scope: BranchScope) {
-        self.identity = match (scope, self.branch.as_deref()) {
-            (BranchScope::Local, Some(branch)) => BranchRefKey::local_branch(branch),
-            (BranchScope::Remote, Some(branch)) => BranchRefKey::remote_branch(branch),
-            (_, None) => BranchRefKey::detached_commit(&self.head),
+    /// Replace this row's kind and branch while preserving the identity
+    /// invariant. The picker's removal morph reclassifies a throwaway clone
+    /// (`build_morph_branch_row`), so the live row's `PickerRowKey` is
+    /// unaffected: a morphed row's previews stay under its worktree key.
+    pub(crate) fn reclassify_as_branch(&mut self, scope: BranchScope, branch: String) {
+        self.identity = match scope {
+            BranchScope::Local => BranchRefKey::local_branch(&branch),
+            BranchScope::Remote => BranchRefKey::remote_branch(&branch),
         };
+        self.branch = Some(branch);
         self.kind = ItemKind::Branch(scope);
     }
 
@@ -1119,12 +1120,8 @@ mod tests {
         });
         assert_eq!(item.key(), BranchRefKey::worktree(root.path()));
 
-        item.reclassify_as_branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "feature".into());
         assert_eq!(item.key(), BranchRefKey::remote_branch("feature"));
-
-        item.branch = None;
-        item.reclassify_as_branch(BranchScope::Local);
-        assert_eq!(item.key(), BranchRefKey::detached_commit("abc123"));
     }
 
     #[test]

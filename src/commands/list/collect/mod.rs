@@ -1136,7 +1136,7 @@ pub fn collect(
 
     let main_worktree_key = worktree_keys
         .get(&main_worktree.path)
-        .expect("main worktree came from the keyed worktree inventory");
+        .context("main worktree is missing from the keyed worktree inventory")?;
 
     // Branches living in more than one worktree. Every row on such a branch
     // is flagged, including the one `wt` resolves to: that choice is git's
@@ -1147,11 +1147,11 @@ pub fn collect(
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
-        .map(|wt| {
+        .map(|wt| -> anyhow::Result<ListItem> {
             let identity = worktree_keys
                 .get(&wt.path)
-                .expect("sorted worktree came from the keyed worktree inventory")
-                .clone();
+                .cloned()
+                .context("sorted worktree is missing from the keyed worktree inventory")?;
             let is_main = &identity == main_worktree_key;
             let is_current = current_worktree_key.as_ref() == Some(&identity);
             // is_previous set to false initially - computed after skeleton
@@ -1170,7 +1170,7 @@ pub fn collect(
                 .is_some_and(|branch| duplicated.contains(branch));
 
             // URL expanded post-skeleton to minimize time-to-skeleton
-            ListItem {
+            Ok(ListItem {
                 identity,
                 head: wt.head.clone(),
                 short_sha: String::new(),
@@ -1196,9 +1196,9 @@ pub fn collect(
                 custom_values: Vec::new(),
                 seeded: super::model::SeededFacts::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
-            }
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<_>>()?;
 
     // Initialize branch items (local and remote) - URLs expanded post-skeleton
     let branch_start_idx = all_items.len();

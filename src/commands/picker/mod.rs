@@ -595,8 +595,12 @@ impl AltXRemover {
                 layout.as_ref(),
             ) {
                 (Some(handle), Some(layout)) => {
-                    let (branch_line, branch_local) =
-                        build_morph_branch_row(layout, &handle.item, default_branch.as_deref());
+                    let (branch_line, branch_local) = build_morph_branch_row(
+                        layout,
+                        &handle.item,
+                        &branch,
+                        default_branch.as_deref(),
+                    );
                     Some(MorphSlots {
                         rendered: Arc::clone(&handle.rendered),
                         morphed: Arc::clone(&handle.morphed),
@@ -816,10 +820,11 @@ struct MorphRevert {
 fn build_morph_branch_row(
     layout: &crate::commands::list::layout::LayoutConfig,
     worktree_item: &ListItem,
+    branch: &str,
     default_branch: Option<&str>,
 ) -> (String, LocalContent) {
     let mut branch_item = worktree_item.clone();
-    branch_item.reclassify_as_branch(BranchScope::Local);
+    branch_item.reclassify_as_branch(BranchScope::Local, branch.to_string());
     branch_item.status_symbols = Default::default();
     branch_item.refresh_status_symbols(default_branch);
     let line = layout
@@ -4238,7 +4243,8 @@ pub mod tests {
             },
         );
 
-        let (line, local) = super::build_morph_branch_row(&layout, &worktree_item, Some("main"));
+        let (line, local) =
+            super::build_morph_branch_row(&layout, &worktree_item, "feature", Some("main"));
         let plain = line.ansi_strip();
         assert!(
             plain.trim_start().starts_with('/'),
@@ -4256,7 +4262,7 @@ pub mod tests {
             local,
             LocalContent::from_item(&{
                 let mut b = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-                b.reclassify_as_branch(BranchScope::Local);
+                b.reclassify_as_branch(BranchScope::Local, "feature".into());
                 b
             }),
             "the morphed row's diff signals are the branch's (working_tree empty)"
