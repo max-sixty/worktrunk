@@ -832,7 +832,7 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&["diff", "--shortstat", "HEAD"])?;
+        let stdout = self.run_command(&["diff", "--shortstat", "--find-renames", "HEAD"])?;
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
@@ -851,15 +851,11 @@ impl<'a> WorkingTree<'a> {
         if !untracked_output.status.success() {
             return Err(CommandError::from_failed_output("git", &args, &untracked_output).into());
         }
-        if !untracked_output
-            .stdout
-            .split(|&byte| byte == 0)
-            .any(|path| !path.is_empty())
-        {
+        if untracked_output.stdout.is_empty() {
             return self.working_tree_diff_stats();
         }
 
-        let tracked_args = [
+        let numstat_args = [
             "diff",
             "--numstat",
             "-z",
@@ -867,25 +863,17 @@ impl<'a> WorkingTree<'a> {
             "--end-of-options",
             "HEAD",
         ];
-        let tracked_output = self.run_command_output(&tracked_args)?;
+        let tracked_output = self.run_command_output(&numstat_args)?;
         if !tracked_output.status.success() {
             return Err(
-                CommandError::from_failed_output("git", &tracked_args, &tracked_output).into(),
+                CommandError::from_failed_output("git", &numstat_args, &tracked_output).into(),
             );
         }
         let tracked_entries = parse_numstat_entries(&tracked_output.stdout)?;
 
         let idx = self.temp_index()?;
         idx.register_untracked_paths(untracked_output.stdout)?;
-        let combined_args = [
-            "diff",
-            "--numstat",
-            "-z",
-            "--find-renames",
-            "--end-of-options",
-            "HEAD",
-        ];
-        let combined_output = idx.run_command_output(combined_args)?;
+        let combined_output = idx.run_command_output(numstat_args)?;
         let combined_entries = parse_numstat_entries(&combined_output.stdout)?;
 
         let mut stats = LineDiff::default();
@@ -1483,6 +1471,31 @@ mod tests {
         assert_eq!(
             index_before, index_after,
             "real index must not be mutated by the temp-index path"
+        );
+    }
+
+    #[test]
+    fn working_tree_diff_stats_without_untracked_files_still_finds_renames() {
+        let test = TestRepo::with_initial_commit();
+        let source = (1..=100)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(test.root_path().join("source.txt"), format!("{source}\n")).unwrap();
+        test.run_git(&["add", "source.txt"]);
+        test.run_git(&["commit", "-m", "add source"]);
+        test.run_git(&["config", "diff.renames", "false"]);
+
+        std::fs::create_dir(test.root_path().join("moved")).unwrap();
+        test.run_git(&["mv", "source.txt", "moved/source.txt"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo.current_worktree()
+                .working_tree_diff_stats_with_untracked()
+                .unwrap(),
+            LineDiff::default(),
+            "HEAD± uses one rename policy whether or not untracked files exist"
         );
     }
 

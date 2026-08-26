@@ -55,7 +55,7 @@
 //! For each worktree, we execute:
 //! - `git status --porcelain` - Working tree state (uses index cache)
 //! - `git rev-list --count <base>..<head>` - Ahead/behind counts (uses commit graph)
-//! - `git diff --shortstat HEAD` - Working tree line diffs (uses index + tree objects)
+//! - `git diff --shortstat --find-renames HEAD` - Working tree line diffs (uses index + tree objects)
 //! - `git diff --shortstat <base>...<head>` - Branch line diffs (uses tree objects)
 //! - `git rev-parse <ref>` - Ref resolution (uses ref cache)
 //!

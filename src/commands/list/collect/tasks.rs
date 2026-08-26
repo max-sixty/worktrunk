@@ -577,7 +577,7 @@ impl Task for WorkingTreeDiffTask {
             parse_working_tree_status(&status_output);
 
         // Only untracked entries need the temporary index. Tracked-only
-        // changes keep the ordinary `git diff --shortstat HEAD` fast path.
+        // changes keep the ordinary tracked diff fast path.
         let working_tree_diff = if !is_dirty {
             LineDiff::default()
         } else if working_tree_status.untracked {

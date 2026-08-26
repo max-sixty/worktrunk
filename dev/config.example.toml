@@ -118,7 +118,7 @@
 #
 # - `branch` — The branch name
 # - `status` — Git status symbols, plus any user-defined status
-# - `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)
+# - `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
 # - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
 # - `branch-diff` — Line changes against the default branch (header `main…±`)
 # - `summary` — An LLM-generated summary of the branch
