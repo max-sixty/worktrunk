@@ -1101,6 +1101,17 @@ mod tests {
         };
         assert_ne!(detached_at_first.key(), detached_at_second.key());
 
+        let detached_without_worktree = BranchRef {
+            full_ref: None,
+            commit_sha: "abc".into(),
+            worktree_path: None,
+        };
+        assert_eq!(
+            detached_without_worktree.key(),
+            BranchRefKey::detached_commit("abc")
+        );
+        assert_eq!(detached_without_worktree.key().to_string(), "commit:abc");
+
         let branch_at_first = BranchRef {
             full_ref: Some("refs/heads/feature".into()),
             commit_sha: "abc".into(),

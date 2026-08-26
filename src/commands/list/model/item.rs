@@ -1121,6 +1121,10 @@ mod tests {
 
         item.reclassify_as_branch(BranchScope::Remote);
         assert_eq!(item.key(), BranchRefKey::remote_branch("feature"));
+
+        item.branch = None;
+        item.reclassify_as_branch(BranchScope::Local);
+        assert_eq!(item.key(), BranchRefKey::detached_commit("abc123"));
     }
 
     #[test]

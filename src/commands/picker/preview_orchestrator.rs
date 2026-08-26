@@ -1205,9 +1205,9 @@ mod tests {
 
         // A second spawn for the same key short-circuits on `contains_key`, so
         // the original value survives even though this closure would overwrite.
-        orch.spawn_compute(&orch.generation(), (pr_key(7), PreviewMode::Log), |_| {
-            Some("REPLACED".to_string())
-        });
+        let replacement = Some("REPLACED".to_string());
+        let duplicate_key = (pr_key(7), PreviewMode::Log);
+        orch.spawn_compute(&orch.generation(), duplicate_key, move |_| replacement);
         orch.wait_for_idle();
         assert_eq!(
             orch.cache

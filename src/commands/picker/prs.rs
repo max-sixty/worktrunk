@@ -1872,6 +1872,47 @@ mod tests {
     }
 
     #[test]
+    fn worktree_comments_use_the_row_key_on_a_supported_forge() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/project.git",
+        ]);
+        let updated_at = "2026-08-26T00:00:00Z";
+        crate::commands::picker::preview_cache::write_comments(
+            &test.repo,
+            42,
+            updated_at,
+            &[CommentEntry {
+                author: "alice".into(),
+                body: "Canonical identity".into(),
+                created_at: updated_at.into(),
+            }],
+        );
+
+        let orchestrator = PreviewOrchestrator::new(test.repo.clone(), Arc::new(OnceLock::new()));
+        let generation = orchestrator.generation();
+        let row_key = PickerRowKey::Local(worktrunk::git::BranchRefKey::local_branch("feature"));
+        spawn_worktree_comments_fetch(
+            &orchestrator,
+            &generation,
+            row_key.clone(),
+            42,
+            Some(updated_at.into()),
+            80,
+        );
+        orchestrator.wait_for_idle();
+
+        let pane = orchestrator
+            .cache
+            .get(&(row_key, PreviewMode::Comments))
+            .expect("supported forge fills the row-keyed comments cache");
+        assert!(pane.contains("Canonical identity"));
+    }
+
+    #[test]
     fn stream_open_prs_clears_loading_and_pokes_render_on_bail() {
         // No forge remote → the fetch bails, but the wrapper still drops the
         // header's loading marker and wakes skim. Without the poke the marker
