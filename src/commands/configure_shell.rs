@@ -685,11 +685,7 @@ fn configure_shell_file(
         // also sever hard links and file metadata that belong to the user.
         let mut file = open_locked_rc_file(path)?;
         let action =
-            if append_shell_integration_if_missing(&mut file, path, shell, cmd, &config_line)? {
-                ConfigAction::Added
-            } else {
-                ConfigAction::AlreadyExists
-            };
+            append_shell_integration_if_missing(&mut file, path, shell, cmd, &config_line)?;
 
         Ok(Some(ConfigureResult {
             shell,
@@ -771,9 +767,12 @@ fn open_locked_rc_file(path: &Path) -> Result<fs::File, String> {
 /// hiding how much of the shell line reached the file. A single short write is
 /// instead an error of its own. Never truncate the user-owned file in response:
 /// no portable operation can keep a later concurrent append out of that race.
-fn write_append_buffer(target: &mut impl Write, addition: &[u8]) -> io::Result<()> {
+fn write_append_buffer(
+    mut write_once: impl FnMut(&[u8]) -> io::Result<usize>,
+    addition: &[u8],
+) -> io::Result<()> {
     let written = loop {
-        match target.write(addition) {
+        match write_once(addition) {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             result => break result?,
         }
@@ -802,27 +801,27 @@ fn append_shell_integration_if_missing(
     shell: Shell,
     cmd: &str,
     config_line: &str,
-) -> Result<bool, String> {
+) -> Result<ConfigAction, String> {
     file.rewind()
         .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
     let mut current_content = Vec::new();
     file.read_to_end(&mut current_content)
         .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
     if contains_shell_integration(&current_content, path, shell, cmd)? {
-        return Ok(false);
+        return Ok(ConfigAction::AlreadyExists);
     }
 
     // Add a blank line before config, then the config line with its own newline.
     // Offer the whole addition as one buffer rather than split formatted writes.
     let addition = format!("\n{config_line}\n");
-    write_append_buffer(file, addition.as_bytes()).map_err(|e| {
+    write_append_buffer(|buffer| file.write(buffer), addition.as_bytes()).map_err(|e| {
         format!(
             "Failed to write to {}: {}",
             format_path_for_display(path),
             e
         )
     })?;
-    Ok(true)
+    Ok(ConfigAction::Added)
 }
 
 fn contains_shell_integration(
@@ -2029,40 +2028,35 @@ mod tests {
     }
 
     #[test]
+    fn test_open_locked_rc_file_reports_open_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("missing-zshrc");
+
+        let error = open_locked_rc_file(&missing).unwrap_err();
+
+        assert!(error.starts_with(&format!(
+            "Failed to open {} for writing:",
+            format_path_for_display(&missing)
+        )));
+    }
+
+    #[test]
     fn test_append_write_retries_interrupt_and_reports_incomplete_writes() {
-        struct ScriptedAppend {
-            content: Vec<u8>,
-            max_write: usize,
-            next_error: Option<io::ErrorKind>,
-            calls: usize,
-        }
-
-        impl Write for ScriptedAppend {
-            fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-                self.calls += 1;
-                if let Some(kind) = self.next_error.take() {
-                    return Err(io::Error::new(kind, "injected write error"));
-                }
-                let written = buffer.len().min(self.max_write);
-                self.content.extend_from_slice(&buffer[..written]);
-                Ok(written)
-            }
-
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
         let original = b"export EDITOR=hx\n";
         let addition = b"\nif command -v wt; then eval ...\n";
-        let mut short = ScriptedAppend {
-            content: original.to_vec(),
-            max_write: 12,
-            next_error: None,
-            calls: 0,
-        };
+        let mut short_content = original.to_vec();
+        let mut short_calls = 0;
 
-        let error = write_append_buffer(&mut short, addition).unwrap_err();
+        let error = write_append_buffer(
+            |buffer| {
+                short_calls += 1;
+                let written = buffer.len().min(12);
+                short_content.extend_from_slice(&buffer[..written]);
+                Ok(written)
+            },
+            addition,
+        )
+        .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::WriteZero);
         assert!(
@@ -2071,38 +2065,81 @@ mod tests {
                 .contains("partial Worktrunk shell integration line")
         );
         assert_eq!(
-            short.content,
+            short_content,
             [original.as_slice(), &addition[..12]].concat()
         );
-        assert_eq!(short.calls, 1, "a short append must not write again");
+        assert_eq!(short_calls, 1, "a short append must not write again");
 
-        let mut interrupted = ScriptedAppend {
-            content: original.to_vec(),
-            max_write: usize::MAX,
-            next_error: Some(io::ErrorKind::Interrupted),
-            calls: 0,
-        };
-
-        write_append_buffer(&mut interrupted, addition).unwrap();
+        let mut interrupted_content = original.to_vec();
+        let mut interrupted_calls = 0;
+        write_append_buffer(
+            |buffer| {
+                interrupted_calls += 1;
+                if interrupted_calls == 1 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "injected write error",
+                    ));
+                }
+                interrupted_content.extend_from_slice(buffer);
+                Ok(buffer.len())
+            },
+            addition,
+        )
+        .unwrap();
 
         assert_eq!(
-            interrupted.content,
+            interrupted_content,
             [original.as_slice(), addition.as_slice()].concat()
         );
-        assert_eq!(interrupted.calls, 2);
+        assert_eq!(interrupted_calls, 2);
 
-        let mut failed = ScriptedAppend {
-            content: original.to_vec(),
-            max_write: usize::MAX,
-            next_error: Some(io::ErrorKind::StorageFull),
-            calls: 0,
-        };
-
-        let error = write_append_buffer(&mut failed, addition).unwrap_err();
+        let mut failed_calls = 0;
+        let error = write_append_buffer(
+            |_| {
+                failed_calls += 1;
+                Err(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "injected write error",
+                ))
+            },
+            addition,
+        )
+        .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::StorageFull);
-        assert_eq!(failed.content, original);
-        assert_eq!(failed.calls, 1);
+        assert!(
+            !error
+                .to_string()
+                .contains("partial Worktrunk shell integration line")
+        );
+        assert_eq!(failed_calls, 1);
+    }
+
+    #[test]
+    fn test_append_shell_integration_reports_write_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".zshrc");
+        let original = "export EDITOR=hx\n";
+        fs::write(&rc, original).unwrap();
+        let mut read_only = fs::File::open(&rc).unwrap();
+        let config_line = Shell::Zsh.config_line("wt");
+
+        let error = append_shell_integration_if_missing(
+            &mut read_only,
+            &rc,
+            Shell::Zsh,
+            "wt",
+            &config_line,
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with(&format!(
+            "Failed to write to {}:",
+            format_path_for_display(&rc)
+        )));
+        assert!(!error.contains("partial Worktrunk shell integration line"));
+        assert_eq!(fs::read_to_string(&rc).unwrap(), original);
     }
 
     #[test]
@@ -2122,7 +2159,7 @@ mod tests {
         write!(concurrent_installer, "\n{config_line}\n").unwrap();
         drop(concurrent_installer);
 
-        let appended = append_shell_integration_if_missing(
+        let action = append_shell_integration_if_missing(
             &mut pending_installer,
             &rc,
             Shell::Zsh,
@@ -2131,7 +2168,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!appended);
+        assert_eq!(action, ConfigAction::AlreadyExists);
         assert_eq!(
             fs::read_to_string(&rc)
                 .unwrap()
