@@ -670,36 +670,6 @@ assert!(!result.contains("error"));
 Import `assert_snapshot` directly (`use insta::assert_snapshot;`) rather than
 using the qualified `insta::assert_snapshot!` form.
 
-**A snapshot of styled output bakes `syntax-highlighting` into the
-expectation.** That feature is on by default, so `test (linux|macos|windows)`
-and `fast-checks` build with it and never disagree. `ci`'s `feature-check` job
-does run `cargo check --bin wt --no-default-features --features cli` on every
-PR, but `cargo check` never compiles `#[cfg(test)]` code, so the snapshot is
-never built there; the only job that *runs the tests* on that combination is
-`feature-powerset` in `nightly`, which on a `src/`-only PR is skipped. A
-snapshot that captures a highlighted `console` block therefore merges green and
-turns `main`'s next nightly cron red (#3908 → #3916). Where the colouring is
-incidental to what the test asserts, give the expectation per configuration
-rather than gating the whole assertion — gating drops the test on the one
-combination that catches this:
-
-```rust
-// The trailing console block renders coloured with the feature and plain
-// without. Only the arm matching the active configuration compiles, so fill
-// the pair with two runs: `cargo insta test --accept`, then the same command
-// with `--no-default-features --features cli --bin wt`.
-#[cfg(feature = "syntax-highlighting")]
-assert_snapshot!(guttered, @"<highlighted rendering>");
-#[cfg(not(feature = "syntax-highlighting"))]
-assert_snapshot!(guttered, @"<plain rendering>");
-```
-
-Reproduce the plain side locally with `cargo test --no-default-features
---features cli --bin wt <filter>`; the highlighted side is the default build.
-A PR that fixes a `feature-powerset` failure gets the `nightly` label:
-nightly's gate ORs that label against its Cargo/toolchain paths filter, so
-without it the job that proves the fix is skipped on the PR carrying it.
-
 For first-time snapshot creation, leave the inline value empty (`@""`), then
 run `cargo insta test --accept` to fill it.
 
