@@ -585,12 +585,15 @@ at all.
 
 Each guard also proves its walk reached something, since a walk that reads
 cleanly and yields nothing passes just as green. `visit_files` returns the
-number of files it visited, for the guards that check nothing else which would
-fail over an empty walk. Where a guard already asserts something an empty walk
-could not satisfy, that assertion is the proof, and a count beside it would be
-a second mechanism for one guarantee. A guard walking several roots counts per
-root: a layout change moves one root and leaves the others, which an aggregate
-count survives.
+number of files it visited and is `#[must_use]`, so forgetting to answer for
+coverage is a compile error rather than a rule someone has to remember — which
+is what the swallowed reads it replaced had going for them. A guard that
+already asserts something an empty walk cannot satisfy discards the count with
+`let _ =`, and that discard is the claim: its proof is the assertion below it,
+and a count beside it would be a second mechanism for one guarantee.
+
+A guard walking several roots counts per root. A layout change moves one root
+and leaves the others, and an aggregate count survives that.
 
 ### Snapshot env drift: cosmetic vs. a leak
 

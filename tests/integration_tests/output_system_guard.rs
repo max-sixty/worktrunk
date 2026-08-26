@@ -125,8 +125,15 @@ fn check_no_unexpected_stdout_writes() {
     let mut violations = Vec::new();
 
     // Recursively scan all .rs files under src/
-    let scanned = scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
-    assert!(scanned > 0, "scanned no files under {}", src_dir.display());
+    let scanned = visit_files(&src_dir, "rs", "stdout scan", &mut |path, contents| {
+        check_file(path, contents, &stdout_tokens, &mut violations, &src_dir)
+    });
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
 
     if !violations.is_empty() {
         panic!(
@@ -138,17 +145,6 @@ fn check_no_unexpected_stdout_writes() {
             violations.join("\n")
         );
     }
-}
-
-fn scan_directory(
-    dir: &Path,
-    tokens: &[&str],
-    violations: &mut Vec<String>,
-    scan_root: &Path,
-) -> usize {
-    visit_files(dir, "rs", "src/ scan", &mut |path, contents| {
-        check_file(path, contents, tokens, violations, scan_root)
-    })
 }
 
 fn check_file(
@@ -292,8 +288,20 @@ fn allowlisted_paths_still_exist() {
 fn check_stderr_macros_come_from_styling() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
-    let scanned = scan_stderr_macros(&src_dir, &src_dir, &mut violations);
-    assert!(scanned > 0, "scanned no files under {}", src_dir.display());
+    let scanned = visit_files(
+        &src_dir,
+        "rs",
+        "stderr-macro scan",
+        &mut |path, contents| {
+            check_stderr_macros_in_file(path, contents, &src_dir, &mut violations)
+        },
+    );
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
     violations.sort();
 
     assert!(
@@ -307,12 +315,6 @@ fn check_stderr_macros_come_from_styling() {
          std's macro is the right one there.",
         violations.join("\n")
     );
-}
-
-fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) -> usize {
-    visit_files(dir, "rs", "src/ scan", &mut |path, contents| {
-        check_stderr_macros_in_file(path, contents, src_dir, violations)
-    })
 }
 
 fn check_stderr_macros_in_file(

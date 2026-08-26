@@ -14,13 +14,21 @@ use std::path::Path;
 /// Visit every `.{extension}` file under `dir`, recursively, passing each
 /// file's path and contents to `f`.
 ///
-/// `scan` names this walk in panic messages (`"src/ scan"`, `"snapshot
-/// scan"`), so a failure says which guard was running as well as which read
-/// failed. The three reads are distinguished: a directory that can't be
-/// listed, an entry within a listed directory, and a file's contents. Naming
-/// only the path would leave the first two printing the same line, and the
-/// entry case is the one where checking the directory finds it healthy and
-/// sends you back to the start.
+/// `scan` names the calling guard in panic messages (`"stdout scan"`,
+/// `"snapshot scan"`), so a failure says which guard was running — several
+/// guards walk the same tree, so the path alone doesn't. The three reads that
+/// can fail are worded apart: listing a directory, reading one entry of a
+/// listed directory, and reading a file's contents. The entry case is the one
+/// that most needs saying, because the directory it names checks out healthy
+/// and the obvious next step leads nowhere.
+///
+/// Returns the number of files visited. It is `#[must_use]` because an
+/// absence-asserting guard also passes over an empty walk, so every caller has
+/// to answer for coverage — either by asserting this count, or by discarding it
+/// with `let _ =` where it already asserts something an empty walk cannot
+/// satisfy. Leaving that to prose is how the swallowed reads this walk replaced
+/// survived in four copies.
+#[must_use]
 pub fn visit_files(
     dir: &Path,
     extension: &str,
@@ -44,8 +52,12 @@ pub fn visit_files(
         if path.is_dir() {
             visited += visit_files(&path, extension, scan, f);
         } else if path.extension().and_then(|s| s.to_str()) == Some(extension) {
-            let contents = fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{} unreadable during the {scan}: {e}", path.display()));
+            let contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "the contents of {} are unreadable during the {scan}: {e}",
+                    path.display()
+                )
+            });
             f(&path, &contents);
             visited += 1;
         }

@@ -1443,11 +1443,14 @@ mod tests {
     }
 
     fn scan_for_needle(dir: &Path, needle: &str, root: &Path, offenders: &mut Vec<PathBuf>) {
-        super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
-            if contents.contains(needle) {
-                offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
-            }
-        });
+        // The count is discarded: asserting the offender list *equals* one named
+        // file already fails over an empty walk.
+        let _ =
+            super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
+                if contents.contains(needle) {
+                    offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
+                }
+            });
     }
 
     /// Every PTY spawn routes through [`configure_pty_command`] (directly or

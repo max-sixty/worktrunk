@@ -30,8 +30,15 @@ fn vergen_env_vars_are_read_optionally() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
     let mut violations = Vec::new();
-    let scanned = scan_directory(&src_dir, &src_dir, &mut violations);
-    assert!(scanned > 0, "scanned no files under {}", src_dir.display());
+    let scanned = visit_files(&src_dir, "rs", "vergen scan", &mut |path, contents| {
+        check_file(path, contents, &src_dir, &mut violations)
+    });
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
 
     assert!(
         violations.is_empty(),
@@ -41,12 +48,6 @@ fn vergen_env_vars_are_read_optionally() {
          (#3123). Use `option_env!` and fall back to a default instead.",
         violations.join("\n")
     );
-}
-
-fn scan_directory(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) -> usize {
-    visit_files(dir, "rs", "src/ scan", &mut |path, contents| {
-        check_file(path, contents, src_dir, violations)
-    })
 }
 
 fn check_file(path: &Path, contents: &str, src_dir: &Path, violations: &mut Vec<String>) {

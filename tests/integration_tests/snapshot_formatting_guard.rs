@@ -183,17 +183,13 @@ fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
     // is load-bearing as a result — one that legitimately stops holding
     // snapshots belongs out of this list, not exempted from it.
     for root in ["src", "tests", "docs"] {
-        let seen = visit_snap_files(&project_root.join(root), &mut f);
+        let seen = visit_files(&project_root.join(root), "snap", "snapshot scan", &mut f);
         assert!(
             seen > 0,
             "{root}/ holds no .snap files — the corpus has moved, so these \
              assertions are now passing over whatever is left of it"
         );
     }
-}
-
-fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) -> usize {
-    visit_files(dir, "snap", "snapshot scan", f)
 }
 
 /// Extract labeled output sections from a snapshot file.

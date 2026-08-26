@@ -52,9 +52,16 @@ fn embedded_assets_ship_in_package() {
     // 1. Discover every compile-time-embedded path under `src/`, as a
     //    repo-root-relative forward-slash string.
     let mut assets = BTreeSet::new();
-    scan_directory(&src_dir, manifest_dir, &mut assets);
-    // `scan_directory` and `scan_file` panic when the tree or one of its files
-    // can't be read. This catches the remaining way discovery comes back empty:
+    // The count is discarded: `assets` being non-empty below already fails over
+    // an empty walk, so asserting the count too would be a second mechanism.
+    let _ = visit_files(
+        &src_dir,
+        "rs",
+        "embedded-asset scan",
+        &mut |path, contents| scan_file(path, contents, manifest_dir, &mut assets),
+    );
+    // `visit_files` panics when the tree or one of its files can't be read.
+    // This catches the remaining way discovery comes back empty:
     // every file read, and the `include_str!` / `include_bytes!` / `#[template]`
     // matching recognizing none of them. The comparison below iterates `assets`,
     // so an empty set checks nothing and passes.
@@ -96,12 +103,6 @@ fn embedded_assets_ship_in_package() {
          include/exclude says otherwise) and to the `flake.nix` source filter.",
         violations.join("\n")
     );
-}
-
-fn scan_directory(dir: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
-    visit_files(dir, "rs", "src/ scan", &mut |path, contents| {
-        scan_file(path, contents, manifest_dir, assets)
-    });
 }
 
 fn scan_file(path: &Path, contents: &str, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
