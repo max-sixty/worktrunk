@@ -135,10 +135,9 @@ impl std::fmt::Display for PickerRowId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Local(key) => key.fmt(f),
-            Self::ChangeRequest(pr_ref) if pr_ref.sigil == '!' => {
-                write!(f, "mr:{}", pr_ref.number)
+            Self::ChangeRequest(pr_ref) => {
+                write!(f, "{}{}", pr_ref.ref_type().syntax(), pr_ref.number)
             }
-            Self::ChangeRequest(pr_ref) => write!(f, "pr:{}", pr_ref.number),
         }
     }
 }
@@ -1373,7 +1372,7 @@ impl PickerRow {
     /// including committed, staged, unstaged, and untracked changes.
     fn compute_unified_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
-        let Some(wt_info) = item.worktree_data() else {
+        let Some(worktree_path) = item.worktree_path() else {
             // A branch-only row has no mutable worktree state, so its complete
             // diff is exactly the committed diff and can reuse that disk cache.
             return Self::compute_branch_diff_preview(repo, item, width);
@@ -1382,7 +1381,7 @@ impl PickerRow {
         // the complete view is exactly the committed view, so reuse its SHA-keyed
         // disk cache and skip the temporary index. A status failure falls through
         // to the diff itself, which may still succeed and is the better authority.
-        let worktree_state = Self::worktree_diff_state(repo, &wt_info.path);
+        let worktree_state = Self::worktree_diff_state(repo, worktree_path);
         if worktree_state == WorktreeDiffState::Clean {
             return Self::compute_branch_diff_preview(repo, item, width);
         }
@@ -1396,7 +1395,7 @@ impl PickerRow {
             return Self::unavailable_diff(branch, "complete diff");
         };
 
-        match Self::compute_live_worktree_diff(repo, &wt_info.path, base, width, worktree_state) {
+        match Self::compute_live_worktree_diff(repo, worktree_path, base, width, worktree_state) {
             Ok(Some(diff)) => diff,
             Ok(None) => {
                 let base_name = &spec.base_name;
@@ -1414,7 +1413,7 @@ impl PickerRow {
     /// Compute Tab 2: staged, unstaged, and untracked changes vs HEAD.
     fn compute_working_tree_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
-        let Some(wt_info) = item.worktree_data() else {
+        let Some(worktree_path) = item.worktree_path() else {
             let reset = Reset;
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is branch only — press Enter to create worktree\n"
@@ -1422,13 +1421,13 @@ impl PickerRow {
         };
 
         let reset = Reset;
-        let worktree_state = Self::worktree_diff_state(repo, &wt_info.path);
+        let worktree_state = Self::worktree_diff_state(repo, worktree_path);
         if worktree_state == WorktreeDiffState::Clean {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no working-tree changes\n"
             );
         }
-        match Self::compute_live_worktree_diff(repo, &wt_info.path, "HEAD", width, worktree_state) {
+        match Self::compute_live_worktree_diff(repo, worktree_path, "HEAD", width, worktree_state) {
             Ok(Some(diff)) => diff,
             Ok(None) => cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no working-tree changes\n"
@@ -1840,8 +1839,14 @@ impl PickerRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::list::model::WorktreeData;
     use ansi_str::AnsiStr;
     use insta::assert_snapshot;
+
+    fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
+        let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
+        ListItem::new_worktree(subject, data)
+    }
 
     /// `anchor_faint_under_selection` recolors faint text to an explicit gray
     /// only on the selected row (and only foreground-less faint spans), so the
@@ -2134,11 +2139,14 @@ mod tests {
         // `working_tree` matches the temporary-index diff: tracked and untracked
         // changes both count.
         let worktree_with = |status: WorkingTreeStatus| {
-            let mut item = ListItem::new_branch("abc".into(), "feature".into());
-            item.reclassify_as_worktree(WorktreeData {
-                working_tree_status: Some(status),
-                ..Default::default()
-            });
+            let item = as_worktree(
+                ListItem::new_branch("abc".into(), "feature".into()),
+                std::path::Path::new("/tmp/feature"),
+                WorktreeData {
+                    working_tree_status: Some(status),
+                    ..Default::default()
+                },
+            );
             LocalContent::from_item(&item).working_tree
         };
         // staged, modified, renamed, deleted → tracked content present.
@@ -2155,8 +2163,11 @@ mod tests {
             "untracked alone is shown by the working-tree diff"
         );
         // A worktree whose status task hasn't landed yet stays loading.
-        let mut pending = ListItem::new_branch("abc".into(), "feature".into());
-        pending.reclassify_as_worktree(WorktreeData::default());
+        let pending = as_worktree(
+            ListItem::new_branch("abc".into(), "feature".into()),
+            std::path::Path::new("/tmp/feature"),
+            WorktreeData::default(),
+        );
         assert_eq!(LocalContent::from_item(&pending).working_tree, None);
     }
 
@@ -2976,11 +2987,7 @@ mod tests {
         repo.run_command(&["config", "status.showUntrackedFiles", "no"])
             .unwrap();
 
-        let mut item = item_at(&repo, "feature");
-        item.reclassify_as_worktree(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        });
+        let item = as_worktree(item_at(&repo, "feature"), t.path(), WorktreeData::default());
 
         let real_index = repo.current_worktree().git_dir().unwrap().join("index");
         let index_before = std::fs::read(&real_index).unwrap();
@@ -3026,11 +3033,7 @@ mod tests {
             .unwrap();
         std::fs::write(t.path().join("tracked.txt"), "changed\n").unwrap();
 
-        let mut item = item_at(&repo, "main");
-        item.reclassify_as_worktree(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        });
+        let item = as_worktree(item_at(&repo, "main"), t.path(), WorktreeData::default());
 
         let unified = PickerRow::compute_unified_diff_preview(&repo, &item, 80);
         let working = PickerRow::compute_working_tree_preview(&repo, &item, 80);
@@ -3173,11 +3176,7 @@ mod tests {
         use crate::commands::list::model::WorktreeData;
 
         let (t, repo) = repo_with_main();
-        let mut item = item_at(&repo, "main");
-        item.reclassify_as_worktree(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        });
+        let item = as_worktree(item_at(&repo, "main"), t.path(), WorktreeData::default());
 
         let output = PickerRow::compute_working_tree_preview(&repo, &item, 80);
         assert!(

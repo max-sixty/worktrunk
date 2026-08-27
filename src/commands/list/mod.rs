@@ -316,7 +316,7 @@ impl SummaryMetrics {
             // may legitimately be named `origin/foo`, so a name-prefix
             // heuristic would misclassify it. See `BranchScope` in
             // `model/item.rs`.
-            match item.kind {
+            match item.kind() {
                 ItemKind::Branch(BranchScope::Remote) => self.remote_branches += 1,
                 _ => self.local_branches += 1,
             }

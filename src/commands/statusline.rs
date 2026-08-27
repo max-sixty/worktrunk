@@ -954,10 +954,10 @@ fn run_json() -> Result<()> {
 
     // Convert to JSON format — single-branch lookup (not all_vars_entries)
     let mut all_vars = HashMap::new();
-    if let Some(branch) = &item.branch {
+    if let Some(branch) = item.branch() {
         let entries = repo.vars_entries(branch);
         if !entries.is_empty() {
-            all_vars.insert(branch.clone(), entries);
+            all_vars.insert(branch.to_string(), entries);
         }
     }
     // No custom columns: the statusline path never expands `[list.custom-columns]`
@@ -1040,7 +1040,7 @@ fn git_status_segments(worktree: &WorkingTree) -> Result<Vec<StatuslineSegment>>
     // If we can't determine the default branch, just show current branch
     if repo.default_branch().is_none() {
         return Ok(vec![StatuslineSegment::from_column(
-            item.branch.as_deref().unwrap_or("HEAD").to_string(),
+            item.branch().unwrap_or("HEAD").to_string(),
             ColumnKind::Branch,
         )]);
     }

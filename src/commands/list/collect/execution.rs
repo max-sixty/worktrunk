@@ -24,7 +24,7 @@ use std::sync::Arc;
 use crossbeam_channel as chan;
 use worktrunk::git::Repository;
 
-use super::super::model::{ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
+use super::super::model::{ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
@@ -234,7 +234,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             // waits and renders `·`.
         }
         TaskKind::WorkingTreeConflicts => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
+            if let Some(data) = item.worktree_data_mut() {
                 // `Some(None)` = "task did not run, fall back to the
                 // committed-HEAD merge-tree check" — matches the semantics
                 // of a clean working tree under `--full`.
@@ -242,7 +242,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             }
         }
         TaskKind::GitOperation => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
+            if let Some(data) = item.worktree_data_mut() {
                 data.git_operation = Some(None);
             }
         }
@@ -260,7 +260,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
 /// `MainState::None` (no symbol). Both are known at spawn time without
 /// any task output.
 pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
-    let is_main = matches!(&item.kind, ItemKind::Worktree(data) if data.is_main);
+    let is_main = item.is_main();
     item.status_symbols.main_state = Some(if is_main {
         super::super::model::MainState::IsMain
     } else {
@@ -343,9 +343,9 @@ pub fn work_items_for_worktree(
     // Expand URL template for this item (only if URL status is enabled).
     let item_url = if include_url {
         options.url_template.as_ref().and_then(|template| {
-            item.branch.as_ref().and_then(|branch| {
+            item.branch().and_then(|branch| {
                 let mut vars = std::collections::HashMap::new();
-                vars.insert("branch", branch.as_str());
+                vars.insert("branch", branch);
                 worktrunk::config::expand_template(
                     template,
                     &vars,
@@ -384,7 +384,7 @@ pub fn work_items_for_worktree(
         snapshot: options.snapshot.clone(),
     };
 
-    let has_commits = item.head != worktrunk::git::NULL_OID;
+    let has_commits = item.head() != worktrunk::git::NULL_OID;
 
     let mut items = Vec::with_capacity(15);
 

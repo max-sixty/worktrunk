@@ -823,7 +823,7 @@ fn plan_switch(
     // Resolving before the path template is also the fast path: an existing
     // worktree answers without the ~7 git commands `compute_worktree_path` runs.
     match repo.resolve_selector(&target.selector)? {
-        ResolvedWorktree::Worktree { path, branch } => {
+        ResolvedWorktree::Worktree { path, branch, .. } => {
             // A registration whose directory is gone or broken has nothing to
             // switch into; `wt remove` is the one command that still wants it.
             if repo.worktree_is_unusable(&path)? {

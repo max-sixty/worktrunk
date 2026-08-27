@@ -147,21 +147,20 @@ pub fn expand_custom_columns(
 
     for item in items {
         let (worktree_path, worktree_name) = if needs_worktree {
-            item.worktree_data()
-                .map(|data| {
-                    let path = to_posix_path(&data.path.to_string_lossy());
-                    let name = data
-                        .path
+            item.worktree_path()
+                .map(|path| {
+                    let display_path = to_posix_path(&path.to_string_lossy());
+                    let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    (path, name)
+                    (display_path, name)
                 })
                 .unwrap_or_default()
         } else {
             Default::default()
         };
-        let branch = item.branch.as_deref().unwrap_or("");
+        let branch = item.branch().unwrap_or("");
 
         let mut context: HashMap<String, Value> = HashMap::new();
         context.insert("branch".to_string(), Value::from(branch));

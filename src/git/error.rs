@@ -37,7 +37,7 @@ use crate::styling::{
 /// Platform-specific reference type (PR vs MR).
 ///
 /// Used to unify error handling across supported forges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RefType {
     /// Pull request (GitHub, Gitea, or Azure DevOps)
     Pr,

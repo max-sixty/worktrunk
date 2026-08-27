@@ -315,7 +315,7 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{BranchRef, ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo};
+use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, terminal_width, truncate_visible,
     warning_message,
@@ -324,7 +324,7 @@ use worktrunk::styling::{
 use crate::commands::is_worktree_at_expected_path;
 use worktrunk::styling::println;
 
-use super::model::{CommitDetails, ItemKind, ListItem, StatusSymbols, WorktreeData};
+use super::model::{CommitDetails, ListItem, WorktreeData};
 use super::progressive::RenderTarget;
 use super::progressive_table::ProgressiveTable;
 
@@ -1026,8 +1026,8 @@ pub fn collect(
     // Build each Git subject once and keep it paired with the inventory entry
     // it describes. The registered path remains available for display and
     // commands; the subject's ID owns canonical path equality.
-    let worktree_subjects: Vec<(&WorktreeInfo, BranchRef)> =
-        worktrees.iter().map(|wt| (wt, wt.branch_ref())).collect();
+    let worktree_subjects: Vec<(&WorktreeInfo, WorktreeRef)> =
+        worktrees.iter().map(|wt| (wt, wt.worktree_ref())).collect();
 
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
@@ -1037,16 +1037,18 @@ pub fn collect(
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
     let primary_id = repo.primary_worktree()?.as_ref().map(WorktreeId::new);
-    let (main_worktree, main_worktree_id) = primary_id
-        .as_ref()
-        .and_then(|id| {
-            worktree_subjects
-                .iter()
-                .find(|(_, branch_ref)| branch_ref.id().worktree_id() == Some(id))
-        })
-        .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()))
-        .map(|(wt, branch_ref)| (*wt, branch_ref.id().clone()))
-        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+    let (main_worktree, main_worktree_id) = {
+        let (wt, worktree_ref) = primary_id
+            .as_ref()
+            .and_then(|id| {
+                worktree_subjects
+                    .iter()
+                    .find(|(_, worktree_ref)| worktree_ref.id() == id)
+            })
+            .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()))
+            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+        (*wt, worktree_ref.id().clone())
+    };
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
@@ -1109,9 +1111,9 @@ pub fn collect(
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
-        .map(|(wt, branch_ref)| {
-            let is_main = branch_ref.id() == &main_worktree_id;
-            let is_current = current_worktree_id.as_ref() == branch_ref.id().worktree_id();
+        .map(|(wt, worktree_ref)| {
+            let is_main = worktree_ref.id() == &main_worktree_id;
+            let is_current = current_worktree_id.as_ref() == Some(worktree_ref.id());
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
 
@@ -1128,33 +1130,7 @@ pub fn collect(
                 .is_some_and(|branch| duplicated.contains(branch));
 
             // URL expanded post-skeleton to minimize time-to-skeleton
-            ListItem {
-                branch_ref: branch_ref.clone(),
-                head: wt.head.clone(),
-                short_sha: String::new(),
-                branch: wt.branch.clone(),
-                commit: None,
-                counts: None,
-                branch_diff: None,
-                committed_trees_match: None,
-                has_file_changes: None,
-                would_merge_add: None,
-                is_patch_id_match: None,
-                is_ancestor: None,
-                is_orphan: None,
-                upstream: None,
-                pr_status: None,
-                url: None,
-                url_active: None,
-                summary: None,
-                has_merge_tree_conflicts: None,
-                user_marker: None,
-                status_symbols: StatusSymbols::default(),
-                statusline: None,
-                custom_values: Vec::new(),
-                seeded: super::model::SeededFacts::default(),
-                kind: ItemKind::Worktree(Box::new(worktree_data)),
-            }
+            ListItem::new_worktree(worktree_ref.clone(), worktree_data)
         })
         .collect();
 
@@ -1182,7 +1158,7 @@ pub fn collect(
     // move costs no fork. Rows the batch didn't cover (unborn branches, a failed
     // batch) keep the empty string and render an empty cell.
     for item in &mut all_items {
-        if let Some((short_sha, _, _)) = commit_details_map.get(&item.head) {
+        if let Some((short_sha, _, _)) = commit_details_map.get(item.head()) {
             item.short_sha = short_sha.clone();
         }
     }
@@ -1636,7 +1612,7 @@ pub fn collect(
     // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
         for item in &mut all_items {
-            if item.branch.as_deref() == Some(prev)
+            if item.branch() == Some(prev)
                 && let Some(wt_data) = item.worktree_data_mut()
             {
                 wt_data.is_previous = true;
@@ -1657,7 +1633,7 @@ pub fn collect(
         if item.worktree_data().is_some_and(|d| d.is_prunable()) {
             continue;
         }
-        let Some((_, timestamp, commit_message)) = commit_details_map.get(&item.head) else {
+        let Some((_, timestamp, commit_message)) = commit_details_map.get(item.head()) else {
             continue;
         };
         item.commit = Some(CommitDetails {
@@ -2092,15 +2068,15 @@ where
 /// Sort worktrees: current first, main second, then by timestamp descending.
 /// Uses the pre-fetched commit-details map for efficiency.
 fn sort_worktrees_with_cache<'a>(
-    mut worktrees: Vec<(&'a WorktreeInfo, BranchRef)>,
-    main_worktree_id: &worktrunk::git::GitItemId,
+    mut worktrees: Vec<(&'a WorktreeInfo, WorktreeRef)>,
+    main_worktree_id: &WorktreeId,
     current_worktree_id: Option<&WorktreeId>,
     commit_details: &std::collections::HashMap<String, (String, i64, String)>,
-) -> Vec<(&'a WorktreeInfo, BranchRef)> {
-    worktrees.sort_by_key(|(wt, branch_ref)| {
-        let priority = if current_worktree_id == branch_ref.id().worktree_id() {
+) -> Vec<(&'a WorktreeInfo, WorktreeRef)> {
+    worktrees.sort_by_key(|(wt, worktree_ref)| {
+        let priority = if current_worktree_id == Some(worktree_ref.id()) {
             0 // Current first
-        } else if branch_ref.id() == main_worktree_id {
+        } else if worktree_ref.id() == main_worktree_id {
             1 // Main second
         } else {
             2 // Rest by timestamp
@@ -2125,38 +2101,10 @@ pub fn build_worktree_item(
     is_current: bool,
     is_previous: bool,
 ) -> ListItem {
-    ListItem {
-        branch_ref: wt.branch_ref(),
-        head: wt.head.clone(),
-        short_sha: String::new(),
-        branch: wt.branch.clone(),
-        commit: None,
-        counts: None,
-        branch_diff: None,
-        committed_trees_match: None,
-        has_file_changes: None,
-        would_merge_add: None,
-        is_patch_id_match: None,
-        is_ancestor: None,
-        is_orphan: None,
-        upstream: None,
-        pr_status: None,
-        url: None,
-        url_active: None,
-        summary: None,
-        has_merge_tree_conflicts: None,
-        user_marker: None,
-        status_symbols: StatusSymbols::default(),
-        statusline: None,
-        custom_values: Vec::new(),
-        seeded: super::model::SeededFacts::default(),
-        kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
-            wt,
-            is_main,
-            is_current,
-            is_previous,
-        ))),
-    }
+    ListItem::new_worktree(
+        wt.worktree_ref(),
+        WorktreeData::from_worktree(wt, is_main, is_current, is_previous),
+    )
 }
 
 /// Populate computed fields for items in parallel (blocking).
@@ -2190,9 +2138,9 @@ pub fn populate_item(
     // timestamp/message bundle is skipped for prunable rows to match the old
     // task-queue UX where probes against a missing worktree dir failed.
     let is_prunable = item.worktree_data().is_some_and(|d| d.is_prunable());
-    if item.head != worktrunk::git::NULL_OID
-        && let Ok(map) = repo.commit_details_many(&[&item.head])
-        && let Some((short_sha, timestamp, commit_message)) = map.get(&item.head)
+    if item.head() != worktrunk::git::NULL_OID
+        && let Ok(map) = repo.commit_details_many(&[item.head()])
+        && let Some((short_sha, timestamp, commit_message)) = map.get(item.head())
     {
         item.short_sha = short_sha.clone();
         if !is_prunable {

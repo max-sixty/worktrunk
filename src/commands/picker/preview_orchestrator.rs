@@ -18,13 +18,13 @@
 //! `alt-r` spawn** (the one `Arc` is reused). The key is `(row-key, mode)`,
 //! where row-key is a canonical Git item identity for a local row or a
 //! structured PR/MR reference for a `--prs` row — with **no content hash**.
-//! Worktrees key by canonical path, while branch-only rows key by full ref. Two consequences: every
-//! mode shares one key shape (a `--prs` row's forge fetches and a worktree
-//! row's git diffs coexist), and a `git fetch` or new commit that moves a
-//! branch does *not* invalidate the entry — the key is unchanged, so a warm
-//! entry can outlive the content it was computed from. That staleness is
-//! reconciled two ways, both below: per-event invalidation for the PR tabs, and
-//! a wholesale clear on refresh.
+//! Two consequences: every mode shares one key shape (a `--prs` row's forge
+//! fetches and a worktree row's git diffs coexist), and a `git fetch` or new
+//! commit that moves a branch does *not* invalidate the entry — the key is
+//! unchanged, so a warm entry can outlive the content it was computed from.
+//! That staleness is reconciled two ways, both below: per-event invalidation
+//! for the PR tabs, and a wholesale clear on refresh.
+//! Worktrees key by canonical path, while branch-only rows key by full ref.
 //!
 //! **On-disk** — content-addressed, cross-session, consulted only on an
 //! in-memory miss. [`super::preview_cache`] holds Log / BranchDiff /
@@ -872,6 +872,11 @@ mod tests {
     use std::fs;
     use worktrunk::testing::TestRepo;
 
+    fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
+        let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
+        ListItem::new_worktree(subject, data)
+    }
+
     fn orch_for(t: &TestRepo) -> PreviewOrchestrator {
         // No render_tx published, so fills don't notify — these tests assert on
         // the cache, not on skim repaints (see `fill_notifies_only_awaited_key`).
@@ -907,22 +912,22 @@ mod tests {
             .unwrap()
             .trim()
             .to_string();
-        let mut item = ListItem::new_branch(head, "main".to_string());
-        item.reclassify_as_worktree(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        });
+        let item = as_worktree(
+            ListItem::new_branch(head, "main".to_string()),
+            t.path(),
+            WorktreeData::default(),
+        );
         (t, Arc::new(item))
     }
 
     fn detached_worktree_item(path: &std::path::Path, head: &str) -> Arc<ListItem> {
-        let mut item = ListItem::new_branch(head.to_string(), "(detached)".to_string());
-        item.branch = None;
-        item.reclassify_as_worktree(WorktreeData {
-            path: path.to_path_buf(),
-            detached: true,
-            ..Default::default()
-        });
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, None, head),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
         Arc::new(item)
     }
 
@@ -1291,11 +1296,11 @@ mod tests {
         let head = first.head().to_string();
         t.repo.run_command(&["branch", "branch-only"]).unwrap();
 
-        let mut offscreen = ListItem::new_branch(head.clone(), "offscreen".to_string());
-        offscreen.reclassify_as_worktree(WorktreeData {
-            path: t.path().join("offscreen"),
-            ..Default::default()
-        });
+        let offscreen = as_worktree(
+            ListItem::new_branch(head.clone(), "offscreen".to_string()),
+            &t.path().join("offscreen"),
+            WorktreeData::default(),
+        );
         let offscreen = Arc::new(offscreen);
         let branch = Arc::new(ListItem::new_branch(head, "branch-only".to_string()));
 

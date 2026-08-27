@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
-use super::super::model::{ItemKind, ListItem};
+use super::super::model::ListItem;
 use super::execution::ExpectedResults;
 use super::types::{DrainOutcome, MissingResult, TaskError, TaskKind, TaskResult};
 
@@ -303,7 +303,7 @@ pub(super) fn drain_results_with_timings(
                 has_conflicts,
                 ..
             } => {
-                if let ItemKind::Worktree(data) = &mut item.kind {
+                if let Some(data) = item.worktree_data_mut() {
                     data.working_tree_diff = Some(working_tree_diff);
                     data.working_tree_status = Some(working_tree_status);
                     data.has_conflicts = Some(has_conflicts);
@@ -321,14 +321,14 @@ pub(super) fn drain_results_with_timings(
                 has_working_tree_conflicts,
                 ..
             } => {
-                if let ItemKind::Worktree(data) = &mut item.kind {
+                if let Some(data) = item.worktree_data_mut() {
                     data.has_working_tree_conflicts = Some(has_working_tree_conflicts);
                 } else {
                     debug_assert!(false, "WorkingTreeConflicts result for non-worktree item");
                 }
             }
             TaskResult::GitOperation { git_operation, .. } => {
-                if let ItemKind::Worktree(data) = &mut item.kind {
+                if let Some(data) = item.worktree_data_mut() {
                     data.git_operation = Some(git_operation);
                 } else {
                     debug_assert!(false, "GitOperation result for non-worktree item");
@@ -404,7 +404,7 @@ mod tests {
         // WorkingTreeDiff is intentionally NOT seeded via
         // `seed_skipped_task_defaults` (it would fabricate a clean tree).
         // Simulate a real task result instead.
-        if let ItemKind::Worktree(data) = &mut item.kind {
+        if let Some(data) = item.worktree_data_mut() {
             data.working_tree_diff = Some(LineDiff::default());
             data.working_tree_status = Some(WorkingTreeStatus::default());
             data.has_conflicts = Some(false);

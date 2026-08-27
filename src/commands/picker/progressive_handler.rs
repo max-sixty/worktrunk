@@ -255,11 +255,11 @@ impl PickerHandler {
 fn collect_shown_branches(items: &[ListItem]) -> HashSet<String> {
     let mut shown = HashSet::new();
     for item in items {
-        let Some(name) = item.branch.as_deref() else {
+        let Some(name) = item.branch() else {
             continue;
         };
         shown.insert(name.to_string());
-        if matches!(item.kind, ItemKind::Branch(BranchScope::Remote))
+        if matches!(item.kind(), ItemKind::Branch(BranchScope::Remote))
             && let Some((_, bare)) = name.split_once('/')
         {
             shown.insert(bare.to_string());
@@ -366,7 +366,6 @@ impl PickerProgressHandler for PickerHandler {
             let path_str = item
                 .worktree_path()
                 .map(|p| {
-                    let p = p.as_path();
                     path_base
                         .as_deref()
                         .and_then(|base| p.strip_prefix(base).ok())
@@ -389,7 +388,7 @@ impl PickerProgressHandler for PickerHandler {
             // `!` is skim's inverse-match operator, so only the bare number
             // filters those (see
             // `folded_pr_reference_filters_under_skims_default_engine`).
-            let gutter = item.kind.gutter_glyph();
+            let gutter = item.kind().gutter_glyph();
             // `display_name`, not `branch_name`: a detached row shows its
             // abbreviated HEAD in the Branch column, so that's what the user
             // reads and types. `branch_name`'s `"(detached)"` matches nothing
@@ -430,7 +429,7 @@ impl PickerProgressHandler for PickerHandler {
             // collector's mutation surfaces on the same item skim renders.
             let morphed = Arc::new(AtomicBool::new(false));
             let morph = (item_arc.worktree_data().is_some()
-                && item_arc.branch.is_some()
+                && item_arc.branch().is_some()
                 && !item_arc.is_main())
             .then(|| MorphHandle {
                 item: Arc::clone(&item_arc),
@@ -447,7 +446,7 @@ impl PickerProgressHandler for PickerHandler {
             shortcut_map.insert(
                 output_token.clone(),
                 RowShortcutData {
-                    branch: item_arc.branch.clone(),
+                    branch: item_arc.branch().map(str::to_string),
                     url: RowUrl::Live(Arc::clone(&pr_status_arc)),
                     morph,
                 },
@@ -668,8 +667,13 @@ impl PickerProgressHandler for PickerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::model::ListItem;
+    use crate::commands::list::model::{ListItem, WorktreeData};
     use worktrunk::testing::TestRepo;
+
+    fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
+        let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
+        ListItem::new_worktree(subject, data)
+    }
 
     /// Build a handler with explicit `repo` (the per-spawn inventory source)
     /// and `orchestrator` (preview compute). Diverging the two lets a test
@@ -774,11 +778,11 @@ mod tests {
         // A worktree row under the handler-repo's tree. The shared parent strips
         // only if path_base comes from self_repo (parent of `<temp>/repo`), not
         // from orchestrator_repo (a different temp parent).
-        let mut item = ListItem::new_branch("abc".into(), "feature".into());
-        item.reclassify_as_worktree(WorktreeData {
-            path: self_repo.path().join("feature"),
-            ..Default::default()
-        });
+        let item = as_worktree(
+            ListItem::new_branch("abc".into(), "feature".into()),
+            &self_repo.path().join("feature"),
+            WorktreeData::default(),
+        );
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
         let received = rx.recv().expect("skeleton batch");
@@ -1258,13 +1262,14 @@ mod tests {
         use crate::commands::list::model::WorktreeData;
 
         let (handler, _test, _rx) = make_handler();
-        let mut item = ListItem::new_branch("abc123".into(), "(detached)".into());
-        item.branch = None;
-        item.reclassify_as_worktree(WorktreeData {
-            path: std::path::PathBuf::from("/tmp/wt-detached"),
-            detached: true,
-            ..Default::default()
-        });
+        let path = std::path::PathBuf::from("/tmp/wt-detached");
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(&path, None, "abc123"),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
 
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
@@ -1440,12 +1445,11 @@ mod tests {
         let outside_path = std::path::PathBuf::from("/nonexistent-root/external-wt");
 
         let worktree_item = |branch: &str, path: &Path| {
-            let mut item = ListItem::new_branch("abc".into(), branch.into());
-            item.reclassify_as_worktree(WorktreeData {
-                path: path.to_path_buf(),
-                ..Default::default()
-            });
-            item
+            as_worktree(
+                ListItem::new_branch("abc".into(), branch.into()),
+                path,
+                WorktreeData::default(),
+            )
         };
 
         handler.on_skeleton(

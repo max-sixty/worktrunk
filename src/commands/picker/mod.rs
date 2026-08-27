@@ -1736,11 +1736,10 @@ pub fn handle_picker(
         // empty placeholder would let this speculative producer cache an
         // error before collection's real row gets a chance to fill the same
         // key, so the warm-up only runs with a resolved commit.
-        let mut item = ListItem::new_branch(head, branch);
-        item.reclassify_as_worktree(WorktreeData {
-            path,
-            ..Default::default()
-        });
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(&path, Some(&branch), &head),
+            WorktreeData::default(),
+        );
         // num_items doesn't matter for Right (dims independent of it); for
         // Down it only affects height, which doesn't alter pager wrapping.
         let dims = state
@@ -3154,23 +3153,22 @@ pub mod tests {
 
     /// Build a `PickerRow` standing in for a detached-worktree row.
     fn detached_picker_item(path: &Path) -> Arc<dyn SkimItem> {
-        let mut item = ListItem::new_branch("abc123".to_string(), "(detached)".to_string());
-        item.branch = None;
-        item.reclassify_as_worktree(WorktreeData {
-            path: path.to_path_buf(),
-            detached: true,
-            ..Default::default()
-        });
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, None, "abc123"),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
         picker_item("(detached)", item)
     }
 
     /// Build a `PickerRow` standing in for a branched-worktree row.
     fn branched_picker_item(branch: &str, path: &Path) -> Arc<dyn SkimItem> {
-        let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
-        item.reclassify_as_worktree(WorktreeData {
-            path: path.to_path_buf(),
-            ..Default::default()
-        });
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some(branch), "abc123"),
+            WorktreeData::default(),
+        );
         picker_item(branch, item)
     }
 
@@ -3198,11 +3196,10 @@ pub mod tests {
         Arc<Mutex<String>>,
         Arc<std::sync::atomic::AtomicBool>,
     ) {
-        let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
-        item.reclassify_as_worktree(WorktreeData {
-            path: path.to_path_buf(),
-            ..Default::default()
-        });
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some(branch), "abc123"),
+            WorktreeData::default(),
+        );
         let item_arc = Arc::new(item);
         let rendered = Arc::new(Mutex::new(format!("+ {branch}")));
         let local_content = Arc::new(Mutex::new(LocalContent::default()));
@@ -4218,11 +4215,10 @@ pub mod tests {
     fn test_build_morph_branch_row() {
         use ansi_str::AnsiStr;
 
-        let mut worktree_item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        worktree_item.reclassify_as_worktree(WorktreeData {
-            path: Path::new("/tmp/wt.feature").to_path_buf(),
-            ..Default::default()
-        });
+        let worktree_item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/tmp/wt.feature", Some("feature"), "abc123"),
+            WorktreeData::default(),
+        );
         let layout = crate::commands::list::layout::calculate_layout_with_width(
             std::slice::from_ref(&worktree_item),
             &crate::commands::list::columns::all_tasks(),
