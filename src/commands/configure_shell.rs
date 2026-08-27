@@ -2022,7 +2022,10 @@ mod tests {
 
         assert_eq!(
             format_new_rc_error(path, &error),
-            "Failed to create /home/user/.zshrc: another process created it first; rerun to append"
+            format!(
+                "Failed to create {}: another process created it first; rerun to append",
+                format_path_for_display(path)
+            )
         );
     }
 
