@@ -11,7 +11,7 @@ use worktrunk::styling::{
     INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
     format_with_gutter, hint_message, println, prompt_message, warning_message,
 };
-use worktrunk::utils::write_atomically;
+use worktrunk::utils::{write_atomically, write_new_atomically};
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use crate::output::shell_integration::shell_extension_label;
@@ -717,8 +717,9 @@ fn configure_shell_file(
                 })?;
             }
 
-            // Write the config content
-            write_atomically(path, &format!("{}\n", config_line)).map_err(|e| {
+            // Another process may create the rc file after the existence check.
+            // Fail in that case so its contents survive and a rerun can append.
+            write_new_atomically(path, &format!("{}\n", config_line)).map_err(|e| {
                 format!(
                     "Failed to write to {}: {}",
                     format_path_for_display(path),
@@ -761,35 +762,6 @@ fn open_locked_rc_file(path: &Path) -> Result<fs::File, String> {
     Ok(file)
 }
 
-/// Offer an rc-file addition in one successful write.
-///
-/// `write_all` can append part of its buffer and then fail on a later write,
-/// hiding how much of the shell line reached the file. A single short write is
-/// instead an error of its own. Never truncate the user-owned file in response:
-/// no portable operation can keep a later concurrent append out of that race.
-fn write_append_buffer(
-    mut write_once: impl FnMut(&[u8]) -> io::Result<usize>,
-    addition: &[u8],
-) -> io::Result<()> {
-    let written = loop {
-        match write_once(addition) {
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            result => break result?,
-        }
-    };
-    if written == addition.len() {
-        return Ok(());
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::WriteZero,
-        format!(
-            "only {written} of {} bytes were written; the file may end with a partial Worktrunk shell integration line",
-            addition.len()
-        ),
-    ))
-}
-
 /// Recheck an open rc file and append the integration line if it is still absent.
 ///
 /// The caller holds the file's exclusive lock. Re-reading through the same
@@ -812,9 +784,10 @@ fn append_shell_integration_if_missing(
     }
 
     // Add a blank line before config, then the config line with its own newline.
-    // Offer the whole addition as one buffer rather than split formatted writes.
+    // A failed append may leave part of this Worktrunk-owned line behind; never
+    // truncate the user-owned file in an attempt to roll it back.
     let addition = format!("\n{config_line}\n");
-    write_append_buffer(|buffer| file.write(buffer), addition.as_bytes()).map_err(|e| {
+    file.write_all(addition.as_bytes()).map_err(|e| {
         format!(
             "Failed to write to {}: {}",
             format_path_for_display(path),
@@ -2039,82 +2012,6 @@ mod tests {
     }
 
     #[test]
-    fn test_append_write_retries_interrupt_and_reports_incomplete_writes() {
-        let original = b"export EDITOR=hx\n";
-        let addition = b"\nif command -v wt; then eval ...\n";
-        let mut short_content = original.to_vec();
-        let mut short_calls = 0;
-
-        let error = write_append_buffer(
-            |buffer| {
-                short_calls += 1;
-                let written = buffer.len().min(12);
-                short_content.extend_from_slice(&buffer[..written]);
-                Ok(written)
-            },
-            addition,
-        )
-        .unwrap_err();
-
-        assert_eq!(error.kind(), io::ErrorKind::WriteZero);
-        assert!(
-            error
-                .to_string()
-                .contains("partial Worktrunk shell integration line")
-        );
-        assert_eq!(
-            short_content,
-            [original.as_slice(), &addition[..12]].concat()
-        );
-        assert_eq!(short_calls, 1, "a short append must not write again");
-
-        let mut interrupted_content = original.to_vec();
-        let mut interrupted_calls = 0;
-        write_append_buffer(
-            |buffer| {
-                interrupted_calls += 1;
-                if interrupted_calls == 1 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Interrupted,
-                        "injected write error",
-                    ));
-                }
-                interrupted_content.extend_from_slice(buffer);
-                Ok(buffer.len())
-            },
-            addition,
-        )
-        .unwrap();
-
-        assert_eq!(
-            interrupted_content,
-            [original.as_slice(), addition.as_slice()].concat()
-        );
-        assert_eq!(interrupted_calls, 2);
-
-        let mut failed_calls = 0;
-        let error = write_append_buffer(
-            |_| {
-                failed_calls += 1;
-                Err(io::Error::new(
-                    io::ErrorKind::StorageFull,
-                    "injected write error",
-                ))
-            },
-            addition,
-        )
-        .unwrap_err();
-
-        assert_eq!(error.kind(), io::ErrorKind::StorageFull);
-        assert!(
-            !error
-                .to_string()
-                .contains("partial Worktrunk shell integration line")
-        );
-        assert_eq!(failed_calls, 1);
-    }
-
-    #[test]
     fn test_append_shell_integration_reports_write_errors() {
         let dir = tempfile::TempDir::new().unwrap();
         let rc = dir.path().join(".zshrc");
@@ -2136,7 +2033,6 @@ mod tests {
             "Failed to write to {}:",
             format_path_for_display(&rc)
         )));
-        assert!(!error.contains("partial Worktrunk shell integration line"));
         assert_eq!(fs::read_to_string(&rc).unwrap(), original);
     }
 
