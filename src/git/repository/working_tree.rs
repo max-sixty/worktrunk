@@ -1,9 +1,10 @@
 //! WorkingTree - a borrowed handle for worktree-specific git operations.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
 use path_slash::PathExt;
 
@@ -13,9 +14,71 @@ use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
 use crate::git::CommandError;
-use crate::git::parse_numstat_line;
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
+
+#[derive(Debug)]
+struct NumstatEntry {
+    diff: LineDiff,
+    paths: NumstatPaths,
+}
+
+#[derive(Debug)]
+enum NumstatPaths {
+    Single(Vec<u8>),
+    Rename { old: Vec<u8>, new: Vec<u8> },
+}
+
+impl NumstatEntry {
+    fn paths(&self) -> impl Iterator<Item = &[u8]> {
+        let (first, second) = match &self.paths {
+            NumstatPaths::Single(path) => (path.as_slice(), None),
+            NumstatPaths::Rename { old, new } => (old.as_slice(), Some(new.as_slice())),
+        };
+        [Some(first), second].into_iter().flatten()
+    }
+}
+
+fn take_numstat_field<'a>(input: &mut &'a [u8], separator: u8) -> anyhow::Result<&'a [u8]> {
+    let Some(index) = input.iter().position(|&byte| byte == separator) else {
+        bail!("Malformed git diff --numstat -z output")
+    };
+    let (field, remainder) = input.split_at(index);
+    *input = &remainder[1..];
+    Ok(field)
+}
+
+fn parse_numstat_count(field: &[u8]) -> anyhow::Result<usize> {
+    if field == b"-" {
+        return Ok(0);
+    }
+    std::str::from_utf8(field)
+        .context("Malformed git diff --numstat count")?
+        .parse()
+        .context("Malformed git diff --numstat count")
+}
+
+fn parse_numstat_entries(mut output: &[u8]) -> anyhow::Result<Vec<NumstatEntry>> {
+    let mut entries = Vec::new();
+    while !output.is_empty() {
+        let added = parse_numstat_count(take_numstat_field(&mut output, b'\t')?)?;
+        let deleted = parse_numstat_count(take_numstat_field(&mut output, b'\t')?)?;
+        let first_path = take_numstat_field(&mut output, 0)?;
+        let paths = if first_path.is_empty() {
+            NumstatPaths::Rename {
+                old: take_numstat_field(&mut output, 0)?.to_vec(),
+                new: take_numstat_field(&mut output, 0)?.to_vec(),
+            }
+        } else {
+            NumstatPaths::Single(first_path.to_vec())
+        };
+        entries.push(NumstatEntry {
+            diff: LineDiff { added, deleted },
+            paths,
+        });
+    }
+    Ok(entries)
+}
 
 /// Quote a path component for Git's `glob` pathspec magic. The caller adds
 /// the one intentional wildcard after the escaped literal.
@@ -769,68 +832,68 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&["diff", "--shortstat", "HEAD"])?;
+        let stdout = self.run_command(&["diff", "--shortstat", "--find-renames", "HEAD"])?;
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
-    /// Working-tree diff stats vs HEAD that also count untracked files,
-    /// matching the diff `wt step diff` shows.
+    /// Working-tree diff stats vs HEAD that also count untracked files.
+    /// The scope matches `wt step diff`; explicit rename detection keeps
+    /// `HEAD±` stable across user Git configuration.
     ///
-    /// Tracked changes come from the normal `git diff HEAD` path. Untracked
-    /// files are staged separately in a [`TempIndex`] and diffed by path, so
-    /// the real index is untouched and Git does not need to rediscover tracked
-    /// modifications from a copied index.
+    /// Untracked paths enter a temporary index as intent-to-add entries, which
+    /// lets one diff pair them with tracked deletions as renames without writing
+    /// their contents as blobs. The real-index diff fills any tracked entry the
+    /// copied index misses because of racy stat data.
     pub fn working_tree_diff_stats_with_untracked(&self) -> anyhow::Result<LineDiff> {
-        let mut stats = self.working_tree_diff_stats()?;
-        let untracked = self.untracked_diff_stats()?;
-        stats.added += untracked.added;
-        stats.deleted += untracked.deleted;
-        Ok(stats)
-    }
-
-    fn untracked_diff_stats(&self) -> anyhow::Result<LineDiff> {
         let exclusions = self.observation_path_exclusions()?;
         let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z"];
         args.extend(exclusions.iter().map(String::as_str));
-        let output = self.run_command_output(&args)?;
-        if !output.status.success() {
-            return Err(CommandError::from_failed_output("git", &args, &output).into());
+        let untracked_output = self.run_command_output(&args)?;
+        if !untracked_output.status.success() {
+            return Err(CommandError::from_failed_output("git", &args, &untracked_output).into());
+        }
+        if untracked_output.stdout.is_empty() {
+            return self.working_tree_diff_stats();
         }
 
-        let paths: Vec<String> = output
-            .stdout
-            .split(|&b| b == 0)
-            .filter(|path| !path.is_empty())
-            .map(|path| String::from_utf8_lossy(path).into_owned())
-            .collect();
-        if paths.is_empty() {
-            return Ok(LineDiff::default());
+        let numstat_args = [
+            "diff",
+            "--numstat",
+            "-z",
+            "--find-renames",
+            "--end-of-options",
+            "HEAD",
+        ];
+        let tracked_output = self.run_command_output(&numstat_args)?;
+        if !tracked_output.status.success() {
+            return Err(
+                CommandError::from_failed_output("git", &numstat_args, &tracked_output).into(),
+            );
         }
+        let tracked_entries = parse_numstat_entries(&tracked_output.stdout)?;
 
         let idx = self.temp_index()?;
-        let add_args = [
-            "add",
-            "--sparse",
-            "--pathspec-from-file=-",
-            "--pathspec-file-nul",
-        ];
-        idx.run_command_with_input(add_args, output.stdout)?;
-
-        let mut args = vec![
-            "diff".to_string(),
-            "--cached".to_string(),
-            "--numstat".to_string(),
-            "HEAD".to_string(),
-            "--".to_string(),
-        ];
-        args.extend(paths);
-        let output = idx.run_command(&args)?;
+        idx.register_untracked_paths(untracked_output.stdout)?;
+        let combined_output = idx.run_command_output(numstat_args)?;
+        let combined_entries = parse_numstat_entries(&combined_output.stdout)?;
 
         let mut stats = LineDiff::default();
-        for line in output.lines() {
-            if let Some((added, deleted)) = parse_numstat_line(line) {
-                stats.added += added;
-                stats.deleted += deleted;
+        for entry in &combined_entries {
+            stats.added += entry.diff.added;
+            stats.deleted += entry.diff.deleted;
+        }
+
+        // A copied index can trust stale stat data that the real index treats
+        // as racily clean. The combined diff owns rename pairing, while the
+        // real-index diff supplies tracked records absent from it.
+        let covered_paths: HashSet<&[u8]> = combined_entries
+            .iter()
+            .flat_map(NumstatEntry::paths)
+            .collect();
+        for entry in tracked_entries {
+            if entry.paths().all(|path| !covered_paths.contains(path)) {
+                stats.added += entry.diff.added;
+                stats.deleted += entry.diff.deleted;
             }
         }
         Ok(stats)
@@ -1002,7 +1065,7 @@ impl<'a> WorkingTree<'a> {
 /// real index, point `GIT_INDEX_FILE` at the copy, and run those
 /// operations there. Today the callers are
 /// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
-/// untracked, used by `wt list --full` / `wt statusline`),
+/// untracked, used by list and statusline),
 /// `WorkingTreeConflictsTask` (write-tree of tracked changes, for
 /// merge-conflict probing), `wt step diff` (diff vs target merge-base with
 /// untracked), `wt step commit --dry-run` (mirror its `--stage` mode without
@@ -1077,6 +1140,21 @@ impl TempIndex {
         Ok(())
     }
 
+    /// Register an exact NUL-separated set of untracked paths as intent-to-add.
+    fn register_untracked_paths(&self, paths: Vec<u8>) -> anyhow::Result<()> {
+        self.run_command_output_with_input(
+            [
+                "add",
+                "--intent-to-add",
+                "--sparse",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ],
+            paths,
+        )?;
+        Ok(())
+    }
+
     fn append_temp_index_exclusion(&self, args: &mut Vec<String>) -> anyhow::Result<()> {
         let temp_dir = canonicalize_with_parents(
             self.temp
@@ -1099,14 +1177,22 @@ impl TempIndex {
         &self,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<String> {
-        self.run_command_with_input(args, Vec::new())
+        let output = self.run_command_output(args)?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    fn run_command_with_input(
+    fn run_command_output(
+        &self,
+        args: impl IntoIterator<Item = impl Into<String>>,
+    ) -> anyhow::Result<std::process::Output> {
+        self.run_command_output_with_input(args, Vec::new())
+    }
+
+    fn run_command_output_with_input(
         &self,
         args: impl IntoIterator<Item = impl Into<String>>,
         stdin: Vec<u8>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<std::process::Output> {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
         let mut command = self.command(args.iter().cloned());
         if !stdin.is_empty() {
@@ -1118,7 +1204,7 @@ impl TempIndex {
         if !output.status.success() {
             return Err(CommandError::from_failed_output("git", &args, &output).into());
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output)
     }
 
     /// Build a `git` command pointed at this temp index.
@@ -1148,7 +1234,7 @@ impl TempIndex {
 #[cfg(test)]
 mod tests {
     use super::has_initialized_submodules_from_status;
-    use crate::git::Repository;
+    use crate::git::{LineDiff, Repository};
     use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
 
@@ -1390,6 +1476,112 @@ mod tests {
     }
 
     #[test]
+    fn working_tree_diff_stats_without_untracked_files_still_finds_renames() {
+        let test = TestRepo::with_initial_commit();
+        let source = (1..=100)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(test.root_path().join("source.txt"), format!("{source}\n")).unwrap();
+        test.run_git(&["add", "source.txt"]);
+        test.run_git(&["commit", "-m", "add source"]);
+        test.run_git(&["config", "diff.renames", "false"]);
+
+        std::fs::create_dir(test.root_path().join("moved")).unwrap();
+        test.run_git(&["mv", "source.txt", "moved/source.txt"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo.current_worktree()
+                .working_tree_diff_stats_with_untracked()
+                .unwrap(),
+            LineDiff::default(),
+            "HEAD± uses one rename policy whether or not untracked files exist"
+        );
+    }
+
+    #[test]
+    fn working_tree_diff_stats_with_untracked_reports_only_a_moves_line_delta() {
+        let test = TestRepo::with_initial_commit();
+        let source = (1..=100)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(test.root_path().join("source.txt"), format!("{source}\n")).unwrap();
+        test.run_git(&["add", "source.txt"]);
+        test.run_git(&["commit", "-m", "add source"]);
+
+        std::fs::create_dir(test.root_path().join("moved")).unwrap();
+        std::fs::rename(
+            test.root_path().join("source.txt"),
+            test.root_path().join("moved/source.txt"),
+        )
+        .unwrap();
+
+        let repo = Repository::at(test.root_path())
+            .unwrap()
+            .redirect_objects_for_observation()
+            .unwrap();
+        let wt = repo.current_worktree();
+        let real_index = wt.git_dir().unwrap().join("index");
+        let index_before = std::fs::read(&real_index).unwrap();
+        let objects_before = test.git_output(&["count-objects", "-v"]);
+
+        assert_eq!(
+            wt.working_tree_diff_stats_with_untracked().unwrap(),
+            LineDiff::default(),
+            "an exact move changes paths but no lines"
+        );
+
+        let mut moved = source.lines().map(str::to_string).collect::<Vec<_>>();
+        moved[49] = "changed line".to_string();
+        moved.push("added line".to_string());
+        std::fs::write(
+            test.root_path().join("moved/source.txt"),
+            format!("{}\n", moved.join("\n")),
+        )
+        .unwrap();
+        assert_eq!(
+            wt.working_tree_diff_stats_with_untracked().unwrap(),
+            LineDiff {
+                added: 2,
+                deleted: 1,
+            },
+            "an edited move reports only the edits"
+        );
+
+        assert_eq!(std::fs::read(&real_index).unwrap(), index_before);
+        assert_eq!(test.git_output(&["count-objects", "-v"]), objects_before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn working_tree_diff_stats_with_untracked_preserves_rename_path_bytes() {
+        let test = TestRepo::with_initial_commit();
+        let source = "source\tname\n.txt";
+        let destination = "moved\tname\n.txt";
+        std::fs::write(test.root_path().join(source), "one\ntwo\nthree\n").unwrap();
+        test.run_git(&["add", source]);
+        test.run_git(&["commit", "-m", "add unusual path"]);
+        std::fs::rename(
+            test.root_path().join(source),
+            test.root_path().join(destination),
+        )
+        .unwrap();
+
+        let repo = Repository::at(test.root_path())
+            .unwrap()
+            .redirect_objects_for_observation()
+            .unwrap();
+        assert_eq!(
+            repo.current_worktree()
+                .working_tree_diff_stats_with_untracked()
+                .unwrap(),
+            LineDiff::default()
+        );
+    }
+
+    #[test]
     fn observation_object_directory_is_excluded_from_status_and_diff() {
         let test = TestRepo::with_initial_commit();
         let observation_directory = test
@@ -1432,11 +1624,14 @@ mod tests {
     }
 
     #[test]
-    fn untracked_diff_stats_crosses_sparse_checkout_boundary() {
+    fn working_tree_diff_stats_with_untracked_crosses_sparse_checkout_boundary() {
         let test = sparse_checkout_with_untracked_file();
 
         let repo = Repository::at(test.root_path()).unwrap();
-        let stats = repo.current_worktree().untracked_diff_stats().unwrap();
+        let stats = repo
+            .current_worktree()
+            .working_tree_diff_stats_with_untracked()
+            .unwrap();
         assert_eq!(stats.added, 1);
         assert_eq!(stats.deleted, 0);
     }
@@ -1473,21 +1668,23 @@ mod tests {
     }
 
     #[test]
-    fn untracked_diff_stats_unborn_head_is_command_error() {
-        // With an unborn HEAD the untracked files stage fine into the temp
-        // index, but `git diff --cached --numstat HEAD` cannot resolve HEAD —
-        // the failure must surface as a typed `CommandError`.
+    fn working_tree_diff_stats_with_untracked_unborn_head_is_command_error() {
+        // With an unborn HEAD the tracked diff cannot resolve its comparison
+        // revision. The failure must surface as a typed `CommandError`.
         let test = TestRepo::new();
         std::fs::write(test.root_path().join("new.txt"), "hello\n").unwrap();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        let err = repo.current_worktree().untracked_diff_stats().unwrap_err();
+        let err = repo
+            .current_worktree()
+            .working_tree_diff_stats_with_untracked()
+            .unwrap_err();
         let cmd_err =
             crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
         assert!(
             cmd_err
                 .command_string()
-                .starts_with("git diff --cached --numstat HEAD")
+                .starts_with("git diff --numstat -z --find-renames --end-of-options HEAD")
         );
     }
 

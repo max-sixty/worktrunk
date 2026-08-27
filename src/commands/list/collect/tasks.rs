@@ -85,9 +85,6 @@ pub struct TaskContext {
     /// ref→SHA cache. `None` when snapshot capture failed (degraded
     /// mode — tasks fall back to ref-taking methods).
     pub snapshot: Option<Arc<RefSnapshot>>,
-    /// Whether `WorkingTreeDiffTask` should include untracked files in
-    /// its `HEAD±` line counts. See `CollectOptions` for rationale.
-    pub include_untracked_in_working_diff: bool,
 }
 
 impl TaskContext {
@@ -579,15 +576,11 @@ impl Task for WorkingTreeDiffTask {
         let (working_tree_status, is_dirty, has_conflicts) =
             parse_working_tree_status(&status_output);
 
-        // The default `wt list` path keeps `HEAD±` as a fast `git diff
-        // --shortstat HEAD` over tracked files only. `--full` and statusline
-        // ask for the same untracked-inclusive stat that `wt step diff`
-        // shows; honour it only when the cached porcelain actually has
-        // untracked entries (otherwise the fast path is identical and we
-        // skip the index copy + intent-to-add walk).
+        // Only untracked entries need the temporary index. Tracked-only
+        // changes keep the ordinary tracked diff fast path.
         let working_tree_diff = if !is_dirty {
             LineDiff::default()
-        } else if ctx.include_untracked_in_working_diff && working_tree_status.untracked {
+        } else if working_tree_status.untracked {
             wt.working_tree_diff_stats_with_untracked()
                 .map_err(|e| ctx.error(Self::KIND, &e))?
         } else {

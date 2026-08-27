@@ -78,7 +78,7 @@ $ wt list --format=json
 |--------|-------|
 | Branch | Branch name; a detached worktree has none, so it shows its short hash in dim yellow |
 | Status | Compact symbols (see below) |
-| HEAD± | Uncommitted changes: +added -deleted lines |
+| HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base (three-dot) with the default branch |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) <span class="badge-experimental"></span> |

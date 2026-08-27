@@ -55,9 +55,16 @@
 //! For each worktree, we execute:
 //! - `git status --porcelain` - Working tree state (uses index cache)
 //! - `git rev-list --count <base>..<head>` - Ahead/behind counts (uses commit graph)
-//! - `git diff --shortstat HEAD` - Working tree line diffs (uses index + tree objects)
+//! - Working tree line diffs:
+//!   - Without untracked files: `git diff --shortstat --find-renames HEAD`
+//!   - With untracked files: `git ls-files --others`, a temporary index copy plus
+//!     `git add --intent-to-add`, and two `git diff --numstat -z --find-renames HEAD` calls
 //! - `git diff --shortstat <base>...<head>` - Branch line diffs (uses tree objects)
 //! - `git rev-parse <ref>` - Ref resolution (uses ref cache)
+//!
+//! `HEAD±` always enables rename detection because pairing a tracked deletion with an
+//! untracked destination makes a move line-neutral. `main…±` compares committed trees
+//! and continues to use the user's configured rename policy.
 //!
 //! Plus one global command:
 //! - `git worktree list --porcelain` - List all worktrees (uses ref cache)
@@ -111,7 +118,8 @@
 //! Bottlenecks:
 //! 1. `git status --porcelain` - Slowest when index is cold or many files changed
 //! 2. `git rev-list --count` - Slow without commit graph in repos with deep history
-//! 3. `git diff --shortstat` - Slow for large diffs or when pack files aren't cached
+//! 3. Working tree diff - Slow for large tracked diffs or cold pack files; untracked
+//!    paths also require enumeration, a temporary index write, and two numstat diffs
 //!
 //! Optimization tips:
 //! - Run `git commit-graph write --reachable --changed-paths` to speed up commit counting

@@ -61,7 +61,7 @@ The URL column in `wt list` shows each worktree's dev server:
 ```console
 $ wt list
   Branch       Status        HEAD±    main↕     main…±  Remote⇅  URL                     Commit
-@ main           ? ^⇅                                    ⇡1  ⇣1  http://localhost:12107  41ee083
+@ main           ? ^⇅      +5                            ⇡1  ⇣1  http://localhost:12107  41ee083
 + feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68
 + fix-typos        _|                                      |     http://localhost:14301  41ee083

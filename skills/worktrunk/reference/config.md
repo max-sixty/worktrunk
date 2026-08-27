@@ -205,7 +205,7 @@ Valid built-in names:
 
 - `branch` — The branch name
 - `status` — Git status symbols, plus any user-defined status
-- `working-diff` — Uncommitted line changes against `HEAD` (header `HEAD±`)
+- `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
 - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
 - `branch-diff` — Line changes against the default branch (header `main…±`)
 - `summary` — An LLM-generated summary of the branch
@@ -1378,8 +1378,8 @@ $ wt list
   Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
 @ main             ^⇡                                    ⇡1      33323bc  1d    Initial commit
 + feature-api      ↑ 🤖              ↑1        +1                70343f0  1d    Add REST API endp…
-+ review-ui      ? ↑ 💬              ↑1        +1                a585d6e  1d    Add dashboard com…
-+ wip-docs       ? –                                             33323bc  1d    Initial commit
++ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e  1d    Add dashboard com…
++ wip-docs       ? –       +1                                    33323bc  1d    Initial commit
 
 ○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
 ```

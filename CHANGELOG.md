@@ -1,10 +1,46 @@
 # Changelog
 
-## Unreleased
+## 0.75.0
+
+### Improved
+
+- **The `wt switch` picker opens on one unified diff**: local rows combine committed, staged, unstaged, and untracked changes. Tab skips empty subsidiary views, while `Alt-1` through `Alt-8` retain direct access. [Docs](https://worktrunk.dev/switch/#interactive-picker) ([#3865](https://github.com/max-sixty/worktrunk/pull/3865))
+
+- **Git 2.43 is now the minimum supported version**: older Git exits with an upgrade message before Git-dependent commands run; `wt config shell` remains available so shell startup continues. (Breaking.) ([#3895](https://github.com/max-sixty/worktrunk/pull/3895))
 
 ### Fixed
 
-- **Windows: a path past the 260-character limit compared as if it were on another drive**: `dunce` strips the `\\?\` prefix only below that length, so a deep `node_modules` came back spelled `\\?\C:\…` while its worktree root stayed `C:\…`. `wt step copy-ignored` refused to copy into it, and `wt switch` (and `remove`, `merge`, `step relocate`) silently landed the shell at the worktree root instead of your subdirectory. The canonicalizer now returns one spelling at any length. (fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting)
+- **`wt list` no longer grows `.git/objects` during advisory conflict checks**: untracked content stays visible but is excluded from synthetic trees, and all probe-only objects use temporary storage. ([#3906](https://github.com/max-sixty/worktrunk/pull/3906), fixes [#3883](https://github.com/max-sixty/worktrunk/issues/3883), thanks @srobroek for reporting and the original fix)
+
+- **`HEAD±` counts untracked files without inflating moves**: `wt list`, the picker, and statusline include untracked lines. Tracked deletions paired with untracked destinations count as renames, so pure moves are line-neutral and edited moves show only their edits. `HEAD±` now always detects renames, regardless of `diff.renames`. ([#3925](https://github.com/max-sixty/worktrunk/pull/3925))
+
+- **Timed child processes no longer abort `wt` in restricted sandboxes**: `wt switch --create`, picker pagers, and other bounded commands survive denied signal-handler wakes. TERM→KILL cleanup also returns promptly once the process group is gone. ([#3857](https://github.com/max-sixty/worktrunk/pull/3857), [#3887](https://github.com/max-sixty/worktrunk/pull/3887), fixes [#3856](https://github.com/max-sixty/worktrunk/issues/3856), thanks @tomascamargo for reporting)
+
+- **JSON list output ignores display-column gates**: `[list] columns` no longer makes `wt list --format json` contact a forge or generate summaries. CI requires `--full`; summaries also require `[list] summary = true` and a configured generator. (Breaking: schema 1 loses config-driven `ci` and `summary` fields.) ([#3812](https://github.com/max-sixty/worktrunk/pull/3812), thanks @emeren for the request)
+
+- **Long Windows paths compare consistently**: paths beyond 260 characters could retain a `\\?\` prefix and appear to be on another drive. `copy-ignored` then refused them, while switch, remove, merge, and relocate landed at the worktree root instead of the original subdirectory. ([#3899](https://github.com/max-sixty/worktrunk/pull/3899), fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting and verifying the fix)
+
+- **Shell configuration rechecks before it writes**: overlapping installs lock and reread rc files; Fish completion installs preserve files created after preview; uninstall applies only previewed rc removals and rejects changed Worktrunk-owned files. ([#3853](https://github.com/max-sixty/worktrunk/pull/3853), [#3924](https://github.com/max-sixty/worktrunk/pull/3924))
+
+- **`-vv` profiles exclude their own collector commands**: command counts and cache summaries no longer include duplicate-looking work performed only to assemble the diagnostic report; raw traces still retain it. ([#3900](https://github.com/max-sixty/worktrunk/pull/3900))
+
+- **Fenced HTML comments survive picker Markdown rendering**: PR descriptions and comments now preserve fenced `<!-- … -->` lines; fenced `<!-- wt list … -->` markers also no longer affect the following block. ([#3908](https://github.com/max-sixty/worktrunk/pull/3908))
+
+### Documentation
+
+- **Agent CLIs without a plugin can publish activity markers**: the integration guide now specifies the session-start, turn-end, and session-end calls, working-directory requirement, error guard, and cleanup contract. [Docs](https://worktrunk.dev/claude-code/#agent-clis-without-a-plugin) ([#3848](https://github.com/max-sixty/worktrunk/pull/3848), thanks @AsafMah for requesting generic-agent guidance and @ortonomy for the related Pi use case)
+
+- **Agent guidance explains worktree selection**: commands that name a branch already select its worktree; `-C` changes repository context and is needed only for commands without a worktree selector or callers outside the repository. ([#3890](https://github.com/max-sixty/worktrunk/pull/3890))
+
+- **The `wt up` recipe safely updates dirty worktrees**: it fetches all remotes, fast-forwards dirty branches without autostash, rebases clean branches, and continues past an ordinary refusal or a failed remote. [Docs](https://worktrunk.dev/extending/#recipe-rebase-every-worktree-onto-its-upstream) ([#3882](https://github.com/max-sixty/worktrunk/pull/3882))
+
+- **The docs site has a new responsive design**: rebuilt on Astro and Starlight while preserving public routes, anchors, and crawler URLs; generated reference pages remain synchronized. ([#3866](https://github.com/max-sixty/worktrunk/pull/3866))
+
+### Internal
+
+- **Library API rework** (Breaking library API): `BranchDiffSpec` gained `working_base`, while remote-URL, shell-path, branch-push, approval, temporary-index, and repository helpers were removed. ([#3833](https://github.com/max-sixty/worktrunk/pull/3833), [#3853](https://github.com/max-sixty/worktrunk/pull/3853), [#3865](https://github.com/max-sixty/worktrunk/pull/3865), [#3866](https://github.com/max-sixty/worktrunk/pull/3866), [#3875](https://github.com/max-sixty/worktrunk/pull/3875))
+
+- **Codex loads repository maintainer skills**: `.agents/skills` now exposes the canonical `.claude/skills` tree; checkouts without symlink support keep the existing limitation. ([#3903](https://github.com/max-sixty/worktrunk/pull/3903))
 
 ## 0.74.0
 
