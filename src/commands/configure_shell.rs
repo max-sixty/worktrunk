@@ -738,7 +738,7 @@ fn configure_shell_file(
 fn format_new_rc_error(path: &Path, error: &io::Error) -> String {
     let display_path = format_path_for_display(path);
     if error.kind() == io::ErrorKind::AlreadyExists {
-        if path.is_symlink() {
+        if path.is_symlink() && !path.exists() {
             return format!(
                 "Failed to create {display_path}: path is a dangling symlink; restore its target or remove the link, then rerun"
             );
@@ -2023,6 +2023,27 @@ mod tests {
         assert_eq!(
             format_new_rc_error(path, &error),
             "Failed to create /home/user/.zshrc: another process created it first; rerun to append"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_new_rc_error_reports_live_symlink_as_concurrent_creator() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("target");
+        let path = dir.path().join(".zshrc");
+        fs::write(&target, "# concurrent config\n").unwrap();
+        symlink(target, &path).unwrap();
+        let error = io::Error::from(io::ErrorKind::AlreadyExists);
+
+        assert_eq!(
+            format_new_rc_error(&path, &error),
+            format!(
+                "Failed to create {}: another process created it first; rerun to append",
+                format_path_for_display(&path)
+            )
         );
     }
 
