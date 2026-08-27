@@ -12,6 +12,8 @@
 
 - **`wt list` no longer grows `.git/objects` during advisory conflict checks**: untracked content stays visible but is excluded from synthetic trees, and all probe-only objects use temporary storage. ([#3906](https://github.com/max-sixty/worktrunk/pull/3906), fixes [#3883](https://github.com/max-sixty/worktrunk/issues/3883), thanks @srobroek for reporting and the original fix)
 
+- **`HEAD±` counts untracked files without inflating moves**: `wt list`, the picker, and statusline include untracked lines. Tracked deletions paired with untracked destinations count as renames, so pure moves are line-neutral and edited moves show only their edits. `HEAD±` now always detects renames, regardless of `diff.renames`. ([#3925](https://github.com/max-sixty/worktrunk/pull/3925))
+
 - **Timed child processes no longer abort `wt` in restricted sandboxes**: `wt switch --create`, picker pagers, and other bounded commands survive denied signal-handler wakes. TERM→KILL cleanup also returns promptly once the process group is gone. ([#3857](https://github.com/max-sixty/worktrunk/pull/3857), [#3887](https://github.com/max-sixty/worktrunk/pull/3887), fixes [#3856](https://github.com/max-sixty/worktrunk/issues/3856), thanks @tomascamargo for reporting)
 
 - **JSON list output ignores display-column gates**: `[list] columns` no longer makes `wt list --format json` contact a forge or generate summaries. CI requires `--full`; summaries also require `[list] summary = true` and a configured generator. (Breaking: schema 1 loses config-driven `ci` and `summary` fields.) ([#3812](https://github.com/max-sixty/worktrunk/pull/3812), thanks @emeren for the request)
