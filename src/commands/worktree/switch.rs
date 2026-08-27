@@ -834,7 +834,7 @@ fn plan_switch(
                 .into());
             }
             return Ok(SwitchPlan::Existing {
-                path: canonicalize(&path).unwrap_or(path),
+                path: operational_worktree_path(path),
                 branch,
                 new_previous,
             });
@@ -872,6 +872,18 @@ fn plan_switch(
     })
 }
 
+/// Preserve the filesystem spelling Git and downstream commands can operate
+/// on. This is deliberately separate from [`WorktreeId`]'s comparison form:
+/// on deep Windows paths, `dunce` keeps the `\\?\` prefix while the identity
+/// drops it so paths on opposite sides of the legacy-length threshold compare.
+fn operational_worktree_path(path: PathBuf) -> PathBuf {
+    canonicalize(&path).unwrap_or(path)
+}
+
+fn same_worktree_path(left: &Path, right: &Path) -> bool {
+    WorktreeId::new(left) == WorktreeId::new(right)
+}
+
 /// Execute a validated switch plan.
 ///
 /// Takes a `SwitchPlan` from `plan_switch()` and executes it.
@@ -891,8 +903,9 @@ fn execute_switch(
             branch,
             new_previous,
         } => {
-            let current_worktree_id = std::env::current_dir().ok().map(WorktreeId::new);
-            let already_at_worktree = current_worktree_id.as_ref() == Some(&WorktreeId::new(&path));
+            let already_at_worktree = std::env::current_dir()
+                .ok()
+                .is_some_and(|current| same_worktree_path(&current, &path));
 
             // Only update switch history when actually switching worktrees.
             // Updating on AlreadyAt would corrupt `wt switch -` by recording
@@ -2087,6 +2100,40 @@ fn validate_switch_templates(
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    /// Windows needs two representations of a deep worktree path: the
+    /// verbatim spelling that filesystem operations accept, and the
+    /// prefix-free canonical identity used for equality. Keep both sides of
+    /// that boundary pinned without asking Git to register an overlong
+    /// administrative `$GIT_DIR` path.
+    #[test]
+    #[cfg(windows)]
+    fn deep_worktree_keeps_operational_path_separate_from_identity() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut deep = temp.path().join("deep");
+        while deep.as_os_str().len() < 320 {
+            deep.push("nested-worktree-directory");
+        }
+        std::fs::create_dir_all(&deep).expect("create deep tree");
+
+        let operational = operational_worktree_path(deep.clone());
+        let identity = worktrunk::path::canonicalize_with_parents(&deep);
+        assert!(
+            operational.to_string_lossy().starts_with(r"\\?\"),
+            "dunce should retain the verbatim prefix: {}",
+            operational.display()
+        );
+        assert!(
+            !identity.to_string_lossy().starts_with(r"\\?\"),
+            "identity should remove the verbatim prefix: {}",
+            identity.display()
+        );
+        assert_ne!(operational, identity, "the representations should differ");
+        assert!(
+            same_worktree_path(&operational, &identity),
+            "canonical identity should still recognize one worktree"
+        );
+    }
 
     #[test]
     fn is_clean_program_token_matches_only_bare_names() {
