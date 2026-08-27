@@ -184,7 +184,9 @@ fn parse_commit_message_details_output(output: &str) -> anyhow::Result<Vec<Commi
     }
 
     Ok(parts
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| CommitMessageDetail {
             subject: pair[0].to_string(),
             body: pair[1].to_string(),

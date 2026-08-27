@@ -50,8 +50,9 @@ const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
     HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
-    LocalContentSlot, MorphHandle, PickerRow, PickerRowId, PrStatusSlot, PreviewCache,
-    RowShortcutData, RowUrl, ShortcutTable, pr_presence, pr_status_pane_eq, worktree_output_token,
+    LocalContentSlot, MorphHandle, PickerRow, PickerRowId, PickerRowSubject, PrStatusSlot,
+    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, pr_presence, pr_status_pane_eq,
+    worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
@@ -357,7 +358,6 @@ impl PickerProgressHandler for PickerHandler {
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
             let branch_name = item.branch_name().to_string();
-            let row_id = PickerRowId::local(&item);
             let has_upstream = upstream_branches.contains(&branch_name);
             // The *distinct* path (leaf relative to the shared worktree parent),
             // not the absolute path — see `path_base`. This feeds only the
@@ -457,13 +457,7 @@ impl PickerProgressHandler for PickerHandler {
                 search_base,
                 gutter,
                 rendered: rendered_arc,
-                row_id,
-                branch_name,
-                output_token,
-                preview_cache: Arc::clone(&self.preview_cache),
-                pr_status: pr_status_arc,
-                notifier: Arc::clone(self.orchestrator.notifier()),
-                local: Some(LocalCheckout {
+                subject: PickerRowSubject::Local(LocalCheckout {
                     item: Arc::clone(&item_arc),
                     demand: Arc::clone(self.orchestrator.demand()),
                     spawn_gen: self.spawn_gen.clone(),
@@ -472,6 +466,11 @@ impl PickerProgressHandler for PickerHandler {
                     local_content: local_content_arc,
                     morphed,
                 }),
+                branch_name,
+                output_token,
+                preview_cache: Arc::clone(&self.preview_cache),
+                pr_status: pr_status_arc,
+                notifier: Arc::clone(self.orchestrator.notifier()),
             }) as Arc<dyn SkimItem>);
         }
 

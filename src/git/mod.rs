@@ -571,11 +571,6 @@ impl WorktreeId {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self(canonicalize_with_parents(path.as_ref()))
     }
-
-    /// Consume the identity and return its canonical path.
-    pub fn into_path(self) -> PathBuf {
-        self.0
-    }
 }
 
 /// Repository-scoped identity for a worktree or branch-only item.

@@ -7375,6 +7375,52 @@ fn test_switch_already_at_preserves_history(repo: TestRepo) {
     );
 }
 
+/// The identity used to recognize the current worktree must not replace the
+/// path returned to the switch pipeline. Past the Windows verbatim-path
+/// threshold, `dunce` keeps the `\\?\` prefix while `WorktreeId` drops it for
+/// comparisons; mixing those representations used to turn this no-op into a
+/// switch and overwrite `worktrunk.history`.
+#[test]
+#[cfg(windows)]
+fn test_switch_already_at_deep_path_preserves_history() {
+    let mut repo = TestRepo::with_initial_commit();
+    repo.run_git(&["config", "core.longPaths", "true"]);
+    let mut deep = repo.home_path().join("deep");
+    while deep.as_os_str().len() < 320 {
+        deep.push("nested-worktree-directory");
+    }
+    let worktree = repo.add_worktree_at_path("deep-feature", &deep);
+    assert!(
+        worktree.to_string_lossy().starts_with(r"\\?\"),
+        "dunce should keep the verbatim prefix past its length threshold: {}",
+        worktree.display()
+    );
+    repo.repo.set_switch_previous(Some("main")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .current_dir(&worktree)
+        .args([
+            "switch",
+            "deep-feature",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+
+    let reloaded = worktrunk::git::Repository::at(repo.root_path()).unwrap();
+    assert_eq!(reloaded.switch_previous().as_deref(), Some("main"));
+}
+
 /// WORKTRUNK_FIRST_OUTPUT exits after execute_switch, before mismatch computation
 /// and output rendering. Used by time-to-first-output benchmarks.
 #[rstest]

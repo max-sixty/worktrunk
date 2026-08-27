@@ -58,7 +58,9 @@ use super::super::list::ci_status::{
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
-use super::items::{PickerRow, PickerRowId, PreviewCache, RowShortcutData, RowUrl, ShortcutTable};
+use super::items::{
+    PickerRow, PickerRowId, PickerRowSubject, PreviewCache, RowShortcutData, RowUrl, ShortcutTable,
+};
 use super::pr_pane;
 use super::preview::PreviewMode;
 use super::preview_cache::CommentEntry;
@@ -432,7 +434,7 @@ fn fetch_and_stream(
     let _ = tx.send(items);
 }
 
-/// Build a listed `--prs` row: a [`PickerRow`] with `local: None` and a static
+/// Build a listed `--prs` row: a [`PickerRow`] with a change-request subject and a static
 /// PR slot pre-filled from `entry` via [`PrEntry::display_status`], which
 /// overlays the entry's number/title/author/body/url/draft onto its CI status
 /// so `text()` folds the same tokens and `render_pr_pane_body` renders the same
@@ -468,13 +470,12 @@ fn listed_pr_row(
         search_base: entry.head_branch.clone(),
         gutter: '#',
         rendered: Arc::new(Mutex::new(rendered)),
-        row_id,
+        subject: PickerRowSubject::ChangeRequest(entry.pr_ref()),
         branch_name: entry.head_branch.clone(),
         output_token,
         preview_cache,
         pr_status: Arc::new(Mutex::new(Some(Some(entry.display_status())))),
         notifier,
-        local: None,
     }
 }
 
@@ -1335,7 +1336,7 @@ mod tests {
     use crate::commands::list::model::ListItem;
     use dashmap::DashMap;
 
-    /// Build a listed-`--prs` `PickerRow` (`local: None`) with a throwaway empty
+    /// Build a listed-`--prs` `PickerRow` with a throwaway empty
     /// preview cache — the same shape `fetch_and_stream` builds. The deferred
     /// `log` tab is exercised separately (see `log_tab_reads_cache_then_placeholder`).
     fn pr_item(entry: PrEntry, list_width: usize, grid: Option<&ColumnGrid>) -> PickerRow {
@@ -2063,7 +2064,7 @@ mod tests {
         assert!(miss.contains("Loading commit log"), "miss: {miss:?}");
 
         cache.insert(
-            (pr.row_id.clone(), PreviewMode::Log),
+            (pr.preview_key(), PreviewMode::Log),
             "abc12345  Fix it\n".to_string(),
         );
         assert_eq!(pr.cached_or_loading(PreviewMode::Log), "abc12345  Fix it\n");
@@ -2215,7 +2216,7 @@ mod tests {
         assert!(miss.contains("Loading comments"), "miss: {miss:?}");
 
         cache.insert(
-            (pr.row_id.clone(), PreviewMode::Comments),
+            (pr.preview_key(), PreviewMode::Comments),
             "rendered thread".to_string(),
         );
         assert_eq!(

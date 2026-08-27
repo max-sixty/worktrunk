@@ -20,11 +20,9 @@ use std::env;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
 
-use dunce::canonicalize;
-
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
-use worktrunk::git::{Repository, WorkingTree};
+use worktrunk::git::{Repository, WorkingTree, WorktreeId};
 use worktrunk::styling::{
     ColorChoice, fix_dim_after_color_reset, println, terminal_width_for_statusline,
     truncate_visible,
@@ -893,26 +891,20 @@ fn statusline_options(repo: &Repository) -> CollectOptions {
 fn current_worktree_item(worktree: &WorkingTree) -> Result<Option<list::model::ListItem>> {
     let repo = worktree.repo();
 
-    // Use git rev-parse --show-toplevel (via WorkingTree::root()) to correctly identify
-    // the worktree containing that directory, rather than prefix matching which fails for
-    // nested worktrees.
-    let worktree_root = worktree.root()?;
-    let Some(wt) = repo.list_worktrees()?.iter().find(|wt| {
-        canonicalize(&wt.path)
-            .map(|p| p == worktree_root)
-            .unwrap_or(false)
-    }) else {
+    // `WorkingTree::root()` identifies the checkout containing a nested
+    // directory. Convert it once to the same canonical identity every
+    // inventory and primary-worktree comparison uses.
+    let current_id = WorktreeId::new(worktree.root()?);
+    let worktrees = repo.list_worktrees()?;
+    let Some(wt) = worktrees.iter().find(|wt| wt.id() == current_id) else {
         return Ok(None);
     };
 
     // Determine if this is the primary worktree
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    let is_home = repo
-        .primary_worktree()
-        .ok()
-        .flatten()
-        .is_some_and(|p| wt.path == p);
+    let primary_id = repo.primary_worktree().ok().flatten().map(WorktreeId::new);
+    let is_home = primary_id.as_ref() == Some(&current_id);
 
     Ok(Some(list::build_worktree_item(wt, is_home, true, false)))
 }

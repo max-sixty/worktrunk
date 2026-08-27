@@ -1,8 +1,8 @@
 //! Skim item implementations.
 //!
 //! The unified [`PickerRow`] (a branch/worktree row or a listed `--prs` row,
-//! distinguished by `local: Option<LocalCheckout>`) and the header row, both
-//! implementing `SkimItem` for the interactive selector.
+//! distinguished by [`PickerRowSubject`]) and the header row, both implementing
+//! `SkimItem` for the interactive selector.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -447,8 +447,10 @@ pub(super) struct PickerRow {
     /// skeleton render and is replaced in place as data arrives; for a `--prs`
     /// row it's built once and never mutated.
     pub rendered: Arc<Mutex<String>>,
-    /// Canonical identity shared by every preview producer and consumer.
-    pub row_id: PickerRowId,
+    /// The row's identity-bearing data. Keeping local checkout data and listed
+    /// change-request identity in one enum makes the row key a derivation of
+    /// the subject rather than parallel state that constructors can mismatch.
+    pub subject: PickerRowSubject,
     /// Branch name (the head branch for a `--prs` row). Used by switch
     /// selection and the `pr` pane's branch line; never as identity.
     pub branch_name: String,
@@ -467,11 +469,32 @@ pub(super) struct PickerRow {
     /// orchestrator pokes a repaint when that key's compute lands (see
     /// [`PreviewNotifier`]).
     pub notifier: Arc<PreviewNotifier>,
-    /// Local-branch data — `Some` for a local worktree or branch-only row,
-    /// `None` for a listed `--prs` row (whose head isn't available as a local
-    /// `ListItem`). Its presence is the single axis the preview/output paths
-    /// branch on.
-    pub local: Option<LocalCheckout>,
+}
+
+/// Identity-bearing data for one picker row.
+///
+/// Local rows derive their canonical key from the contained [`ListItem`];
+/// listed PR/MR rows derive it from their structured forge reference. This is
+/// also the single axis the preview and output paths branch on.
+pub(super) enum PickerRowSubject {
+    Local(LocalCheckout),
+    ChangeRequest(PrRef),
+}
+
+impl PickerRowSubject {
+    fn id(&self) -> PickerRowId {
+        match self {
+            Self::Local(local) => PickerRowId::local(&local.item),
+            Self::ChangeRequest(pr_ref) => PickerRowId::change_request(*pr_ref),
+        }
+    }
+
+    fn local(&self) -> Option<&LocalCheckout> {
+        match self {
+            Self::Local(local) => Some(local),
+            Self::ChangeRequest(_) => None,
+        }
+    }
 }
 
 /// The local-git-backed half of a [`PickerRow`]: present for local worktree and
@@ -513,8 +536,8 @@ pub(super) struct LocalCheckout {
 
 impl PickerRow {
     /// Key for every preview-cache read and notifier record.
-    fn preview_key(&self) -> &PickerRowId {
-        &self.row_id
+    pub(super) fn preview_key(&self) -> PickerRowId {
+        self.subject.id()
     }
 }
 
@@ -551,8 +574,9 @@ impl SkimItem for PickerRow {
         // An `alt-x` morph turned this worktree row into a branch-only row: its
         // selection token is the bare branch name, like any branch row (so a
         // later switch/`alt-x` treats it as a branch, and `alt-y` finds it under
-        // the re-keyed token). `--prs` rows have no `local`, so they never morph.
-        if let Some(local) = &self.local
+        // the re-keyed token). Listed PR/MR rows have no local checkout, so
+        // they never morph.
+        if let Some(local) = self.subject.local()
             && local.morphed.load(Ordering::Relaxed)
         {
             return Cow::Owned(self.branch_name.clone());
@@ -567,7 +591,7 @@ impl SkimItem for PickerRow {
         // (it's per-process picker state); everything else is derived in
         // `render_preview`, which takes the mode explicitly so it's testable
         // without touching that global state.
-        let default_mode = if self.local.is_some() {
+        let default_mode = if self.subject.local().is_some() {
             PreviewMode::UnifiedDiff
         } else {
             PreviewMode::Pr
@@ -582,7 +606,8 @@ impl SkimItem for PickerRow {
         // set and pokes a repaint (see `PreviewNotifier`). Keyed by `preview_key`
         // so the awaited key matches the typed identity the background fill
         // writes.
-        self.notifier.note_awaiting(self.preview_key(), mode);
+        let preview_key = self.preview_key();
+        self.notifier.note_awaiting(&preview_key, mode);
         // A miss on a local-git tab means the placeholder below would sit
         // until background precompute reaches this (row, mode) — in a large
         // repo, seconds. Ask the demand worker to compute it now; the fill
@@ -593,12 +618,10 @@ impl SkimItem for PickerRow {
         // effort: a request parked in the instant before the morph is still
         // served from the frozen item.) A row an `alt-r` rebuild superseded
         // is refused at the channel via the spawn token it posts.
-        if let Some(local) = &self.local
+        if let Some(local) = self.subject.local()
             && mode.is_local_git()
             && !local.morphed.load(Ordering::Relaxed)
-            && !self
-                .preview_cache
-                .contains_key(&(self.preview_key().clone(), mode))
+            && !self.preview_cache.contains_key(&(preview_key, mode))
         {
             local.demand.request(
                 Arc::clone(&local.item),
@@ -1074,7 +1097,7 @@ impl PickerRow {
             // branch-diff/upstream/summary) compute locally for a local row; a `--prs` row has no
             // checkout, so its `log` loads from the forge and the rest point at
             // the `pr` tab (see `render_listed_pr_mode`).
-            _ => match &self.local {
+            _ => match self.subject.local() {
                 Some(_) => self.preview_for_mode(mode, width, height),
                 None => self.render_listed_pr_mode(mode),
             },
@@ -1100,7 +1123,7 @@ impl PickerRow {
 
     /// The same live availability used by the tab bar and sequential cycling.
     fn tab_availability(&self) -> TabAvailability {
-        match &self.local {
+        match self.subject.local() {
             Some(local) => TabAvailability::worktree(
                 *local.local_content.lock().unwrap(),
                 local.has_upstream,
@@ -1122,7 +1145,7 @@ impl PickerRow {
     /// for a `--prs` row, whose slot is static, `prs::listed_pr_row` removes it
     /// when the row is (re)built on an `alt-r` reload.
     pub(super) fn render_pr_pane_cached(&self, width: usize) -> String {
-        let key = (self.preview_key().clone(), PreviewMode::Pr);
+        let key = (self.preview_key(), PreviewMode::Pr);
         if let Some(cached) = self.preview_cache.get(&key) {
             return cached.value().clone();
         }
@@ -1182,7 +1205,7 @@ impl PickerRow {
     /// once it lands.
     pub(super) fn cached_or_loading(&self, mode: PreviewMode) -> String {
         self.preview_cache
-            .get(&(self.preview_key().clone(), mode))
+            .get(&(self.preview_key(), mode))
             .map(|v| v.value().clone())
             .unwrap_or_else(|| super::prs::pr_deferred_loading(mode))
     }
@@ -1209,7 +1232,7 @@ impl PickerRow {
         // Reached only for a worktree row (the `Some(_)` arm in `render_preview`),
         // so the key is the canonical local identity the orchestrator
         // precomputes under.
-        let cache_key = (self.preview_key().clone(), mode);
+        let cache_key = (self.preview_key(), mode);
         let content = self
             .preview_cache
             .get(&cache_key)
@@ -1908,7 +1931,7 @@ mod tests {
         PickerRowId::local(&test_local_checkout(branch).item)
     }
 
-    /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
+    /// Build a worktree-backed [`PickerRow`] for tests, with the
     /// given branch, preview cache, and live `pr_status` slot value; the local
     /// signals default (no upstream, no summaries, unknown diff content).
     fn worktree_test_row(
@@ -1917,18 +1940,16 @@ mod tests {
         pr_status: Option<Option<PrStatus>>,
     ) -> PickerRow {
         let local = test_local_checkout(branch);
-        let row_id = PickerRowId::local(&local.item);
         PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch.to_string(),
             output_token: branch.to_string(),
-            row_id,
+            subject: PickerRowSubject::Local(local),
             preview_cache,
             pr_status: Arc::new(Mutex::new(pr_status)),
             notifier: PreviewNotifier::detached(),
-            local: Some(local),
         }
     }
 
@@ -2834,19 +2855,18 @@ mod tests {
         // invalidate the entry the way the collect handler's `on_update` does.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
-        let row_id = test_local_row_id("feature");
-        let key = (row_id.clone(), PreviewMode::Pr);
+        let local = test_local_checkout("feature");
+        let key = (PickerRowId::local(&local.item), PreviewMode::Pr);
         let row = PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
             output_token: "feature".into(),
-            row_id,
+            subject: PickerRowSubject::Local(local),
             preview_cache: Arc::clone(&cache),
             pr_status: Arc::clone(&slot),
             notifier: PreviewNotifier::detached(),
-            local: Some(test_local_checkout("feature")),
         };
 
         // First render populates the shared cache.

@@ -331,10 +331,7 @@ pub fn work_items_for_worktree(
     // Prunable worktrees have their directory missing — no task can run.
     // Seed every gate directly so the cell shows just the `⊟` metadata
     // symbol rather than seven `·` placeholders.
-    if item
-        .worktree_data()
-        .is_some_and(|data| data.prunable.is_some())
-    {
+    if item.worktree_data().is_some_and(|data| data.is_prunable()) {
         seed_prunable_item(item);
         return vec![];
     }

@@ -1220,7 +1220,7 @@ mod tests {
     /// not depend on speculative bulk precompute.
     #[test]
     fn preview_miss_is_served_by_demand_worker() {
-        use super::super::items::{LocalCheckout, LocalContent, PickerRow};
+        use super::super::items::{LocalCheckout, LocalContent, PickerRow, PickerRowSubject};
         use skim::prelude::{PreviewContext, SkimItem};
         use std::sync::Mutex;
         use std::sync::atomic::AtomicBool;
@@ -1235,11 +1235,7 @@ mod tests {
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "main".to_string(),
             output_token: "main".to_string(),
-            row_id: row_id.clone(),
-            preview_cache: Arc::clone(&orch.cache),
-            pr_status: Arc::new(Mutex::new(None)),
-            notifier: Arc::clone(orch.notifier()),
-            local: Some(LocalCheckout {
+            subject: PickerRowSubject::Local(LocalCheckout {
                 item: Arc::clone(&item),
                 demand: Arc::clone(orch.demand()),
                 spawn_gen: orch.generation(),
@@ -1248,6 +1244,9 @@ mod tests {
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
                 morphed: Arc::new(AtomicBool::new(false)),
             }),
+            preview_cache: Arc::clone(&orch.cache),
+            pr_status: Arc::new(Mutex::new(None)),
+            notifier: Arc::clone(orch.notifier()),
         };
 
         // The picker opens on UnifiedDiff — the process-global default tab,

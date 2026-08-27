@@ -834,7 +834,7 @@ fn plan_switch(
                 .into());
             }
             return Ok(SwitchPlan::Existing {
-                path: WorktreeId::new(path).into_path(),
+                path: canonicalize(&path).unwrap_or(path),
                 branch,
                 new_previous,
             });
@@ -891,13 +891,8 @@ fn execute_switch(
             branch,
             new_previous,
         } => {
-            let current_dir = std::env::current_dir()
-                .ok()
-                .and_then(|p| canonicalize(&p).ok());
-            let already_at_worktree = current_dir
-                .as_ref()
-                .map(|cur| cur == &path)
-                .unwrap_or(false);
+            let current_worktree_id = std::env::current_dir().ok().map(WorktreeId::new);
+            let already_at_worktree = current_worktree_id.as_ref() == Some(&WorktreeId::new(&path));
 
             // Only update switch history when actually switching worktrees.
             // Updating on AlreadyAt would corrupt `wt switch -` by recording

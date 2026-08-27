@@ -7,9 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{
-    BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree, WorktreeId,
-};
+use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
@@ -80,7 +78,7 @@ fn validate_remove_targets(
     };
 
     let current_worktree = match repo.current_worktree().root() {
-        Ok(path) => WorktreeId::new(path).into_path(),
+        Ok(path) => dunce::canonicalize(&path).unwrap_or(path),
         Err(e) => {
             plans.record_error(e);
             return plans;
