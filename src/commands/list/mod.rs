@@ -137,6 +137,7 @@ pub mod model;
 pub mod progressive;
 mod progressive_table;
 pub(crate) mod render;
+pub(crate) mod sort;
 
 // Layout is calculated in collect/mod.rs
 use anstyle::Style;

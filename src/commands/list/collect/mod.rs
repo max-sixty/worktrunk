@@ -73,7 +73,10 @@
 //!
 //! What each field feeds:
 //! - `%ct` — sort order on the skeleton. This is why #6 is pre-skeleton; the
-//!   skeleton can't pick row order without it.
+//!   skeleton can't pick row order without it. A `[list] sort` spec that never
+//!   consults the date (`["path"]`, `["branch"]`) doesn't need it for order,
+//!   but the fork still runs — `%h` is a skeleton cell and Age/Message are
+//!   painted right behind it, so skipping it would only move the cost.
 //! - `%ct` again, post-skeleton — Age column ("3 hours ago").
 //! - `%s` post-skeleton — Message column.
 //! - `%h` pre-skeleton — the abbreviated SHA every surface renders: the Commit
@@ -1078,24 +1081,36 @@ pub fn collect(
         std::collections::HashMap::new()
     });
 
+    // `[list] sort` picks the row order. It resolves here, ahead of the
+    // `[list] columns` selection below, because order is chosen before the
+    // skeleton paints — which is also why only skeleton-time columns are
+    // sortable (see [`super::sort`]). A bad key aborts `wt list` but only
+    // degrades the picker, which can't surface an abort mid-render: the same
+    // fork the column selection takes.
+    let sort_terms = match super::sort::parse_sort_spec(&repo.config().list.sort) {
+        Ok(terms) => terms,
+        Err(e) if progressive_handler.is_some() => {
+            emit_warning(warning_message(format!("Sort order ignored: {e}")).to_string());
+            Vec::new()
+        }
+        Err(e) => return Err(e),
+    };
+
     // Sort worktrees: current first, main second, then by timestamp descending
+    // — unless `[list] sort` replaces that with its own order.
     let sorted_worktrees = sort_worktrees_with_cache(
         worktrees,
         &main_worktree,
         current_worktree_path.as_ref(),
         &commit_details_map,
+        &sort_terms,
     );
 
-    // Sort branches by timestamp (most recent first)
-    let branches_without_worktrees = sort_by_timestamp_desc_with_cache(
-        branches_without_worktrees,
-        &commit_details_map,
-        |(_, sha)| sha.as_str(),
-    );
-    let remote_branches =
-        sort_by_timestamp_desc_with_cache(remote_branches, &commit_details_map, |(_, sha)| {
-            sha.as_str()
-        });
+    // Branch-only and remote rows sort as their own groups, by timestamp
+    // (most recent first) or by the configured spec.
+    let branches_without_worktrees =
+        sort_branch_rows(branches_without_worktrees, &commit_details_map, &sort_terms);
+    let remote_branches = sort_branch_rows(remote_branches, &commit_details_map, &sort_terms);
 
     // Pre-canonicalize main_worktree.path for is_main comparison
     // (paths from git worktree list may differ based on symlinks or working directory)
@@ -2083,54 +2098,80 @@ pub fn collect(
 // Sorting Helpers
 // ============================================================================
 
-/// Sort items by timestamp descending using the pre-fetched commit-details map.
-fn sort_by_timestamp_desc_with_cache<T, F>(
-    items: Vec<T>,
+/// Sort `(branch name, SHA)` rows — the branch-only and remote-only groups.
+///
+/// With no `[list] sort` spec this is timestamp descending, as before. These
+/// rows have no worktree path, so a `path` term leaves them all equal and the
+/// newest-first tiebreak inside [`super::sort::compare`] keeps their order.
+fn sort_branch_rows(
+    rows: Vec<(String, String)>,
     commit_details: &std::collections::HashMap<String, (String, i64, String)>,
-    get_sha: F,
-) -> Vec<T>
-where
-    F: Fn(&T) -> &str,
-{
-    // Embed timestamp in tuple to avoid parallel Vec and index lookups
-    let mut with_ts: Vec<_> = items
-        .into_iter()
-        .map(|item| {
-            let ts = commit_details
-                .get(get_sha(&item))
-                .map_or(0, |(_, ts, _)| *ts);
-            (item, ts)
+    sort_terms: &[super::sort::SortTerm],
+) -> Vec<(String, String)> {
+    // Facts are precomputed per row rather than derived inside the comparator,
+    // so the commit-details lookup is one per row instead of one per comparison.
+    let mut with_facts: Vec<_> = rows
+        .iter()
+        .map(|(name, sha)| {
+            (
+                super::sort::SortFacts::new(None, Some(name.as_str()), sha, commit_details),
+                (name, sha),
+            )
         })
         .collect();
-    with_ts.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
-    with_ts.into_iter().map(|(item, _)| item).collect()
+    with_facts.sort_by(|(a, _), (b, _)| super::sort::compare(sort_terms, a, b));
+    with_facts
+        .into_iter()
+        .map(|(_, (name, sha))| (name.clone(), sha.clone()))
+        .collect()
 }
 
 /// Sort worktrees: current first, main second, then by timestamp descending.
 /// Uses the pre-fetched commit-details map for efficiency.
+///
+/// A non-empty `[list] sort` spec replaces the whole order, current/primary
+/// prefix included: pinning two rows to the top would defeat the ordering the
+/// user asked for (`sort = ["path"]` exists to make the table read in path
+/// order). Without a spec the prefix and the timestamp fallback are unchanged.
 fn sort_worktrees_with_cache(
     worktrees: &[WorktreeInfo],
     main_worktree: &WorktreeInfo,
     current_path: Option<&std::path::PathBuf>,
     commit_details: &std::collections::HashMap<String, (String, i64, String)>,
+    sort_terms: &[super::sort::SortTerm],
 ) -> Vec<WorktreeInfo> {
-    // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
+    let pin_current_and_primary = sort_terms.is_empty();
+    // Embed priority and facts in the tuple to avoid parallel Vecs and
+    // per-comparison map lookups.
     let mut with_sort_key: Vec<_> = worktrees
         .iter()
         .map(|wt| {
-            let priority = if current_path.is_some_and(|cp| &wt.path == cp) {
-                0 // Current first
-            } else if wt.path == main_worktree.path {
-                1 // Main second
+            let priority = if pin_current_and_primary {
+                if current_path.is_some_and(|cp| &wt.path == cp) {
+                    0 // Current first
+                } else if wt.path == main_worktree.path {
+                    1 // Main second
+                } else {
+                    2 // Rest by timestamp
+                }
             } else {
-                2 // Rest by timestamp
+                0 // A configured order decides every row; nothing is pinned
             };
-            let ts = commit_details.get(&wt.head).map_or(0, |(_, ts, _)| *ts);
-            (wt, priority, ts)
+            let facts = super::sort::SortFacts::new(
+                Some(wt.path.as_path()),
+                wt.branch.as_deref(),
+                &wt.head,
+                commit_details,
+            );
+            (wt, priority, facts)
         })
         .collect();
 
-    with_sort_key.sort_by_key(|(_, priority, ts)| (*priority, std::cmp::Reverse(*ts)));
+    with_sort_key.sort_by(|(_, a_priority, a), (_, b_priority, b)| {
+        a_priority
+            .cmp(b_priority)
+            .then_with(|| super::sort::compare(sort_terms, a, b))
+    });
     with_sort_key
         .into_iter()
         .map(|(wt, _, _)| wt.clone())

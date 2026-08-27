@@ -179,6 +179,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
+[107m [0m [2m# sort = ["path"]                                # Row order, most significant key first; `-` prefixes a descending key (omit for the default order)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables[0m
 [107m [0m [2m#[0m
@@ -217,6 +218,40 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# named one. A column whose data source is missing still stays hidden — `summary`[0m
 [107m [0m [2m# needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`[0m
 [107m [0m [2m# template — since listing can't supply the data.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# #### Row order[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `sort` orders the rows of the same two surfaces, `columns` orders their[0m
+[107m [0m [2m# columns. Keys are column names, most significant first, each optionally[0m
+[107m [0m [2m# prefixed with `-` for descending: `["path"]` makes the table mirror the[0m
+[107m [0m [2m# directory layout, `["-age"]` puts the oldest commit on top, and[0m
+[107m [0m [2m# `["branch", "-age"]` groups by branch name with the newest commit first inside[0m
+[107m [0m [2m# each name.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Sortable columns are the ones whose value is known before the table paints:[0m
+[107m [0m [2m# `branch`, `path`, `commit`, `age`, `message`. The rest (`status`, `ci`,[0m
+[107m [0m [2m# `upstream`, the diff columns, custom columns) stream in behind the first frame,[0m
+[107m [0m [2m# so ordering on them would mean either holding the table for a network round[0m
+[107m [0m [2m# trip or reordering rows under the cursor. Naming one is an error rather than a[0m
+[107m [0m [2m# silent reinterpretation, as is an unknown key or the same key twice.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `age` counts up from the commit date, so ascending `age` is newest first — the[0m
+[107m [0m [2m# same direction as the default — and `-age` puts the oldest commits on top.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Omitting `sort` keeps the default order: the current worktree first, the[0m
+[107m [0m [2m# primary worktree second, then newest commit first. Any `sort` value replaces[0m
+[107m [0m [2m# that order outright, including the two pinned rows, since pinning them would[0m
+[107m [0m [2m# defeat the order being asked for. Newest-first survives as the final tiebreak,[0m
+[107m [0m [2m# so rows a spec can't separate keep the order they already had — branch-only[0m
+[107m [0m [2m# rows under `sort = ["path"]`, for instance, since only worktrees have a path.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Rows sort within their group and never across it: worktrees first, then[0m
+[107m [0m [2m# branch-only rows (`--branches`), then remote-only rows (`--remotes`), each[0m
+[107m [0m [2m# group ordered by the spec.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Unlike `columns`, `sort` does reach `--format json`: reordering an array[0m
+[107m [0m [2m# neither narrows the payload nor adds a fetch, so the every-field contract[0m
+[107m [0m [2m# holds either way.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Custom columns [experimental][0m
 [107m [0m [2m#[0m

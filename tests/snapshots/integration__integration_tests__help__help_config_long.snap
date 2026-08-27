@@ -227,6 +227,7 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mjson-schema = [0m[2m[33m2[0m[2m    [0m[2m# JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
 [107m [0m 
 [107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
+[107m [0m [2msort = [[0m[2m[32m"path"[0m[2m]                                [0m[2m# Row order, most significant key first; `-` prefixes a descending key (omit for the default order)[0m
 [107m [0m 
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m     [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
@@ -265,6 +266,40 @@ since [2m--full[0m only bundles columns into the default table rather than gat
 named one. A column whose data source is missing still stays hidden — [2msummary[0m
 needs an LLM command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m
 template — since listing can't supply the data.
+
+[1mRow order[0m
+
+[2msort[0m orders the rows of the same two surfaces, [2mcolumns[0m orders their
+columns. Keys are column names, most significant first, each optionally
+prefixed with [2m-[0m for descending: [2m["path"][0m makes the table mirror the
+directory layout, [2m["-age"][0m puts the oldest commit on top, and
+[2m["branch", "-age"][0m groups by branch name with the newest commit first inside
+each name.
+
+Sortable columns are the ones whose value is known before the table paints:
+[2mbranch[0m, [2mpath[0m, [2mcommit[0m, [2mage[0m, [2mmessage[0m. The rest ([2mstatus[0m, [2mci[0m,
+[2mupstream[0m, the diff columns, custom columns) stream in behind the first frame,
+so ordering on them would mean either holding the table for a network round
+trip or reordering rows under the cursor. Naming one is an error rather than a
+silent reinterpretation, as is an unknown key or the same key twice.
+
+[2mage[0m counts up from the commit date, so ascending [2mage[0m is newest first — the
+same direction as the default — and [2m-age[0m puts the oldest commits on top.
+
+Omitting [2msort[0m keeps the default order: the current worktree first, the
+primary worktree second, then newest commit first. Any [2msort[0m value replaces
+that order outright, including the two pinned rows, since pinning them would
+defeat the order being asked for. Newest-first survives as the final tiebreak,
+so rows a spec can't separate keep the order they already had — branch-only
+rows under [2msort = ["path"][0m, for instance, since only worktrees have a path.
+
+Rows sort within their group and never across it: worktrees first, then
+branch-only rows ([2m--branches[0m), then remote-only rows ([2m--remotes[0m), each
+group ordered by the spec.
+
+Unlike [2mcolumns[0m, [2msort[0m does reach [2m--format json[0m: reordering an array
+neither narrows the payload nor adds a fetch, so the every-field contract
+holds either way.
 
 [1mCustom columns [experimental][0m
 

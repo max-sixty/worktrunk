@@ -195,6 +195,7 @@ remotes = false    # Include remote-only branches (--remotes)
 json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
+sort = ["path"]                                # Row order, most significant key first; `-` prefixes a descending key (omit for the default order)
 
 timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables
 ```
@@ -234,6 +235,40 @@ since `--full` only bundles columns into the default table rather than gating a
 named one. A column whose data source is missing still stays hidden — `summary`
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
+
+#### Row order
+
+`sort` orders the rows of the same two surfaces, `columns` orders their
+columns. Keys are column names, most significant first, each optionally
+prefixed with `-` for descending: `["path"]` makes the table mirror the
+directory layout, `["-age"]` puts the oldest commit on top, and
+`["branch", "-age"]` groups by branch name with the newest commit first inside
+each name.
+
+Sortable columns are the ones whose value is known before the table paints:
+`branch`, `path`, `commit`, `age`, `message`. The rest (`status`, `ci`,
+`upstream`, the diff columns, custom columns) stream in behind the first frame,
+so ordering on them would mean either holding the table for a network round
+trip or reordering rows under the cursor. Naming one is an error rather than a
+silent reinterpretation, as is an unknown key or the same key twice.
+
+`age` counts up from the commit date, so ascending `age` is newest first — the
+same direction as the default — and `-age` puts the oldest commits on top.
+
+Omitting `sort` keeps the default order: the current worktree first, the
+primary worktree second, then newest commit first. Any `sort` value replaces
+that order outright, including the two pinned rows, since pinning them would
+defeat the order being asked for. Newest-first survives as the final tiebreak,
+so rows a spec can't separate keep the order they already had — branch-only
+rows under `sort = ["path"]`, for instance, since only worktrees have a path.
+
+Rows sort within their group and never across it: worktrees first, then
+branch-only rows (`--branches`), then remote-only rows (`--remotes`), each
+group ordered by the spec.
+
+Unlike `columns`, `sort` does reach `--format json`: reordering an array
+neither narrows the payload nor adds a fetch, so the every-field contract
+holds either way.
 
 #### Custom columns
 
