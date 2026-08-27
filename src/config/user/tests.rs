@@ -694,18 +694,22 @@ fn test_merge_list_config() {
 #[test]
 fn test_merge_list_config_columns_replace() {
     // A non-empty override replaces the whole list (it's an ordering, not a
-    // keyed set), unlike the per-key union used for custom_columns.
+    // keyed set), unlike the per-key union used for custom_columns. `sort` is
+    // an ordering too and follows the same rule.
     let base = ListConfig {
         columns: vec!["branch".into(), "ci".into(), "path".into()],
+        sort: vec!["path".into(), "branch".into()],
         ..Default::default()
     };
     let override_config = ListConfig {
         columns: vec!["status".into(), "branch".into()],
+        sort: vec!["-age".into()],
         ..Default::default()
     };
 
     let merged = base.merge_with(&override_config);
     assert_eq!(merged.columns, vec!["status", "branch"]);
+    assert_eq!(merged.sort, vec!["-age"]);
 }
 
 #[test]

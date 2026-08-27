@@ -255,10 +255,11 @@ mod tests {
         assert!(streamed.contains("not sortable"), "{streamed}");
         assert!(streamed.contains("path"), "lists valid keys: {streamed}");
 
-        // A typo is a different error, and still lists the valid keys.
-        let unknown = parse_sort_spec(&["paht".into()]).unwrap_err().to_string();
+        // A name that isn't a column at all is a different error, and still
+        // lists the valid keys.
+        let unknown = parse_sort_spec(&["bogus".into()]).unwrap_err().to_string();
         assert!(unknown.contains("Unknown sort key"), "{unknown}");
-        assert!(unknown.contains("paht"), "{unknown}");
+        assert!(unknown.contains("bogus"), "{unknown}");
         assert!(unknown.contains("branch"), "{unknown}");
 
         // The `-` prefix is stripped before the name is resolved, so a bad name
@@ -329,6 +330,18 @@ mod tests {
             Ordering::Less,
             "equal branches fall through to the message term, not to the date"
         );
+    }
+
+    #[test]
+    fn test_compare_by_commit() {
+        // The abbreviated SHA orders lexicographically. Not a meaningful
+        // ranking, but it groups a repeated commit together, and every
+        // skeleton-time column is offered rather than a hand-picked subset.
+        let terms = parse_sort_spec(&["commit".into()]).unwrap();
+        let a = facts(Some("/a"), Some("a"), "abc1234", 100, "a");
+        let b = facts(Some("/b"), Some("b"), "def5678", 200, "b");
+        assert_eq!(compare(&terms, &a, &b), Ordering::Less);
+        assert_eq!(compare(&terms, &b, &a), Ordering::Greater);
     }
 
     #[test]

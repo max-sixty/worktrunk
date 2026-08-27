@@ -1383,13 +1383,14 @@ sort = ["ci"]
     );
 }
 
-/// A typo aborts too, with the sortable keys and the `-` prefix spelled out.
+/// A name that isn't a column at all aborts too, with the sortable keys and
+/// the `-` prefix spelled out.
 #[rstest]
 fn test_list_config_sort_unknown_key_errors(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         r#"[list]
-sort = ["paht"]
+sort = ["bogus"]
 "#,
     )
     .unwrap();
@@ -1399,10 +1400,16 @@ sort = ["paht"]
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
-    assert!(!output.status.success(), "a typo should abort wt list");
+    assert!(
+        !output.status.success(),
+        "an unknown key should abort wt list"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Unknown sort key"), "stderr: {stderr}");
-    assert!(stderr.contains("paht"), "stderr names the typo: {stderr}");
+    assert!(
+        stderr.contains("bogus"),
+        "stderr names the bad key: {stderr}"
+    );
     assert!(
         stderr.contains("branch"),
         "stderr lists valid keys: {stderr}"
