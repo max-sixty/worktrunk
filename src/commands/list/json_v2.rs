@@ -627,7 +627,7 @@ impl JsonItemV2 {
         // The default branch itself gets no relation object. Matching on the
         // worktree's main flag alone would miss a branch-only row for the
         // default branch, so compare names too. Use the remote-stripped
-        // the remote-stripped `branch`, rather than the remote-qualified name
+        // `branch`, rather than the remote-qualified name
         // returned by `item.branch()`, so a remote-only row of the default
         // branch (`origin/main`) also matches. Otherwise it gets a spurious
         // self-referential relation.
