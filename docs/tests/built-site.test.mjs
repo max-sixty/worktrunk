@@ -170,8 +170,8 @@ test('build preserves the public route contract', async () => {
   assert.ok(comparison, 'homepage is missing the command comparison table');
   assert.equal(comparison.match(/<td data-label="Worktrunk">/g)?.length, 4);
   assert.equal(comparison.match(/<td data-label="Plain git">/g)?.length, 4);
-  assert.match(homepage, /class="wt-positive"/);
-  assert.match(homepage, /class="wt-negative"/);
+  assert.match(homepage, /class="wt-terminal-green"/);
+  assert.match(homepage, /class="wt-terminal-red"/);
   const switchPage = await readFile(routeFile('/switch/'), 'utf8');
   assert.match(switchPage, /<nav aria-labelledby="starlight__on-this-page">/);
   assert.match(
@@ -183,6 +183,17 @@ test('build preserves the public route contract', async () => {
   const listPage = await readFile(routeFile('/list/'), 'utf8');
   assert.match(listPage, /href="https:\/\/github\.com\/max-sixty\/worktrunk\/edit\/main\/docs\/src\/content\/docs\/list\.md"/);
   assert.doesNotMatch(listPage, /docs\/src\/content\/docs\/src\/content\/docs/);
+  assert.match(listPage, /<span class="wt-terminal-green">\+54<\/span>/);
+  assert.match(listPage, /<span class="wt-terminal-red">-5<\/span>/);
+  assert.match(listPage, /<span class="wt-terminal-blue wt-terminal-dim">#412<\/span>/);
+  assert.match(listPage, /<span class="wt-command-text">wt list<\/span>/);
+
+  const llmCommitsPage = await readFile(routeFile('/llm-commits/'), 'utf8');
+  assert.match(llmCommitsPage, /<span class="wt-terminal-cyan">◎<\/span>/);
+  assert.match(
+    llmCommitsPage,
+    /<span class="wt-terminal-bold">feat\(validation\): add input validation utilities<\/span>/,
+  );
 
   const configPage = await readFile(routeFile('/config/'), 'utf8');
   const configToc = configPage.match(

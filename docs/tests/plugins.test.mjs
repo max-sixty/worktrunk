@@ -299,6 +299,26 @@ test('console output and its blank lines stay out of copied commands', () => {
   assert.equal(copyButton.properties['data-code'], 'wt list\u007f# shell comment');
 });
 
+test('shell snippets use the command-only terminal classifier', () => {
+  const codeBlock = { language: 'bash', getLines: () => [] };
+  const blockAst = {
+    type: 'element',
+    tagName: 'figure',
+    properties: { className: ['frame', 'is-terminal'] },
+    children: [],
+  };
+  const plugin = pluginWorktrunkTerminal();
+
+  plugin.hooks.preprocessCode({ codeBlock });
+  plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData: { blockAst } });
+
+  assert.deepEqual(blockAst.properties.className, [
+    'frame',
+    'is-terminal',
+    'wt-commands-only',
+  ]);
+});
+
 test('console output retains state-color semantics without ANSI in Markdown', () => {
   assert.deepEqual(
     semanticOutputSegments('@ feat  +54  -5  ↑4  ↓1  ⇡3  ?  ✓ done'),
@@ -326,12 +346,65 @@ test('console output retains state-color semantics without ANSI in Markdown', ()
     [{ text: '[unoptimized + debuginfo] Allow and remember?' }],
   );
   assert.deepEqual(
-    semanticOutputSegments('@ feat  +   ↑'),
-    [
-      { text: '@ feat  ' },
-      { text: '+', tone: 'positive' },
-      { text: '   ' },
-      { text: '↑', tone: 'positive' },
-    ],
+    semanticOutputSegments('release-5 v1+2 port -3000'),
+    [{ text: 'release-5 v1+2 port -3000' }],
   );
+  assert.deepEqual(
+    semanticOutputSegments('@ feat  +   ↑'),
+    [{ text: '@ feat  +   ↑' }],
+  );
+});
+
+test('console commands distinguish commands from trailing shell comments', () => {
+  const lines = [
+    '$ wt switch "#412" # inspect the PR',
+    "$ printf '%s' '# literal'",
+  ].map((text) => ({
+    text,
+    editText(start, end, replacement) {
+      this.text = this.text.slice(0, start) + replacement + this.text.slice(end);
+    },
+  }));
+  const codeBlock = { language: 'console', getLines: () => lines };
+  const plugin = pluginWorktrunkTerminal();
+  plugin.hooks.preprocessCode({ codeBlock });
+
+  const rendered = lines.map((line, lineIndex) => {
+    const code = {
+      type: 'element',
+      tagName: 'div',
+      properties: { className: ['code'] },
+      children: [{ type: 'text', value: line.text }],
+    };
+    const renderData = {
+      lineAst: { type: 'element', tagName: 'div', properties: {}, children: [code] },
+    };
+    plugin.hooks.postprocessRenderedLine({ codeBlock, line, lineIndex, renderData });
+    return code.children;
+  });
+
+  assert.deepEqual(rendered, [
+    [
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: { className: ['wt-command-text'] },
+        children: [{ type: 'text', value: 'wt switch "#412" ' }],
+      },
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: { className: ['wt-terminal-dim'] },
+        children: [{ type: 'text', value: '# inspect the PR' }],
+      },
+    ],
+    [
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: { className: ['wt-command-text'] },
+        children: [{ type: 'text', value: "printf '%s' '# literal'" }],
+      },
+    ],
+  ]);
 });

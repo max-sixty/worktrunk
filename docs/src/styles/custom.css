@@ -12,6 +12,13 @@
   --wt-craft: #7e6247;
   --wt-gold-wash: #ead9bb;
   --wt-line: #d9cab7;
+  --wt-terminal-red: #b42318;
+  --wt-terminal-green: #256b4a;
+  --wt-terminal-yellow: #8a5a00;
+  --wt-terminal-blue: #1d4ed8;
+  --wt-terminal-magenta: #7e22ce;
+  --wt-terminal-cyan: #0f6f73;
+  --wt-terminal-gutter: #a8a29e;
   --wt-focus: var(--wt-copper);
   --wt-font-display: 'Newsreader', ui-serif, 'Iowan Old Style', 'Palatino Linotype', Palatino,
     Georgia, serif;
@@ -52,6 +59,13 @@
   --wt-craft: #b99776;
   --wt-gold-wash: #44311e;
   --wt-line: #493a2e;
+  --wt-terminal-red: #f87171;
+  --wt-terminal-green: #6ee7a2;
+  --wt-terminal-yellow: #facc15;
+  --wt-terminal-blue: #93c5fd;
+  --wt-terminal-magenta: #d8b4fe;
+  --wt-terminal-cyan: #67d4d4;
+  --wt-terminal-gutter: #6b7280;
   --sl-color-accent-low: var(--wt-gold-wash);
   --sl-color-accent: var(--wt-copper);
   --sl-color-accent-high: #fcd34d;
@@ -463,6 +477,8 @@ header.header {
 
 /* Code is content, not a simulated application window. */
 .expressive-code .frame {
+  max-width: 100%;
+  min-width: 0;
   margin-block: 1.25rem;
 }
 
@@ -473,6 +489,33 @@ header.header {
   border-radius: 0;
   background-color: var(--wt-scroll-surface);
   box-shadow: none;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sl-markdown-content table:not(.cmd-compare):not(:where(.not-content *)) {
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 42rem) {
+  .expressive-code .frame:not(.is-terminal) pre,
+  .expressive-code .frame.is-terminal.wt-commands-only pre {
+    overflow-x: clip;
+  }
+
+  .expressive-code .frame:not(.is-terminal) .ec-line,
+  .expressive-code .frame:not(.is-terminal) .code,
+  .expressive-code .frame.is-terminal.wt-commands-only .ec-line,
+  .expressive-code .frame.is-terminal.wt-commands-only .code {
+    min-width: 0;
+  }
+
+  .expressive-code .frame:not(.is-terminal) .code,
+  .expressive-code .frame.is-terminal.wt-commands-only .code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* A local cover hides the stationary edge shade once the inline scroll reaches its end. */

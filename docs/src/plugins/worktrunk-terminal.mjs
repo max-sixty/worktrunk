@@ -1,10 +1,14 @@
-const terminalBlocks = new WeakMap();
+import terminalStyles from '../generated/terminal-styles.json' with { type: 'json' };
 
-// Bare `+` is a status only at a line edge or between wide table columns;
-// ordinary prose such as `[unoptimized + debuginfo]` stays neutral.
-const semanticMarker = /([+↑⇡]\d+|[↑⇡]|(?<!\s)\+|\+(?!\s)|(?<=^|\s\s)\+(?=\s\s|\s*$)|[-↓⇣]\d+|✓|✗|(?<=^|\s)[!?](?=\s|$))/gmu;
+const terminalBlocks = new WeakMap();
+const recordedTerminalBlocks = new Map(
+  terminalStyles.map(({ plain, lines }) => [plain, lines]),
+);
+
+const semanticMarker = /((?:(?<=^)|(?<=\s{2}))[-+↑⇡↓⇣]\d+(?=\s{2}|$)|✓|✗|(?<=^|\s)[!?](?=\s|$))/gmu;
 
 function addClass(node, className) {
+  node.properties ??= {};
   const classes = node.properties.className ?? [];
   node.properties.className = Array.isArray(classes)
     ? [...classes, className]
@@ -91,7 +95,73 @@ function renderSemanticOutput(lineAst, text) {
         properties: { className: [`wt-${tone}`] },
         children: [{ type: 'text', value }],
       }
+      : { type: 'text', value });
+}
+
+function renderRecordedOutput(lineAst, segments) {
+  const code = findCodeElement(lineAst);
+  if (!code) return false;
+  code.children = segments.map(({ text: value, classes }) => classes.length > 0
+    ? {
+        type: 'element',
+        tagName: 'span',
+        properties: { className: classes },
+        children: [{ type: 'text', value }],
+      }
     : { type: 'text', value });
+  return true;
+}
+
+function shellCommentIndex(text) {
+  let quote;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (character === quote) {
+      quote = undefined;
+      continue;
+    }
+    if (!quote && (character === "'" || character === '"')) {
+      quote = character;
+      continue;
+    }
+    if (!quote && character === '#' && (index === 0 || /\s/u.test(text[index - 1]))) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function renderCommand(lineAst, text) {
+  const code = findCodeElement(lineAst);
+  if (!code) return;
+  const commentIndex = shellCommentIndex(text);
+  const command = commentIndex === -1 ? text : text.slice(0, commentIndex);
+  const comment = commentIndex === -1 ? '' : text.slice(commentIndex);
+  code.children = [
+    {
+      type: 'element',
+      tagName: 'span',
+      properties: { className: ['wt-command-text'] },
+      children: [{ type: 'text', value: command }],
+    },
+  ];
+  if (comment) {
+    code.children.push({
+      type: 'element',
+      tagName: 'span',
+      properties: { className: ['wt-terminal-dim'] },
+      children: [{ type: 'text', value: comment }],
+    });
+  }
 }
 
 /**
@@ -104,9 +174,12 @@ export function pluginWorktrunkTerminal() {
     baseStyles: `
       .expressive-code .frame.is-terminal .ec-line.wt-command .code::before {
         content: '$ ';
-        color: var(--sl-color-accent-high);
-        font-weight: 650;
+        color: var(--wt-ink-muted);
         user-select: none;
+      }
+      .expressive-code .frame.is-terminal .wt-command-text {
+        color: var(--wt-copper);
+        font-weight: 550;
       }
       .expressive-code .frame.is-terminal .ec-line.wt-output .code {
         color: var(--sl-color-gray-2);
@@ -125,6 +198,43 @@ export function pluginWorktrunkTerminal() {
       .expressive-code .frame.is-terminal .wt-warning {
         color: var(--sl-color-orange-high);
         font-weight: 650;
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-red {
+        color: var(--wt-terminal-red);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-green {
+        color: var(--wt-terminal-green);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-yellow {
+        color: var(--wt-terminal-yellow);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-blue {
+        color: var(--wt-terminal-blue);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-magenta {
+        color: var(--wt-terminal-magenta);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-cyan {
+        color: var(--wt-terminal-cyan);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-gray {
+        color: var(--wt-ink-muted);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-gutter {
+        background: var(--wt-terminal-gutter);
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-bold {
+        font-weight: 600;
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-dim {
+        opacity: 0.9;
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-italic {
+        font-style: italic;
+      }
+      .expressive-code .frame.is-terminal .wt-terminal-underline {
+        text-decoration: underline;
+        text-underline-offset: 0.14em;
       }
     `,
     hooks: {
@@ -145,7 +255,22 @@ export function pluginWorktrunkTerminal() {
             copyableLines.add(lineIndex);
           }
         }
-        terminalBlocks.set(codeBlock, { commandLines, copyableLines });
+        const outputLines = lines
+          .map((line, lineIndex) => ({ line, lineIndex }))
+          .filter(({ lineIndex }) => (
+            !commandLines.has(lineIndex) && !copyableLines.has(lineIndex)
+          ));
+        const outputText = outputLines.map(({ line }) => line.text).join('\n').trimEnd();
+        const recordedLines = recordedTerminalBlocks.get(outputText);
+        const recordedByLine = recordedLines?.length === outputLines.length
+          ? new Map(outputLines.map(({ lineIndex }, index) => [lineIndex, recordedLines[index]]))
+          : new Map();
+        terminalBlocks.set(codeBlock, {
+          commandLines,
+          copyableLines,
+          hasOutput,
+          recordedByLine,
+        });
       },
       postprocessRenderedLine({ codeBlock, line, lineIndex, renderData }) {
         const terminal = terminalBlocks.get(codeBlock);
@@ -156,14 +281,25 @@ export function pluginWorktrunkTerminal() {
             ? 'wt-copyable'
             : 'wt-output';
         addClass(renderData.lineAst, className);
-        if (className === 'wt-output') {
-          renderSemanticOutput(renderData.lineAst, line?.text ?? codeBlock.getLines()[lineIndex].text);
+        const text = line?.text ?? codeBlock.getLines()[lineIndex].text;
+        if (className === 'wt-command') {
+          renderCommand(renderData.lineAst, text);
+        } else if (className === 'wt-output') {
+          const rendered = terminal.recordedByLine.has(lineIndex)
+            && renderRecordedOutput(renderData.lineAst, terminal.recordedByLine.get(lineIndex));
+          if (!rendered) renderSemanticOutput(renderData.lineAst, text);
         }
       },
       postprocessRenderedBlock({ codeBlock, renderData }) {
         removeTitlelessHeader(renderData.blockAst);
         const terminal = terminalBlocks.get(codeBlock);
-        if (!terminal) return;
+        if (!terminal) {
+          if (renderData.blockAst.properties?.className?.includes('is-terminal')) {
+            addClass(renderData.blockAst, 'wt-commands-only');
+          }
+          return;
+        }
+        if (!terminal.hasOutput) addClass(renderData.blockAst, 'wt-commands-only');
         if (terminal.commandLines.size === 0 && terminal.copyableLines.size === 0) {
           removeCopyControl(renderData.blockAst);
           return;

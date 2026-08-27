@@ -12,6 +12,7 @@ skills/worktrunk/reference/troubleshooting.md linguist-generated=false
 docs/public/*.md linguist-generated=true
 docs/public/llms.txt linguist-generated=true
 docs/public/.well-known/agent-skills/index.json linguist-generated=true
+docs/src/generated/terminal-styles.json linguist-generated=true
 # Shell templates are embedded into the binary at compile time (askama); a
 # CRLF checkout would leak \r into the shell code Windows-built binaries emit.
 templates/* text eol=lf

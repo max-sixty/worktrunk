@@ -22,8 +22,10 @@
 
 use crate::common::wt_command;
 use ansi_str::AnsiStr;
+use ansi_to_tui::IntoText;
+use ratatui::style::{Color, Modifier, Style};
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -455,36 +457,50 @@ static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
-/// Map commands to their snapshot files for help page expansion
+/// Snapshot-backed command examples shared by Markdown generation and the
+/// website's ANSI-style manifest.
+const COMMAND_SNAPSHOTS: &[(&str, &str)] = &[
+    (
+        "wt list",
+        "integration__integration_tests__list__readme_example_list.snap",
+    ),
+    (
+        "wt list --full",
+        "integration__integration_tests__list__readme_example_list_full.snap",
+    ),
+    (
+        "wt list --branches --full",
+        "integration__integration_tests__list__readme_example_list_branches.snap",
+    ),
+    (
+        "wt list (markers)",
+        "integration__integration_tests__list__readme_example_list_marker.snap",
+    ),
+    // Docs-page example snapshots drive the static command-output blocks on
+    // pages otherwise dominated by GIFs. See the convention in merge.rs.
+    (
+        "wt merge (docs-example)",
+        "integration__integration_tests__merge__docs_merge_pre_merge_hook.snap",
+    ),
+    (
+        "wt step commit (docs-example)",
+        "integration__integration_tests__merge__docs_step_commit_llm.snap",
+    ),
+    (
+        "wt remove (docs-example)",
+        "integration__integration_tests__remove__docs_remove_pre_remove_hook.snap",
+    ),
+    (
+        "wt hook pre-merge (docs-example)",
+        "integration__integration_tests__user_hooks__docs_hook_pre_merge.snap",
+    ),
+];
+
+/// Map commands to their snapshot files for help page expansion.
 fn command_to_snapshot(command: &str) -> Option<&'static str> {
-    match command {
-        "wt list" => Some("integration__integration_tests__list__readme_example_list.snap"),
-        "wt list --full" => {
-            Some("integration__integration_tests__list__readme_example_list_full.snap")
-        }
-        "wt list --branches --full" => {
-            Some("integration__integration_tests__list__readme_example_list_branches.snap")
-        }
-        "wt list (markers)" => {
-            Some("integration__integration_tests__list__readme_example_list_marker.snap")
-        }
-        // Docs-page example snapshots — drive the static command-output blocks
-        // on pages otherwise dominated by GIFs. See comment in merge.rs test
-        // section for the convention.
-        "wt merge (docs-example)" => {
-            Some("integration__integration_tests__merge__docs_merge_pre_merge_hook.snap")
-        }
-        "wt step commit (docs-example)" => {
-            Some("integration__integration_tests__merge__docs_step_commit_llm.snap")
-        }
-        "wt remove (docs-example)" => {
-            Some("integration__integration_tests__remove__docs_remove_pre_remove_hook.snap")
-        }
-        "wt hook pre-merge (docs-example)" => {
-            Some("integration__integration_tests__user_hooks__docs_hook_pre_merge.snap")
-        }
-        _ => None,
-    }
+    COMMAND_SNAPSHOTS
+        .iter()
+        .find_map(|(candidate, snapshot)| (*candidate == command).then_some(*snapshot))
 }
 
 /// Expand command placeholders in help page content into rendered snapshot blocks.
@@ -568,6 +584,176 @@ fn parse_snapshot_content(content: &str) -> String {
     let content = replace_placeholders(&content);
     let content = literal_to_escape(&content);
     content.ansi_strip().into_owned()
+}
+
+/// CSS class for the semantic ANSI foreground carried by a snapshot span.
+fn terminal_color_class(color: Color) -> Result<Option<&'static str>, String> {
+    match color {
+        Color::Red | Color::LightRed => Ok(Some("wt-terminal-red")),
+        Color::Green | Color::LightGreen => Ok(Some("wt-terminal-green")),
+        Color::Yellow | Color::LightYellow => Ok(Some("wt-terminal-yellow")),
+        Color::Blue | Color::LightBlue => Ok(Some("wt-terminal-blue")),
+        Color::Magenta | Color::LightMagenta => Ok(Some("wt-terminal-magenta")),
+        Color::Cyan | Color::LightCyan => Ok(Some("wt-terminal-cyan")),
+        Color::DarkGray | Color::Gray => Ok(Some("wt-terminal-gray")),
+        Color::Reset => Ok(None),
+        Color::Black | Color::White | Color::Rgb(..) | Color::Indexed(_) => {
+            Err(format!("unsupported ANSI foreground color {color:?}"))
+        }
+    }
+}
+
+/// CSS class for the bright execution gutter rendered by Worktrunk output.
+fn terminal_background_class(color: Color) -> Result<Option<&'static str>, String> {
+    match color {
+        Color::Gray | Color::White => Ok(Some("wt-terminal-gutter")),
+        Color::Reset => Ok(None),
+        Color::Black
+        | Color::Red
+        | Color::Green
+        | Color::Yellow
+        | Color::Blue
+        | Color::Magenta
+        | Color::Cyan
+        | Color::DarkGray
+        | Color::LightRed
+        | Color::LightGreen
+        | Color::LightYellow
+        | Color::LightBlue
+        | Color::LightMagenta
+        | Color::LightCyan
+        | Color::Rgb(..)
+        | Color::Indexed(_) => Err(format!("unsupported ANSI background color {color:?}")),
+    }
+}
+
+fn terminal_style_classes(style: Style) -> Result<Vec<String>, String> {
+    let mut classes = Vec::new();
+    if let Some(color) = style.fg
+        && let Some(class) = terminal_color_class(color)?
+    {
+        classes.push(class.to_string());
+    }
+    if style.add_modifier.contains(Modifier::BOLD) {
+        classes.push("wt-terminal-bold".to_string());
+    }
+    if style.add_modifier.contains(Modifier::DIM) {
+        classes.push("wt-terminal-dim".to_string());
+    }
+    if style.add_modifier.contains(Modifier::ITALIC) {
+        classes.push("wt-terminal-italic".to_string());
+    }
+    if style.add_modifier.contains(Modifier::UNDERLINED) {
+        classes.push("wt-terminal-underline".to_string());
+    }
+    if let Some(color) = style.bg
+        && let Some(class) = terminal_background_class(color)?
+    {
+        classes.push(class.to_string());
+    }
+    Ok(classes)
+}
+
+/// Parse one snapshot's ANSI output into the span data the website renderer
+/// consumes. The reconstructed visible text must equal the portable Markdown
+/// generated from the same snapshot, which prevents style and content from
+/// drifting into two parallel examples.
+fn styled_snapshot_lines(content: &str) -> Result<(String, serde_json::Value), String> {
+    let raw = parse_snapshot_raw(content);
+    let raw = replace_placeholders(&raw);
+    let ansi = literal_to_escape(&raw);
+    let parsed = ansi
+        .as_str()
+        .into_text()
+        .map_err(|error| format!("ANSI parsing failed: {error}"))?;
+    let plain = trim_lines(&parse_snapshot_content(content));
+    let expected_lines: Vec<&str> = if plain.is_empty() {
+        Vec::new()
+    } else {
+        plain.split('\n').collect()
+    };
+
+    if parsed.lines.len() < expected_lines.len() {
+        return Err(format!(
+            "ANSI parser returned {} line(s), expected {}",
+            parsed.lines.len(),
+            expected_lines.len()
+        ));
+    }
+
+    let mut rendered_lines = Vec::with_capacity(expected_lines.len());
+    for (line_index, expected) in expected_lines.into_iter().enumerate() {
+        let line = &parsed.lines[line_index];
+        let mut segments: Vec<(String, Vec<String>)> = Vec::new();
+        for span in &line.spans {
+            if span.content.is_empty() {
+                continue;
+            }
+            let classes = terminal_style_classes(parsed.style.patch(line.style).patch(span.style))
+                .map_err(|error| format!("styled line {}: {error}", line_index + 1))?;
+            if let Some((text, previous_classes)) = segments.last_mut()
+                && *previous_classes == classes
+            {
+                text.push_str(&span.content);
+            } else {
+                segments.push((span.content.to_string(), classes));
+            }
+        }
+
+        while let Some((text, _)) = segments.last_mut() {
+            let trimmed = text.trim_end().to_string();
+            if trimmed.is_empty() {
+                segments.pop();
+            } else {
+                *text = trimmed;
+                break;
+            }
+        }
+
+        let actual = segments
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<String>();
+        if actual != expected {
+            return Err(format!(
+                "styled line {} differs from portable text\nexpected: {expected:?}\nactual:   {actual:?}",
+                line_index + 1
+            ));
+        }
+
+        rendered_lines.push(serde_json::Value::Array(
+            segments
+                .into_iter()
+                .map(|(text, classes)| serde_json::json!({ "text": text, "classes": classes }))
+                .collect(),
+        ));
+    }
+
+    Ok((plain, serde_json::Value::Array(rendered_lines)))
+}
+
+#[test]
+fn test_styled_snapshot_lines_preserve_text_and_ansi_roles() {
+    let (plain, lines) = styled_snapshot_lines(
+        "\x1b[107m \x1b[0m \x1b[1mBranch\x1b[0m  \x1b[32m+2\x1b[0m  \x1b[2m\x1b[34m#42\x1b[0m",
+    )
+    .unwrap();
+    assert_eq!(plain, "  Branch  +2  #42");
+    assert_eq!(
+        lines,
+        serde_json::json!([[
+            { "text": " ", "classes": ["wt-terminal-gutter"] },
+            { "text": " ", "classes": [] },
+            { "text": "Branch", "classes": ["wt-terminal-bold"] },
+            { "text": "  ", "classes": [] },
+            { "text": "+2", "classes": ["wt-terminal-green"] },
+            { "text": "  ", "classes": [] },
+            { "text": "#42", "classes": ["wt-terminal-blue", "wt-terminal-dim"] }
+        ]])
+    );
+
+    let error = styled_snapshot_lines("\x1b[38;2;1;2;3mcustom\x1b[0m").unwrap_err();
+    assert!(error.contains("unsupported ANSI foreground color Rgb(1, 2, 3)"));
 }
 
 /// Get help output for a command
@@ -1544,6 +1730,14 @@ const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "config", "step", "hook",
 ];
 
+/// Hand-edited site pages whose snapshot markers are refreshed by this test.
+const STANDALONE_DOC_FILES: &[&str] = &[
+    "docs/src/content/docs/worktrunk.md",
+    "docs/src/content/docs/claude-code.md",
+    "docs/src/content/docs/tips-patterns.md",
+    "docs/src/content/docs/llm-commits.md",
+];
+
 /// Write `expected` to `path` and record `rel_path` in `updated`. Creates
 /// parent directories as needed. Panics on I/O failure — these are test-time
 /// syncs, so any write error should abort the run.
@@ -2219,6 +2413,92 @@ fn sync_json_schema(project_root: &Path) -> (Vec<String>, Vec<String>) {
     (errors, updated_files)
 }
 
+/// Generate the site-only style manifest from the same ANSI snapshots that
+/// populate the portable Markdown examples. Expressive Code receives plain
+/// text by design; this sidecar lets it restore the CLI's semantic styling
+/// without putting escape sequences or renderer-specific HTML in Markdown.
+fn sync_terminal_style_manifest(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut updated_files = Vec::new();
+    let snapshots_dir = project_root.join("tests/snapshots");
+    let mut snapshot_paths = BTreeSet::new();
+    let mut blocks: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+
+    snapshot_paths.extend(
+        COMMAND_SNAPSHOTS
+            .iter()
+            .map(|(_, snapshot_name)| snapshots_dir.join(snapshot_name)),
+    );
+    for doc_file in STANDALONE_DOC_FILES {
+        let doc_path = project_root.join(doc_file);
+        let content = match fs::read_to_string(&doc_path) {
+            Ok(content) => content,
+            Err(error) => {
+                errors.push(format!("Failed to read {}: {error}", doc_path.display()));
+                continue;
+            }
+        };
+        snapshot_paths.extend(
+            DOCS_SNAPSHOT_MARKER_PATTERN
+                .captures_iter(&content)
+                .map(|captures| project_root.join(captures.get(1).unwrap().as_str())),
+        );
+    }
+
+    for snapshot_path in snapshot_paths {
+        let raw = match fs::read_to_string(&snapshot_path) {
+            Ok(raw) => raw,
+            Err(error) => {
+                errors.push(format!(
+                    "Failed to read {}: {error}",
+                    snapshot_path.display()
+                ));
+                continue;
+            }
+        };
+        let (plain, lines) = match styled_snapshot_lines(&raw) {
+            Ok(styled) => styled,
+            Err(error) => {
+                errors.push(format!("{}: {error}", snapshot_path.display()));
+                continue;
+            }
+        };
+        if plain.is_empty() {
+            continue;
+        }
+        if let Some(existing) = blocks.insert(plain.clone(), lines.clone())
+            && existing != lines
+        {
+            errors.push(format!(
+                "{}: duplicate portable output carries different ANSI styling",
+                snapshot_path.display()
+            ));
+        }
+    }
+
+    if !errors.is_empty() {
+        return (errors, updated_files);
+    }
+
+    let generated = format!(
+        "{}\n",
+        serde_json::to_string_pretty(
+            &blocks
+                .into_iter()
+                .map(|(plain, lines)| serde_json::json!({ "plain": plain, "lines": lines }))
+                .collect::<Vec<_>>()
+        )
+        .unwrap()
+    );
+    let rel_path = "docs/src/generated/terminal-styles.json";
+    let dst = project_root.join(rel_path);
+    if fs::read_to_string(&dst).unwrap_or_default() != generated {
+        write_tracked(&dst, &generated, rel_path, &mut updated_files);
+    }
+
+    (errors, updated_files)
+}
+
 /// Generate `docs/public/llms.txt` from the Starlight content collection,
 /// following the llms.txt spec (https://llmstxt.org/): H1, blockquote summary,
 /// optional intro prose, H2 section headings with bulleted link lists.
@@ -2415,15 +2695,9 @@ fn test_docs_are_in_sync() {
 
     // Step 2: Sync standalone docs files from snapshots.
     // README extraction in step 5 reads these, so they must be current first.
-    let standalone_doc_files = [
-        "docs/src/content/docs/worktrunk.md",
-        "docs/src/content/docs/claude-code.md",
-        "docs/src/content/docs/tips-patterns.md",
-        "docs/src/content/docs/llm-commits.md",
-    ];
     let mut docs_errors: Vec<String> = Vec::new();
     let mut docs_files: Vec<String> = Vec::new();
-    for doc_file in standalone_doc_files {
+    for doc_file in STANDALONE_DOC_FILES {
         let doc_path = project_root.join(doc_file);
         match sync_docs_snapshots(&doc_path, project_root) {
             Ok(updated) => {
@@ -2435,6 +2709,15 @@ fn test_docs_are_in_sync() {
         }
     }
     tag("standalone docs", docs_errors, docs_files);
+
+    // Step 2b: Preserve the ANSI semantics of snapshot-backed examples in a
+    // site-only manifest while the Markdown remains portable plain text.
+    let (terminal_style_errors, terminal_style_files) = sync_terminal_style_manifest(project_root);
+    tag(
+        "terminal styles",
+        terminal_style_errors,
+        terminal_style_files,
+    );
 
     // Step 3: Sync skill files (Starlight Markdown → skills/*)
     let (skill_errors, skill_files) = sync_skill_files(project_root);
