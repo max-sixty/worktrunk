@@ -721,16 +721,17 @@ fn configure_shell_file(
             // Fail in that case so its contents survive and a rerun can append.
             write_new_atomically(path, &format!("{}\n", config_line)).map_err(|e| {
                 if e.kind() == io::ErrorKind::AlreadyExists && path.is_symlink() {
-                    return format!(
+                    format!(
                         "Failed to create {}: path is a dangling symlink; restore its target or remove the link, then rerun",
                         format_path_for_display(path)
-                    );
+                    )
+                } else {
+                    format!(
+                        "Failed to write to {}: {}",
+                        format_path_for_display(path),
+                        e
+                    )
                 }
-                format!(
-                    "Failed to write to {}: {}",
-                    format_path_for_display(path),
-                    e
-                )
             })?;
 
             Ok(Some(ConfigureResult {
@@ -1989,6 +1990,26 @@ mod tests {
             )
         );
         assert_eq!(fs::read_link(&rc).unwrap(), target);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_configure_shell_reports_non_symlink_create_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join("x".repeat(300));
+
+        let error = configure_shell_file(Shell::Zsh, &rc, false, true, "wt")
+            .err()
+            .expect("overlong filename should be rejected");
+
+        assert!(
+            error.starts_with(&format!(
+                "Failed to write to {}:",
+                format_path_for_display(&rc)
+            )),
+            "{error}"
+        );
+        assert!(!error.contains("dangling symlink"), "{error}");
     }
 
     #[test]
