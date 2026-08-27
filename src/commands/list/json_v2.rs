@@ -627,9 +627,10 @@ impl JsonItemV2 {
         // The default branch itself gets no relation object. Matching on the
         // worktree's main flag alone would miss a branch-only row for the
         // default branch, so compare names too. Use the remote-stripped
-        // `branch` (not `item.branch`) so a remote-only row of the default
-        // branch (`origin/main`) also matches — otherwise it fails the name
-        // check and gets a spurious self-referential relation.
+        // the remote-stripped `branch`, rather than the remote-qualified name
+        // returned by `item.branch()`, so a remote-only row of the default
+        // branch (`origin/main`) also matches. Otherwise it gets a spurious
+        // self-referential relation.
         let is_default_branch_row = worktree_data.is_some_and(|d| d.is_main)
             || (branch.is_some() && branch.as_deref() == default_branch);
         let default_branch = if is_default_branch_row {

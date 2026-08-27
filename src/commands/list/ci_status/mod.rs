@@ -727,7 +727,7 @@ impl PrStatus {
 /// Rows with no usable cache entry are left `None` (pending): the live task
 /// fills them, so they must not be resolved to "no PR" here.
 ///
-/// `item.branch` is the cache key for every row shape: local worktrees and
+/// `ListItem::branch()` is the cache key for every row shape: local worktrees and
 /// branches cache under the bare name, remote rows under `origin/...` —
 /// the same `full_name` the `CiStatus` task writes.
 pub(crate) fn populate_from_cache(repo: &Repository, items: &mut [super::model::ListItem]) {
