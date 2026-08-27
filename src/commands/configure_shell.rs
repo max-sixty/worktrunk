@@ -719,20 +719,8 @@ fn configure_shell_file(
 
             // Another process may create the rc file after the existence check.
             // Fail in that case so its contents survive and a rerun can append.
-            write_new_atomically(path, &format!("{}\n", config_line)).map_err(|e| {
-                if e.kind() == io::ErrorKind::AlreadyExists && path.is_symlink() {
-                    format!(
-                        "Failed to create {}: path is a dangling symlink; restore its target or remove the link, then rerun",
-                        format_path_for_display(path)
-                    )
-                } else {
-                    format!(
-                        "Failed to write to {}: {}",
-                        format_path_for_display(path),
-                        e
-                    )
-                }
-            })?;
+            write_new_atomically(path, &format!("{}\n", config_line))
+                .map_err(|e| format_new_rc_error(path, &e))?;
 
             Ok(Some(ConfigureResult {
                 shell,
@@ -745,6 +733,21 @@ fn configure_shell_file(
             Ok(None)
         }
     }
+}
+
+fn format_new_rc_error(path: &Path, error: &io::Error) -> String {
+    let display_path = format_path_for_display(path);
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        if path.is_symlink() {
+            return format!(
+                "Failed to create {display_path}: path is a dangling symlink; restore its target or remove the link, then rerun"
+            );
+        }
+        return format!(
+            "Failed to create {display_path}: another process created it first; rerun to append"
+        );
+    }
+    format!("Failed to write to {display_path}: {error}")
 }
 
 fn open_locked_rc_file(path: &Path) -> Result<fs::File, String> {
@@ -2010,6 +2013,17 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("dangling symlink"), "{error}");
+    }
+
+    #[test]
+    fn test_new_rc_error_reports_concurrent_creator() {
+        let path = Path::new("/home/user/.zshrc");
+        let error = io::Error::from(io::ErrorKind::AlreadyExists);
+
+        assert_eq!(
+            format_new_rc_error(path, &error),
+            "Failed to create /home/user/.zshrc: another process created it first; rerun to append"
+        );
     }
 
     #[test]
