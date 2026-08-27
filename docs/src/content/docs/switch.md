@@ -171,7 +171,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt switch - Switch to a worktree; create if needed
 
 Usage: wt switch [OPTIONS] [BRANCH] [-- <EXECUTE_ARGS>...]

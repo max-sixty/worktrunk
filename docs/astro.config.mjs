@@ -9,6 +9,10 @@ import { rehypeStableHeadingIds } from './src/plugins/stable-heading-ids.mjs';
 import { sidebar } from './src/site-navigation.mjs';
 import { sitemapCompatibility } from './src/plugins/sitemap-compatibility.mjs';
 import { pluginWorktrunkTerminal } from './src/plugins/worktrunk-terminal.mjs';
+import {
+  worktrunkDarkCodeTheme,
+  worktrunkLightCodeTheme,
+} from './src/themes/worktrunk-code.mjs';
 
 const repository = 'https://github.com/max-sixty/worktrunk';
 const site = 'https://worktrunk.dev';
@@ -57,6 +61,8 @@ export default defineConfig({
       },
       expressiveCode: {
         plugins: [pluginWorktrunkTerminal()],
+        themes: [worktrunkDarkCodeTheme, worktrunkLightCodeTheme],
+        useStarlightUiThemeColors: true,
         styleOverrides: {
           borderRadius: '0',
           codeFontFamily: 'var(--sl-font-mono)',

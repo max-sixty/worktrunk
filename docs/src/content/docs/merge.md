@@ -111,7 +111,7 @@ lint = "cargo clippy"
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt merge - Merge current branch into the target branch
 
 Squash & rebase, fast-forward the target branch, remove the worktree.

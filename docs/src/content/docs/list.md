@@ -478,7 +478,7 @@ Missing a field that would be generally useful? [Open an issue](https://github.c
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt list - List worktrees and their status
 
 Usage: wt list [OPTIONS]
@@ -566,7 +566,7 @@ The pace segment appears only when usage is likely to hit a rate limit before it
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt list statusline - Single-line status for the current worktree
 
 Usage: wt list statusline [OPTIONS]

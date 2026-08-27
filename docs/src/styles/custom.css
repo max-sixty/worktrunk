@@ -19,6 +19,11 @@
   --wt-terminal-magenta: #7e22ce;
   --wt-terminal-cyan: #0f6f73;
   --wt-terminal-gutter: #a8a29e;
+  --wt-terminal-ink: #403a35;
+  --wt-terminal-dim: #756b62;
+  --wt-code-command: #9b6500;
+  --wt-code-string: #527a16;
+  --wt-code-option: #1d4ed8;
   --wt-focus: var(--wt-copper);
   --wt-font-display: 'Newsreader', ui-serif, 'Iowan Old Style', 'Palatino Linotype', Palatino,
     Georgia, serif;
@@ -66,6 +71,11 @@
   --wt-terminal-magenta: #d8b4fe;
   --wt-terminal-cyan: #67d4d4;
   --wt-terminal-gutter: #6b7280;
+  --wt-terminal-ink: #dedbd7;
+  --wt-terminal-dim: #9f9488;
+  --wt-code-command: #e5b567;
+  --wt-code-string: #a3be8c;
+  --wt-code-option: #93c5fd;
   --sl-color-accent-low: var(--wt-gold-wash);
   --sl-color-accent: var(--wt-copper);
   --sl-color-accent-high: #fcd34d;
@@ -475,7 +485,7 @@ header.header {
   }
 }
 
-/* Code is content, not a simulated application window. */
+/* Code is content, while file excerpts keep the label of the artifact shown. */
 .expressive-code .frame {
   max-width: 100%;
   min-width: 0;
@@ -491,6 +501,45 @@ header.header {
   box-shadow: none;
   overscroll-behavior-inline: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+.expressive-code .frame.has-title .header {
+  align-items: end;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.expressive-code .frame.has-title .title {
+  width: auto;
+  max-width: calc(100% - 1.2rem);
+  margin-inline-start: 0.6rem;
+  overflow: hidden;
+  border: 1px solid var(--wt-line);
+  border-block-end: 0;
+  border-radius: 0.28rem 0.28rem 0 0;
+  padding: 0.32rem 0.68rem 0.38rem;
+  background: var(--wt-paper-soft);
+  color: var(--wt-craft);
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expressive-code .frame.has-title pre {
+  border: 1px solid var(--wt-line);
+  border-inline-start: 3px solid var(--wt-copper);
+  box-shadow: 0 0.2rem 0.75rem color-mix(in srgb, var(--wt-ink) 7%, transparent);
+}
+
+.expressive-code .frame.wt-command-reference pre {
+  border-inline-start-width: 3px;
+  border-inline-start-color: var(--wt-craft);
 }
 
 .sl-markdown-content table:not(.cmd-compare):not(:where(.not-content *)) {

@@ -349,7 +349,7 @@ The long form `--var KEY=VALUE` is deprecated but still supported. It force-bind
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt hook - Run configured hooks
 
 Usage: wt hook [OPTIONS] <COMMAND>

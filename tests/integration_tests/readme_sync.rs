@@ -1730,6 +1730,27 @@ const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "config", "step", "hook",
 ];
 
+#[test]
+fn test_command_references_use_explicit_fences() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for command in COMMAND_PAGES {
+        let path = project_root.join(format!("docs/src/content/docs/{command}.md"));
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("Failed to read {}: {error}", path.display()));
+        let headings = content.matches("Command reference\n\n").count();
+        let marked_fences = content
+            .matches("Command reference\n\n```text wt-command-reference\n")
+            .count();
+        assert!(headings > 0, "{} has no command references", path.display());
+        assert_eq!(
+            marked_fences,
+            headings,
+            "{} has an unmarked command-reference fence",
+            path.display(),
+        );
+    }
+}
+
 /// Hand-edited site pages whose snapshot markers are refreshed by this test.
 const STANDALONE_DOC_FILES: &[&str] = &[
     "docs/src/content/docs/worktrunk.md",

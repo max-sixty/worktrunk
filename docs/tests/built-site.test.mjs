@@ -186,7 +186,18 @@ test('build preserves the public route contract', async () => {
   assert.match(listPage, /<span class="wt-terminal-green">\+54<\/span>/);
   assert.match(listPage, /<span class="wt-terminal-red">-5<\/span>/);
   assert.match(listPage, /<span class="wt-terminal-blue wt-terminal-dim">#412<\/span>/);
-  assert.match(listPage, /<span class="wt-command-text">wt list<\/span>/);
+  assert.match(
+    listPage,
+    /<div class="ec-line wt-command"><div class="code"><span[^>]*>wt<\/span><span[^>]*> <\/span><span[^>]*>list<\/span>/,
+  );
+  assert.match(listPage, /<figure class="frame wt-command-reference not-content">/);
+  assert.match(listPage, /<span class="wt-help-heading">Usage:<\/span>/);
+  assert.match(listPage, /<span class="wt-help-option">--format<\/span>/);
+  assert.match(listPage, /<span class="wt-help-value">\[OPTIONS\]<\/span>/);
+  assert.match(
+    listPage,
+    /<span class="wt-help-command">wt list<\/span> <span class="wt-help-value">&#x3C;COMMAND><\/span>/,
+  );
 
   const llmCommitsPage = await readFile(routeFile('/llm-commits/'), 'utf8');
   assert.match(llmCommitsPage, /<span class="wt-terminal-cyan">◎<\/span>/);
@@ -196,6 +207,10 @@ test('build preserves the public route contract', async () => {
   );
 
   const configPage = await readFile(routeFile('/config/'), 'utf8');
+  assert.match(
+    configPage,
+    /<figure class="frame has-title not-content"><figcaption class="header"><span class="title">~\/.config\/worktrunk\/config\.toml<\/span><\/figcaption>/,
+  );
   const configToc = configPage.match(
     /<nav aria-labelledby="starlight__on-this-page">([\s\S]*?)<\/nav>/,
   )?.[1];
@@ -251,6 +266,7 @@ test('built pages omit low-value footer navigation', async () => {
 
 test('nested command references expose unique search-only fragment titles', async () => {
   const stepPage = await readFile(routeFile('/step/'), 'utf8');
+  assert.match(stepPage, /<span class="wt-help-value">&#x3C;COMMAND>\.\.\.<\/span>/);
   assert.match(stepPage, /<h2 id="command-reference">Command reference<\/h2>/);
 
   const references = [...stepPage.matchAll(
@@ -276,6 +292,41 @@ test('nested command references expose unique search-only fragment titles', asyn
     listPage,
     /<h3 id="command-reference-1"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">wt list statusline — <\/span>Command reference<\/h3>/,
   );
+});
+
+test('every command reference receives semantic syntax roles', async () => {
+  let headingCount = 0;
+  let frameCount = 0;
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    headingCount += [...html.matchAll(/>Command reference<\/h[23]>/g)].length;
+    const frames = [...html.matchAll(
+      /<figure class="frame wt-command-reference not-content">([\s\S]*?)<\/figure>/g,
+    )];
+    frameCount += frames.length;
+    for (const [, frame] of frames) {
+      const renderedCode = frame.match(/<code>([\s\S]*?)<\/code>/)?.[1] ?? '';
+      assert.match(frame, /class="wt-help-command"/, `${page} leaves the command unstyled`);
+      assert.match(frame, /class="wt-help-heading"/, `${page} leaves help headings unstyled`);
+      assert.match(frame, /class="wt-help-(?:option|value)"/, `${page} leaves help syntax unstyled`);
+      assert.doesNotMatch(
+        frame,
+        /<div class="code">- [^<]/,
+        `${page} leaves a possible-value row unstyled`,
+      );
+      const experimentalCount = [...renderedCode.matchAll(/\[experimental\]/g)].length;
+      const styledExperimentalCount = [
+        ...renderedCode.matchAll(/class="wt-help-meta">\[experimental\]<\/span>/g),
+      ].length;
+      assert.equal(
+        styledExperimentalCount,
+        experimentalCount,
+        `${page} leaves an experimental annotation unstyled`,
+      );
+    }
+  }
+  assert.ok(headingCount > 0, 'expected rendered command references');
+  assert.equal(frameCount, headingCount, 'some command references remain plain code blocks');
 });
 
 test('built pages only reference emitted local assets', async () => {
