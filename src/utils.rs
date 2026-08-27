@@ -144,7 +144,9 @@ pub fn write_atomically(path: &Path, content: &str) -> io::Result<()> {
 /// Create `path` atomically, failing if another writer creates it first.
 ///
 /// Use this when the caller observed that the path was absent and must not
-/// overwrite content that appears before the temp file is persisted.
+/// overwrite content that appears before the temp file is persisted. A
+/// dangling symlink already occupies the path, so this returns `AlreadyExists`
+/// instead of replacing the link as [`write_atomically`] does.
 pub fn write_new_atomically(path: &Path, content: &str) -> io::Result<()> {
     write_atomically_with(path, content, false)
 }

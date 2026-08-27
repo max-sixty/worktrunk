@@ -720,6 +720,12 @@ fn configure_shell_file(
             // Another process may create the rc file after the existence check.
             // Fail in that case so its contents survive and a rerun can append.
             write_new_atomically(path, &format!("{}\n", config_line)).map_err(|e| {
+                if e.kind() == io::ErrorKind::AlreadyExists && path.is_symlink() {
+                    return format!(
+                        "Failed to create {}: path is a dangling symlink; restore its target or remove the link, then rerun",
+                        format_path_for_display(path)
+                    );
+                }
                 format!(
                     "Failed to write to {}: {}",
                     format_path_for_display(path),
@@ -1959,6 +1965,30 @@ mod tests {
 
         assert_eq!(result.unwrap().action, ConfigAction::AlreadyExists);
         assert_eq!(fs::read(&rc).unwrap(), content);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_configure_shell_reports_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let rc = dir.path().join(".zshrc");
+        let target = dir.path().join("missing-target");
+        symlink(&target, &rc).unwrap();
+
+        let error = configure_shell_file(Shell::Zsh, &rc, false, true, "wt")
+            .err()
+            .expect("dangling symlink should be rejected");
+
+        assert_eq!(
+            error,
+            format!(
+                "Failed to create {}: path is a dangling symlink; restore its target or remove the link, then rerun",
+                format_path_for_display(&rc)
+            )
+        );
+        assert_eq!(fs::read_link(&rc).unwrap(), target);
     }
 
     #[test]
