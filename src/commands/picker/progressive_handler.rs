@@ -42,8 +42,6 @@ use skim::prelude::*;
 use worktrunk::git::Repository;
 use worktrunk::styling::{HINT_SYMBOL, StyledLine};
 
-use super::super::list::ci_status::PrStatus;
-
 /// Minimum gap between repaint pokes during collection. Holds the redraw rate
 /// at ~60fps so a burst of task results can't flood skim's (effectively
 /// unbounded) event channel ahead of the user's key presses. A directly-sent
@@ -52,7 +50,7 @@ const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
     HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
-    LocalContentSlot, MorphHandle, PickerRow, PickerRowKey, PrStatusSlot, PreviewCache,
+    LocalContentSlot, MorphHandle, PickerRow, PickerRowId, PrStatusSlot, PreviewCache,
     RowShortcutData, RowUrl, ShortcutTable, pr_presence, pr_status_pane_eq, worktree_output_token,
 };
 use super::preview::PreviewMode;
@@ -93,10 +91,6 @@ pub(super) struct PickerHandler {
     /// One `Arc<Mutex<String>>` per data row — same Arcs `PickerRow`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
-    /// Canonical identity per data row. Computed once with the skeleton and
-    /// shared by the skim row plus every later update producer, so display or
-    /// selection strings can never drift into cache keying.
-    pub(super) row_keys: OnceLock<Box<[PickerRowKey]>>,
     /// One live `pr_status` slot per data row — same `PrStatusSlot` Arcs the
     /// `PickerRow`s hold. Set once in `on_skeleton` (primed from the
     /// cache-filled snapshot), then written by `on_update` as the `CiStatus`
@@ -198,13 +192,8 @@ impl PickerHandler {
     /// repeated `on_update`s short-circuit — and a *changed* number (a reused
     /// branch, a stale prime corrected by the live fetch) drops the now-wrong
     /// cached thread and re-fetches, keeping the `comments` tab consistent with
-    /// the `pr` tab. Both local and `--prs` rows use their structured row key.
-    fn maybe_spawn_comments(
-        &self,
-        idx: usize,
-        row_key: &PickerRowKey,
-        pr_status: &Option<Option<PrStatus>>,
-    ) {
+    /// the `pr` tab. Both local and `--prs` rows use their structured row ID.
+    fn maybe_spawn_comments(&self, idx: usize, item: &ListItem) {
         // A superseded handler (its collect thread draining past an `alt-r`)
         // must not act at all: its corrected-number path below *removes* the
         // shared `(row, Comments)` entry — possibly the one the live spawn
@@ -215,7 +204,7 @@ impl PickerHandler {
         if !self.spawn_gen.is_current() {
             return;
         }
-        let Some(Some(status)) = pr_status else {
+        let Some(Some(status)) = &item.pr_status else {
             return;
         };
         let Some(pr_ref) = status.number else { return };
@@ -239,16 +228,17 @@ impl PickerHandler {
         if previous == number {
             return; // this PR's comments are already fetched (or in flight)
         }
+        let row_id = PickerRowId::local(item);
         if previous != 0 {
             // The live fetch corrected the PR number — drop the stale thread so
             // the re-fetch (below) replaces it rather than serving the old PR.
             self.preview_cache
-                .remove(&(row_key.clone(), PreviewMode::Comments));
+                .remove(&(row_id.clone(), PreviewMode::Comments));
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
             &self.spawn_gen,
-            row_key.clone(),
+            row_id,
             number as u32,
             status.updated_at.clone(),
             self.preview_dims.0,
@@ -299,7 +289,6 @@ impl PickerProgressHandler for PickerHandler {
         let shown_branches = collect_shown_branches(&items);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
-        let mut row_keys: Vec<PickerRowKey> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
         let mut comments_slots: Vec<Arc<AtomicU64>> = Vec::with_capacity(items.len());
         let mut local_content_slots: Vec<LocalContentSlot> = Vec::with_capacity(items.len());
@@ -368,8 +357,7 @@ impl PickerProgressHandler for PickerHandler {
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
             let branch_name = item.branch_name().to_string();
-            let row_key = PickerRowKey::local(&item);
-            row_keys.push(row_key.clone());
+            let row_id = PickerRowId::local(&item);
             let has_upstream = upstream_branches.contains(&branch_name);
             // The *distinct* path (leaf relative to the shared worktree parent),
             // not the absolute path — see `path_base`. This feeds only the
@@ -469,7 +457,7 @@ impl PickerProgressHandler for PickerHandler {
                 search_base,
                 gutter,
                 rendered: rendered_arc,
-                row_key,
+                row_id,
                 branch_name,
                 output_token,
                 preview_cache: Arc::clone(&self.preview_cache),
@@ -491,7 +479,6 @@ impl PickerProgressHandler for PickerHandler {
         // (which reads `shared_items`) sees a populated list the moment
         // skim calls `CommandCollector::invoke`.
         let _ = self.rendered_slots.set(slots.into_boxed_slice());
-        let _ = self.row_keys.set(row_keys.into_boxed_slice());
         let _ = self.pr_status_slots.set(pr_slots.into_boxed_slice());
         let _ = self.comments_fetched.set(comments_slots.into_boxed_slice());
         let _ = self
@@ -552,9 +539,7 @@ impl PickerProgressHandler for PickerHandler {
         // skeleton time — kick off its `comments` fetch now so the tab is warm.
         // Rows whose PR only surfaces later get theirs from `on_update`.
         for (idx, item) in list_items.iter().enumerate() {
-            if let Some(row_key) = self.row_keys.get().and_then(|keys| keys.get(idx)) {
-                self.maybe_spawn_comments(idx, row_key, &item.pr_status);
-            }
+            self.maybe_spawn_comments(idx, item);
         }
         // Static Summary hint is a synchronous in-memory insert, no
         // contention concern. Pre-fill every row at skeleton time so the
@@ -572,7 +557,7 @@ impl PickerProgressHandler for PickerHandler {
     }
 
     fn on_update(&self, idx: usize, rendered: String, item: &ListItem) {
-        let row_key = self.row_keys.get().and_then(|keys| keys.get(idx));
+        let row_id = PickerRowId::local(item);
         if let Some(slots) = self.rendered_slots.get()
             && let Some(slot) = slots.get(idx)
         {
@@ -600,14 +585,12 @@ impl PickerProgressHandler for PickerHandler {
                 *slot = item.pr_status.clone();
             }
         }
-        if delta.pane_changed
-            && let Some(row_key) = row_key
-        {
+        if delta.pane_changed {
             // Drop the memoized `pr` pane for this row so the next `preview()`
             // re-renders from the status just mirrored — see
             // `PickerRow::render_pr_pane_cached`.
             self.preview_cache
-                .remove(&(row_key.clone(), PreviewMode::Pr));
+                .remove(&(row_id.clone(), PreviewMode::Pr));
         }
         // Mirror the row's live diff-content signals so the `working_tree` /
         // `branch_diff` / `upstream` tabs dim once their diff is known empty.
@@ -621,9 +604,7 @@ impl PickerProgressHandler for PickerHandler {
         // If this update is where the row's PR first surfaced, kick off its
         // `comments` background fetch (once per row) so the `comments` tab loads
         // the thread — the same fetch a `--prs` row makes.
-        if let Some(row_key) = row_key {
-            self.maybe_spawn_comments(idx, row_key, &item.pr_status);
-        }
+        self.maybe_spawn_comments(idx, item);
         // `request_render` sends `Event::Render`, which repaints the *list* row
         // (its CI/status cells just changed) but does NOT re-run the preview.
         // When the `pr` pane changed, poke a `RunPreview` so the selected row's
@@ -635,12 +616,10 @@ impl PickerProgressHandler for PickerHandler {
         // reset its scroll (see `PreviewNotifier`). The `local_content` mirror
         // above feeds only the diff tabs' tab-bar dim, which refreshes on the
         // next selection change or tab switch rather than re-running here.
-        if delta.pane_changed
-            && let Some(row_key) = row_key
-        {
+        if delta.pane_changed {
             self.orchestrator
                 .notifier()
-                .notify_pr_status_changed(row_key, delta);
+                .notify_pr_status_changed(&row_id, delta);
         }
         self.request_render(false);
     }
@@ -715,7 +694,6 @@ mod tests {
             shared_items: Arc::new(Mutex::new(Vec::new())),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
             rendered_slots: OnceLock::new(),
-            row_keys: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
             comments_fetched: OnceLock::new(),
             local_content_slots: OnceLock::new(),
@@ -751,8 +729,8 @@ mod tests {
         (handler, test, rx)
     }
 
-    fn branch_key(branch: &str) -> PickerRowKey {
-        PickerRowKey::local(&ListItem::new_branch(
+    fn branch_key(branch: &str) -> PickerRowId {
+        PickerRowId::local(&ListItem::new_branch(
             "0000000".to_string(),
             branch.to_string(),
         ))
@@ -1843,15 +1821,17 @@ mod tests {
             grid(),
         );
         let _ = rx.recv();
-        let row_key = branch_key("b");
+        let mut item = ListItem::new_branch("abc".into(), "b".into());
+        let row_id = PickerRowId::local(&item);
         // Record PR #5 in this handler's dedup slot (the fetch resolves
         // synchronously to the "unsupported forge" pane — the test repo has
         // no forge remote — only the recorded number matters here).
-        handler.maybe_spawn_comments(0, &row_key, &status(5));
+        item.pr_status = status(5);
+        handler.maybe_spawn_comments(0, &item);
 
         // A refresh supersedes this handler; the live spawn fetches the thread.
         handler.orchestrator.refresh(test.repo.clone());
-        let key = (row_key.clone(), PreviewMode::Comments);
+        let key = (row_id.clone(), PreviewMode::Comments);
         handler.orchestrator.fill_external(
             &handler.orchestrator.generation(),
             key.clone(),
@@ -1860,7 +1840,8 @@ mod tests {
 
         // The stale handler observing a corrected number must not touch the
         // live spawn's entry.
-        handler.maybe_spawn_comments(0, &row_key, &status(6));
+        item.pr_status = status(6);
+        handler.maybe_spawn_comments(0, &item);
         handler.orchestrator.wait_for_idle();
         assert_eq!(
             handler.preview_cache.get(&key).map(|v| v.clone()),

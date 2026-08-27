@@ -2646,7 +2646,7 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        entries.iter().any(|e| e["row_key"] == "pr:42"),
+        entries.iter().any(|e| e["row_id"] == "pr:42"),
         "expected a pr:42 cache entry proving the PR row rendered, got:\n{stdout}"
     );
 }
@@ -2654,7 +2654,7 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
 /// The `log` tab on a `--prs` row loads its commits in the background: as each
 /// PR row streams in, `spawn_pr_previews` kicks off `gh pr view <n> --json
 /// commits` on `COLLECT_POOL`, keyed by the row's structured PR identity. The dry-run
-/// path joins that work and dumps the preview cache, so a `{row_key:"pr:42",
+/// path joins that work and dumps the preview cache, so a `{row_id:"pr:42",
 /// mode:4}` (Log) entry with non-empty bytes proves the whole mechanism end to
 /// end: `spawn_compute` → `compute_pr_log` → `parse_github_commits` → cache.
 ///
@@ -2698,7 +2698,7 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     // Mode 4 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
     let log_entry = entries
         .iter()
-        .find(|e| e["row_key"] == "pr:42" && e["mode"] == 4)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2757,7 +2757,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     let entries = parsed["entries"].as_array().expect("entries array");
     let log_entry = entries
         .iter()
-        .find(|e| e["row_key"] == "pr:42" && e["mode"] == 4)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2771,7 +2771,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     // `pr view` rigged to exit 1.
     let comments_entry = entries
         .iter()
-        .find(|e| e["row_key"] == "pr:42" && e["mode"] == 8)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| {
             panic!("failed comments fetch must cache a couldn't-load pane:\n{stdout}")
         });
@@ -2826,7 +2826,7 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     for (mode, tab) in [(4, "log"), (8, "comments")] {
         let entry = entries
             .iter()
-            .find(|e| e["row_key"] == "pr:42" && e["mode"] == mode)
+            .find(|e| e["row_id"] == "pr:42" && e["mode"] == mode)
             .unwrap_or_else(|| panic!("no pr:42 {tab} cache entry in dump:\n{stdout}"));
         assert!(
             entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2837,7 +2837,7 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
 
 /// The `comments` tab (8) loads the PR discussion in the background, the same
 /// way the `log` tab loads commits: `spawn_pr_previews` fires `gh pr view <n>
-/// --json comments` keyed by the row's structured PR identity. A `{row_key:"pr:42",
+/// --json comments` keyed by the row's structured PR identity. A `{row_id:"pr:42",
 /// mode:8}` entry in the dry-run cache dump proves `compute_pr_comments` →
 /// `render_github_comments` → cache ran end to end. (`gh pr view --json
 /// commits` and `--json comments` both match the mock's `pr view` key, so the
@@ -2878,7 +2878,7 @@ fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
     // Mode 8 is Comments; the row keys its cache by `pr:42`.
     let comments_entry = entries
         .iter()
-        .find(|e| e["row_key"] == "pr:42" && e["mode"] == 8)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| panic!("no pr:42 Comments cache entry in dump:\n{stdout}"));
     assert!(
         comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2913,7 +2913,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        entries.iter().any(|e| e["row_key"] == "mr:7"),
+        entries.iter().any(|e| e["row_id"] == "mr:7"),
         "expected an mr:7 cache entry proving the MR row rendered, got:\n{stdout}"
     );
 }
@@ -2967,7 +2967,7 @@ fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     for (mode, label) in [(4, "Log"), (8, "Comments")] {
         let entry = entries
             .iter()
-            .find(|e| e["row_key"] == "mr:7" && e["mode"] == mode)
+            .find(|e| e["row_id"] == "mr:7" && e["mode"] == mode)
             .unwrap_or_else(|| panic!("no mr:7 {label} cache entry in dump:\n{stdout}"));
         assert!(
             entry["bytes"].as_u64().unwrap_or(0) > 0,

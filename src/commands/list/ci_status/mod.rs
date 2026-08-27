@@ -927,11 +927,7 @@ mod tests {
 
     #[test]
     fn test_ci_branch_name_from_detached_head() {
-        let detached = BranchRef {
-            full_ref: None,
-            commit_sha: "abc123".to_string(),
-            worktree_path: None,
-        };
+        let detached = BranchRef::worktree("/tmp/detached", None, "abc123");
         assert!(CiBranchName::from_branch_ref(&detached).is_none());
     }
 

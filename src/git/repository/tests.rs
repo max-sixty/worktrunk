@@ -1373,14 +1373,17 @@ fn resolve_worktree_accepts_branch_and_path() {
 
     // A relative path resolves against `-C`, which only a spawned `wt` has —
     // `switch::switch_by_relative_worktree_path` covers that spelling.
+    let mut ids = Vec::new();
     for selector in ["feature", worktree_path.to_str().unwrap()] {
         let resolved = test.repo.resolve_worktree(selector).unwrap();
+        ids.push(resolved.id().expect("resolved Git item has an identity"));
         let ResolvedWorktree::Worktree { path, branch } = resolved else {
             panic!("{selector} should resolve to a worktree");
         };
         assert_eq!(canonicalize(&path).unwrap(), worktree_path);
         assert_eq!(branch.as_deref(), Some("feature"));
     }
+    assert_eq!(ids[0], ids[1]);
 }
 
 /// A directory whose name matches a branch does not shadow it: `wt switch docs`

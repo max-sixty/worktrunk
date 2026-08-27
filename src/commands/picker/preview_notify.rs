@@ -63,7 +63,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use skim::prelude::Event;
 use tokio::sync::mpsc::Sender;
 
-use super::items::{PickerRowKey, PreviewCacheKey};
+use super::items::{PickerRowId, PreviewCacheKey};
 use super::preview::PreviewMode;
 
 /// What about a row's live `pr_status` changed, at the granularity each
@@ -115,8 +115,8 @@ impl PreviewNotifier {
     /// Record the `(row-key, mode)` the selected row is rendering, so a matching
     /// background fill knows to surface itself. Called from `*SkimItem::preview`
     /// before it reads the cache (see the module docstring on ordering).
-    pub(super) fn note_awaiting(&self, row_key: &PickerRowKey, mode: PreviewMode) {
-        *self.awaiting.lock().unwrap() = Some((row_key.clone(), mode));
+    pub(super) fn note_awaiting(&self, row_id: &PickerRowId, mode: PreviewMode) {
+        *self.awaiting.lock().unwrap() = Some((row_id.clone(), mode));
     }
 
     /// Inject an `Event::RunPreview` if `key` is the preview the selected row is
@@ -130,17 +130,17 @@ impl PreviewNotifier {
         }
     }
 
-    /// Inject an `Event::RunPreview` if the selected row is `row_key` *and* the
+    /// Inject an `Event::RunPreview` if the selected row is `row_id` *and* the
     /// part of `pr_status` its visible tab renders actually changed, so the live
     /// `CiStatus` fetch surfaces on its own without resetting the scroll of an
     /// unchanged pane. `delta` carries the two per-tab change signals the collect
     /// handler computed (see [`PrStatusDelta`]); a diff / log / summary tab reads
     /// neither, so it matches nothing and injects nothing.
-    pub(super) fn notify_pr_status_changed(&self, row_key: &PickerRowKey, delta: PrStatusDelta) {
+    pub(super) fn notify_pr_status_changed(&self, row_id: &PickerRowId, delta: PrStatusDelta) {
         let relevant = {
             let awaiting = self.awaiting.lock().unwrap();
             awaiting.as_ref().is_some_and(|(k, mode)| {
-                k == row_key
+                k == row_id
                     && match mode {
                         PreviewMode::Pr => delta.pane_changed,
                         PreviewMode::Comments => delta.presence_changed,
@@ -173,6 +173,7 @@ impl PreviewNotifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::list::model::ListItem;
 
     /// `notify_pr_status_changed` re-runs the selected row's preview only when
     /// the *visible* tab's own change signal fired: the `pr` tab on a pane
@@ -185,8 +186,8 @@ mod tests {
         let render_tx = Arc::new(OnceLock::new());
         render_tx.set(tx).unwrap();
         let notifier = PreviewNotifier::new(render_tx);
-        let feature = PickerRowKey::Local(worktrunk::git::BranchRefKey::local_branch("feature"));
-        let other = PickerRowKey::Local(worktrunk::git::BranchRefKey::local_branch("other"));
+        let feature = PickerRowId::local(&ListItem::new_branch("abc".into(), "feature".into()));
+        let other = PickerRowId::local(&ListItem::new_branch("def".into(), "other".into()));
 
         let pane_only = PrStatusDelta {
             pane_changed: true,

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use color_print::cformat;
 use worktrunk::git::{
-    BranchRefKey, InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff,
+    BranchRef, GitItemId, InProgressOperation, IntegrationReason, IntegrationSignals, LineDiff,
     check_integration,
 };
 
@@ -232,10 +232,10 @@ impl BranchScope {
 #[derive(Clone)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
-    /// Canonical identity captured when the row kind is established. Keeping
-    /// this on the model makes key lookup pure: picker rendering must not
-    /// resolve filesystem paths while building its first frame.
-    pub(crate) identity: BranchRefKey,
+    /// Canonical Git subject captured when the row kind is established. List
+    /// tasks and picker caches share this snapshot instead of rebuilding ref
+    /// qualification or worktree identity downstream.
+    pub(crate) branch_ref: BranchRef,
     pub head: String,
     /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
     /// for ambiguous prefixes. Always populated when there is a HEAD commit
@@ -389,12 +389,12 @@ impl ListItem {
     }
 
     fn new_branch_with_scope(head: String, branch: String, scope: BranchScope) -> Self {
-        let identity = match scope {
-            BranchScope::Local => BranchRefKey::local_branch(&branch),
-            BranchScope::Remote => BranchRefKey::remote_branch(&branch),
+        let branch_ref = match scope {
+            BranchScope::Local => BranchRef::local_branch(&branch, &head),
+            BranchScope::Remote => BranchRef::remote_branch(&branch, &head),
         };
         Self {
-            identity,
+            branch_ref,
             head,
             short_sha: String::new(),
             branch: Some(branch),
@@ -430,29 +430,35 @@ impl ListItem {
     ///
     /// Kept separate from [`Self::branch_name`] and [`Self::display_name`]:
     /// both are presentation fallbacks and can collapse distinct rows. The
-    /// key follows [`BranchRefKey`]'s canonical rules — worktree path for a
+    /// identity follows [`GitItemId`]'s canonical rules — worktree path for a
     /// worktree, full ref for a branch-only row. It is captured when the row
     /// kind is established, so this accessor performs no filesystem work.
-    pub fn key(&self) -> BranchRefKey {
-        self.identity.clone()
+    pub fn id(&self) -> &GitItemId {
+        self.branch_ref.id()
+    }
+
+    /// Git snapshot shared with list tasks.
+    pub(crate) fn branch_ref(&self) -> &BranchRef {
+        &self.branch_ref
     }
 
     /// Replace this row's kind with a worktree while preserving the identity
     /// invariant. Used when a progressively built or synthetic row changes
     /// shape after its initial branch construction.
     pub(crate) fn reclassify_as_worktree(&mut self, data: WorktreeData) {
-        self.identity = BranchRefKey::worktree(&data.path);
+        self.branch_ref =
+            BranchRef::worktree(data.path.clone(), self.branch.as_deref(), &self.head);
         self.kind = ItemKind::Worktree(Box::new(data));
     }
 
     /// Replace this row's kind and branch while preserving the identity
     /// invariant. The picker's removal morph reclassifies a throwaway clone
-    /// (`build_morph_branch_row`), so the live row's `PickerRowKey` is
+    /// (`build_morph_branch_row`), so the live row's `PickerRowId` is
     /// unaffected: a morphed row's previews stay under its worktree key.
     pub(crate) fn reclassify_as_branch(&mut self, scope: BranchScope, branch: String) {
-        self.identity = match scope {
-            BranchScope::Local => BranchRefKey::local_branch(&branch),
-            BranchScope::Remote => BranchRefKey::remote_branch(&branch),
+        self.branch_ref = match scope {
+            BranchScope::Local => BranchRef::local_branch(&branch, &self.head),
+            BranchScope::Remote => BranchRef::remote_branch(&branch, &self.head),
         };
         self.branch = Some(branch);
         self.kind = ItemKind::Branch(scope);
@@ -1111,16 +1117,22 @@ mod tests {
     fn reclassification_updates_list_item_identity() {
         let root = tempfile::tempdir().unwrap();
         let mut item = ListItem::new_branch("abc123".into(), "feature".into());
-        assert_eq!(item.key(), BranchRefKey::local_branch("feature"));
+        assert_eq!(item.id(), BranchRef::local_branch("feature", "abc123").id());
 
         item.reclassify_as_worktree(WorktreeData {
             path: root.path().to_path_buf(),
             ..Default::default()
         });
-        assert_eq!(item.key(), BranchRefKey::worktree(root.path()));
+        assert_eq!(
+            item.id(),
+            BranchRef::worktree(root.path(), Some("feature"), "abc123").id()
+        );
 
         item.reclassify_as_branch(BranchScope::Remote, "feature".into());
-        assert_eq!(item.key(), BranchRefKey::remote_branch("feature"));
+        assert_eq!(
+            item.id(),
+            BranchRef::remote_branch("feature", "abc123").id()
+        );
     }
 
     #[test]

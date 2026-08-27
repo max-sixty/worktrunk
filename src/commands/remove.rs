@@ -7,7 +7,9 @@ use std::path::Path;
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree};
+use worktrunk::git::{
+    BranchDeletionMode, ErrorExt, GitError, Repository, ResolvedWorktree, WorktreeId,
+};
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
@@ -78,7 +80,7 @@ fn validate_remove_targets(
     };
 
     let current_worktree = match repo.current_worktree().root() {
-        Ok(path) => dunce::canonicalize(&path).unwrap_or(path),
+        Ok(path) => WorktreeId::new(path).into_path(),
         Err(e) => {
             plans.record_error(e);
             return plans;
@@ -102,6 +104,7 @@ fn validate_remove_targets(
     // across candidates here. Errors propagate to per-candidate calls, which
     // fall back to capturing internally when None.
     let snapshot = repo.capture_refs().ok();
+    let mut seen_targets = HashSet::new();
 
     for branch_name in branches {
         let resolved = match repo.resolve_worktree(&branch_name) {
@@ -111,10 +114,20 @@ fn validate_remove_targets(
                 continue;
             }
         };
+        // Branch and path spellings are aliases for one registered worktree.
+        // Once resolution has produced the Git model's canonical identity,
+        // plan that target only once regardless of how many aliases were
+        // supplied.
+        if resolved.id().is_some_and(|id| !seen_targets.insert(id)) {
+            continue;
+        }
 
         let target = match resolved {
             ResolvedWorktree::Worktree { path, branch: _ } => {
-                // Use canonical paths to avoid symlink/normalization mismatches
+                // Preserve Git's registered spelling when the worktree is
+                // missing/prunable; its canonical identity is for matching,
+                // not a replacement command target. Existing paths retain the
+                // prior symlink-normalized behavior.
                 let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
 
                 // Remove exactly the resolved worktree by its path. Targeting by
@@ -478,6 +491,29 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn validation_deduplicates_branch_and_path_aliases() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let plans = validate_remove_targets(
+            &repo,
+            vec![
+                "feature".to_string(),
+                worktree.to_string_lossy().into_owned(),
+            ],
+            true,
+            false,
+            false,
+        );
+
+        assert!(plans.errors.is_empty());
+        assert_eq!(plans.others.len(), 1);
+        assert!(plans.branch_only.is_empty());
+        assert!(plans.current.is_none());
+    }
 
     /// Resolution sees a registered worktree, but preparation discovers its
     /// directory is gone and degrades the result to BranchOnly. Ordered

@@ -58,7 +58,7 @@ use super::super::list::ci_status::{
 };
 use super::super::list::columns::ColumnKind;
 use super::super::list::layout::ColumnGrid;
-use super::items::{PickerRow, PickerRowKey, PreviewCache, RowShortcutData, RowUrl, ShortcutTable};
+use super::items::{PickerRow, PickerRowId, PreviewCache, RowShortcutData, RowUrl, ShortcutTable};
 use super::pr_pane;
 use super::preview::PreviewMode;
 use super::preview_cache::CommentEntry;
@@ -170,7 +170,7 @@ impl PrEntry {
     }
 
     /// The `pr:{N}` / `mr:{N}` selection shortcut returned by the row's
-    /// `output()`. Preview caching uses the structured [`PickerRowKey`], not
+    /// `output()`. Preview caching uses the structured [`PickerRowId`], not
     /// this user-facing address token.
     fn output_token(&self) -> String {
         format!("{}{}", self.kind.syntax(), self.number)
@@ -456,8 +456,8 @@ fn listed_pr_row(
     notifier: Arc<PreviewNotifier>,
 ) -> PickerRow {
     let output_token = entry.output_token();
-    let row_key = PickerRowKey::change_request(entry.pr_ref());
-    preview_cache.remove(&(row_key.clone(), PreviewMode::Pr));
+    let row_id = PickerRowId::change_request(entry.pr_ref());
+    preview_cache.remove(&(row_id.clone(), PreviewMode::Pr));
     // The display line is built once and never mutated (a `--prs` row has no
     // live list pipeline behind it).
     let rendered = match grid {
@@ -468,7 +468,7 @@ fn listed_pr_row(
         search_base: entry.head_branch.clone(),
         gutter: '#',
         rendered: Arc::new(Mutex::new(rendered)),
-        row_key,
+        row_id,
         branch_name: entry.head_branch.clone(),
         output_token,
         preview_cache,
@@ -506,33 +506,29 @@ fn spawn_pr_previews(
     entry: &PrEntry,
     preview_dims: (usize, usize),
 ) {
-    let row_key = PickerRowKey::change_request(entry.pr_ref());
+    let row_id = PickerRowId::change_request(entry.pr_ref());
     let (kind, number) = (entry.kind, entry.number);
     let (width, height) = preview_dims;
     let head_oid = entry.head_oid.clone();
     let head_branch = entry.head_branch.clone();
-    orchestrator.spawn_compute(
-        spawn_gen,
-        (row_key.clone(), PreviewMode::Log),
-        move |repo| {
-            Some(
-                compute_pr_log(
-                    repo,
-                    kind,
-                    number,
-                    head_oid.as_deref(),
-                    &head_branch,
-                    width,
-                    height,
-                )
-                .unwrap_or_else(|| pr_unavailable_pane("commit log")),
+    orchestrator.spawn_compute(spawn_gen, (row_id.clone(), PreviewMode::Log), move |repo| {
+        Some(
+            compute_pr_log(
+                repo,
+                kind,
+                number,
+                head_oid.as_deref(),
+                &head_branch,
+                width,
+                height,
             )
-        },
-    );
+            .unwrap_or_else(|| pr_unavailable_pane("commit log")),
+        )
+    });
     spawn_comments_fetch(
         orchestrator,
         spawn_gen,
-        row_key,
+        row_id,
         entry.kind,
         entry.number,
         entry.updated_at.clone(),
@@ -547,7 +543,7 @@ fn spawn_pr_previews(
 /// structured PR/MR reference and `entry.kind` (both already resolved from the
 /// forge in the listing call); a worktree row goes through
 /// [`spawn_worktree_comments_fetch`], which resolves `kind` from the repo's
-/// platform. The [`PickerRowKey`] enum keeps forge and Git identities in
+/// platform. The [`PickerRowId`] enum keeps forge and Git identities in
 /// separate variants. A failed fetch caches a terminal [`pr_unavailable_pane`]
 /// (not `None`), so the tab never strands on its loading placeholder — see
 /// [`spawn_pr_previews`] and [`PreviewOrchestrator::spawn_compute`].
@@ -560,13 +556,13 @@ fn spawn_pr_previews(
 fn spawn_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     spawn_gen: &SpawnGeneration,
-    row_key: PickerRowKey,
+    row_id: PickerRowId,
     kind: RefType,
     number: u32,
     updated_at: Option<String>,
     width: usize,
 ) {
-    orchestrator.spawn_compute(spawn_gen, (row_key, PreviewMode::Comments), move |repo| {
+    orchestrator.spawn_compute(spawn_gen, (row_id, PreviewMode::Comments), move |repo| {
         Some(
             compute_pr_comments(repo, kind, number, updated_at.as_deref(), width)
                 .unwrap_or_else(|| pr_unavailable_pane("comments")),
@@ -587,7 +583,7 @@ fn spawn_comments_fetch(
 pub(super) fn spawn_worktree_comments_fetch(
     orchestrator: &PreviewOrchestrator,
     spawn_gen: &SpawnGeneration,
-    row_key: PickerRowKey,
+    row_id: PickerRowId,
     number: u32,
     updated_at: Option<String>,
     width: usize,
@@ -597,7 +593,7 @@ pub(super) fn spawn_worktree_comments_fetch(
         _ => {
             orchestrator.fill_external(
                 spawn_gen,
-                (row_key, PreviewMode::Comments),
+                (row_id, PreviewMode::Comments),
                 comments_unsupported_forge_pane(),
             );
             return;
@@ -606,7 +602,7 @@ pub(super) fn spawn_worktree_comments_fetch(
     spawn_comments_fetch(
         orchestrator,
         spawn_gen,
-        row_key,
+        row_id,
         kind,
         number,
         updated_at,
@@ -1336,6 +1332,7 @@ mod tests {
     use super::super::items::PreviewCache;
     use super::super::preview_notify::PreviewNotifier;
     use super::*;
+    use crate::commands::list::model::ListItem;
     use dashmap::DashMap;
 
     /// Build a listed-`--prs` `PickerRow` (`local: None`) with a throwaway empty
@@ -1872,7 +1869,7 @@ mod tests {
     }
 
     #[test]
-    fn worktree_comments_use_the_row_key_on_a_supported_forge() {
+    fn worktree_comments_use_the_row_id_on_a_supported_forge() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         test.run_git(&[
             "remote",
@@ -1894,11 +1891,11 @@ mod tests {
 
         let orchestrator = PreviewOrchestrator::new(test.repo.clone(), Arc::new(OnceLock::new()));
         let generation = orchestrator.generation();
-        let row_key = PickerRowKey::Local(worktrunk::git::BranchRefKey::local_branch("feature"));
+        let row_id = PickerRowId::local(&ListItem::new_branch("abc".into(), "feature".into()));
         spawn_worktree_comments_fetch(
             &orchestrator,
             &generation,
-            row_key.clone(),
+            row_id.clone(),
             42,
             Some(updated_at.into()),
             80,
@@ -1907,7 +1904,7 @@ mod tests {
 
         let pane = orchestrator
             .cache
-            .get(&(row_key, PreviewMode::Comments))
+            .get(&(row_id, PreviewMode::Comments))
             .expect("supported forge fills the row-keyed comments cache");
         assert!(pane.contains("Canonical identity"));
     }
@@ -2066,7 +2063,7 @@ mod tests {
         assert!(miss.contains("Loading commit log"), "miss: {miss:?}");
 
         cache.insert(
-            (pr.row_key.clone(), PreviewMode::Log),
+            (pr.row_id.clone(), PreviewMode::Log),
             "abc12345  Fix it\n".to_string(),
         );
         assert_eq!(pr.cached_or_loading(PreviewMode::Log), "abc12345  Fix it\n");
@@ -2218,7 +2215,7 @@ mod tests {
         assert!(miss.contains("Loading comments"), "miss: {miss:?}");
 
         cache.insert(
-            (pr.row_key.clone(), PreviewMode::Comments),
+            (pr.row_id.clone(), PreviewMode::Comments),
             "rendered thread".to_string(),
         );
         assert_eq!(

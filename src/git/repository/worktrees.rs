@@ -12,6 +12,7 @@ use super::{
     GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
     normalize_selector, resolve_input_path,
 };
+use crate::git::WorktreeId;
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
@@ -418,12 +419,14 @@ impl Repository {
                 .map_err(|_| GitError::NotInWorktree {
                     action: Some("resolve @".into()),
                 })?;
-            // root() returns canonicalized path, so canonicalize worktree paths
-            // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
+            // Compare canonical identities so alternate path spellings (for
+            // example macOS `/var` and `/private/var`) select one inventory
+            // entry without changing Git's registered path.
+            let current_id = WorktreeId::new(&path);
             let branch = self
                 .list_worktrees()?
                 .iter()
-                .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
+                .find(|wt| wt.id() == current_id)
                 .and_then(|wt| wt.branch.clone());
             return Ok(ResolvedWorktree::Worktree { path, branch });
         }

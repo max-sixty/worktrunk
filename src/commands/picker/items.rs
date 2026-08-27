@@ -110,19 +110,19 @@ fn anchor_faint_under_selection(
 
 /// Canonical identity of a picker row.
 ///
-/// Local rows wrap the Git model's [`worktrunk::git::BranchRefKey`], so
+/// Local rows wrap the Git model's [`worktrunk::git::GitItemId`], so
 /// worktrees are path-keyed and branch-only rows are full-ref-keyed. Listed
 /// PR/MR rows use their structured forge reference. Display labels and skim's
 /// string `output()` tokens are intentionally not identities.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) enum PickerRowKey {
-    Local(worktrunk::git::BranchRefKey),
+pub(super) enum PickerRowId {
+    Local(worktrunk::git::GitItemId),
     ChangeRequest(PrRef),
 }
 
-impl PickerRowKey {
+impl PickerRowId {
     pub(super) fn local(item: &ListItem) -> Self {
-        Self::Local(item.key())
+        Self::Local(item.id().clone())
     }
 
     pub(super) fn change_request(pr_ref: PrRef) -> Self {
@@ -130,7 +130,7 @@ impl PickerRowKey {
     }
 }
 
-impl std::fmt::Display for PickerRowKey {
+impl std::fmt::Display for PickerRowId {
     /// Tagged diagnostic form; never parsed back into an identity.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -144,7 +144,7 @@ impl std::fmt::Display for PickerRowKey {
 }
 
 /// Cache key for pre-computed previews: `(canonical row identity, mode)`.
-pub(super) type PreviewCacheKey = (PickerRowKey, PreviewMode);
+pub(super) type PreviewCacheKey = (PickerRowId, PreviewMode);
 
 /// Cache for pre-computed previews, keyed by [`PreviewCacheKey`].
 /// Shared across all PickerRows for background pre-computation. This is the
@@ -448,7 +448,7 @@ pub(super) struct PickerRow {
     /// row it's built once and never mutated.
     pub rendered: Arc<Mutex<String>>,
     /// Canonical identity shared by every preview producer and consumer.
-    pub row_key: PickerRowKey,
+    pub row_id: PickerRowId,
     /// Branch name (the head branch for a `--prs` row). Used by switch
     /// selection and the `pr` pane's branch line; never as identity.
     pub branch_name: String,
@@ -513,8 +513,8 @@ pub(super) struct LocalCheckout {
 
 impl PickerRow {
     /// Key for every preview-cache read and notifier record.
-    fn preview_key(&self) -> &PickerRowKey {
-        &self.row_key
+    fn preview_key(&self) -> &PickerRowId {
+        &self.row_id
     }
 }
 
@@ -602,7 +602,6 @@ impl SkimItem for PickerRow {
         {
             local.demand.request(
                 Arc::clone(&local.item),
-                self.preview_key().clone(),
                 mode,
                 (context.width, context.height),
                 local.spawn_gen.clone(),
@@ -1905,8 +1904,8 @@ mod tests {
         }
     }
 
-    fn test_local_row_key(branch: &str) -> PickerRowKey {
-        PickerRowKey::local(&test_local_checkout(branch).item)
+    fn test_local_row_id(branch: &str) -> PickerRowId {
+        PickerRowId::local(&test_local_checkout(branch).item)
     }
 
     /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
@@ -1918,14 +1917,14 @@ mod tests {
         pr_status: Option<Option<PrStatus>>,
     ) -> PickerRow {
         let local = test_local_checkout(branch);
-        let row_key = PickerRowKey::local(&local.item);
+        let row_id = PickerRowId::local(&local.item);
         PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch.to_string(),
             output_token: branch.to_string(),
-            row_key,
+            row_id,
             preview_cache,
             pr_status: Arc::new(Mutex::new(pr_status)),
             notifier: PreviewNotifier::detached(),
@@ -2434,7 +2433,7 @@ mod tests {
         let cache_hit = {
             let preview_cache: PreviewCache = Arc::new(DashMap::new());
             preview_cache.insert(
-                (test_local_row_key("feature"), PreviewMode::Summary),
+                (test_local_row_id("feature"), PreviewMode::Summary),
                 "Add auth module\n\nImplements JWT-based authentication.".to_string(),
             );
             worktree_test_row("feature", preview_cache, None)
@@ -2637,7 +2636,7 @@ mod tests {
         // A PR with the thread already cached → the cached thread is shown.
         let cache: PreviewCache = Arc::new(DashMap::new());
         cache.insert(
-            (test_local_row_key("feature"), PreviewMode::Comments),
+            (test_local_row_id("feature"), PreviewMode::Comments),
             "@octocat\nLooks good\n".to_string(),
         );
         let with_thread = row(pr_status(Some(PrRef::pr(7))), Arc::clone(&cache));
@@ -2835,15 +2834,15 @@ mod tests {
         // invalidate the entry the way the collect handler's `on_update` does.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
-        let row_key = test_local_row_key("feature");
-        let key = (row_key.clone(), PreviewMode::Pr);
+        let row_id = test_local_row_id("feature");
+        let key = (row_id.clone(), PreviewMode::Pr);
         let row = PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
             output_token: "feature".into(),
-            row_key,
+            row_id,
             preview_cache: Arc::clone(&cache),
             pr_status: Arc::clone(&slot),
             notifier: PreviewNotifier::detached(),

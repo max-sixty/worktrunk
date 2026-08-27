@@ -306,8 +306,7 @@ mod tasks;
 mod types;
 
 use anyhow::Context;
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
@@ -316,7 +315,7 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{BranchRefKey, ErrorExt, LocalBranch, Repository, WorktreeInfo};
+use worktrunk::git::{BranchRef, ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, terminal_width, truncate_visible,
     warning_message,
@@ -1042,44 +1041,29 @@ pub fn collect(
         Vec::new()
     };
 
-    // Resolve every worktree identity exactly once. These keys serve both path
-    // comparisons and the ListItem model, so picker skeleton construction does
-    // not repeat filesystem canonicalization for every row.
-    let worktree_keys: HashMap<PathBuf, BranchRefKey> = worktrees
-        .iter()
-        .map(|wt| (wt.path.clone(), BranchRefKey::worktree(&wt.path)))
-        .collect();
+    // Build each Git subject once and keep it paired with the inventory entry
+    // it describes. The registered path remains available for display and
+    // commands; the subject's ID owns canonical path equality.
+    let worktree_subjects: Vec<(&WorktreeInfo, BranchRef)> =
+        worktrees.iter().map(|wt| (wt, wt.branch_ref())).collect();
 
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
     // by letting git resolve the actual worktree root rather than using prefix matching.
-    let current_worktree_key = repo
-        .current_worktree()
-        .root()
-        .ok()
-        .map(BranchRefKey::worktree);
-    let current_worktree_path = current_worktree_key.as_ref().and_then(|current_key| {
-        worktrees
-            .iter()
-            .find(|wt| worktree_keys.get(&wt.path) == Some(current_key))
-            .map(|wt| wt.path.clone())
-    });
+    let current_worktree_id = repo.current_worktree().root().ok().map(WorktreeId::new);
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    let primary_key = repo
-        .primary_worktree()?
+    let primary_id = repo.primary_worktree()?.as_ref().map(WorktreeId::new);
+    let (main_worktree, main_worktree_id) = primary_id
         .as_ref()
-        .map(BranchRefKey::worktree);
-    let main_worktree = primary_key
-        .as_ref()
-        .and_then(|key| {
-            worktrees
+        .and_then(|id| {
+            worktree_subjects
                 .iter()
-                .find(|wt| worktree_keys.get(&wt.path) == Some(key))
+                .find(|(_, branch_ref)| branch_ref.id().worktree_id() == Some(id))
         })
-        .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
-        .cloned()
+        .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()))
+        .map(|(wt, branch_ref)| (*wt, branch_ref.id().clone()))
         .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
@@ -1117,9 +1101,9 @@ pub fn collect(
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
-        worktrees,
-        &main_worktree,
-        current_worktree_path.as_ref(),
+        worktree_subjects,
+        &main_worktree_id,
+        current_worktree_id.as_ref(),
         &commit_details_map,
     );
 
@@ -1134,10 +1118,6 @@ pub fn collect(
             sha.as_str()
         });
 
-    let main_worktree_key = worktree_keys
-        .get(&main_worktree.path)
-        .context("main worktree is missing from the keyed worktree inventory")?;
-
     // Branches living in more than one worktree. Every row on such a branch
     // is flagged, including the one `wt` resolves to: that choice is git's
     // listing order, so no row is the legitimate one.
@@ -1147,13 +1127,9 @@ pub fn collect(
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
-        .map(|wt| -> anyhow::Result<ListItem> {
-            let identity = worktree_keys
-                .get(&wt.path)
-                .cloned()
-                .context("sorted worktree is missing from the keyed worktree inventory")?;
-            let is_main = &identity == main_worktree_key;
-            let is_current = current_worktree_key.as_ref() == Some(&identity);
+        .map(|(wt, branch_ref)| {
+            let is_main = branch_ref.id() == &main_worktree_id;
+            let is_current = current_worktree_id.as_ref() == branch_ref.id().worktree_id();
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
 
@@ -1170,8 +1146,8 @@ pub fn collect(
                 .is_some_and(|branch| duplicated.contains(branch));
 
             // URL expanded post-skeleton to minimize time-to-skeleton
-            Ok(ListItem {
-                identity,
+            ListItem {
+                branch_ref: branch_ref.clone(),
                 head: wt.head.clone(),
                 short_sha: String::new(),
                 branch: wt.branch.clone(),
@@ -1196,9 +1172,9 @@ pub fn collect(
                 custom_values: Vec::new(),
                 seeded: super::model::SeededFacts::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
-            })
+            }
         })
-        .collect::<anyhow::Result<_>>()?;
+        .collect();
 
     // Initialize branch items (local and remote) - URLs expanded post-skeleton
     let branch_start_idx = all_items.len();
@@ -1540,6 +1516,7 @@ pub fn collect(
     let fsmonitor_worktrees: Vec<_> = if repo.is_builtin_fsmonitor_enabled() {
         sorted_worktrees
             .iter()
+            .map(|(wt, _)| *wt)
             .filter(|wt| !wt.is_prunable())
             .collect()
     } else {
@@ -1721,25 +1698,18 @@ pub fn collect(
     // Collect errors for display after rendering
     let mut errors: Vec<TaskError> = Vec::new();
 
-    // Prepare branch data if needed.
-    // Tuple: (item_idx, branch_name, commit_sha, is_remote)
-    let branch_data: Vec<(usize, String, String, bool)> =
-        if show_branches || show_remotes {
-            let mut all_branches = Vec::new();
-            if show_branches {
-                all_branches.extend(branches_without_worktrees.iter().enumerate().map(
-                    |(idx, (name, sha))| (branch_start_idx + idx, name.clone(), sha.clone(), false),
-                ));
-            }
-            if show_remotes {
-                all_branches.extend(remote_branches.iter().enumerate().map(
-                    |(idx, (name, sha))| (remote_start_idx + idx, name.clone(), sha.clone(), true),
-                ));
-            }
-            all_branches
-        } else {
-            Vec::new()
-        };
+    // Branch item indices; each item already owns its canonical Git subject.
+    let branch_indices: Vec<usize> = (show_branches)
+        .then(|| branch_start_idx..branch_start_idx + branches_without_worktrees.len())
+        .into_iter()
+        .flatten()
+        .chain(
+            (show_remotes)
+                .then(|| remote_start_idx..remote_start_idx + remote_branches.len())
+                .into_iter()
+                .flatten(),
+        )
+        .collect();
 
     // Phase 1: Generate all work items on the main thread. Work item
     // generation is fast (a fixed-size loop per item) and *must* run here
@@ -1749,31 +1719,29 @@ pub fn collect(
     let mut all_work_items = Vec::new();
 
     // Worktree work items
-    for (idx, wt) in sorted_worktrees.iter().enumerate() {
+    for (idx, item) in all_items
+        .iter_mut()
+        .enumerate()
+        .take(sorted_worktrees.len())
+    {
         all_work_items.extend(work_items_for_worktree(
             repo,
-            wt,
             idx,
             &options,
             &expected_results,
             &tx,
-            &mut all_items[idx],
+            item,
         ));
     }
 
     // Branch work items (local + remote)
-    for (item_idx, branch_name, commit_sha, is_remote) in &branch_data {
+    for item_idx in branch_indices {
         all_work_items.extend(work_items_for_branch(
             repo,
-            execution::BranchSpawn {
-                name: branch_name,
-                commit_sha,
-                item_idx: *item_idx,
-                is_remote: *is_remote,
-            },
+            item_idx,
             &options,
             &expected_results,
-            &mut all_items[*item_idx],
+            &mut all_items[item_idx],
         ));
     }
 
@@ -2142,33 +2110,24 @@ where
 
 /// Sort worktrees: current first, main second, then by timestamp descending.
 /// Uses the pre-fetched commit-details map for efficiency.
-fn sort_worktrees_with_cache(
-    worktrees: &[WorktreeInfo],
-    main_worktree: &WorktreeInfo,
-    current_path: Option<&std::path::PathBuf>,
+fn sort_worktrees_with_cache<'a>(
+    mut worktrees: Vec<(&'a WorktreeInfo, BranchRef)>,
+    main_worktree_id: &worktrunk::git::GitItemId,
+    current_worktree_id: Option<&WorktreeId>,
     commit_details: &std::collections::HashMap<String, (String, i64, String)>,
-) -> Vec<WorktreeInfo> {
-    // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
-    let mut with_sort_key: Vec<_> = worktrees
-        .iter()
-        .map(|wt| {
-            let priority = if current_path.is_some_and(|cp| &wt.path == cp) {
-                0 // Current first
-            } else if wt.path == main_worktree.path {
-                1 // Main second
-            } else {
-                2 // Rest by timestamp
-            };
-            let ts = commit_details.get(&wt.head).map_or(0, |(_, ts, _)| *ts);
-            (wt, priority, ts)
-        })
-        .collect();
-
-    with_sort_key.sort_by_key(|(_, priority, ts)| (*priority, std::cmp::Reverse(*ts)));
-    with_sort_key
-        .into_iter()
-        .map(|(wt, _, _)| wt.clone())
-        .collect()
+) -> Vec<(&'a WorktreeInfo, BranchRef)> {
+    worktrees.sort_by_key(|(wt, branch_ref)| {
+        let priority = if current_worktree_id == branch_ref.id().worktree_id() {
+            0 // Current first
+        } else if branch_ref.id() == main_worktree_id {
+            1 // Main second
+        } else {
+            2 // Rest by timestamp
+        };
+        let ts = commit_details.get(&wt.head).map_or(0, |(_, ts, _)| *ts);
+        (priority, std::cmp::Reverse(ts))
+    });
+    worktrees
 }
 
 // ============================================================================
@@ -2186,7 +2145,7 @@ pub fn build_worktree_item(
     is_previous: bool,
 ) -> ListItem {
     ListItem {
-        identity: BranchRefKey::worktree(&wt.path),
+        branch_ref: wt.branch_ref(),
         head: wt.head.clone(),
         short_sha: String::new(),
         branch: wt.branch.clone(),
@@ -2264,9 +2223,9 @@ pub fn populate_item(
     }
 
     // Extract worktree data (skip if not a worktree item)
-    let Some(data) = item.worktree_data() else {
+    if item.worktree_data().is_none() {
         return Ok(());
-    };
+    }
 
     // Populate default_branch / snapshot / integration_targets if the
     // caller didn't. Tasks read these through `TaskContext`; `None`
@@ -2300,24 +2259,10 @@ pub fn populate_item(
     // Collect errors (logged silently for statusline)
     let mut errors: Vec<TaskError> = Vec::new();
 
-    // Build a minimal WorktreeInfo so the shared work-item generator can
-    // run. The item lives on this (main) thread; the worker thread only
-    // executes prebuilt work items.
-    let wt = WorktreeInfo {
-        path: data.path.clone(),
-        head: item.head.clone(),
-        branch: item.branch.clone(),
-        bare: false,
-        detached: false,
-        locked: None,
-        prunable: None,
-    };
-
     // Generate work items on the main thread so the item can be seeded
     // with sentinels for skipped tasks (see `work_items_for_worktree`).
     let mut work_items = work_items_for_worktree(
         repo,
-        &wt,
         0, // Single item, always index 0
         &options,
         &expected_results,

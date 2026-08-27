@@ -1465,7 +1465,6 @@ impl PipelineFactory {
                 shared_items: Arc::clone(&self.shared_items),
                 shortcut_table: Arc::clone(&self.shortcut_table),
                 rendered_slots: OnceLock::new(),
-                row_keys: OnceLock::new(),
                 pr_status_slots: OnceLock::new(),
                 comments_fetched: OnceLock::new(),
                 local_content_slots: OnceLock::new(),
@@ -2534,7 +2533,7 @@ fn switch_pipeline_repo(repo: &Repository, is_recovered: bool) -> anyhow::Result
 #[cfg(test)]
 pub mod tests {
     use super::items::{
-        LocalCheckout, LocalContent, PickerRow, PickerRowKey, worktree_output_token,
+        LocalCheckout, LocalContent, PickerRow, PickerRowId, worktree_output_token,
     };
     use super::{
         AltXRemover, PickerAction, RemovalEffect, RemoveTarget, drain_stashed_warnings,
@@ -3129,7 +3128,7 @@ pub mod tests {
     /// Build a `PickerRow` from a snapshot `ListItem`.
     fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
         let item = Arc::new(item);
-        let row_key = PickerRowKey::local(&item);
+        let row_id = PickerRowId::local(&item);
         let pr_status = Arc::new(Mutex::new(item.pr_status.clone()));
         let output_token = worktree_output_token(&item, branch_name);
         Arc::new(PickerRow {
@@ -3138,7 +3137,7 @@ pub mod tests {
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch_name.to_string(),
             output_token,
-            row_key,
+            row_id,
             preview_cache: Arc::new(dashmap::DashMap::new()),
             pr_status,
             notifier: super::preview_notify::PreviewNotifier::detached(),
@@ -3206,7 +3205,7 @@ pub mod tests {
             ..Default::default()
         });
         let item_arc = Arc::new(item);
-        let row_key = PickerRowKey::local(&item_arc);
+        let row_id = PickerRowId::local(&item_arc);
         let rendered = Arc::new(Mutex::new(format!("+ {branch}")));
         let local_content = Arc::new(Mutex::new(LocalContent::default()));
         let morphed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3216,7 +3215,7 @@ pub mod tests {
             rendered: Arc::clone(&rendered),
             branch_name: branch.to_string(),
             output_token: worktree_output_token(&item_arc, branch),
-            row_key,
+            row_id,
             preview_cache: Arc::new(dashmap::DashMap::new()),
             pr_status: Arc::new(Mutex::new(None)),
             notifier: super::preview_notify::PreviewNotifier::detached(),
@@ -3521,7 +3520,7 @@ pub mod tests {
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let factory = test_factory(repo);
         let ghost = (
-            PickerRowKey::local(&ListItem::new_branch(
+            PickerRowId::local(&ListItem::new_branch(
                 "0000000".to_string(),
                 "ghost-branch".to_string(),
             )),

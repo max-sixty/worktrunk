@@ -18,8 +18,8 @@ fn main_only_repo() -> TestRepo {
     TestRepo::standard_main_only()
 }
 
-fn worktree_row_key(path: &std::path::Path) -> String {
-    worktrunk::git::BranchRefKey::worktree(path).to_string()
+fn worktree_row_id(path: &std::path::Path) -> String {
+    worktrunk::git::GitItemId::from(worktrunk::git::WorktreeId::new(path)).to_string()
 }
 
 /// Install a strict fake summary command through TestRepo's cross-platform
@@ -103,13 +103,13 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
         "expected at least one cache entry, got: {stdout}"
     );
 
-    // Every entry has {row_key: string, mode: u8, bytes: usize, content: string}. Asserting
+    // Every entry has {row_id: string, mode: u8, bytes: usize, content: string}. Asserting
     // schema (not specific branches/modes) keeps the test robust to fixture
     // changes while still covering the dump format.
     for e in entries {
         assert!(
-            e["row_key"].as_str().is_some_and(|key| !key.is_empty()),
-            "entry missing nonempty row key: {e}"
+            e["row_id"].as_str().is_some_and(|key| !key.is_empty()),
+            "entry missing nonempty row ID: {e}"
         );
         assert!(
             e["mode"]
@@ -152,7 +152,7 @@ fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
 ) {
     repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
     std::fs::write(repo.path().join("untracked-preview.txt"), "preview\n").unwrap();
-    let row_key = worktree_row_key(repo.path());
+    let row_id = worktree_row_id(repo.path());
 
     let output = repo
         .wt_command()
@@ -174,7 +174,7 @@ fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
         .as_array()
         .expect("top-level `entries` array")
         .iter()
-        .find(|entry| entry["row_key"] == row_key && entry["mode"] == 1)
+        .find(|entry| entry["row_id"] == row_id && entry["mode"] == 1)
         .expect("current branch has a complete-diff cache entry");
     let content = complete["content"].as_str().expect("content is a string");
 
@@ -204,7 +204,7 @@ fn test_picker_dry_run_tempdir_inside_worktree_has_no_worktrunk_artifacts(
     repo.run_git(&["commit", "-m", "track local temp directory"]);
     std::fs::write(repo.path().join("loose.txt"), "loose\n").unwrap();
     let branch = repo.current_branch();
-    let row_key = worktree_row_key(repo.path());
+    let row_id = worktree_row_id(repo.path());
 
     let output = repo
         .wt_command()
@@ -228,7 +228,7 @@ fn test_picker_dry_run_tempdir_inside_worktree_has_no_worktrunk_artifacts(
     for mode in [1, 2] {
         let pane = entries
             .iter()
-            .find(|entry| entry["row_key"] == row_key && entry["mode"] == mode)
+            .find(|entry| entry["row_id"] == row_id && entry["mode"] == mode)
             .unwrap_or_else(|| panic!("branch {branch} has mode-{mode} cache entry"));
         let content = pane["content"].as_str().expect("content is a string");
         assert!(
@@ -264,7 +264,7 @@ fn test_picker_dry_run_includes_untracked_outside_sparse_checkout(
     std::fs::create_dir_all(&hidden).unwrap();
     std::fs::write(hidden.join("loose.txt"), "loose\n").unwrap();
     let branch = repo.current_branch();
-    let row_key = worktree_row_key(repo.path());
+    let row_id = worktree_row_id(repo.path());
 
     let output = repo
         .wt_command()
@@ -286,7 +286,7 @@ fn test_picker_dry_run_includes_untracked_outside_sparse_checkout(
     for mode in [1, 2] {
         let pane = entries
             .iter()
-            .find(|entry| entry["row_key"] == row_key && entry["mode"] == mode)
+            .find(|entry| entry["row_id"] == row_id && entry["mode"] == mode)
             .unwrap_or_else(|| panic!("branch {branch} has mode-{mode} cache entry"));
         let content = pane["content"].as_str().expect("content is a string");
         assert!(
@@ -453,13 +453,13 @@ fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
         .expect("top-level `entries` array")
         .iter()
         .filter(|e| e["mode"] == 8)
-        .map(|e| e["row_key"].as_str().expect("row_key is a string"))
+        .map(|e| e["row_id"].as_str().expect("row_id is a string"))
         .collect();
-    let feature_a_key = worktree_row_key(repo.worktree_path("feature-a"));
-    let feature_b_key = worktree_row_key(repo.worktree_path("feature-b"));
+    let feature_a_key = worktree_row_id(repo.worktree_path("feature-a"));
+    let feature_b_key = worktree_row_id(repo.worktree_path("feature-b"));
     assert!(
         comments_keys.contains(&feature_a_key.as_str()),
-        "the PR-bearing worktree row spawns a row-keyed comments fetch, got: {comments_keys:?}"
+        "the PR-bearing worktree row spawns a row-ID-keyed comments fetch, got: {comments_keys:?}"
     );
     assert!(
         !comments_keys.contains(&feature_b_key.as_str()),

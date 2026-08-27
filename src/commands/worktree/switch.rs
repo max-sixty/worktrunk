@@ -22,7 +22,7 @@ use worktrunk::git::remote_ref::{
 };
 use worktrunk::git::{
     ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
-    SwitchSuggestionCtx, current_or_recover,
+    SwitchSuggestionCtx, WorktreeId, current_or_recover,
 };
 use worktrunk::shell_exec::{
     ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
@@ -834,7 +834,7 @@ fn plan_switch(
                 .into());
             }
             return Ok(SwitchPlan::Existing {
-                path: canonicalize(&path).unwrap_or(path),
+                path: WorktreeId::new(path).into_path(),
                 branch,
                 new_previous,
             });
