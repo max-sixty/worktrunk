@@ -21,8 +21,9 @@
   --wt-terminal-gutter: #a8a29e;
   --wt-terminal-ink: #403a35;
   --wt-terminal-dim: #756b62;
-  --wt-code-command: #9b6500;
-  --wt-code-string: #527a16;
+  --wt-code-command: #8a5a00;
+  --wt-code-string: #4a6e14;
+  --wt-code-flag: #a03c15;
   --wt-code-option: #1d4ed8;
   --wt-focus: var(--wt-copper);
   --wt-font-display: 'Newsreader', ui-serif, 'Iowan Old Style', 'Palatino Linotype', Palatino,
@@ -75,6 +76,7 @@
   --wt-terminal-dim: #9f9488;
   --wt-code-command: #e5b567;
   --wt-code-string: #a3be8c;
+  --wt-code-flag: #e09a82;
   --wt-code-option: #93c5fd;
   --sl-color-accent-low: var(--wt-gold-wash);
   --sl-color-accent: var(--wt-copper);
@@ -394,11 +396,15 @@ header.header {
 
 .sl-markdown-content .cmd-compare th:nth-child(2),
 .sl-markdown-content .cmd-compare td:nth-child(2) {
-  background: color-mix(in srgb, var(--wt-gold) 7%, transparent);
+  background: color-mix(in srgb, var(--wt-gold) 7%, var(--wt-paper));
 }
 
 .sl-markdown-content .cmd-compare tbody tr + tr {
   border-block-start: 1px solid var(--wt-line);
+}
+
+.sl-markdown-content .cmd-compare tbody td {
+  background: var(--wt-paper);
 }
 
 .sl-markdown-content .cmd-compare tbody td:first-child {
@@ -425,6 +431,19 @@ header.header {
   line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.sl-markdown-content .cmd-compare .wt-shell-command {
+  color: var(--wt-code-command);
+  font-weight: 700;
+}
+
+.sl-markdown-content .cmd-compare .wt-shell-argument {
+  color: var(--wt-code-string);
+}
+
+.sl-markdown-content .cmd-compare .wt-shell-option {
+  color: var(--wt-code-flag);
 }
 
 @media (max-width: 44rem) {

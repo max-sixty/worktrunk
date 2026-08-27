@@ -10,7 +10,9 @@ import { rehypeResponsiveTables } from '../src/plugins/responsive-tables.mjs';
 import {
   commandReferenceSegments,
   pluginWorktrunkTerminal,
+  rehypeComparisonCommands,
   semanticOutputSegments,
+  shellCommandSegments,
 } from '../src/plugins/worktrunk-terminal.mjs';
 
 function prepareCodeBlock(plugin, codeBlock) {
@@ -221,6 +223,118 @@ test('responsive records reject tables that cannot stack unambiguously', () => {
       0,
     );
   }
+});
+
+test('homepage comparison commands gain shell roles without changing their text', () => {
+  const command = {
+    type: 'element',
+    tagName: 'code',
+    properties: {},
+    children: [{
+      type: 'text',
+      value: 'git worktree add -b feat ../repo.feat && \\\ncd ../repo.feat',
+    }],
+  };
+  const outsideCode = structuredClone(command);
+  const comparison = {
+    type: 'element',
+    tagName: 'table',
+    properties: { className: ['cmd-compare'] },
+    children: [{
+      type: 'element',
+      tagName: 'tbody',
+      properties: {},
+      children: [{
+        type: 'element',
+        tagName: 'tr',
+        properties: {},
+        children: [{
+          type: 'element',
+          tagName: 'td',
+          properties: {},
+          children: [command],
+        }],
+      }],
+    }],
+  };
+  const tree = { type: 'root', children: [outsideCode, comparison] };
+
+  rehypeComparisonCommands()(tree);
+
+  assert.deepEqual(shellCommandSegments(command.children.map((child) => (
+    child.children?.[0]?.value ?? child.value
+  )).join('')), [
+    { text: 'git', tone: 'command' },
+    { text: ' ' },
+    { text: 'worktree', tone: 'argument' },
+    { text: ' ' },
+    { text: 'add', tone: 'argument' },
+    { text: ' ' },
+    { text: '-b', tone: 'option' },
+    { text: ' ' },
+    { text: 'feat', tone: 'argument' },
+    { text: ' ' },
+    { text: '../repo.feat', tone: 'argument' },
+    { text: ' && \\\n' },
+    { text: 'cd', tone: 'command' },
+    { text: ' ' },
+    { text: '../repo.feat', tone: 'argument' },
+  ]);
+  assert.equal(command.children.map((child) => child.children?.[0]?.value ?? child.value).join(''),
+    'git worktree add -b feat ../repo.feat && \\\ncd ../repo.feat');
+  assert.deepEqual(
+    command.children.filter((child) => child.type === 'element')
+      .map((child) => child.properties.className[0]),
+    [
+      'wt-shell-command',
+      'wt-shell-argument',
+      'wt-shell-argument',
+      'wt-shell-option',
+      'wt-shell-argument',
+      'wt-shell-argument',
+      'wt-shell-command',
+      'wt-shell-argument',
+    ],
+  );
+  assert.deepEqual(outsideCode, structuredClone({
+    type: 'element',
+    tagName: 'code',
+    properties: {},
+    children: [{
+      type: 'text',
+      value: 'git worktree add -b feat ../repo.feat && \\\ncd ../repo.feat',
+    }],
+  }));
+});
+
+test('raw homepage comparison markup is expanded before shell roles are added', () => {
+  const source = 'wt switch -c feat';
+  const tree = {
+    type: 'root',
+    children: [{
+      type: 'raw',
+      value: '<table class="cmd-compare"><tbody><tr><td><code>'
+        + source
+        + '</code></td></tr></tbody></table>',
+    }],
+  };
+
+  rehypeComparisonCommands()(tree);
+
+  const table = tree.children[0];
+  const code = table.children[0].children[0].children[0].children[0];
+  assert.equal(table.type, 'element');
+  assert.equal(code.children.map((child) => child.children?.[0]?.value ?? child.value).join(''), source);
+  assert.deepEqual(
+    code.children.filter((child) => child.type === 'element')
+      .map((child) => child.properties.className[0]),
+    ['wt-shell-command', 'wt-shell-argument', 'wt-shell-option', 'wt-shell-argument'],
+  );
+});
+
+test('shell command roles preserve syntax outside the styled grammar', () => {
+  const source = 'cmd & next\ncmd 2>&1';
+  assert.equal(shellCommandSegments(source).map(({ text }) => text).join(''), source);
 });
 
 test('console blocks separate copyable recipes from output', () => {

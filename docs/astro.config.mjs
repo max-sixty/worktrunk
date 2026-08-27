@@ -8,7 +8,10 @@ import { rehypeResponsiveTables } from './src/plugins/responsive-tables.mjs';
 import { rehypeStableHeadingIds } from './src/plugins/stable-heading-ids.mjs';
 import { sidebar } from './src/site-navigation.mjs';
 import { sitemapCompatibility } from './src/plugins/sitemap-compatibility.mjs';
-import { pluginWorktrunkTerminal } from './src/plugins/worktrunk-terminal.mjs';
+import {
+  pluginWorktrunkTerminal,
+  rehypeComparisonCommands,
+} from './src/plugins/worktrunk-terminal.mjs';
 import {
   worktrunkDarkCodeTheme,
   worktrunkLightCodeTheme,
@@ -27,6 +30,7 @@ export default defineConfig({
       rehypePlugins: [
         rehypeStableHeadingIds,
         rehypePagefindCommandReferences,
+        rehypeComparisonCommands,
         rehypeResponsiveTables,
       ],
     }),

@@ -165,11 +165,17 @@ test('build preserves the public route contract', async () => {
   );
   assert.match(homepage, /<img src="\/assets\/docs\/light\/wt-core\.gif"/);
   assert.equal(homepage.match(/<h1\b/g)?.length, 1);
-  assert.match(homepage, /<pre><code>git worktree add -b feat \.\.\/repo\.feat &#x26;&#x26; \\\ncd \.\.\/repo\.feat &#x26;&#x26; \\\nclaude<\/code><\/pre>/);
+  assert.match(
+    homepage,
+    /<pre[^>]*><code><span class="wt-shell-command">git<\/span> <span class="wt-shell-argument">worktree<\/span> <span class="wt-shell-argument">add<\/span> <span class="wt-shell-option">-b<\/span>/,
+  );
   const comparison = homepage.match(/<table class="cmd-compare">([\s\S]*?)<\/table>/)?.[1];
   assert.ok(comparison, 'homepage is missing the command comparison table');
   assert.equal(comparison.match(/<td data-label="Worktrunk">/g)?.length, 4);
   assert.equal(comparison.match(/<td data-label="Plain git">/g)?.length, 4);
+  assert.equal(comparison.match(/class="wt-shell-command"/g)?.length, 12);
+  assert.equal(comparison.match(/class="wt-shell-option"/g)?.length, 4);
+  assert.equal(comparison.match(/class="wt-shell-argument"/g)?.length, 21);
   assert.match(homepage, /class="wt-terminal-green"/);
   assert.match(homepage, /class="wt-terminal-red"/);
   const switchPage = await readFile(routeFile('/switch/'), 'utf8');

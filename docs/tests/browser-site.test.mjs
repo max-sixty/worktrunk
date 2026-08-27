@@ -231,6 +231,42 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
         assert.ok(ratio >= 4.5, `${theme} shell token ${text} contrast is ${ratio.toFixed(2)}:1`);
       }
 
+      await page.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' });
+      await page.evaluate((selectedTheme) => {
+        document.documentElement.dataset.theme = selectedTheme;
+      }, theme);
+      const comparisonStyles = await page.evaluate(() => {
+        const table = document.querySelector('.cmd-compare');
+        return {
+          text: table.textContent,
+          tokens: [...table.querySelectorAll('[class^="wt-shell-"]')].map((span) => {
+            const cell = span.closest('td');
+            return {
+              role: [...span.classList].find((name) => name.startsWith('wt-shell-'))
+                .replace('wt-shell-', ''),
+              color: getComputedStyle(span).color,
+              background: getComputedStyle(cell).backgroundColor,
+            };
+          }),
+        };
+      });
+      assert.match(comparisonStyles.text, /wt switch -c -x claude feat/);
+      assert.match(comparisonStyles.text, /git worktree add -b feat \.\.\/repo\.feat/);
+      const roleColors = new Map(comparisonStyles.tokens.map(({ role, color }) => [role, color]));
+      assert.equal(roleColors.size, 3, `${theme} comparison is missing a syntax role`);
+      assert.equal(
+        new Set(roleColors.values()).size,
+        roleColors.size,
+        theme + ' comparison syntax roles collapse to the same color',
+      );
+      for (const { role, color, background } of comparisonStyles.tokens) {
+        const ratio = contrastRatio(color, background);
+        assert.ok(
+          ratio >= 4.5,
+          theme + ' comparison ' + role + ' contrast is ' + ratio.toFixed(2) + ':1',
+        );
+      }
+
       await page.goto(`${baseUrl}/list/`, { waitUntil: 'domcontentloaded' });
       await page.evaluate((selectedTheme) => {
         document.documentElement.dataset.theme = selectedTheme;

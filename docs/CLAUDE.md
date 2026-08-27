@@ -52,7 +52,7 @@ View changes: http://127.0.0.1:<port>
 | `src/pages/index.astro` | Homepage route; renders the canonical `worktrunk.md` body |
 | `src/styles/custom.css` | Worktrunk's visual system and narrow Starlight adjustments |
 | `src/plugins/stable-heading-ids.mjs` | Stable public anchor IDs for Markdown headings |
-| `src/plugins/worktrunk-terminal.mjs` | Shell syntax, prompts, copy behavior, Clap help roles, and ANSI-derived output styling |
+| `src/plugins/worktrunk-terminal.mjs` | Shell syntax, homepage comparison roles, prompts, copy behavior, Clap help roles, and ANSI-derived output styling |
 | `src/themes/worktrunk-code.mjs` | Light and dark syntax themes for source and command blocks |
 | `src/generated/terminal-styles.json` | Generated site-only span styles from ANSI command snapshots |
 | `src/components/Head.astro` | Social metadata, structured data, and analytics |

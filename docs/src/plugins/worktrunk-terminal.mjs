@@ -1,3 +1,5 @@
+import { fromHtml } from 'hast-util-from-html';
+
 import terminalStyles from '../generated/terminal-styles.json' with { type: 'json' };
 
 const terminalBlocks = new WeakMap();
@@ -16,6 +18,16 @@ function addClass(node, className) {
   node.properties.className = Array.isArray(classes)
     ? [...classes, className]
     : [classes, className];
+}
+
+function classNames(node) {
+  const classes = node.properties?.className ?? [];
+  return Array.isArray(classes) ? classes : String(classes).split(/\s+/u).filter(Boolean);
+}
+
+function nodeText(node) {
+  if (node.type === 'text') return node.value;
+  return node.children?.map(nodeText).join('') ?? '';
 }
 
 function findCodeElement(node) {
@@ -122,6 +134,96 @@ function appendSegment(segments, text, tone) {
   } else {
     segments.push(tone ? { text, tone } : { text });
   }
+}
+
+/** Split a shell recipe into the syntax roles used by the site code theme. */
+export function shellCommandSegments(text) {
+  const segments = [];
+  const tokens = /(?<space>\s+)|(?<operator>&&|\\)|(?<word>[^\s&\\]+)/gu;
+  let cursor = 0;
+  let expectCommand = true;
+
+  for (const match of text.matchAll(tokens)) {
+    appendSegment(segments, text.slice(cursor, match.index));
+    const token = match[0];
+    if (match.groups.space) {
+      appendSegment(segments, token);
+      if (token.includes('\n')) expectCommand = true;
+      cursor = match.index + token.length;
+      continue;
+    }
+    if (match.groups.operator) {
+      appendSegment(segments, token);
+      if (token === '&&') expectCommand = true;
+      cursor = match.index + token.length;
+      continue;
+    }
+
+    const tone = expectCommand
+      ? 'command'
+      : /^--?[A-Za-z0-9]/u.test(token)
+        ? 'option'
+        : 'argument';
+    appendSegment(segments, token, tone);
+    expectCommand = false;
+    cursor = match.index + token.length;
+  }
+  appendSegment(segments, text.slice(cursor));
+
+  return segments;
+}
+
+function renderShellCommand(code) {
+  code.children = shellCommandSegments(nodeText(code)).map(({ text: value, tone }) => tone
+    ? {
+        type: 'element',
+        tagName: 'span',
+        properties: { className: [`wt-shell-${tone}`] },
+        children: [{ type: 'text', value }],
+      }
+    : { type: 'text', value });
+}
+
+/** Add build-only shell syntax roles to the homepage command comparison. */
+export function rehypeComparisonCommands() {
+  return (tree) => {
+    function decorate(node, insideComparison = false) {
+      const comparison = insideComparison || (
+        node.type === 'element'
+        && node.tagName === 'table'
+        && classNames(node).includes('cmd-compare')
+      );
+      if (comparison && node.type === 'element' && node.tagName === 'code') {
+        renderShellCommand(node);
+        return;
+      }
+      node.children?.forEach((child) => decorate(child, comparison));
+    }
+
+    function expandRawComparisons(node) {
+      for (let index = 0; index < (node.children?.length ?? 0); index += 1) {
+        const child = node.children[index];
+        if (child.type === 'raw' && child.value.includes('cmd-compare')) {
+          const fragment = fromHtml(child.value, { fragment: true });
+          const comparison = fragment.children.find((candidate) => (
+            candidate.type === 'element'
+            && candidate.tagName === 'table'
+            && classNames(candidate).includes('cmd-compare')
+          ));
+          if (comparison) {
+            decorate(comparison);
+            node.children.splice(index, 1, ...fragment.children);
+            index += fragment.children.length - 1;
+            continue;
+          }
+        }
+        expandRawComparisons(child);
+      }
+    }
+
+    decorate(tree);
+    expandRawComparisons(tree);
+  };
 }
 
 function helpInlineSegments(text) {
