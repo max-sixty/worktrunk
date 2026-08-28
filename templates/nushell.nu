@@ -176,10 +176,12 @@ export def --env --wrapped {{ cmd }} [...args] {
         # wrapper's own source and flattens the real exit code to 1 — the opposite
         # of what this branch is for. `$nu.current-exe` is always present by
         # construction, and using one path on every platform keeps the branch Unix
-        # CI exercises identical to the one Windows runs.
+        # CI exercises identical to the one Windows runs. `--no-std-lib` halves
+        # the startup this costs (~9 ms to ~4.5 ms on nu 0.115); `exit` is a core
+        # builtin, so propagation is unaffected.
         if $exit_code != 0 {
             if ($output | is-not-empty) { print -n $output }
-            ^$nu.current-exe --no-config-file -c $"exit ($exit_code)"
+            ^$nu.current-exe --no-config-file --no-std-lib -c $"exit ($exit_code)"
         } else if ($output | is-not-empty) {
             $output
         }

@@ -827,10 +827,15 @@ mod unix_tests {
     fn test_nushell_wrapper_failure_needs_no_posix_shell(mut repo: TestRepo) {
         repo.add_worktree("existing");
 
-        // A PATH with no `sh`/`bash`/`dash`: just the shell under test and the
-        // git that `wt switch` shells out to.
+        // A PATH with no `sh`/`bash`/`dash`: just the shell under test, the git
+        // that `wt switch` shells out to, and the `rm` the wrapper's own Unix
+        // cleanup branch calls externally (`^rm`). Dropping `rm` would leak every
+        // `mktemp` file, silently — the branch is wrapped in `try` — and would
+        // also make the test less faithful to the platform it stands in for:
+        // Windows takes the `$nu.os-info.family` branch, where cleanup uses the
+        // nushell builtin and does run.
         let bin_dir = tempfile::tempdir().unwrap();
-        for tool in ["nu", "git"] {
+        for tool in ["nu", "git", "rm"] {
             let resolved = which::which(tool)
                 .unwrap_or_else(|e| panic!("{tool} must be installed to run tests: {e}"));
             std::os::unix::fs::symlink(resolved, bin_dir.path().join(tool)).unwrap();
@@ -861,6 +866,33 @@ mod unix_tests {
         );
         // The shape the bug produced: nushell rendering a spawn failure for the
         // wrapper's internals on top of wt's error.
+        assert!(
+            !output.combined.contains("External command failed")
+                && !output.combined.contains("not found"),
+            "wrapper leaked a nushell external-command error.\nOutput:\n{}",
+            output.combined
+        );
+
+        // The other half of the bug: a failed spawn flattens every exit code to
+        // 1, so an exit-1 command can't tell the two templates apart. `wt config
+        // alias show <unknown>` exits 2 entirely inside wt (`unknown_alias_error`
+        // in `src/commands/config/alias.rs`), so the code only survives if the
+        // wrapper's propagation command actually ran.
+        let output = exec_through_wrapper_with_env(
+            "nu",
+            &repo,
+            "config",
+            &["alias", "show", "no-such-alias"],
+            repo.root_path(),
+            &[],
+            &[("PATH", &sanitized_path)],
+        );
+
+        assert_eq!(
+            output.exit_code, 2,
+            "wt's exit code should propagate unchanged, not flatten to 1.\nOutput:\n{}",
+            output.combined
+        );
         assert!(
             !output.combined.contains("External command failed")
                 && !output.combined.contains("not found"),
