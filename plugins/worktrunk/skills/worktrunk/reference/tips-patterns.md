@@ -236,6 +236,16 @@ git rebase $(wt config state default-branch)
 
 In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](https://worktrunk.dev/hook/#template-variables); reserve this command for plain shell scripts.
 
+## Override `default-branch` without a config file
+
+When the branch a team integrates against isn't the one the remote's `HEAD` names, pin it per clone:
+
+```bash
+wt config state default-branch set integration
+```
+
+The value is stored as `worktrunk.default-branch` in the repository's local git config, which git never commits or pushes — so nothing is added to a repository owned by a client or an upstream project, and no `wt.toml` is needed. Local git config lives in the common git dir, so the override applies to every linked worktree of that clone. `wt config state` reports the difference from the remote's `HEAD` as drift, which is expected for a deliberate override; `wt config state default-branch clear` drops it and [re-detects](https://worktrunk.dev/config/#wt-config-state-default-branch).
+
 ## Task runners in hooks
 
 Reference Taskfile/Justfile/Makefile in hooks:

@@ -1138,6 +1138,19 @@ Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` t
 
 `default-branch get` resolves the value and caches it on a miss; the aggregate `wt config state get` only reports the cache (read-only), so it can show `(none)` until something populates it.
 
+### Overriding without a config file
+
+`set` writes `worktrunk.default-branch` to the repository's local git config, which git never commits or pushes — so the override stays on one machine and needs no `wt.toml`:
+
+```console
+$ wt config state default-branch set integration
+✓ Set default branch to integration
+```
+
+That covers a repo whose remote `HEAD` names a branch other than the one to integrate against, without adding a Worktrunk file to a repository owned by someone else. Local git config lives in the common git dir, so one `set` applies to every linked worktree of that clone.
+
+An override that deliberately differs from the remote's `HEAD` shows up as drift in `wt config state`; that report is inspection-only and no ordinary command re-checks it. `clear` drops the override and returns to detection.
+
 ### Detection
 
 Worktrunk detects the default branch automatically:
