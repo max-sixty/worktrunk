@@ -235,6 +235,57 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
       await page.evaluate((selectedTheme) => {
         document.documentElement.dataset.theme = selectedTheme;
       }, theme);
+      const homepageTerminalStyles = await page.evaluate(() => {
+        const frames = [...document.querySelectorAll('.expressive-code .frame')];
+        const agentFrame = frames.find((candidate) => candidate.textContent.includes(
+          "wt switch -x claude -c feature-a -- 'Add user authentication'",
+        ));
+        const mergeFrame = frames.find((candidate) => candidate.textContent.includes(
+          'Merging 1 commit to main',
+        ));
+        const token = (text) => [...agentFrame.querySelectorAll('.code span')]
+          .find((candidate) => candidate.textContent === text);
+        const outputLines = [...mergeFrame.querySelectorAll('.ec-line.wt-output')];
+        const gutters = outputLines.map((line, index) => ({
+          index,
+          gutter: line.querySelector('.wt-terminal-gutter'),
+        })).filter(({ gutter }) => gutter);
+        const joins = gutters.slice(1).flatMap((current, index) => (
+          current.index === gutters[index].index + 1
+            ? [current.gutter.getBoundingClientRect().top
+              - gutters[index].gutter.getBoundingClientRect().bottom]
+            : []
+        ));
+        const pre = agentFrame.querySelector('pre');
+        return {
+          argument: getComputedStyle(token('feature-a')).color,
+          background: getComputedStyle(pre).backgroundColor,
+          gutterIndexes: gutters.map(({ index }) => index),
+          joins,
+          lineHeights: outputLines.map((line) => line.getBoundingClientRect().height),
+          quoted: getComputedStyle(token("'Add user authentication'")).color,
+        };
+      });
+      assert.notEqual(
+        homepageTerminalStyles.argument,
+        homepageTerminalStyles.quoted,
+        `${theme} quoted shell string uses the argument color`,
+      );
+      assert.ok(
+        contrastRatio(homepageTerminalStyles.quoted, homepageTerminalStyles.background) >= 4.5,
+        `${theme} quoted shell string falls below 4.5:1 contrast`,
+      );
+      assert.deepEqual(homepageTerminalStyles.gutterIndexes, [1, 4, 5, 6, 7]);
+      assert.equal(homepageTerminalStyles.joins.length, 3);
+      assert.ok(
+        homepageTerminalStyles.joins.every((gap) => gap <= 0),
+        `${theme} merge gutter has a visible gap between rows`,
+      );
+      assert.equal(
+        new Set(homepageTerminalStyles.lineHeights).size,
+        1,
+        `${theme} gutter padding changes terminal line height`,
+      );
       const comparisonStyles = await page.evaluate(() => {
         const table = document.querySelector('.cmd-compare');
         return {
@@ -331,6 +382,8 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
           titleBackground: getComputedStyle(title).backgroundColor,
           codeBackground: getComputedStyle(pre).backgroundColor,
           accentWidth: getComputedStyle(pre).borderInlineStartWidth,
+          stringColor: getComputedStyle([...frame.querySelectorAll('.code span')]
+            .find((span) => span.textContent === '".worktrees/{{ branch | sanitize }}"')).color,
         };
       });
       assert.equal(fileFrame.title, '~/.config/worktrunk/config.toml');
@@ -346,6 +399,11 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
       );
       const titleContrast = contrastRatio(fileFrame.titleColor, fileFrame.titleBackground);
       assert.ok(titleContrast >= 4.5, `${theme} file-label contrast is ${titleContrast.toFixed(2)}:1`);
+      assert.notEqual(
+        fileFrame.stringColor,
+        homepageTerminalStyles.quoted,
+        `${theme} shell quote color leaks into TOML strings`,
+      );
       assert.equal(fileFrame.accentWidth, '3px');
       await page.close();
     }

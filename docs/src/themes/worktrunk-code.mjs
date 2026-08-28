@@ -35,6 +35,11 @@ const baseTokenColors = (palette) => [
     settings: { foreground: palette.string },
   },
   {
+    name: 'Quoted shell strings',
+    scope: ['string.quoted.single.shell', 'string.quoted.double.shell'],
+    settings: { foreground: palette.quotedShellString },
+  },
+  {
     name: 'Variables',
     scope: ['variable', 'support.class', 'entity.name.class', 'entity.name.type.class'],
     settings: { foreground: palette.variable },
@@ -78,8 +83,8 @@ function theme(name, type, palette) {
   };
 }
 
-// These are the syntax roles from the pre-Astro Worktrunk themes, adjusted only
-// where the old foregrounds did not meet contrast on the current code surface.
+// These roles follow the pre-Astro Worktrunk themes. Low-contrast colors and
+// the shell-only quoted-string role use the current site's accessible palette.
 export const worktrunkLightCodeTheme = theme('worktrunk-light', 'light', {
   background: '#f8f7f6',
   foreground: '#3d3632',
@@ -87,6 +92,7 @@ export const worktrunkLightCodeTheme = theme('worktrunk-light', 'light', {
   keyword: '#9f4f2a',
   function: '#9b6500',
   string: '#527a16',
+  quotedShellString: '#1d4ed8',
   variable: '#7e6247',
   constant: '#a03c15',
   support: '#9f4f2a',
@@ -101,6 +107,7 @@ export const worktrunkDarkCodeTheme = theme('worktrunk-dark', 'dark', {
   keyword: '#d8b4fe',
   function: '#e5b567',
   string: '#a3be8c',
+  quotedShellString: '#93c5fd',
   variable: '#d9a0a5',
   constant: '#e09a82',
   support: '#67d4d4',
