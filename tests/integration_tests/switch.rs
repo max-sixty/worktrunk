@@ -3498,27 +3498,7 @@ fn test_switch_pr_same_repo_hooks_see_resolved_branch(#[from(repo_with_remote)] 
     repo.run_git(&["push", "origin", "feature-auth"]);
     repo.run_git(&["branch", "-D", "feature-auth"]);
 
-    let bare_url = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["config", "remote.origin.url"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-    repo.run_git(&[
-        "config",
-        &format!("url.{}.insteadOf", bare_url),
-        "https://github.com/owner/test-repo.git",
-    ]);
+    set_github_remote_url(&repo);
 
     // `pre-switch` runs in the invoking worktree, before the destination
     // exists — so it reports the branch it is switching to, not a path.
@@ -3587,27 +3567,7 @@ fn test_switch_pr_existing_worktree_hooks_see_pr_vars(#[from(repo_with_remote)] 
     repo.run_git(&["push", "origin", "feature-auth"]);
     repo.run_git(&["branch", "-D", "feature-auth"]);
 
-    let bare_url = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["config", "remote.origin.url"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-    repo.run_git(&[
-        "config",
-        &format!("url.{}.insteadOf", bare_url),
-        "https://github.com/owner/test-repo.git",
-    ]);
+    set_github_remote_url(&repo);
 
     let gh_response = r#"{
         "title": "Fix authentication bug in login flow",

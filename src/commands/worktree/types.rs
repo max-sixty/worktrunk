@@ -95,9 +95,11 @@ pub enum CreationMethod {
 
 /// Identity of the PR/MR a `pr:N` / `mr:N` argument resolved to.
 ///
-/// Resolved once, before `pre-switch` hooks run, and then carried through the
-/// plan — so `pr_number` / `pr_url` reach every switch hook whether the PR
-/// came from this repo or a fork. Reading it back off
+/// Resolved once, before `pre-switch` hooks run, then held by whoever needs it:
+/// the `ResolvedTarget` `pre-switch` reads, the plan `pre-start` reads, and the
+/// pipeline's own clone behind the post-* hooks — an `Existing` switch builds no
+/// `SwitchPlan::Create` at all. So `pr_number` / `pr_url` reach every switch
+/// hook whether the PR came from this repo or a fork. Reading it back off
 /// [`CreationMethod::ForkRef`] used to be the only source, which silently left
 /// same-repo PRs (the common case) with both variables unset.
 #[derive(Debug, Clone)]
