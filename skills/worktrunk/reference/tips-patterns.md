@@ -244,7 +244,9 @@ When the branch a team integrates against isn't the one the remote's `HEAD` name
 wt config state default-branch set integration
 ```
 
-The value is stored as `worktrunk.default-branch` in the repository's local git config, which git never commits or pushes — so nothing is added to a repository owned by a client or an upstream project, and no `wt.toml` is needed. Local git config lives in the common git dir, so the override applies to every linked worktree of that clone. `wt config state` reports the difference from the remote's `HEAD` as drift, which is expected for a deliberate override; `wt config state default-branch clear` drops it and [re-detects](https://worktrunk.dev/config/#wt-config-state-default-branch).
+The value is stored as `worktrunk.default-branch` in the repository's local git config, which git never commits or pushes — so nothing is added to a repository owned by a client or an upstream project. There is no config-file key for the default branch, so this is the only way to override detection, and because local git config lives in the common git dir, one `set` covers every linked worktree of that clone.
+
+Check the branch out locally first. With only `origin/integration` fetched, `set` warns that the branch doesn't exist locally, and every `wt list` repeats that warning with a hint to clear the override. `wt config state` reports the difference from the remote's `HEAD` as drift, which is expected for a deliberate override; `wt config state default-branch clear` drops it and [re-detects](https://worktrunk.dev/config/#wt-config-state-default-branch).
 
 ## Task runners in hooks
 

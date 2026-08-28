@@ -1152,7 +1152,7 @@ Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` t
 
 ### Overriding without a config file
 
-`set` writes `worktrunk.default-branch` to the repository's local git config, which git never commits or pushes — so the override stays on one machine and needs no `wt.toml`:
+`set` writes `worktrunk.default-branch` to the repository's local git config, which git never commits or pushes — so the override stays on one machine. There is no config-file key for the default branch, so this is the only way to override detection:
 
 ```console
 $ wt config state default-branch set integration
@@ -1161,7 +1161,7 @@ $ wt config state default-branch set integration
 
 That covers a repo whose remote `HEAD` names a branch other than the one to integrate against, without adding a Worktrunk file to a repository owned by someone else. Local git config lives in the common git dir, so one `set` applies to every linked worktree of that clone.
 
-An override that deliberately differs from the remote's `HEAD` shows up as drift in `wt config state`; that report is inspection-only and no ordinary command re-checks it. `clear` drops the override and returns to detection.
+Check the branch out locally first. With only `origin/integration` fetched, `set` warns that the branch doesn't exist locally, and every `wt list` repeats that warning with a hint to clear the override, then skips the comparisons against the default branch.
 
 ### Detection
 
@@ -1172,7 +1172,7 @@ Worktrunk detects the default branch automatically:
 3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s, abandoned after 10s
 4. **Local inference** — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD; `set` adopts the new branch and `clear` re-detects.
+Once detected, the result is cached in `worktrunk.default-branch` for fast access. The cache isn't re-validated on every command, so a later change to `origin/HEAD` — a renamed default branch followed by `git remote set-head origin -a` — isn't picked up automatically. `wt config state` flags the drift when the cached value differs from the remote's local HEAD — expected for a deliberate override, and inspection-only either way; `set` adopts the new branch and `clear` re-detects.
 
 An abandoned remote query is the one case that isn't cached: the branch it inferred locally answers that command, but a value guessed while the remote was unreachable would otherwise become permanent, so the next command queries again.
 
