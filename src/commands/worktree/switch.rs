@@ -468,9 +468,9 @@ fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
 /// returns the remote-qualified form so the validation in
 /// [`resolve_switch_target`] doesn't reject `wt switch -c new --base
 /// remote-only-branch`. Git's rev-parse doesn't auto-expand `foo` to
-/// `refs/remotes/origin/foo`. The remote-qualified form is also what lets the
-/// creation site's `branch.autoSetupMerge = simple` see a remote branch at all,
-/// so `--base release` and `--base origin/release` set up the same tracking.
+/// `refs/remotes/origin/foo`, though `git worktree add` would DWIM the bare
+/// form on its own — so the qualification is load-bearing for the validation,
+/// not for the creation.
 fn resolve_base_ref(
     repo: &Repository,
     base: &str,
@@ -1054,19 +1054,22 @@ fn execute_switch(
                     let worktree_path_str = worktree_path.to_string_lossy();
                     let mut args: Vec<&str> = Vec::new();
 
-                    // Safety: for an explicitly requested branch, `wt` decides
-                    // tracking rather than the user's `branch.autoSetupMerge`.
-                    // `-c` outranks every config file, so the outcome is the same
-                    // on every machine. Git's `simple` is the rule `wt` wants: an
+                    // Safety: `wt` decides tracking for a branch it creates,
+                    // rather than the user's `branch.autoSetupMerge`. `-c`
+                    // outranks every config file, so the outcome is the same on
+                    // every machine. Git's `simple` is the rule `wt` wants: an
                     // upstream only when the new branch's name matches the remote
                     // branch it starts from, which is exactly when inherited
                     // tracking is right. Git's default `true`, and `always`, would
                     // have `--create feature --base origin/release` track
                     // `origin/release`, so a bare `git push` under
                     // `push.default = upstream` pushes the new work to `release`
-                    // (#713); `false` and `inherit` would deny `--create release
-                    // --base origin/release` the tracking that is the point of a
-                    // same-named branch.
+                    // (#713); `false` and `inherit` would deny the tracking that is
+                    // the point of a same-named branch — `--create release --base
+                    // origin/release`, and every DWIM `wt switch feature` from
+                    // `origin/feature`, which is the tracking branch the docs
+                    // promise. Both paths run under the one rule, so `wt switch`
+                    // has one answer to state.
                     //
                     // `wt` sets git's rule rather than picking `--track` /
                     // `--no-track` from a name comparison of its own, because only
@@ -1078,13 +1081,7 @@ fn execute_switch(
                     // where `simple` is best-effort: it fails the whole command
                     // when the base isn't refspec-mapped, as in a single-branch
                     // clone holding a hand-fetched ref.
-                    //
-                    // Only the `--create` paths need it. The DWIM paths below
-                    // create `feature` from `origin/feature`, where the names
-                    // match and `simple` and `true` agree.
-                    if *create_branch {
-                        args.extend(["-c", "branch.autoSetupMerge=simple"]);
-                    }
+                    args.extend(["-c", "branch.autoSetupMerge=simple"]);
 
                     args.extend(["worktree", "add"]);
 

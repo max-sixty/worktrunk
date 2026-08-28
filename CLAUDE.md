@@ -13,6 +13,8 @@ Codex Cloud: use the setup in `.codex/cloud.sh`.
 
 Maturing mode: a growing user base, so balance clean design with compatibility.
 
+- New features are welcome, but a command, option, user-facing concept, or configuration key is a product decision. Its user value must justify the code and documentation surface it adds.
+- Consolidate or remove existing prose and machinery before adding another explanation, mode, or special case.
 - External-interface breaks need justification (a real improvement, not cleanup); prefer deprecation warnings over silent breaks.
 - **Protected interfaces:** config file format (`wt.toml`, user config) and CLI flags/arguments. Everything else (internal APIs, output formatting, log locations) is flexible.
 - No Rust library compatibility concerns (CLI tool only).
