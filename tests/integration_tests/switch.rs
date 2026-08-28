@@ -399,8 +399,8 @@ fn test_switch_create_from_remote_base_upstream(
         repo.run_git(&["config", "branch.autoSetupMerge", value]);
     }
 
-    // `release` and `hotfix` on origin only, so each can serve as a remote base
-    // whose name a new branch either shares or doesn't.
+    // `release`, `hotfix`, and `staging` on origin only, so each can serve as a
+    // remote base whose name a new branch either shares or doesn't.
     repo.run_git(&["push", "origin", "main:release"]);
     repo.run_git(&["push", "origin", "main:hotfix"]);
     repo.run_git(&["push", "origin", "main:staging"]);
@@ -521,6 +521,49 @@ fn test_switch_create_base_on_remote_with_slash(#[from(repo_with_remote)] repo: 
         upstream("release").as_deref(),
         Some("team/fork/release"),
         "release is the base's own counterpart"
+    );
+}
+
+/// Switching to a remote-only branch creates the tracking branch the docs
+/// promise, under every `branch.autoSetupMerge`. The names match by
+/// construction here, so the same rule `--create` runs under settles it — git's
+/// `false` and `inherit` would otherwise leave the branch with no upstream.
+#[rstest]
+fn test_switch_dwim_from_remote_tracks(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[values(None, Some("false"), Some("inherit"), Some("always"))] auto_setup_merge: Option<&str>,
+) {
+    if let Some(value) = auto_setup_merge {
+        repo.run_git(&["config", "branch.autoSetupMerge", value]);
+    }
+    repo.run_git(&["branch", "dwim-feature"]);
+    repo.run_git(&["push", "origin", "dwim-feature"]);
+    repo.run_git(&["branch", "-D", "dwim-feature"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "dwim-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch dwim-feature should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let upstream = repo
+        .git_command()
+        .args(["rev-parse", "--abbrev-ref", "dwim-feature@{upstream}"])
+        .run()
+        .unwrap();
+    assert!(
+        upstream.status.success(),
+        "dwim-feature should track its remote counterpart ({auto_setup_merge:?})"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&upstream.stdout).trim(),
+        "origin/dwim-feature",
+        "{auto_setup_merge:?}"
     );
 }
 
