@@ -137,7 +137,7 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt remove - Remove worktree; delete branch if merged
 
 Defaults to the current worktree.

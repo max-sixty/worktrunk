@@ -38,6 +38,7 @@ globs = [
     "docs/**/*.md",
     "docs/public/llms.txt",
     "docs/public/.well-known/agent-skills/index.json",
+    "docs/src/generated/terminal-styles.json",
     "dev/*.toml",
     "src/cli/mod.rs",
     "src/llm.rs",

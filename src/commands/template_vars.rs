@@ -149,7 +149,10 @@ impl TemplateVars {
     ///
     /// `target` matches the bare vars (the destination); `base` is the source
     /// — the branched-from for creates, the source worktree for existing
-    /// switches. PR/MR identity propagates into post-* hooks.
+    /// switches. PR/MR identity is not read off the result: it belongs to the
+    /// argument, not to what the switch did with it, so the caller applies it
+    /// with [`with_pr`](Self::with_pr) — an `Existing` switch onto a
+    /// `pr:N` branch has the same identity as the run that created it.
     pub fn for_post_switch(
         result: &SwitchResult,
         branch_info: &SwitchBranchInfo,
@@ -164,12 +167,8 @@ impl TemplateVars {
             SwitchResult::Created {
                 base_branch,
                 base_worktree_path,
-                pr_number,
-                pr_url,
                 ..
-            } => vars
-                .with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref())
-                .with_pr(*pr_number, pr_url.as_deref()),
+            } => vars.with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref()),
             SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => {
                 let base = (!source_branch.is_empty()).then_some(source_branch);
                 let path = (!source_path.is_empty()).then_some(source_path);
@@ -247,21 +246,24 @@ mod tests {
         assert!(!pairs.iter().any(|(k, _)| *k == "base_worktree_path"));
     }
 
+    /// The switch pipeline layers the PR/MR identity on afterwards, the same
+    /// way for a create as for a switch onto an existing worktree.
     #[test]
-    fn for_post_switch_created_with_pr() {
+    fn for_post_switch_created_takes_pr_from_caller() {
         let result = SwitchResult::Created {
             path: PathBuf::from("/repo.fork"),
             created_branch: false,
             base_branch: Some("main".to_string()),
             base_worktree_path: Some("/repo".to_string()),
             from_remote: None,
-            pr_number: Some(42),
-            pr_url: Some("https://example.test/pr/42".to_string()),
         };
         let info = SwitchBranchInfo {
             branch: Some("contributor/feature".to_string()),
         };
         let vars = TemplateVars::for_post_switch(&result, &info, "", "");
+        assert!(!vars.as_extra_vars().iter().any(|(k, _)| *k == "pr_number"));
+
+        let vars = vars.with_pr(Some(42), Some("https://example.test/pr/42"));
         let pairs = vars.as_extra_vars();
         assert!(pairs.contains(&("base", "main")));
         assert!(pairs.contains(&("base_worktree_path", "/repo")));

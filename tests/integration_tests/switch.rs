@@ -2646,15 +2646,15 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        entries.iter().any(|e| e["branch"] == "pr:42"),
+        entries.iter().any(|e| e["row_id"] == "pr:42"),
         "expected a pr:42 cache entry proving the PR row rendered, got:\n{stdout}"
     );
 }
 
 /// The `log` tab on a `--prs` row loads its commits in the background: as each
 /// PR row streams in, `spawn_pr_previews` kicks off `gh pr view <n> --json
-/// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
-/// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
+/// commits` on `COLLECT_POOL`, keyed by the row's structured PR identity. The dry-run
+/// path joins that work and dumps the preview cache, so a `{row_id:"pr:42",
 /// mode:4}` (Log) entry with non-empty bytes proves the whole mechanism end to
 /// end: `spawn_compute` → `compute_pr_log` → `parse_github_commits` → cache.
 ///
@@ -2698,7 +2698,7 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     // Mode 4 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
     let log_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 4)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2757,7 +2757,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     let entries = parsed["entries"].as_array().expect("entries array");
     let log_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 4)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2771,7 +2771,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     // `pr view` rigged to exit 1.
     let comments_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 8)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| {
             panic!("failed comments fetch must cache a couldn't-load pane:\n{stdout}")
         });
@@ -2826,7 +2826,7 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     for (mode, tab) in [(4, "log"), (8, "comments")] {
         let entry = entries
             .iter()
-            .find(|e| e["branch"] == "pr:42" && e["mode"] == mode)
+            .find(|e| e["row_id"] == "pr:42" && e["mode"] == mode)
             .unwrap_or_else(|| panic!("no pr:42 {tab} cache entry in dump:\n{stdout}"));
         assert!(
             entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2837,7 +2837,7 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
 
 /// The `comments` tab (8) loads the PR discussion in the background, the same
 /// way the `log` tab loads commits: `spawn_pr_previews` fires `gh pr view <n>
-/// --json comments` keyed by the row's `pr:{N}` token. A `{branch:"pr:42",
+/// --json comments` keyed by the row's structured PR identity. A `{row_id:"pr:42",
 /// mode:8}` entry in the dry-run cache dump proves `compute_pr_comments` →
 /// `render_github_comments` → cache ran end to end. (`gh pr view --json
 /// commits` and `--json comments` both match the mock's `pr view` key, so the
@@ -2878,7 +2878,7 @@ fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
     // Mode 8 is Comments; the row keys its cache by `pr:42`.
     let comments_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 8)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| panic!("no pr:42 Comments cache entry in dump:\n{stdout}"));
     assert!(
         comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2913,7 +2913,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        entries.iter().any(|e| e["branch"] == "mr:7"),
+        entries.iter().any(|e| e["row_id"] == "mr:7"),
         "expected an mr:7 cache entry proving the MR row rendered, got:\n{stdout}"
     );
 }
@@ -2921,7 +2921,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 /// GitLab counterpart of the GitHub `_log_tab` / `_comments_tab` dry-run tests:
 /// an MR row's deferred `log` and `comments` tabs load via background `glab api
 /// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
-/// calls keyed by the row's `mr:{N}` token. Both `mode:4` (Log) and `mode:8`
+/// calls keyed by the row's structured MR identity. Both `mode:4` (Log) and `mode:8`
 /// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
 /// `compute_pr_comments` → `parse_gitlab_commits` / `render_gitlab_notes` →
 /// cache for the GitLab forge — the half the unit tests (canned JSON straight
@@ -2967,7 +2967,7 @@ fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     for (mode, label) in [(4, "Log"), (8, "Comments")] {
         let entry = entries
             .iter()
-            .find(|e| e["branch"] == "mr:7" && e["mode"] == mode)
+            .find(|e| e["row_id"] == "mr:7" && e["mode"] == mode)
             .unwrap_or_else(|| panic!("no mr:7 {label} cache entry in dump:\n{stdout}"));
         assert!(
             entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -3371,11 +3371,12 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `pre-start`, `post-start`, and `post-switch` hooks on PR/MR-created worktrees
-/// see `pr_number` and `pr_url` in their template context. Both GitHub PRs and
-/// GitLab MRs canonicalize to the same `pr_*` names — hook authors don't need
-/// to branch on platform. Pre-switch fires before PR resolution and never sees
-/// them.
+/// Every hook on a PR/MR-created worktree — `pre-switch`, `pre-start`,
+/// `post-start`, `post-switch` — sees `pr_number` and `pr_url` in its template
+/// context. Both GitHub PRs and GitLab MRs canonicalize to the same `pr_*`
+/// names — hook authors don't need to branch on platform. `pre-switch` fires
+/// before the worktree exists but after the forge answered, so it names the
+/// PR's branch rather than the raw `pr:N` token (#3934).
 #[rstest]
 fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
@@ -3404,7 +3405,8 @@ fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     fs::create_dir_all(repo.root_path().join(".config")).unwrap();
     fs::write(
         repo.root_path().join(".config/wt.toml"),
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+        r#"pre-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
 post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
 post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
 "#,
@@ -3462,7 +3464,12 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
     );
 
     let expected = "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42";
-    for marker in ["pre_start.txt", "post_start.txt", "post_switch.txt"] {
+    for marker in [
+        "pre_switch.txt",
+        "pre_start.txt",
+        "post_start.txt",
+        "post_switch.txt",
+    ] {
         let path = repo.root_path().join(marker);
         // post-* hooks run in the background; poll until the file appears.
         wait_for_file_content(&path);
@@ -3474,6 +3481,169 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
             "{marker} hook should see canonical pr_number and pr_url variables",
         );
     }
+}
+
+/// A **same-repo** `pr:N` switch has to fill the same template variables as a
+/// fork one. Two things used to go missing here (#3934): `pre-switch` ran
+/// before the forge was queried, so `branch` / `target` carried the literal
+/// `pr:101` token; and `pr_number` / `pr_url` were read back off
+/// `CreationMethod::ForkRef`, which a same-repo PR never produces — so the
+/// common case saw them unset in every hook.
+#[rstest]
+fn test_switch_pr_same_repo_hooks_see_resolved_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Push the PR's source branch to the remote, then drop the local branch so
+    // the switch takes the create path (the reporter's case: the PR's worktree
+    // does not exist yet).
+    repo.run_git(&["branch", "feature-auth"]);
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    // `pre-switch` runs in the invoking worktree, before the destination
+    // exists — so it reports the branch it is switching to, not a path.
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+post-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:101 should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:101 failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let expected = "branch=feature-auth target=feature-auth pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101";
+    for marker in ["pre_switch.txt", "post_switch.txt"] {
+        let path = repo.root_path().join(marker);
+        // post-switch runs in the background; poll until the file appears.
+        wait_for_file_content(&path);
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{marker} should have been written: {e}"));
+        assert_eq!(
+            contents.trim(),
+            expected,
+            "{marker} should name the PR's branch and carry its pr_* variables",
+        );
+    }
+}
+
+/// A second `wt switch pr:N`, onto the worktree the first one created, is the
+/// path with nothing else to fall back on. It returns `SwitchResult::Existing`,
+/// which carries no PR identity of its own and no base branch — so `pr_number`
+/// / `pr_url` reach `post-switch` only because the pipeline keeps the resolved
+/// identity past `plan_switch`, and `target_worktree_path` reaches `pre-switch`
+/// only because the forge answered before the hook ran (#3934). Both go silently
+/// missing again if either is dropped; the create-path tests above stay green.
+#[rstest]
+fn test_switch_pr_existing_worktree_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["branch", "feature-auth"]);
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let run_switch = |mock_bin: &std::path::Path| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:101", "--yes"]);
+        configure_mock_cli_env(&mut cmd, mock_bin);
+        let output = cmd.output().expect("wt switch pr:101 should run");
+        assert!(
+            output.status.success(),
+            "wt switch pr:101 failed: stdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    };
+
+    // First switch creates the worktree. Hooks are configured only afterwards,
+    // so the markers below can't be left over from the create path.
+    run_switch(&mock_bin);
+
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "echo 'target={{ target }} target_worktree_path={{ target_worktree_path }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+post-switch = "echo 'target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+
+    // Second switch lands on the existing worktree (the command runs from the
+    // primary worktree, so this is `Existing`, not `AlreadyAt`).
+    run_switch(&mock_bin);
+
+    let post_switch = repo.root_path().join("post_switch.txt");
+    wait_for_file_content(&post_switch);
+    assert_eq!(
+        fs::read_to_string(&post_switch).unwrap().trim(),
+        "target=feature-auth pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101",
+        "post-switch on an existing worktree should still carry the PR identity",
+    );
+
+    let pre_switch = fs::read_to_string(repo.root_path().join("pre_switch.txt"))
+        .expect("pre_switch.txt should have been written");
+    let pre_switch = pre_switch.trim();
+    let dest = pre_switch
+        .split("target_worktree_path=")
+        .nth(1)
+        .and_then(|rest| rest.split(" pr_number=").next())
+        .unwrap_or_else(|| panic!("no target_worktree_path in: {pre_switch}"));
+    assert!(
+        std::path::Path::new(dest).is_dir(),
+        "pre-switch `target_worktree_path` should name the branch's existing worktree, got: {dest}"
+    );
+    assert!(
+        pre_switch.starts_with("target=feature-auth "),
+        "pre-switch should name the PR's branch, got: {pre_switch}"
+    );
+    assert!(
+        pre_switch.ends_with("pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101"),
+        "pre-switch should carry the PR identity, got: {pre_switch}"
+    );
 }
 
 /// `wt switch pr:N` resolves `post-start` etc. from the **invoking** worktree's

@@ -746,7 +746,7 @@ Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, s
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt config - Manage user & project configs
 
 Includes shell integration, hooks, and saved state.
@@ -812,7 +812,7 @@ This tests:
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config show - Show configuration files & locations
 
 Usage: wt config show [OPTIONS]
@@ -920,7 +920,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config approvals - Manage command approvals
 
 Usage: wt config approvals [OPTIONS] <COMMAND>
@@ -979,7 +979,7 @@ $ wt config alias dry-run deploy -- --env=staging
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config alias - Inspect and preview aliases
 
 Usage: wt config alias [OPTIONS] <COMMAND>
@@ -1064,7 +1064,7 @@ $ wt config state clear
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state - Manage internal data and cache
 
 Usage: wt config state [OPTIONS] <COMMAND>
@@ -1133,7 +1133,7 @@ $ wt config state cache clear
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state cache - Regenerable caches
 
 Usage: wt config state cache [OPTIONS] [COMMAND]
@@ -1208,7 +1208,7 @@ If none of these match, detection fails; set it explicitly with `wt config state
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state default-branch - Default branch detection and override
 
 Usage: wt config state default-branch [OPTIONS] [COMMAND]
@@ -1325,7 +1325,7 @@ $ wt config state logs clear
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state logs - Operation and debug logs
 
 Usage: wt config state logs [OPTIONS] [COMMAND]
@@ -1374,7 +1374,7 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state ci-status - CI status cache
 
 Usage: wt config state ci-status [OPTIONS] [COMMAND]
@@ -1449,7 +1449,7 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state marker - Branch markers
 
 Usage: wt config state marker [OPTIONS] [COMMAND]
@@ -1542,7 +1542,7 @@ Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt config state vars - [experimental] Custom variables per branch
 
 Usage: wt config state vars [OPTIONS] <COMMAND>

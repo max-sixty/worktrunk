@@ -12,6 +12,7 @@ To run it yourself:
 
 ```bash
 npm --prefix docs install
+npm --prefix docs exec playwright install webkit
 npm --prefix docs run dev -- --host 127.0.0.1 --port 4321
 ```
 
@@ -51,9 +52,11 @@ View changes: http://127.0.0.1:<port>
 | `src/pages/index.astro` | Homepage route; renders the canonical `worktrunk.md` body |
 | `src/styles/custom.css` | Worktrunk's visual system and narrow Starlight adjustments |
 | `src/plugins/stable-heading-ids.mjs` | Stable public anchor IDs for Markdown headings |
-| `src/plugins/worktrunk-terminal.mjs` | Prompts, copy behavior, and state colors for `console` fences |
+| `src/plugins/worktrunk-terminal.mjs` | Shell syntax, homepage comparison roles, prompts, copy behavior, Clap help roles, and ANSI-derived output styling |
+| `src/themes/worktrunk-code.mjs` | Light and dark syntax themes for source and command blocks |
+| `src/generated/terminal-styles.json` | Generated site-only span styles from ANSI command snapshots |
 | `src/components/Head.astro` | Social metadata, structured data, and analytics |
-| `tests/` | Renderer unit tests and built-site route/link checks |
+| `tests/` | Renderer unit tests plus built-site and WebKit mobile checks |
 | `public/` | Files served unchanged at the site root |
 | `demos/` | VHS sources and scripts for the external demo assets |
 
@@ -184,7 +187,10 @@ $ wt list
 The mapping lives in `tests/integration_tests/readme_sync.rs`. The generated
 site page uses the real command plus ANSI-stripped output in one `console`
 fence. This keeps the Markdown readable on GitHub and lets the site renderer
-add prompts and command-only copy behavior without changing the source.
+add prompts and command-only copy behavior without changing the source. The
+same sync pass writes `src/generated/terminal-styles.json` from the snapshot's
+ANSI spans, so the website preserves the CLI's exact semantic colors and text
+attributes while every portable Markdown surface remains plain text.
 
 To update an example:
 
@@ -213,13 +219,15 @@ $ wt switch --create feature-auth
 ```
 ````
 
-Starlight and Expressive Code create the terminal frame and copy button. The
-small Worktrunk plugin removes `$ ` from presentation data, renders it as a
-prompt, and makes mixed blocks copy only their commands. Comment lines and
-blank recipe separators remain copyable; captured output does not. The plugin
-also restores green/red/amber state markers from the portable text rather than
-putting ANSI escapes in Markdown. Committed Markdown must remain useful without
-the plugin.
+Starlight and Expressive Code create the frame and copy button. The Worktrunk
+plugin highlights `console` commands as Bash, renders `$ ` as a prompt, and
+makes mixed blocks copy only their commands. Comment lines and blank recipe
+separators remain copyable; captured output does not. Snapshot-backed output
+gets its exact ANSI roles from the generated style manifest, while hand-written
+output uses a conservative marker fallback. Generated Clap help fences carry
+the `wt-command-reference` marker, which the plugin expands into semantic
+command, option, value, and metadata roles. Committed Markdown must remain
+useful without the plugin.
 
 ### Web-only post-processing
 

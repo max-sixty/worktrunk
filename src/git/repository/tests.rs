@@ -293,12 +293,12 @@ use super::ResolvedWorktree;
 
 #[test]
 fn test_resolved_worktree_clone() {
-    let wt = ResolvedWorktree::Worktree {
-        path: PathBuf::from("/path/to/worktree"),
-        branch: Some("feature".to_string()),
-    };
+    let wt = ResolvedWorktree::worktree(
+        PathBuf::from("/path/to/worktree"),
+        Some("feature".to_string()),
+    );
     let cloned = wt.clone();
-    if let ResolvedWorktree::Worktree { path, branch } = cloned {
+    if let ResolvedWorktree::Worktree { path, branch, .. } = cloned {
         assert_eq!(path, PathBuf::from("/path/to/worktree"));
         assert_eq!(branch, Some("feature".to_string()));
     } else {
@@ -309,11 +309,8 @@ fn test_resolved_worktree_clone() {
 #[test]
 fn test_resolved_worktree_none_branch() {
     // Worktree with detached HEAD (no branch)
-    let wt = ResolvedWorktree::Worktree {
-        path: PathBuf::from("/path/to/worktree"),
-        branch: None,
-    };
-    if let ResolvedWorktree::Worktree { path, branch } = wt {
+    let wt = ResolvedWorktree::worktree(PathBuf::from("/path/to/worktree"), None);
+    if let ResolvedWorktree::Worktree { path, branch, .. } = wt {
         assert_eq!(path, PathBuf::from("/path/to/worktree"));
         assert!(branch.is_none());
     } else {
@@ -1373,14 +1370,22 @@ fn resolve_worktree_accepts_branch_and_path() {
 
     // A relative path resolves against `-C`, which only a spawned `wt` has —
     // `switch::switch_by_relative_worktree_path` covers that spelling.
+    let mut ids = Vec::new();
     for selector in ["feature", worktree_path.to_str().unwrap()] {
         let resolved = test.repo.resolve_worktree(selector).unwrap();
-        let ResolvedWorktree::Worktree { path, branch } = resolved else {
+        ids.push(
+            resolved
+                .id()
+                .expect("resolved Git item has an identity")
+                .clone(),
+        );
+        let ResolvedWorktree::Worktree { path, branch, .. } = resolved else {
             panic!("{selector} should resolve to a worktree");
         };
         assert_eq!(canonicalize(&path).unwrap(), worktree_path);
         assert_eq!(branch.as_deref(), Some("feature"));
     }
+    assert_eq!(ids[0], ids[1]);
 }
 
 /// A directory whose name matches a branch does not shadow it: `wt switch docs`
@@ -1397,7 +1402,8 @@ fn resolve_worktree_prefers_branch_over_same_named_directory() {
     let nested = test.root_path().join("docs");
     test.add_worktree_at_path("docs-nested", &nested);
 
-    let ResolvedWorktree::Worktree { path, branch } = test.repo.resolve_worktree("docs").unwrap()
+    let ResolvedWorktree::Worktree { path, branch, .. } =
+        test.repo.resolve_worktree("docs").unwrap()
     else {
         panic!("docs should resolve to a worktree");
     };
@@ -1417,7 +1423,7 @@ fn resolve_worktree_reaches_detached_worktree_by_path() {
     let worktree_path = test.add_worktree("feature");
     test.detach_head_in_worktree("feature");
 
-    let ResolvedWorktree::Worktree { path, branch } = test
+    let ResolvedWorktree::Worktree { path, branch, .. } = test
         .repo
         .resolve_worktree(worktree_path.to_str().unwrap())
         .unwrap()
@@ -1454,7 +1460,7 @@ fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
     let resolved = test.repo.resolve_worktree("^").unwrap();
     let branch = match resolved {
         ResolvedWorktree::Worktree { branch, .. } => branch,
-        ResolvedWorktree::BranchOnly { branch } => Some(branch),
+        ResolvedWorktree::BranchOnly { branch, .. } => Some(branch),
         ResolvedWorktree::NoWorktreeAtPath { path } => {
             panic!("`^` resolved to a directory: {}", path.display())
         }
@@ -1472,7 +1478,7 @@ fn resolve_worktree_falls_through_to_branch_only() {
     let test = TestRepo::with_initial_commit();
 
     let resolved = test.repo.resolve_worktree("nowhere").unwrap();
-    let ResolvedWorktree::BranchOnly { branch } = resolved else {
+    let ResolvedWorktree::BranchOnly { branch, .. } = resolved else {
         panic!("an unmatched selector should resolve to branch-only");
     };
     assert_eq!(branch, "nowhere");

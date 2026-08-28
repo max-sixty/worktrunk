@@ -8,7 +8,14 @@ import { rehypeResponsiveTables } from './src/plugins/responsive-tables.mjs';
 import { rehypeStableHeadingIds } from './src/plugins/stable-heading-ids.mjs';
 import { sidebar } from './src/site-navigation.mjs';
 import { sitemapCompatibility } from './src/plugins/sitemap-compatibility.mjs';
-import { pluginWorktrunkTerminal } from './src/plugins/worktrunk-terminal.mjs';
+import {
+  pluginWorktrunkTerminal,
+  rehypeComparisonCommands,
+} from './src/plugins/worktrunk-terminal.mjs';
+import {
+  worktrunkDarkCodeTheme,
+  worktrunkLightCodeTheme,
+} from './src/themes/worktrunk-code.mjs';
 
 const repository = 'https://github.com/max-sixty/worktrunk';
 const site = 'https://worktrunk.dev';
@@ -23,6 +30,7 @@ export default defineConfig({
       rehypePlugins: [
         rehypeStableHeadingIds,
         rehypePagefindCommandReferences,
+        rehypeComparisonCommands,
         rehypeResponsiveTables,
       ],
     }),
@@ -57,6 +65,8 @@ export default defineConfig({
       },
       expressiveCode: {
         plugins: [pluginWorktrunkTerminal()],
+        themes: [worktrunkDarkCodeTheme, worktrunkLightCodeTheme],
+        useStarlightUiThemeColors: true,
         styleOverrides: {
           borderRadius: '0',
           codeFontFamily: 'var(--sl-font-mono)',

@@ -16,6 +16,11 @@ runs:
       run: npm ci
       working-directory: docs
 
+    - name: Install WebKit for mobile layout tests
+      shell: bash
+      run: npx playwright install --with-deps webkit
+      working-directory: docs
+
     - name: Fetch docs assets
       shell: bash
       env:

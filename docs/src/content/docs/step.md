@@ -52,7 +52,7 @@ $ wt step push
 
 ## Command reference
 
-```
+```text wt-command-reference
 wt step - Run individual operations
 
 The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
@@ -140,7 +140,7 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step commit - Stage and commit with LLM-generated message
 
 Usage: wt step commit [OPTIONS]
@@ -235,7 +235,7 @@ Three sections are printed: the rendered prompt, the shell command that would in
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step squash - Squash commits since branching
 
 Stages changes and generates message with LLM.
@@ -330,7 +330,7 @@ A conflicting commit leaves the rebase open rather than undoing it. The worktree
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step rebase - Rebase onto target
 
 Usage: wt step rebase [OPTIONS] [TARGET]
@@ -397,7 +397,7 @@ A worktree that is still registered but whose directory is gone is refused as we
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step push - Fast-forward target to current branch
 
 Usage: wt step push [OPTIONS] [TARGET]
@@ -489,7 +489,7 @@ $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state defau
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step diff - Show all changes since branching
 
 Includes committed, staged, unstaged, and untracked files.
@@ -630,7 +630,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step copy-ignored - Copy gitignored files to another worktree
 
 Eliminates cold starts by copying build caches and dependencies.
@@ -742,7 +742,7 @@ feature/auth-oauth2
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step eval - [experimental] Evaluate a template expression
 
 Prints the result to stdout for use in scripts and shell substitutions.
@@ -829,7 +829,7 @@ $ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step for-each - [experimental] Run command in each worktree
 
 Executes sequentially with real-time output; continues past command failures.
@@ -917,7 +917,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step promote - [experimental] Swap a branch into the main worktree
 
 Exchanges branches and gitignored files between two worktrees.
@@ -1004,7 +1004,7 @@ $ wt step prune
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step prune - [experimental] Remove worktrees merged into the default branch
 
 Usage: wt step prune [OPTIONS]
@@ -1115,7 +1115,7 @@ refuses), unless `--commit` is passed.
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step relocate - [experimental] Move worktrees to expected paths
 
 Relocates worktrees whose path doesn't match the worktree-path template.
@@ -1221,7 +1221,7 @@ server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 
 ### Command reference
 
-```
+```text wt-command-reference
 wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
 
 Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.

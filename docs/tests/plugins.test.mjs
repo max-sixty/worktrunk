@@ -8,9 +8,18 @@ import {
 import { rehypePagefindCommandReferences } from '../src/plugins/pagefind-command-references.mjs';
 import { rehypeResponsiveTables } from '../src/plugins/responsive-tables.mjs';
 import {
+  commandReferenceSegments,
   pluginWorktrunkTerminal,
+  rehypeComparisonCommands,
   semanticOutputSegments,
+  shellCommandSegments,
 } from '../src/plugins/worktrunk-terminal.mjs';
+
+function prepareCodeBlock(plugin, codeBlock) {
+  codeBlock.props ??= {};
+  plugin.hooks.preprocessLanguage({ codeBlock });
+  plugin.hooks.preprocessCode({ codeBlock });
+}
 
 function markdownTable(headers, rows, { className, headerProperties } = {}) {
   const row = (tagName, values, properties = []) => ({
@@ -216,6 +225,118 @@ test('responsive records reject tables that cannot stack unambiguously', () => {
   }
 });
 
+test('homepage comparison commands gain shell roles without changing their text', () => {
+  const command = {
+    type: 'element',
+    tagName: 'code',
+    properties: {},
+    children: [{
+      type: 'text',
+      value: 'git worktree add -b feat ../repo.feat && \\\ncd ../repo.feat',
+    }],
+  };
+  const outsideCode = structuredClone(command);
+  const comparison = {
+    type: 'element',
+    tagName: 'table',
+    properties: { className: ['cmd-compare'] },
+    children: [{
+      type: 'element',
+      tagName: 'tbody',
+      properties: {},
+      children: [{
+        type: 'element',
+        tagName: 'tr',
+        properties: {},
+        children: [{
+          type: 'element',
+          tagName: 'td',
+          properties: {},
+          children: [command],
+        }],
+      }],
+    }],
+  };
+  const tree = { type: 'root', children: [outsideCode, comparison] };
+
+  rehypeComparisonCommands()(tree);
+
+  assert.deepEqual(shellCommandSegments(command.children.map((child) => (
+    child.children?.[0]?.value ?? child.value
+  )).join('')), [
+    { text: 'git', tone: 'command' },
+    { text: ' ' },
+    { text: 'worktree', tone: 'argument' },
+    { text: ' ' },
+    { text: 'add', tone: 'argument' },
+    { text: ' ' },
+    { text: '-b', tone: 'option' },
+    { text: ' ' },
+    { text: 'feat', tone: 'argument' },
+    { text: ' ' },
+    { text: '../repo.feat', tone: 'argument' },
+    { text: ' && \\\n' },
+    { text: 'cd', tone: 'command' },
+    { text: ' ' },
+    { text: '../repo.feat', tone: 'argument' },
+  ]);
+  assert.equal(command.children.map((child) => child.children?.[0]?.value ?? child.value).join(''),
+    'git worktree add -b feat ../repo.feat && \\\ncd ../repo.feat');
+  assert.deepEqual(
+    command.children.filter((child) => child.type === 'element')
+      .map((child) => child.properties.className[0]),
+    [
+      'wt-shell-command',
+      'wt-shell-argument',
+      'wt-shell-argument',
+      'wt-shell-option',
+      'wt-shell-argument',
+      'wt-shell-argument',
+      'wt-shell-command',
+      'wt-shell-argument',
+    ],
+  );
+  assert.deepEqual(outsideCode, structuredClone({
+    type: 'element',
+    tagName: 'code',
+    properties: {},
+    children: [{
+      type: 'text',
+      value: 'git worktree add -b feat ../repo.feat && \\\ncd ../repo.feat',
+    }],
+  }));
+});
+
+test('raw homepage comparison markup is expanded before shell roles are added', () => {
+  const source = 'wt switch -c feat';
+  const tree = {
+    type: 'root',
+    children: [{
+      type: 'raw',
+      value: '<table class="cmd-compare"><tbody><tr><td><code>'
+        + source
+        + '</code></td></tr></tbody></table>',
+    }],
+  };
+
+  rehypeComparisonCommands()(tree);
+
+  const table = tree.children[0];
+  const code = table.children[0].children[0].children[0].children[0];
+  assert.equal(table.type, 'element');
+  assert.equal(code.children.map((child) => child.children?.[0]?.value ?? child.value).join(''), source);
+  assert.deepEqual(
+    code.children.filter((child) => child.type === 'element')
+      .map((child) => child.properties.className[0]),
+    ['wt-shell-command', 'wt-shell-argument', 'wt-shell-option', 'wt-shell-argument'],
+  );
+});
+
+test('shell command roles preserve syntax outside the styled grammar', () => {
+  const source = 'cmd & next\ncmd 2>&1';
+  assert.equal(shellCommandSegments(source).map(({ text }) => text).join(''), source);
+});
+
 test('console blocks separate copyable recipes from output', () => {
   const lines = ['# Recent', '$ wt list', '', '# Failed', '$ wt list --full'].map((text) => ({
     text,
@@ -225,7 +346,10 @@ test('console blocks separate copyable recipes from output', () => {
   }));
   const codeBlock = { language: 'console', getLines: () => lines };
   const plugin = pluginWorktrunkTerminal();
-  plugin.hooks.preprocessCode({ codeBlock });
+  prepareCodeBlock(plugin, codeBlock);
+
+  assert.equal(codeBlock.language, 'bash');
+  assert.equal(codeBlock.props.frame, 'terminal');
 
   const classes = lines.map((_, lineIndex) => {
     const renderData = { lineAst: { properties: {} } };
@@ -271,7 +395,7 @@ test('console output and its blank lines stay out of copied commands', () => {
   }));
   const codeBlock = { language: 'console', getLines: () => lines };
   const plugin = pluginWorktrunkTerminal();
-  plugin.hooks.preprocessCode({ codeBlock });
+  prepareCodeBlock(plugin, codeBlock);
 
   const classes = lines.map((_, lineIndex) => {
     const renderData = { lineAst: { properties: {} } };
@@ -297,6 +421,26 @@ test('console output and its blank lines stay out of copied commands', () => {
   };
   plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData });
   assert.equal(copyButton.properties['data-code'], 'wt list\u007f# shell comment');
+});
+
+test('shell snippets use the command-only terminal classifier', () => {
+  const codeBlock = { language: 'bash', getLines: () => [] };
+  const blockAst = {
+    type: 'element',
+    tagName: 'figure',
+    properties: { className: ['frame', 'is-terminal'] },
+    children: [],
+  };
+  const plugin = pluginWorktrunkTerminal();
+
+  plugin.hooks.preprocessCode({ codeBlock });
+  plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData: { blockAst } });
+
+  assert.deepEqual(blockAst.properties.className, [
+    'frame',
+    'is-terminal',
+    'wt-commands-only',
+  ]);
 });
 
 test('console output retains state-color semantics without ANSI in Markdown', () => {
@@ -326,12 +470,149 @@ test('console output retains state-color semantics without ANSI in Markdown', ()
     [{ text: '[unoptimized + debuginfo] Allow and remember?' }],
   );
   assert.deepEqual(
-    semanticOutputSegments('@ feat  +   ↑'),
-    [
-      { text: '@ feat  ' },
-      { text: '+', tone: 'positive' },
-      { text: '   ' },
-      { text: '↑', tone: 'positive' },
-    ],
+    semanticOutputSegments('release-5 v1+2 port -3000'),
+    [{ text: 'release-5 v1+2 port -3000' }],
   );
+  assert.deepEqual(
+    semanticOutputSegments('@ feat  +   ↑'),
+    [{ text: '@ feat  +   ↑' }],
+  );
+});
+
+test('console commands retain syntax highlighter token spans', () => {
+  const lines = ['$ wt switch "#412" # inspect the PR'].map((text) => ({
+    text,
+    editText(start, end, replacement) {
+      this.text = this.text.slice(0, start) + replacement + this.text.slice(end);
+    },
+  }));
+  const codeBlock = { language: 'console', getLines: () => lines };
+  const plugin = pluginWorktrunkTerminal();
+  prepareCodeBlock(plugin, codeBlock);
+
+  const rendered = lines.map((line, lineIndex) => {
+    const code = {
+      type: 'element',
+      tagName: 'div',
+      properties: { className: ['code'] },
+      children: [
+        {
+          type: 'element',
+          tagName: 'span',
+          properties: { style: '--0:#aaa;--1:#111' },
+          children: [{ type: 'text', value: 'wt' }],
+        },
+        { type: 'text', value: ' switch "#412" ' },
+        {
+          type: 'element',
+          tagName: 'span',
+          properties: { style: '--0:#bbb;--1:#222' },
+          children: [{ type: 'text', value: '# inspect the PR' }],
+        },
+      ],
+    };
+    const renderData = {
+      lineAst: { type: 'element', tagName: 'div', properties: {}, children: [code] },
+    };
+    plugin.hooks.postprocessRenderedLine({ codeBlock, line, lineIndex, renderData });
+    return code.children;
+  });
+
+  assert.deepEqual(rendered, [
+    [
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: { style: '--0:#aaa;--1:#111' },
+        children: [{ type: 'text', value: 'wt' }],
+      },
+      { type: 'text', value: ' switch "#412" ' },
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: { style: '--0:#bbb;--1:#222' },
+        children: [{ type: 'text', value: '# inspect the PR' }],
+      },
+    ],
+  ]);
+});
+
+test('command references expose clap syntax roles', () => {
+  const plugin = pluginWorktrunkTerminal();
+  const markedBlock = {
+    language: 'text',
+    metaOptions: { value: (key) => (key === 'wt-command-reference' ? true : undefined) },
+  };
+  const plainBlock = {
+    language: 'text',
+    metaOptions: { value: () => undefined },
+  };
+  plugin.hooks.preprocessLanguage({ codeBlock: markedBlock });
+  plugin.hooks.preprocessLanguage({ codeBlock: plainBlock });
+  for (const [codeBlock, expected] of [[markedBlock, true], [plainBlock, false]]) {
+    const blockAst = { properties: { className: ['frame'] }, children: [] };
+    plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData: { blockAst } });
+    assert.equal(blockAst.properties.className.includes('wt-command-reference'), expected);
+  }
+
+  assert.deepEqual(commandReferenceSegments('Usage: wt list [OPTIONS] <COMMAND>'), [
+    { text: 'Usage:', tone: 'heading' },
+    { text: ' ' },
+    { text: 'wt list', tone: 'command' },
+    { text: ' ' },
+    { text: '[OPTIONS]', tone: 'value' },
+    { text: ' ' },
+    { text: '<COMMAND>', tone: 'value' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('       wt list <COMMAND>'), [
+    { text: '       ' },
+    { text: 'wt list', tone: 'command' },
+    { text: ' ' },
+    { text: '<COMMAND>', tone: 'value' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('      --format <FORMAT>'), [
+    { text: '      ' },
+    { text: '--format', tone: 'option' },
+    { text: ' ' },
+    { text: '<FORMAT>', tone: 'value' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('          [default: table]'), [
+    { text: '          ' },
+    { text: '[default: table]', tone: 'meta' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('  [EXTRA_ARGS]...'), [
+    { text: '  ' },
+    { text: '[EXTRA_ARGS]...', tone: 'value' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('  <COMMAND>...'), [
+    { text: '  ' },
+    { text: '<COMMAND>...', tone: 'value' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('          Possible values:'), [
+    { text: '          ' },
+    { text: 'Possible values:', tone: 'meta' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('          - all: Stage everything'), [
+    { text: '          - ' },
+    { text: 'all', tone: 'value' },
+    { text: ':' },
+    { text: ' Stage everything' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('          - json'), [
+    { text: '          - ' },
+    { text: 'json', tone: 'value' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('wt step eval - [experimental] Evaluate a template'), [
+    { text: 'wt step eval', tone: 'command' },
+    { text: ' - ' },
+    { text: '[experimental]', tone: 'meta' },
+    { text: ' Evaluate a template' },
+  ]);
+  assert.deepEqual(commandReferenceSegments('  eval    [experimental] Evaluate a template'), [
+    { text: '  ' },
+    { text: 'eval', tone: 'command' },
+    { text: '    ' },
+    { text: '[experimental]', tone: 'meta' },
+    { text: ' Evaluate a template' },
+  ]);
 });

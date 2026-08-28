@@ -1185,7 +1185,7 @@ pub fn calculate_layout_with_width(
     // Include branch names from both worktrees and standalone branches
     let longest_branch = items
         .iter()
-        .filter_map(|item| item.branch.as_deref())
+        .filter_map(|item| item.branch())
         .max_by_key(|b| b.width());
 
     // A detached row shows its abbreviated HEAD in this column
@@ -1194,7 +1194,7 @@ pub fn calculate_layout_with_width(
     // and stretches further still to disambiguate.
     let detached_width = items
         .iter()
-        .filter(|item| item.branch.is_none())
+        .filter(|item| item.branch().is_none())
         .map(|item| item.short_sha.width())
         .max();
 
@@ -1209,7 +1209,7 @@ pub fn calculate_layout_with_width(
     let path_data_width = items
         .iter()
         .filter_map(|item| item.worktree_path())
-        .map(|path| shorten_path(path.as_path(), main_worktree_path).width())
+        .map(|path| shorten_path(path, main_worktree_path).width())
         .max()
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
@@ -1616,65 +1616,38 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
-            UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ListItem, UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
-        let item = ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some("feature".to_string()),
-            commit: Some(CommitDetails {
-                timestamp: 1234567890,
-                commit_message: "Test commit message".to_string(),
-            }),
-            counts: Some(AheadBehind {
-                ahead: 5,
-                behind: 10,
-            }),
-            branch_diff: Some(BranchDiffTotals {
-                diff: LineDiff::from((200, 30)),
-            }),
-            committed_trees_match: Some(false),
-            has_file_changes: Some(true),
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: Some(UpstreamStatus {
-                remote: Some("origin".to_string()),
-                ahead: 4,
-                behind: 2,
-                ..Default::default()
-            }),
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from("/test/path"),
-                detached: false,
-                locked: None,
-                prunable: None,
+        let mut item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test/path", Some("feature"), "abc12345"),
+            WorktreeData {
                 working_tree_diff: Some(LineDiff::from((100, 50))),
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
                 git_operation: Some(None),
-                is_main: false,
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        };
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item.commit = Some(CommitDetails {
+            timestamp: 1234567890,
+            commit_message: "Test commit message".to_string(),
+        });
+        item.counts = Some(AheadBehind {
+            ahead: 5,
+            behind: 10,
+        });
+        item.branch_diff = Some(BranchDiffTotals {
+            diff: LineDiff::from((200, 30)),
+        });
+        item.committed_trees_match = Some(false);
+        item.has_file_changes = Some(true);
+        item.upstream = Some(UpstreamStatus {
+            remote: Some("origin".to_string()),
+            ahead: 4,
+            behind: 2,
+            ..Default::default()
+        });
 
         let items = vec![item];
         let tasks = run_except(&[TaskKind::BranchDiff, TaskKind::CiStatus]);
@@ -1741,60 +1714,34 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, ListItem, StatusSymbols,
-            UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, ListItem, UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
-        let item = ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some("main".to_string()),
-            commit: Some(CommitDetails {
-                timestamp: 1234567890,
-                commit_message: "Test".to_string(),
-            }),
-            counts: Some(AheadBehind {
-                ahead: 0,
-                behind: 0,
-            }),
-            branch_diff: Some(BranchDiffTotals {
-                diff: LineDiff::default(),
-            }),
-            committed_trees_match: Some(false),
-            has_file_changes: Some(true),
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: Some(UpstreamStatus::default()),
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from("/test"),
-                detached: false,
-                locked: None,
-                prunable: None,
+        let mut item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test", Some("main"), "abc12345"),
+            WorktreeData {
                 working_tree_diff: Some(LineDiff::default()),
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
                 git_operation: Some(None),
                 is_main: true, // Primary worktree: no ahead/behind shown
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        };
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item.commit = Some(CommitDetails {
+            timestamp: 1234567890,
+            commit_message: "Test".to_string(),
+        });
+        item.counts = Some(AheadBehind {
+            ahead: 0,
+            behind: 0,
+        });
+        item.branch_diff = Some(BranchDiffTotals {
+            diff: LineDiff::default(),
+        });
+        item.committed_trees_match = Some(false);
+        item.has_file_changes = Some(true);
+        item.upstream = Some(UpstreamStatus::default());
 
         let items = vec![item];
         let tasks = run_except(&[TaskKind::BranchDiff, TaskKind::CiStatus]);
@@ -1888,48 +1835,16 @@ mod tests {
 
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
-        super::super::model::ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some(branch.to_string()),
-            commit: None,
-            counts: None,
-            branch_diff: None,
-            committed_trees_match: None,
-            has_file_changes: None,
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: None,
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from("/test/wt"),
-                detached: false,
-                locked: None,
-                prunable: None,
-                working_tree_diff: None,
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
+        use crate::commands::list::model::WorktreeData;
+        let mut item = super::super::model::ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test/wt", Some(branch), "abc12345"),
+            WorktreeData {
                 git_operation: Some(None),
-                is_main: false,
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        }
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item
     }
 
     /// Helper: compute layout with explicit terminal width and run plan.
@@ -2117,8 +2032,14 @@ mod tests {
     /// runs.
     #[test]
     fn test_branch_column_fits_a_detached_rows_sha() {
-        let mut detached = make_test_item("main");
-        detached.branch = None;
+        let mut detached = super::super::model::ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test/detached", None, "abc12345"),
+            super::super::model::WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
+        detached.short_sha = "abc1234".to_string();
         let items = vec![make_test_item("main"), detached];
 
         let layout = calculate_layout_with_width(
@@ -2413,48 +2334,16 @@ mod tests {
 
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
-        use crate::commands::list::model::{ItemKind, StatusSymbols, WorktreeData};
-        super::super::model::ListItem {
-            head: "abc12345".to_string(),
-            short_sha: "abc1234".to_string(),
-            branch: Some(branch.to_string()),
-            commit: None,
-            counts: None,
-            branch_diff: None,
-            committed_trees_match: None,
-            has_file_changes: None,
-            would_merge_add: None,
-            is_patch_id_match: None,
-            is_ancestor: None,
-            is_orphan: None,
-            upstream: None,
-            pr_status: None,
-            url: None,
-            url_active: None,
-            summary: None,
-            has_merge_tree_conflicts: None,
-            user_marker: None,
-            status_symbols: StatusSymbols::default(),
-            statusline: None,
-            custom_values: Vec::new(),
-            seeded: Default::default(),
-            kind: ItemKind::Worktree(Box::new(WorktreeData {
-                path: PathBuf::from(path),
-                detached: false,
-                locked: None,
-                prunable: None,
-                working_tree_diff: None,
-                working_tree_status: None,
-                has_conflicts: None,
-                has_working_tree_conflicts: None,
+        use crate::commands::list::model::WorktreeData;
+        let mut item = super::super::model::ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some(branch), "abc12345"),
+            WorktreeData {
                 git_operation: Some(None),
-                is_main: false,
-                is_current: false,
-                is_previous: false,
-                branch_worktree_mismatch: false,
-                duplicate_branch: false,
-            })),
-        }
+                ..Default::default()
+            },
+        );
+        item.short_sha = "abc1234".to_string();
+        item
     }
 
     /// When paths are consistent (no mismatch), Path should yield space to Summary.
@@ -2471,7 +2360,7 @@ mod tests {
         let items = vec![
             {
                 let mut item = make_test_item_at("main", "/test/worktrunk");
-                if let super::super::model::ItemKind::Worktree(ref mut data) = item.kind {
+                if let Some(data) = item.worktree_data_mut() {
                     data.is_main = true;
                 }
                 item
@@ -2543,8 +2432,7 @@ mod tests {
     #[test]
     fn test_snapshot_path_yields_to_summary() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, ItemKind, StatusSymbols, UpstreamStatus,
-            WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus, WorktreeData,
         };
         use worktrunk::git::LineDiff;
 
@@ -2574,50 +2462,27 @@ mod tests {
                 behind: 0,
                 ..Default::default()
             });
-            super::super::model::ListItem {
-                head: "a620bcfe".to_string(),
-                short_sha: "a620bcf".to_string(),
-                branch: Some(branch.to_string()),
-                commit: Some(CommitDetails {
-                    timestamp: ts,
-                    commit_message: "Some commit message".to_string(),
-                }),
-                counts,
-                branch_diff,
-                committed_trees_match: None,
-                has_file_changes: None,
-                would_merge_add: None,
-                is_patch_id_match: None,
-                is_ancestor: None,
-                is_orphan: None,
-                upstream: upstream_status,
-                pr_status: Some(None), // loaded, no CI
-                url: None,
-                url_active: None,
-                summary: Some(summary.map(|s| s.to_string())),
-                has_merge_tree_conflicts: None,
-                user_marker: None,
-                status_symbols: StatusSymbols::default(),
-                statusline: None,
-                custom_values: Vec::new(),
-                seeded: Default::default(),
-                kind: ItemKind::Worktree(Box::new(WorktreeData {
-                    path: PathBuf::from(path),
-                    detached: false,
-                    locked: None,
-                    prunable: None,
+            let mut item = super::super::model::ListItem::new_worktree(
+                worktrunk::git::WorktreeRef::new(path, Some(branch), "a620bcfe"),
+                WorktreeData {
                     working_tree_diff: Some(LineDiff::default()),
-                    working_tree_status: None,
-                    has_conflicts: None,
-                    has_working_tree_conflicts: None,
                     git_operation: Some(None),
                     is_main,
                     is_current,
-                    is_previous: false,
-                    branch_worktree_mismatch: false,
-                    duplicate_branch: false,
-                })),
-            }
+                    ..Default::default()
+                },
+            );
+            item.short_sha = "a620bcf".to_string();
+            item.commit = Some(CommitDetails {
+                timestamp: ts,
+                commit_message: "Some commit message".to_string(),
+            });
+            item.counts = counts;
+            item.branch_diff = branch_diff;
+            item.upstream = upstream_status;
+            item.pr_status = Some(None); // loaded, no CI
+            item.summary = Some(summary.map(str::to_string));
+            item
         };
 
         let items = vec![

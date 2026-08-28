@@ -1,0 +1,4506 @@
+[
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Age"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Message"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ feature-auth  "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "+"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↑"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+27"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-8"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑1"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+31"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "4bc72dc"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "2h"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add authenticati…"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "^ main              "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇡"
+        },
+        {
+          "classes": [],
+          "text": "                                    "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "0e631ad"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Initial commit"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden"
+        }
+      ]
+    ],
+    "plain": "  Branch        Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc  2h    Add authenticati…\n^ main              ^⇡                                    ⇡1      0e631ad  1d    Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Age"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Message"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ feature-api  "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "+"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕⇡"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+54"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-5"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑4"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+234"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-24"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡3"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "6814f02"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "30m"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add API tests"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "^ main             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇅"
+        },
+        {
+          "classes": [],
+          "text": "                                    "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "⇣1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "4d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Merge fix-auth: h…"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ fix-auth         "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕|"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑2"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+25"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-11"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "b772e68"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "5h"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add secure token…"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "fix-typos"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_|"
+        },
+        {
+          "classes": [],
+          "text": "                                      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "4d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Merge fix-auth: h…"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden"
+        }
+      ]
+    ],
+    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02  30m   Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083  4d    Merge fix-auth: h…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68  5h    Add secure token…\n+ fix-typos        _|                                      |     41ee083  4d    Merge fix-auth: h…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Age"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Message"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ main             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇡"
+        },
+        {
+          "classes": [],
+          "text": "                                    "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "33323bc"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Initial commit"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ feature-api      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↑"
+        },
+        {
+          "classes": [],
+          "text": " 🤖              "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑1"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "70343f0"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add REST API endp…"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ review-ui      "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "?"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↑"
+        },
+        {
+          "classes": [],
+          "text": " 💬    "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑1"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "a585d6e"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add dashboard com…"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ wip-docs       "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "?"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "–"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "                                    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "33323bc"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Initial commit"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden"
+        }
+      ]
+    ],
+    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message\n@ main             ^⇡                                    ⇡1      33323bc  1d    Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0  1d    Add REST API endp…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e  1d    Add dashboard com…\n+ wip-docs       ? –       +1                                    33323bc  1d    Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Path"
+        },
+        {
+          "classes": [],
+          "text": "                 "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Age"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Message"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ main             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇡"
+        },
+        {
+          "classes": [],
+          "text": "                                    "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "      .                    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "33323bc"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Initial commit"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ feature-api      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↑"
+        },
+        {
+          "classes": [],
+          "text": " 🤖              "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑1"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "                ../repo.feature-api  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "70343f0"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add REST API endpoints"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ review-ui      "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "?"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↑"
+        },
+        {
+          "classes": [],
+          "text": " 💬    "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑1"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "                ../repo.review-ui    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "a585d6e"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Add dashboard component"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ wip-docs       "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "?"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "–"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+1"
+        },
+        {
+          "classes": [],
+          "text": "                                    ../repo.wip-docs     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "33323bc"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "1d"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Initial commit"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead"
+        }
+      ]
+    ],
+    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Path                 Commit   Age   Message\n@ main             ^⇡                                    ⇡1      .                    33323bc  1d    Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0  1d    Add REST API endpoints\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e  1d    Add dashboard component\n+ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc  1d    Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "URL"
+        },
+        {
+          "classes": [],
+          "text": "                     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ main           "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "?"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇅"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+5"
+        },
+        {
+          "classes": [],
+          "text": "                            "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "⇣1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "http://localhost:12107"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ feature-api  "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "+"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕⇡"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+54"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-5"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑4"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+234"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-24"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡3"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "http://localhost:10703"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "6814f02"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ fix-auth         "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕|"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑2"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+25"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-11"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "http://localhost:16460"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "b772e68"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "fix-typos"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_|"
+        },
+        {
+          "classes": [],
+          "text": "                                      "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "http://localhost:14301"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden"
+        }
+      ]
+    ],
+    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  URL                     Commit\n@ main           ? ^⇅      +5                            ⇡1  ⇣1  http://localhost:12107  41ee083\n+ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68\n+ fix-typos        _|                                      |     http://localhost:14301  41ee083\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Summary"
+        },
+        {
+          "classes": [],
+          "text": "                                                 "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "CI"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ feature-api  "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "+"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕⇡"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+54"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-5"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑4"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+234"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-24"
+        },
+        {
+          "classes": [],
+          "text": "  Refactor API to REST architecture with middleware        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡3"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-blue",
+            "wt-terminal-dim"
+          ],
+          "text": "#412"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "6814f02"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "^ main             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇅"
+        },
+        {
+          "classes": [],
+          "text": "                                                                                            "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "⇣1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "#"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ fix-auth         "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕|"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑2"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+25"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-11"
+        },
+        {
+          "classes": [],
+          "text": "  Harden auth with constant-time token validation            "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "#408"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "b772e68"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "fix-typos"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_|"
+        },
+        {
+          "classes": [],
+          "text": "                                                                                              "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "#410"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden"
+        }
+      ]
+    ],
+    "plain": "  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02\n^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68\n+ fix-typos        _|                                                                                              |     #410  41ee083\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Branch"
+        },
+        {
+          "classes": [],
+          "text": "       "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Status"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "HEAD±"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main↕"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main…±"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Summary"
+        },
+        {
+          "classes": [],
+          "text": "                                                 "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Remote⇅"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "CI"
+        },
+        {
+          "classes": [],
+          "text": "    "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Commit"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "@ feature-api  "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "+"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕⇡"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+54"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-5"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑4"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+234"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-24"
+        },
+        {
+          "classes": [],
+          "text": "  Refactor API to REST architecture with middleware        "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡3"
+        },
+        {
+          "classes": [],
+          "text": "      "
+        },
+        {
+          "classes": [
+            "wt-terminal-blue",
+            "wt-terminal-dim"
+          ],
+          "text": "#412"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "6814f02"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "^ main             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "^⇅"
+        },
+        {
+          "classes": [],
+          "text": "                                                                                            "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "⇡1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "⇣1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "#"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ fix-auth         "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↕|"
+        },
+        {
+          "classes": [],
+          "text": "                "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑2"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+25"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red"
+          ],
+          "text": "-11"
+        },
+        {
+          "classes": [],
+          "text": "  Harden auth with constant-time token validation            "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "#408"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "b772e68"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "+ "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "fix-typos"
+        },
+        {
+          "classes": [],
+          "text": "        "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_|"
+        },
+        {
+          "classes": [],
+          "text": "                                                                                              "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "|"
+        },
+        {
+          "classes": [],
+          "text": "     "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "#410"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "41ee083"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "/ "
+        },
+        {
+          "classes": [],
+          "text": "exp             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "/↕"
+        },
+        {
+          "classes": [],
+          "text": "                 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑2"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+137"
+        },
+        {
+          "classes": [],
+          "text": "       Explore GraphQL schema and resolvers                                   "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "9637922"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "/ "
+        },
+        {
+          "classes": [],
+          "text": "wip             "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "/↕"
+        },
+        {
+          "classes": [],
+          "text": "                 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "↑1"
+        },
+        {
+          "classes": [],
+          "text": "  "
+        },
+        {
+          "classes": [
+            "wt-terminal-red",
+            "wt-terminal-dim"
+          ],
+          "text": "↓1"
+        },
+        {
+          "classes": [],
+          "text": "   "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+33"
+        },
+        {
+          "classes": [],
+          "text": "       Start API documentation                                                "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "b40716d"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden"
+        }
+      ]
+    ],
+    "plain": "  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02\n^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68\n+ fix-typos        _|                                                                                              |     #410  41ee083\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                   9637922\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                                b40716d\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Generating commit message and committing changes... "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(2 files, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+26"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "feat(validation): add input validation utilities"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Committed changes @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-dim"
+          ],
+          "text": "a1b2c3d"
+        }
+      ]
+    ],
+    "plain": "◎ Generating commit message and committing changes... (2 files, +26)\n  feat(validation): add input validation utilities\n✓ Committed changes @ a1b2c3d"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Generating commit message and committing changes... "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(2 files, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+53"
+        },
+        {
+          "classes": [],
+          "text": ", no squashing needed"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "Add authentication module"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Committed changes @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-dim"
+          ],
+          "text": "a1b2c3d"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Merging 1 commit to "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-dim"
+          ],
+          "text": "a1b2c3d"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " (no rebase needed)"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " * "
+        },
+        {
+          "classes": [
+            "wt-terminal-yellow"
+          ],
+          "text": "a1b2c3d"
+        },
+        {
+          "classes": [],
+          "text": " Add authentication module"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  auth.rs | 51 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+++++++++++++++++++++++++++++++++++++++++++++++++++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  lib.rs  |  2 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  2 files changed, 53 insertions(+)"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Merged to "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(1 commit, 2 files, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+53"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Removing "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "feature-auth"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " worktree & branch in background (same commit as "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ","
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " Switched to worktree for "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "~/repo"
+        }
+      ]
+    ],
+    "plain": "◎ Generating commit message and committing changes... (2 files, +53, no squashing needed)\n  Add authentication module\n✓ Committed changes @ a1b2c3d\n◎ Merging 1 commit to main @ a1b2c3d (no rebase needed)\n  * a1b2c3d Add authentication module\n   auth.rs | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++\n   lib.rs  |  2 ++\n   2 files changed, 53 insertions(+)\n✓ Merged to main (1 commit, 2 files, +53)\n◎ Removing feature-auth worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Running pre-merge "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "project:test"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-blue",
+            "wt-terminal-dim"
+          ],
+          "text": "cargo"
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": " nextest run"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Merging 1 commit to "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-dim"
+          ],
+          "text": "a1b2c3d"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " (no commit/squash/rebase needed)"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " * "
+        },
+        {
+          "classes": [
+            "wt-terminal-yellow"
+          ],
+          "text": "a1b2c3d"
+        },
+        {
+          "classes": [],
+          "text": " feat: add hook registration"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  hook.rs | 31 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+++++++++++++++++++++++++++++++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  1 file changed, 31 insertions(+)"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Merged to "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(1 commit, 1 file, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+31"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Removing "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "hooks"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " worktree & branch in background (same commit as "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ","
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " Switched to worktree for "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "~/repo"
+        }
+      ]
+    ],
+    "plain": "◎ Running pre-merge project:test\n  cargo nextest run\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s\n     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped\n◎ Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)\n  * a1b2c3d feat: add hook registration\n   hook.rs | 31 +++++++++++++++++++++++++++++++\n   1 file changed, 31 insertions(+)\n✓ Merged to main (1 commit, 1 file, +31)\n◎ Removing hooks worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Running pre-merge "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "project:test"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-blue",
+            "wt-terminal-dim"
+          ],
+          "text": "cargo"
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": " test"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "    Finished test [unoptimized + debuginfo] target(s) in 0.12s"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [],
+          "text": "running 18 tests"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "test auth::tests::test_jwt_decode ... ok"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "test auth::tests::test_jwt_encode ... ok"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "test auth::tests::test_token_refresh ... ok"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "test auth::tests::test_token_validation ... ok"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [],
+          "text": "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Running pre-merge "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "project:lint"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-blue",
+            "wt-terminal-dim"
+          ],
+          "text": "cargo"
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": " clippy"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "    Checking worktrunk v0.1.0"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "    Finished dev [unoptimized + debuginfo] target(s) in 1.23s"
+        }
+      ]
+    ],
+    "plain": "◎ Running pre-merge project:test\n  cargo test\n    Finished test [unoptimized + debuginfo] target(s) in 0.12s\n     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)\n\nrunning 18 tests\ntest auth::tests::test_jwt_decode ... ok\ntest auth::tests::test_jwt_encode ... ok\ntest auth::tests::test_token_refresh ... ok\ntest auth::tests::test_token_validation ... ok\n\ntest result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s\n◎ Running pre-merge project:lint\n  cargo clippy\n    Checking worktrunk v0.1.0\n    Finished dev [unoptimized + debuginfo] target(s) in 1.23s"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Running pre-remove "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "project:cleanup"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-blue",
+            "wt-terminal-dim"
+          ],
+          "text": "flyctl"
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": " scale count 0"
+        }
+      ],
+      [
+        {
+          "classes": [],
+          "text": "Scaling app to 0 machines"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Removing "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "api"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " worktree & branch in background (same commit as "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ","
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " Switched to worktree for "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "~/repo"
+        }
+      ]
+    ],
+    "plain": "◎ Running pre-remove project:cleanup\n  flyctl scale count 0\nScaling app to 0 machines\n◎ Removing api worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Squashing 3 commits into a single commit "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(5 files, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+16"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        },
+        {
+          "classes": [],
+          "text": "..."
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Generating squash commit message..."
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "feat(auth): Implement JWT authentication system"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " Add comprehensive JWT token handling including validation, refresh"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " logic, and authentication tests."
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Squashed @ a1b2c3d"
+        }
+      ]
+    ],
+    "plain": "◎ Squashing 3 commits into a single commit (5 files, +16)...\n◎ Generating squash commit message...\n  feat(auth): Implement JWT authentication system\n\n  Add comprehensive JWT token handling including validation, refresh\n  logic, and authentication tests.\n✓ Squashed @ a1b2c3d"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Squashing 3 commits into a single commit "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(5 files, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+16"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        },
+        {
+          "classes": [],
+          "text": "..."
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Generating squash commit message..."
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "feat(auth): Implement JWT authentication system"
+        }
+      ],
+      [],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " Add comprehensive JWT token handling including validation, refresh"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " logic, and authentication tests."
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Squashed @ a1b2c3d"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Merging 1 commit to "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-dim"
+          ],
+          "text": "a1b2c3d"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " (no rebase needed)"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": " * "
+        },
+        {
+          "classes": [
+            "wt-terminal-yellow"
+          ],
+          "text": "a1b2c3d"
+        },
+        {
+          "classes": [],
+          "text": " feat(auth): Implement JWT authentication system"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  auth.rs             | 2 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  auth_test.rs        | 2 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  integration_test.rs | 6 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "++++++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  jwt.rs              | 3 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  jwt_test.rs         | 3 "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+++"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-gutter"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [],
+          "text": "  5 files changed, 16 insertions(+)"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Merged to "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": "(1 commit, 5 files, "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "+16"
+        },
+        {
+          "classes": [
+            "wt-terminal-gray"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "◎"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": "Removing "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "feature"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": " worktree & branch in background (same commit as "
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ","
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "_"
+        },
+        {
+          "classes": [
+            "wt-terminal-cyan"
+          ],
+          "text": ")"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "○"
+        },
+        {
+          "classes": [],
+          "text": " Switched to worktree for "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [],
+          "text": " @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-bold"
+          ],
+          "text": "~/repo"
+        }
+      ]
+    ],
+    "plain": "◎ Squashing 3 commits into a single commit (5 files, +16)...\n◎ Generating squash commit message...\n  feat(auth): Implement JWT authentication system\n\n  Add comprehensive JWT token handling including validation, refresh\n  logic, and authentication tests.\n✓ Squashed @ a1b2c3d\n◎ Merging 1 commit to main @ a1b2c3d (no rebase needed)\n  * a1b2c3d feat(auth): Implement JWT authentication system\n   auth.rs             | 2 ++\n   auth_test.rs        | 2 ++\n   integration_test.rs | 6 ++++++\n   jwt.rs              | 3 +++\n   jwt_test.rs         | 3 +++\n   5 files changed, 16 insertions(+)\n✓ Merged to main (1 commit, 5 files, +16)\n◎ Removing feature worktree & branch in background (same commit as main, _)\n○ Switched to worktree for main @ ~/repo"
+  },
+  {
+    "lines": [
+      [
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "✓"
+        },
+        {
+          "classes": [],
+          "text": " "
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": "Created branch "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-bold"
+          ],
+          "text": "feature-auth"
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": " from "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-bold"
+          ],
+          "text": "main"
+        },
+        {
+          "classes": [
+            "wt-terminal-green"
+          ],
+          "text": " and worktree @ "
+        },
+        {
+          "classes": [
+            "wt-terminal-green",
+            "wt-terminal-bold"
+          ],
+          "text": "~/repo.feature-auth"
+        }
+      ]
+    ],
+    "plain": "✓ Created branch feature-auth from main and worktree @ ~/repo.feature-auth"
+  }
+]

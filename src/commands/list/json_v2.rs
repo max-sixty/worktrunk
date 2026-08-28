@@ -587,41 +587,50 @@ impl JsonItemV2 {
         ci_provider_override: Option<&str>,
         custom_columns: &[ResolvedCustomColumn],
     ) -> Self {
-        let (worktree_data, remote_scope) = match &item.kind {
+        let (worktree_data, remote_scope) = match item.kind() {
             ItemKind::Worktree(data) => (Some(data.as_ref()), false),
             ItemKind::Branch(scope) => (None, *scope == BranchScope::Remote),
         };
 
         // Remote rows store the remote-qualified short name ("origin/feature");
         // split it into the remote and the bare branch name.
-        let (branch, remote) = match (&item.branch, remote_scope) {
+        let (branch, remote) = match (item.branch(), remote_scope) {
             (Some(name), true) => match name.split_once('/') {
                 Some((remote, branch)) => (Some(branch.to_string()), Some(remote.to_string())),
-                None => (Some(name.clone()), None),
+                None => (Some(name.to_string()), None),
             },
-            (name, _) => (name.clone(), None),
+            (name, _) => (name.map(str::to_string), None),
         };
 
         // HEAD — null for unborn branches (no sentinel strings).
         let head =
-            (!item.head.is_empty() && item.head != worktrunk::git::NULL_OID).then(|| JsonHead {
-                sha: item.head.clone(),
-                short_sha: item.short_sha.clone(),
-                subject: item.commit.as_ref().map(|c| c.commit_message.clone()),
-                committed_at: item
-                    .commit
-                    .as_ref()
-                    .and_then(|c| worktrunk::utils::format_timestamp_iso8601_opt(c.timestamp)),
+            (!item.head().is_empty() && item.head() != worktrunk::git::NULL_OID).then(|| {
+                JsonHead {
+                    sha: item.head().to_string(),
+                    short_sha: item.short_sha.clone(),
+                    subject: item.commit.as_ref().map(|c| c.commit_message.clone()),
+                    committed_at: item
+                        .commit
+                        .as_ref()
+                        .and_then(|c| worktrunk::utils::format_timestamp_iso8601_opt(c.timestamp)),
+                }
             });
 
-        let worktree = worktree_data.map(json_worktree);
+        let worktree = worktree_data.map(|data| {
+            json_worktree(
+                data,
+                item.worktree_path()
+                    .expect("typed worktree rows always carry a worktree path"),
+            )
+        });
 
         // The default branch itself gets no relation object. Matching on the
         // worktree's main flag alone would miss a branch-only row for the
         // default branch, so compare names too. Use the remote-stripped
-        // `branch` (not `item.branch`) so a remote-only row of the default
-        // branch (`origin/main`) also matches — otherwise it fails the name
-        // check and gets a spurious self-referential relation.
+        // `branch`, rather than the remote-qualified name
+        // returned by `item.branch()`, so a remote-only row of the default
+        // branch (`origin/main`) also matches. Otherwise it gets a spurious
+        // self-referential relation.
         let is_default_branch_row = worktree_data.is_some_and(|d| d.is_main)
             || (branch.is_some() && branch.as_deref() == default_branch);
         let default_branch = if is_default_branch_row {
@@ -674,7 +683,7 @@ impl JsonItemV2 {
             }
         };
 
-        let vars = take_vars(item.branch.as_deref(), all_vars);
+        let vars = take_vars(item.branch(), all_vars);
         let columns = columns_map(custom_columns, &item.custom_values);
 
         let display = JsonDisplay {
@@ -704,7 +713,7 @@ impl JsonItemV2 {
     }
 }
 
-fn json_worktree(data: &WorktreeData) -> JsonWorktreeV2 {
+fn json_worktree(data: &WorktreeData, path: &std::path::Path) -> JsonWorktreeV2 {
     // Empty lock/prune reasons (git records the state without a message)
     // become `reason: null`.
     let reason = |r: &Option<String>| {
@@ -730,7 +739,7 @@ fn json_worktree(data: &WorktreeData) -> JsonWorktreeV2 {
     });
 
     JsonWorktreeV2 {
-        path: data.path.clone(),
+        path: path.to_path_buf(),
         main: data.is_main,
         current: data.is_current,
         previous: data.is_previous,
@@ -1074,7 +1083,7 @@ mod tests {
     #[test]
     fn test_remote_row_splits_branch_and_remote() {
         let mut item = item_with("origin/feature");
-        item.kind = ItemKind::Branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "origin/feature".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert_eq!(json["branch"], "feature");
         assert_eq!(json["remote"], "origin");
@@ -1082,8 +1091,7 @@ mod tests {
 
     #[test]
     fn test_unborn_branch_head_is_null() {
-        let mut item = item_with("new");
-        item.head = worktrunk::git::NULL_OID.to_string();
+        let item = ListItem::new_branch(worktrunk::git::NULL_OID.to_string(), "new".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert!(json["head"].is_null());
     }
@@ -1102,7 +1110,7 @@ mod tests {
         // "main", not the raw "origin/main", so it gets no self-referential
         // relation object.
         let mut item = item_with("origin/main");
-        item.kind = ItemKind::Branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "origin/main".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert_eq!(json["branch"], "main");
         assert!(json.get("default_branch").is_none());
@@ -1257,9 +1265,10 @@ mod tests {
     }
 
     fn worktree_item(branch: &str, data: WorktreeData) -> ListItem {
-        let mut item = item_with(branch);
-        item.kind = ItemKind::Worktree(Box::new(data));
-        item
+        ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/test", Some(branch), "abc123"),
+            data,
+        )
     }
 
     /// `JsonIntegrationReason` covers every `IntegrationReason`, under the
@@ -1314,7 +1323,7 @@ mod tests {
     #[test]
     fn test_remote_row_without_slash_keeps_name() {
         let mut item = item_with("weird");
-        item.kind = ItemKind::Branch(BranchScope::Remote);
+        item.reclassify_as_branch(BranchScope::Remote, "weird".into());
         let json = to_value(&convert(&item, Collected::default()));
         assert_eq!(json["branch"], "weird");
         assert!(json.get("remote").is_none());

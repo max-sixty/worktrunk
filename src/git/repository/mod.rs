@@ -139,7 +139,9 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{CommandError, DefaultBranchName, ForgeKind, GitError, LineDiff, WorktreeInfo};
+use super::{
+    CommandError, DefaultBranchName, ForgeKind, GitError, GitItemId, LineDiff, WorktreeInfo,
+};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -371,11 +373,15 @@ pub enum ResolvedWorktree {
         path: PathBuf,
         /// The branch name, if known (None for detached HEAD)
         branch: Option<String>,
+        /// Canonical identity captured when the selector resolves.
+        id: GitItemId,
     },
     /// Only a branch exists (no worktree)
     BranchOnly {
         /// The branch name
         branch: String,
+        /// Canonical local-ref identity captured when the selector resolves.
+        id: GitItemId,
     },
     /// The selector named a directory holding no worktree — the skeleton an
     /// interrupted create or remove leaves behind.
@@ -389,6 +395,27 @@ pub enum ResolvedWorktree {
         /// The directory, resolved against `-C` but spelled as the selector did
         path: PathBuf,
     },
+}
+
+impl ResolvedWorktree {
+    fn worktree(path: PathBuf, branch: Option<String>) -> Self {
+        let id = GitItemId::worktree(&path);
+        Self::Worktree { path, branch, id }
+    }
+
+    fn branch_only(branch: String) -> Self {
+        let id = GitItemId::local_branch(&branch);
+        Self::BranchOnly { branch, id }
+    }
+
+    /// Canonical identity selected by this resolution, when it names a Git
+    /// item rather than an unregistered directory.
+    pub fn id(&self) -> Option<&GitItemId> {
+        match self {
+            Self::Worktree { id, .. } | Self::BranchOnly { id, .. } => Some(id),
+            Self::NoWorktreeAtPath { .. } => None,
+        }
+    }
 }
 
 /// A worktree selector after normalization and expansion — the token to look

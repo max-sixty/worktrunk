@@ -92,6 +92,15 @@ impl PageMode {
         }
     }
 
+    /// Opening fence for generated command references. The web marker gives
+    /// the renderer explicit ownership; plain skill pages stay portable.
+    fn command_reference_fence(self) -> &'static str {
+        match self {
+            Self::Web => "```text wt-command-reference",
+            Self::Plain => "```",
+        }
+    }
+
     /// Emit the page header — an auto-generated comment for web (sync test
     /// uses it as a region marker), or an H1 title for plain skill pages.
     fn emit_header(self, subcommand: &str) {
@@ -435,7 +444,7 @@ Commands with schemas: list"
 ///
 /// ## Command reference
 ///
-/// ```bash
+/// ```text wt-command-reference
 /// wt merge — ...
 /// Usage: ...
 /// ```
@@ -485,7 +494,7 @@ Commands with pages: merge, switch, remove, list"
     // Main command reference immediately after its content
     println!("## Command reference");
     println!();
-    println!("```");
+    println!("{}", mode.command_reference_fence());
     println!("{}", reference_block.trim());
     println!("```");
 
@@ -748,7 +757,9 @@ fn format_subcommand_section(
     }
 
     // Command reference comes after main content but before nested subdocs
-    section.push_str("### Command reference\n\n```\n");
+    section.push_str("### Command reference\n\n");
+    section.push_str(mode.command_reference_fence());
+    section.push('\n');
     section.push_str(reference_block.trim());
     section.push_str("\n```\n");
 

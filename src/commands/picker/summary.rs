@@ -46,7 +46,7 @@ pub(super) fn generate_summary_for_item(
     repo: &Repository,
 ) -> String {
     let branch = item.branch_name();
-    let worktree_path = item.worktree_data().map(|d| d.path.as_path());
+    let worktree_path = item.worktree_path();
     crate::summary::generate_summary(branch, item.head(), worktree_path, llm_command, repo)
 }
 
@@ -55,7 +55,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::commands::list::model::{ItemKind, WorktreeData};
+    use crate::commands::list::model::WorktreeData;
     use std::fs;
     use worktrunk::testing::TestRepo;
 
@@ -109,12 +109,10 @@ mod tests {
     }
 
     fn feature_item(head: &str, path: &std::path::Path) -> ListItem {
-        let mut item = ListItem::new_branch(head.to_string(), "feature".to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: path.to_path_buf(),
-            ..Default::default()
-        }));
-        item
+        ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some("feature"), head),
+            WorktreeData::default(),
+        )
     }
 
     #[test]

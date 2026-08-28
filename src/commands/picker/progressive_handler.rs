@@ -42,8 +42,6 @@ use skim::prelude::*;
 use worktrunk::git::Repository;
 use worktrunk::styling::{HINT_SYMBOL, StyledLine};
 
-use super::super::list::ci_status::PrStatus;
-
 /// Minimum gap between repaint pokes during collection. Holds the redraw rate
 /// at ~60fps so a burst of task results can't flood skim's (effectively
 /// unbounded) event channel ahead of the user's key presses. A directly-sent
@@ -52,8 +50,9 @@ const RENDER_THROTTLE: Duration = Duration::from_millis(16);
 
 use super::items::{
     HeaderFlash, HeaderLoading, HeaderSkimItem, LayoutSlot, LocalCheckout, LocalContent,
-    LocalContentSlot, MorphHandle, PickerRow, PrStatusSlot, PreviewCache, RowShortcutData, RowUrl,
-    ShortcutTable, pr_presence, pr_status_pane_eq, worktree_output_token,
+    LocalContentSlot, MorphHandle, PickerRow, PickerRowId, PickerRowSubject, PrStatusSlot,
+    PreviewCache, RowShortcutData, RowUrl, ShortcutTable, pr_presence, pr_status_pane_eq,
+    worktree_output_token,
 };
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
@@ -194,18 +193,11 @@ impl PickerHandler {
     /// repeated `on_update`s short-circuit — and a *changed* number (a reused
     /// branch, a stale prime corrected by the live fetch) drops the now-wrong
     /// cached thread and re-fetches, keeping the `comments` tab consistent with
-    /// the `pr` tab. Keyed by branch name — `--prs` rows key by their `pr:{N}`
-    /// token, and git forbids `:` in branch names, so the two keyspaces never
-    /// collide.
-    fn maybe_spawn_comments(
-        &self,
-        idx: usize,
-        branch_name: &str,
-        pr_status: &Option<Option<PrStatus>>,
-    ) {
+    /// the `pr` tab. Both local and `--prs` rows use their structured row ID.
+    fn maybe_spawn_comments(&self, idx: usize, item: &ListItem) {
         // A superseded handler (its collect thread draining past an `alt-r`)
         // must not act at all: its corrected-number path below *removes* the
-        // shared `(branch, Comments)` entry — possibly the one the live spawn
+        // shared `(row, Comments)` entry — possibly the one the live spawn
         // just fetched — and its replacement fetch would then drop at `fill`
         // on the stale token, stranding the tab on its loading placeholder
         // (nothing else refills Comments; the live handler's dedup slot
@@ -213,7 +205,7 @@ impl PickerHandler {
         if !self.spawn_gen.is_current() {
             return;
         }
-        let Some(Some(status)) = pr_status else {
+        let Some(Some(status)) = &item.pr_status else {
             return;
         };
         let Some(pr_ref) = status.number else { return };
@@ -237,16 +229,17 @@ impl PickerHandler {
         if previous == number {
             return; // this PR's comments are already fetched (or in flight)
         }
+        let row_id = PickerRowId::local(item);
         if previous != 0 {
             // The live fetch corrected the PR number — drop the stale thread so
             // the re-fetch (below) replaces it rather than serving the old PR.
             self.preview_cache
-                .remove(&(branch_name.to_string(), PreviewMode::Comments));
+                .remove(&(row_id.clone(), PreviewMode::Comments));
         }
         super::prs::spawn_worktree_comments_fetch(
             &self.orchestrator,
             &self.spawn_gen,
-            branch_name.to_string(),
+            row_id,
             number as u32,
             status.updated_at.clone(),
             self.preview_dims.0,
@@ -262,11 +255,11 @@ impl PickerHandler {
 fn collect_shown_branches(items: &[ListItem]) -> HashSet<String> {
     let mut shown = HashSet::new();
     for item in items {
-        let Some(name) = item.branch.as_deref() else {
+        let Some(name) = item.branch() else {
             continue;
         };
         shown.insert(name.to_string());
-        if matches!(item.kind, ItemKind::Branch(BranchScope::Remote))
+        if matches!(item.kind(), ItemKind::Branch(BranchScope::Remote))
             && let Some((_, bare)) = name.split_once('/')
         {
             shown.insert(bare.to_string());
@@ -373,7 +366,6 @@ impl PickerProgressHandler for PickerHandler {
             let path_str = item
                 .worktree_path()
                 .map(|p| {
-                    let p = p.as_path();
                     path_base
                         .as_deref()
                         .and_then(|base| p.strip_prefix(base).ok())
@@ -396,7 +388,7 @@ impl PickerProgressHandler for PickerHandler {
             // `!` is skim's inverse-match operator, so only the bare number
             // filters those (see
             // `folded_pr_reference_filters_under_skims_default_engine`).
-            let gutter = item.kind.gutter_glyph();
+            let gutter = item.kind().gutter_glyph();
             // `display_name`, not `branch_name`: a detached row shows its
             // abbreviated HEAD in the Branch column, so that's what the user
             // reads and types. `branch_name`'s `"(detached)"` matches nothing
@@ -437,7 +429,7 @@ impl PickerProgressHandler for PickerHandler {
             // collector's mutation surfaces on the same item skim renders.
             let morphed = Arc::new(AtomicBool::new(false));
             let morph = (item_arc.worktree_data().is_some()
-                && item_arc.branch.is_some()
+                && item_arc.branch().is_some()
                 && !item_arc.is_main())
             .then(|| MorphHandle {
                 item: Arc::clone(&item_arc),
@@ -454,7 +446,7 @@ impl PickerProgressHandler for PickerHandler {
             shortcut_map.insert(
                 output_token.clone(),
                 RowShortcutData {
-                    branch: item_arc.branch.clone(),
+                    branch: item_arc.branch().map(str::to_string),
                     url: RowUrl::Live(Arc::clone(&pr_status_arc)),
                     morph,
                 },
@@ -464,12 +456,7 @@ impl PickerProgressHandler for PickerHandler {
                 search_base,
                 gutter,
                 rendered: rendered_arc,
-                branch_name,
-                output_token,
-                preview_cache: Arc::clone(&self.preview_cache),
-                pr_status: pr_status_arc,
-                notifier: Arc::clone(self.orchestrator.notifier()),
-                local: Some(LocalCheckout {
+                subject: PickerRowSubject::Local(LocalCheckout {
                     item: Arc::clone(&item_arc),
                     demand: Arc::clone(self.orchestrator.demand()),
                     spawn_gen: self.spawn_gen.clone(),
@@ -478,6 +465,11 @@ impl PickerProgressHandler for PickerHandler {
                     local_content: local_content_arc,
                     morphed,
                 }),
+                branch_name,
+                output_token,
+                preview_cache: Arc::clone(&self.preview_cache),
+                pr_status: pr_status_arc,
+                notifier: Arc::clone(self.orchestrator.notifier()),
             }) as Arc<dyn SkimItem>);
         }
 
@@ -545,7 +537,7 @@ impl PickerProgressHandler for PickerHandler {
         // skeleton time — kick off its `comments` fetch now so the tab is warm.
         // Rows whose PR only surfaces later get theirs from `on_update`.
         for (idx, item) in list_items.iter().enumerate() {
-            self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
+            self.maybe_spawn_comments(idx, item);
         }
         // Static Summary hint is a synchronous in-memory insert, no
         // contention concern. Pre-fill every row at skeleton time so the
@@ -563,6 +555,7 @@ impl PickerProgressHandler for PickerHandler {
     }
 
     fn on_update(&self, idx: usize, rendered: String, item: &ListItem) {
+        let row_id = PickerRowId::local(item);
         if let Some(slots) = self.rendered_slots.get()
             && let Some(slot) = slots.get(idx)
         {
@@ -595,7 +588,7 @@ impl PickerProgressHandler for PickerHandler {
             // re-renders from the status just mirrored — see
             // `PickerRow::render_pr_pane_cached`.
             self.preview_cache
-                .remove(&(item.branch_name().to_string(), PreviewMode::Pr));
+                .remove(&(row_id.clone(), PreviewMode::Pr));
         }
         // Mirror the row's live diff-content signals so the `working_tree` /
         // `branch_diff` / `upstream` tabs dim once their diff is known empty.
@@ -609,7 +602,7 @@ impl PickerProgressHandler for PickerHandler {
         // If this update is where the row's PR first surfaced, kick off its
         // `comments` background fetch (once per row) so the `comments` tab loads
         // the thread — the same fetch a `--prs` row makes.
-        self.maybe_spawn_comments(idx, item.branch_name(), &item.pr_status);
+        self.maybe_spawn_comments(idx, item);
         // `request_render` sends `Event::Render`, which repaints the *list* row
         // (its CI/status cells just changed) but does NOT re-run the preview.
         // When the `pr` pane changed, poke a `RunPreview` so the selected row's
@@ -624,7 +617,7 @@ impl PickerProgressHandler for PickerHandler {
         if delta.pane_changed {
             self.orchestrator
                 .notifier()
-                .notify_pr_status_changed(item.branch_name(), delta);
+                .notify_pr_status_changed(&row_id, delta);
         }
         self.request_render(false);
     }
@@ -674,8 +667,13 @@ impl PickerProgressHandler for PickerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::model::ListItem;
+    use crate::commands::list::model::{ListItem, WorktreeData};
     use worktrunk::testing::TestRepo;
+
+    fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
+        let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
+        ListItem::new_worktree(subject, data)
+    }
 
     /// Build a handler with explicit `repo` (the per-spawn inventory source)
     /// and `orchestrator` (preview compute). Diverging the two lets a test
@@ -734,6 +732,13 @@ mod tests {
         (handler, test, rx)
     }
 
+    fn branch_key(branch: &str) -> PickerRowId {
+        PickerRowId::local(&ListItem::new_branch(
+            "0000000".to_string(),
+            branch.to_string(),
+        ))
+    }
+
     fn header(text: &str) -> StyledLine {
         let mut line = StyledLine::new();
         line.push_raw(text);
@@ -754,7 +759,7 @@ mod tests {
     /// strips to a relative tail only if `on_skeleton` consulted `self.repo`.
     #[test]
     fn on_skeleton_reads_inventory_from_handler_repo_not_orchestrator() {
-        use crate::commands::list::model::{ItemKind, WorktreeData};
+        use crate::commands::list::model::WorktreeData;
 
         let self_repo = TestRepo::with_initial_commit();
         let orchestrator_repo = TestRepo::with_initial_commit();
@@ -773,11 +778,11 @@ mod tests {
         // A worktree row under the handler-repo's tree. The shared parent strips
         // only if path_base comes from self_repo (parent of `<temp>/repo`), not
         // from orchestrator_repo (a different temp parent).
-        let mut item = ListItem::new_branch("abc".into(), "feature".into());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: self_repo.path().join("feature"),
-            ..Default::default()
-        }));
+        let item = as_worktree(
+            ListItem::new_branch("abc".into(), "feature".into()),
+            &self_repo.path().join("feature"),
+            WorktreeData::default(),
+        );
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
         let received = rx.recv().expect("skeleton batch");
@@ -984,7 +989,7 @@ mod tests {
             handler
                 .orchestrator
                 .notifier()
-                .note_awaiting("feature", mode)
+                .note_awaiting(&branch_key("feature"), mode)
         };
 
         // Cursor on `feature`'s `pr` tab (still loading). The CI fetch lands as a
@@ -1017,7 +1022,7 @@ mod tests {
         );
 
         // Cursor on the `comments` tab: a pr-field change that keeps the PR
-        // present (#7, badge flips back) leaves the branch-keyed thread
+        // present (#7, badge flips back) leaves the row-keyed thread
         // unchanged, so it must NOT re-run a scrolled thread.
         await_tab(PreviewMode::Comments);
         handler.on_update(0, "r".into(), &row(false, CiStatus::Passed));
@@ -1053,7 +1058,7 @@ mod tests {
         handler
             .orchestrator
             .notifier()
-            .note_awaiting("other", PreviewMode::Pr);
+            .note_awaiting(&branch_key("other"), PreviewMode::Pr);
         handler.on_update(0, "r".into(), &no_pr());
         assert_eq!(
             run_previews(&mut render_rx),
@@ -1062,7 +1067,7 @@ mod tests {
         );
     }
 
-    /// A row's `comments` fetch is once-per-PR, keyed by branch name — but if the
+    /// A row's `comments` fetch is once-per-PR, keyed by row identity — but if the
     /// live CI fetch corrects the PR number (a stale prime, a reused branch), the
     /// now-wrong cached thread is dropped and re-fetched, so the `comments` tab
     /// can't keep serving the old PR's thread under the new number. The
@@ -1100,14 +1105,14 @@ mod tests {
             }));
             item
         };
-        let key = ("feature".to_string(), PreviewMode::Comments);
+        let key = (branch_key("feature"), PreviewMode::Comments);
 
         // First the row resolves to PR #41 → its comments fetch fires and caches.
         handler.on_update(0, "r".into(), &with_pr(41));
         handler.orchestrator.wait_for_idle();
         assert!(
             handler.preview_cache.contains_key(&key),
-            "PR #41's comments fetch populated the branch-keyed cache"
+            "PR #41's comments fetch populated the row-keyed cache"
         );
 
         // A repeat update with the SAME number must not re-fetch: overwrite with a
@@ -1182,7 +1187,7 @@ mod tests {
             }));
             item
         };
-        let key = ("feature".to_string(), PreviewMode::Comments);
+        let key = (branch_key("feature"), PreviewMode::Comments);
 
         // Expired prime → skipped: no comments fetch, cache stays empty. (The
         // prime also must not consume the dedup slot, or the live update below
@@ -1254,16 +1259,17 @@ mod tests {
     /// `"(detached)"` label `branch_name()` falls back to.
     #[test]
     fn shortcut_table_branch_is_none_for_detached_worktree() {
-        use crate::commands::list::model::{ItemKind, WorktreeData};
+        use crate::commands::list::model::WorktreeData;
 
         let (handler, _test, _rx) = make_handler();
-        let mut item = ListItem::new_branch("abc123".into(), "(detached)".into());
-        item.branch = None;
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: std::path::PathBuf::from("/tmp/wt-detached"),
-            detached: true,
-            ..Default::default()
-        }));
+        let path = std::path::PathBuf::from("/tmp/wt-detached");
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(&path, None, "abc123"),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
 
         handler.on_skeleton(vec![item], vec!["skel".into()], header("hdr"), grid());
 
@@ -1423,7 +1429,7 @@ mod tests {
     /// shared parent keeps its full path via the `strip_prefix` fallback.
     #[test]
     fn search_text_strips_shared_worktree_parent() {
-        use crate::commands::list::model::{ItemKind, WorktreeData};
+        use crate::commands::list::model::WorktreeData;
 
         let (handler, mut test, rx) = make_handler();
         // A genuine sibling worktree at `{temp}/repo.feat`; read its path back from
@@ -1439,12 +1445,11 @@ mod tests {
         let outside_path = std::path::PathBuf::from("/nonexistent-root/external-wt");
 
         let worktree_item = |branch: &str, path: &Path| {
-            let mut item = ListItem::new_branch("abc".into(), branch.into());
-            item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-                path: path.to_path_buf(),
-                ..Default::default()
-            }));
-            item
+            as_worktree(
+                ListItem::new_branch("abc".into(), branch.into()),
+                path,
+                WorktreeData::default(),
+            )
         };
 
         handler.on_skeleton(
@@ -1617,7 +1622,7 @@ mod tests {
 
         // Static Summary hint primed for every item at skeleton time.
         for branch in ["alpha", "beta", "gamma"] {
-            let key = (branch.to_string(), PreviewMode::Summary);
+            let key = (branch_key(branch), PreviewMode::Summary);
             let hint = handler.preview_cache.get(&key).unwrap_or_else(|| {
                 panic!("Summary hint should be filled for {branch} at skeleton time")
             });
@@ -1637,7 +1642,9 @@ mod tests {
             PreviewMode::UpstreamDiff,
         ] {
             assert!(
-                handler.preview_cache.contains_key(&("alpha".into(), mode)),
+                handler
+                    .preview_cache
+                    .contains_key(&(branch_key("alpha"), mode)),
                 "first item should have {mode:?} cached after on_skeleton"
             );
         }
@@ -1647,7 +1654,7 @@ mod tests {
             assert!(
                 handler
                     .preview_cache
-                    .contains_key(&(branch.into(), PreviewMode::UnifiedDiff)),
+                    .contains_key(&(branch_key(branch), PreviewMode::UnifiedDiff)),
                 "{branch}.UnifiedDiff should be cached after on_skeleton (initial tier)"
             );
         }
@@ -1661,7 +1668,9 @@ mod tests {
                 PreviewMode::UpstreamDiff,
             ] {
                 assert!(
-                    !handler.preview_cache.contains_key(&(branch.into(), mode)),
+                    !handler
+                        .preview_cache
+                        .contains_key(&(branch_key(branch), mode)),
                     "{branch}.{mode:?} should remain demand-loaded"
                 );
             }
@@ -1680,7 +1689,9 @@ mod tests {
                 PreviewMode::UpstreamDiff,
             ] {
                 assert!(
-                    !handler.preview_cache.contains_key(&(branch.into(), mode)),
+                    !handler
+                        .preview_cache
+                        .contains_key(&(branch_key(branch), mode)),
                     "{branch}.{mode:?} should remain demand-loaded after collection"
                 );
             }
@@ -1723,7 +1734,9 @@ mod tests {
             PreviewMode::Summary,
         ] {
             assert!(
-                handler.preview_cache.contains_key(&("solo".into(), mode)),
+                handler
+                    .preview_cache
+                    .contains_key(&(branch_key("solo"), mode)),
                 "first-item phase should have cached {mode:?}"
             );
         }
@@ -1778,7 +1791,7 @@ mod tests {
 
     /// A superseded handler's `maybe_spawn_comments` is fully inert. Its
     /// corrected-number path would otherwise evict the live spawn's
-    /// `(branch, Comments)` entry from the shared cache while its own refetch
+    /// `(row, Comments)` entry from the shared cache while its own refetch
     /// drops at `fill` on the stale token — stranding the tab on its loading
     /// placeholder, since the live handler's dedup slot already records the
     /// number and nothing else refills Comments.
@@ -1811,14 +1824,17 @@ mod tests {
             grid(),
         );
         let _ = rx.recv();
+        let mut item = ListItem::new_branch("abc".into(), "b".into());
+        let row_id = PickerRowId::local(&item);
         // Record PR #5 in this handler's dedup slot (the fetch resolves
         // synchronously to the "unsupported forge" pane — the test repo has
         // no forge remote — only the recorded number matters here).
-        handler.maybe_spawn_comments(0, "b", &status(5));
+        item.pr_status = status(5);
+        handler.maybe_spawn_comments(0, &item);
 
         // A refresh supersedes this handler; the live spawn fetches the thread.
         handler.orchestrator.refresh(test.repo.clone());
-        let key = ("b".to_string(), PreviewMode::Comments);
+        let key = (row_id.clone(), PreviewMode::Comments);
         handler.orchestrator.fill_external(
             &handler.orchestrator.generation(),
             key.clone(),
@@ -1827,7 +1843,8 @@ mod tests {
 
         // The stale handler observing a corrected number must not touch the
         // live spawn's entry.
-        handler.maybe_spawn_comments(0, "b", &status(6));
+        item.pr_status = status(6);
+        handler.maybe_spawn_comments(0, &item);
         handler.orchestrator.wait_for_idle();
         assert_eq!(
             handler.preview_cache.get(&key).map(|v| v.clone()),

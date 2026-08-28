@@ -16,14 +16,15 @@
 //! the Pr/Comments panes, but those aren't cache reads.) Session-scoped, and
 //! **shared across every
 //! `alt-r` spawn** (the one `Arc` is reused). The key is `(row-key, mode)`,
-//! where row-key is the branch for a worktree row or the `pr:N` / `mr:N` token
-//! for a `--prs` row — with **no SHA or content hash**. Two consequences: every
-//! mode shares one key shape (a `--prs` row's forge fetches and a worktree
-//! row's git diffs coexist), and a `git fetch` or new commit that moves a
-//! branch does *not* invalidate the entry — the key is unchanged, so a warm
-//! entry can outlive the content it was computed from. That staleness is
-//! reconciled two ways, both below: per-event invalidation for the PR tabs, and
-//! a wholesale clear on refresh.
+//! where row-key is a canonical Git item identity for a local row or a
+//! structured PR/MR reference for a `--prs` row — with **no content hash**.
+//! Two consequences: every mode shares one key shape (a `--prs` row's forge
+//! fetches and a worktree row's git diffs coexist), and a `git fetch` or new
+//! commit that moves a branch does *not* invalidate the entry — the key is
+//! unchanged, so a warm entry can outlive the content it was computed from.
+//! That staleness is reconciled two ways, both below: per-event invalidation
+//! for the PR tabs, and a wholesale clear on refresh.
+//! Worktrees key by canonical path, while branch-only rows key by full ref.
 //!
 //! **On-disk** — content-addressed, cross-session, consulted only on an
 //! in-memory miss. [`super::preview_cache`] holds Log / BranchDiff /
@@ -156,7 +157,7 @@ use skim::prelude::Event;
 use tokio::sync::mpsc::Sender;
 use worktrunk::git::Repository;
 
-use super::items::{PickerRow, PreviewCache, PreviewCacheKey};
+use super::items::{PickerRow, PickerRowId, PreviewCache, PreviewCacheKey};
 use super::preview::{LOCAL_GIT_MODES, PreviewMode};
 use super::preview_notify::PreviewNotifier;
 use super::summary;
@@ -442,7 +443,7 @@ impl PreviewOrchestrator {
         if !req.spawn_gen.is_current() {
             return;
         }
-        let key = (req.item.branch_name().to_string(), req.mode);
+        let key = (PickerRowId::local(&req.item), req.mode);
         if cache.contains_key(&key) {
             return;
         }
@@ -452,7 +453,7 @@ impl PreviewOrchestrator {
         }));
         let Ok((value, log_disk_hit)) = computed else {
             tracing::debug!(
-                branch = key.0,
+                row = %key.0,
                 mode = ?key.1,
                 "preview demand compute panicked; leaving the tab to precompute"
             );
@@ -569,7 +570,7 @@ impl PreviewOrchestrator {
             if !spawn_gen.is_current() {
                 return;
             }
-            let cache_key = (item.branch_name().to_string(), mode);
+            let cache_key = (PickerRowId::local(&item), mode);
             if cache.contains_key(&cache_key) {
                 return;
             }
@@ -626,7 +627,7 @@ impl PreviewOrchestrator {
                     &cache,
                     &notifier,
                     &spawn_gen,
-                    (item.branch_name().to_string(), PreviewMode::Log),
+                    (PickerRowId::local(&item), PreviewMode::Log),
                     rendered,
                 );
             }
@@ -653,7 +654,7 @@ impl PreviewOrchestrator {
                 &cache,
                 &notifier,
                 &spawn_gen,
-                (item.branch_name().to_string(), PreviewMode::Summary),
+                (PickerRowId::local(&item), PreviewMode::Summary),
                 summary,
             );
         });
@@ -778,7 +779,7 @@ impl PreviewOrchestrator {
     pub(super) fn seed_summary_hints(&self, items: &[Arc<ListItem>], hint: &str) {
         for item in items {
             self.cache.insert(
-                (item.branch_name().to_string(), PreviewMode::Summary),
+                (PickerRowId::local(item), PreviewMode::Summary),
                 hint.to_string(),
             );
         }
@@ -821,7 +822,7 @@ impl PreviewOrchestrator {
     }
 
     /// Preview-cache inventory for the dry-run dump: one sorted
-    /// `{branch, mode, bytes, content}` object per cached preview. Content is
+    /// `{row_id, mode, bytes, content}` object per cached preview. Content is
     /// included because dry-run integration tests need to distinguish a real
     /// preview from an equally non-empty error pane; the dump is test-only.
     pub(super) fn cache_entries_json(&self) -> serde_json::Value {
@@ -829,9 +830,9 @@ impl PreviewOrchestrator {
             .cache
             .iter()
             .map(|e| {
-                let (branch, mode) = e.key();
+                let (row, mode) = e.key();
                 (
-                    branch.clone(),
+                    row.to_string(),
                     *mode as u8,
                     e.value().len(),
                     e.value().clone(),
@@ -842,9 +843,9 @@ impl PreviewOrchestrator {
 
         entries
             .into_iter()
-            .map(|(branch, mode, bytes, content)| {
+            .map(|(row, mode, bytes, content)| {
                 serde_json::json!({
-                    "branch": branch,
+                    "row_id": row,
                     "mode": mode,
                     "bytes": bytes,
                     "content": content,
@@ -867,14 +868,34 @@ impl Drop for PreviewOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::model::{ItemKind, WorktreeData};
+    use crate::commands::list::model::WorktreeData;
     use std::fs;
     use worktrunk::testing::TestRepo;
+
+    fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
+        let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
+        ListItem::new_worktree(subject, data)
+    }
 
     fn orch_for(t: &TestRepo) -> PreviewOrchestrator {
         // No render_tx published, so fills don't notify — these tests assert on
         // the cache, not on skim repaints (see `fill_notifies_only_awaited_key`).
         PreviewOrchestrator::new(Repository::at(t.path()).unwrap(), Arc::new(OnceLock::new()))
+    }
+
+    fn item_key(item: &ListItem) -> PickerRowId {
+        PickerRowId::local(item)
+    }
+
+    fn branch_key(branch: &str) -> PickerRowId {
+        item_key(&ListItem::new_branch(
+            "0000000".to_string(),
+            branch.to_string(),
+        ))
+    }
+
+    fn pr_key(number: u64) -> PickerRowId {
+        PickerRowId::change_request(crate::commands::list::ci_status::PrRef::pr(number))
     }
 
     fn dirty_worktree_item() -> (TestRepo, Arc<ListItem>) {
@@ -891,12 +912,23 @@ mod tests {
             .unwrap()
             .trim()
             .to_string();
-        let mut item = ListItem::new_branch(head, "main".to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        }));
+        let item = as_worktree(
+            ListItem::new_branch(head, "main".to_string()),
+            t.path(),
+            WorktreeData::default(),
+        );
         (t, Arc::new(item))
+    }
+
+    fn detached_worktree_item(path: &std::path::Path, head: &str) -> Arc<ListItem> {
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, None, head),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
+        Arc::new(item)
     }
 
     /// End-to-end: orchestrator spawns real previews, populates the cache.
@@ -921,8 +953,9 @@ mod tests {
         );
         orch.wait_for_idle();
 
-        let wt_key = ("main".to_string(), PreviewMode::WorkingTree);
-        let log_key = ("main".to_string(), PreviewMode::Log);
+        let row_id = item_key(&item);
+        let wt_key = (row_id.clone(), PreviewMode::WorkingTree);
+        let log_key = (row_id, PreviewMode::Log);
         assert!(
             orch.cache.contains_key(&wt_key),
             "WorkingTree preview not cached"
@@ -931,6 +964,73 @@ mod tests {
         assert!(
             !orch.cache.get(&wt_key).unwrap().is_empty(),
             "WorkingTree preview was empty"
+        );
+    }
+
+    /// Two detached worktrees can point at the same commit while carrying
+    /// different mutable state. Visiting the clean one first must not make the
+    /// dirty one's producer short-circuit against the clean preview.
+    #[test]
+    fn detached_worktrees_at_same_commit_have_distinct_preview_ids() {
+        let t = TestRepo::with_initial_commit();
+        let linked = tempfile::tempdir().unwrap();
+        let clean_path = linked.path().join("clean");
+        let dirty_path = linked.path().join("dirty");
+        let clean_arg = clean_path.to_str().unwrap();
+        let dirty_arg = dirty_path.to_str().unwrap();
+        t.repo
+            .run_command(&["worktree", "add", "--detach", clean_arg, "HEAD"])
+            .unwrap();
+        t.repo
+            .run_command(&["worktree", "add", "--detach", dirty_arg, "HEAD"])
+            .unwrap();
+        fs::write(dirty_path.join("file.txt"), "hello\nchanged\n").unwrap();
+
+        let head = t
+            .repo
+            .run_command(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let clean = detached_worktree_item(&clean_path, &head);
+        let dirty = detached_worktree_item(&dirty_path, &head);
+        let clean_key = item_key(&clean);
+        let dirty_key = item_key(&dirty);
+        assert_ne!(clean_key, dirty_key, "worktree path is part of identity");
+
+        let orch = orch_for(&t);
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&clean),
+            PreviewMode::UnifiedDiff,
+            (80, 24),
+        );
+        orch.wait_for_idle();
+        orch.spawn_preview(
+            &orch.generation(),
+            Arc::clone(&dirty),
+            PreviewMode::UnifiedDiff,
+            (80, 24),
+        );
+        orch.wait_for_idle();
+
+        let clean_preview = orch
+            .cache
+            .get(&(clean_key, PreviewMode::UnifiedDiff))
+            .expect("clean preview cached")
+            .clone();
+        let dirty_preview = orch
+            .cache
+            .get(&(dirty_key, PreviewMode::UnifiedDiff))
+            .expect("dirty preview cached")
+            .clone();
+        assert!(
+            !clean_preview.contains("changed"),
+            "clean checkout preview: {clean_preview:?}"
+        );
+        assert!(
+            dirty_preview.contains("file.txt") && dirty_preview.contains("changed"),
+            "dirty checkout preview: {dirty_preview:?}"
         );
     }
 
@@ -946,12 +1046,8 @@ mod tests {
             (80, 24),
         );
         orch.wait_for_idle();
-        let first = orch
-            .cache
-            .get(&("main".to_string(), PreviewMode::WorkingTree))
-            .unwrap()
-            .value()
-            .clone();
+        let key = (item_key(&item), PreviewMode::WorkingTree);
+        let first = orch.cache.get(&key).unwrap().value().clone();
 
         // Second spawn should hit `contains_key` and skip.
         orch.spawn_preview(
@@ -961,12 +1057,7 @@ mod tests {
             (80, 24),
         );
         orch.wait_for_idle();
-        let second = orch
-            .cache
-            .get(&("main".to_string(), PreviewMode::WorkingTree))
-            .unwrap()
-            .value()
-            .clone();
+        let second = orch.cache.get(&key).unwrap().value().clone();
         assert_eq!(first, second);
     }
 
@@ -989,7 +1080,7 @@ mod tests {
 
         assert!(
             orch.cache
-                .contains_key(&("main".to_string(), PreviewMode::Summary)),
+                .contains_key(&(item_key(&item), PreviewMode::Summary)),
             "Summary entry not cached"
         );
     }
@@ -1034,7 +1125,7 @@ mod tests {
 
         let in_memory = orch
             .cache
-            .get(&("main".to_string(), PreviewMode::Log))
+            .get(&(item_key(&item), PreviewMode::Log))
             .expect("in-memory entry present")
             .clone();
         assert!(
@@ -1087,57 +1178,43 @@ mod tests {
         let orch = orch_for(&t);
 
         // A populated value lands in the cache under its key.
-        orch.spawn_compute(
-            &orch.generation(),
-            ("pr:7".to_string(), PreviewMode::Log),
-            |_| Some("commit list".to_string()),
-        );
+        orch.spawn_compute(&orch.generation(), (pr_key(7), PreviewMode::Log), |_| {
+            Some("commit list".to_string())
+        });
         orch.wait_for_idle();
         assert_eq!(
             orch.cache
-                .get(&("pr:7".to_string(), PreviewMode::Log))
+                .get(&(pr_key(7), PreviewMode::Log))
                 .map(|v| v.clone()),
             Some("commit list".to_string())
         );
 
         // A second spawn for the same key short-circuits on `contains_key`, so
         // the original value survives even though this closure would overwrite.
-        orch.spawn_compute(
-            &orch.generation(),
-            ("pr:7".to_string(), PreviewMode::Log),
-            |_| Some("REPLACED".to_string()),
-        );
+        let replacement = Some("REPLACED".to_string());
+        let duplicate_key = (pr_key(7), PreviewMode::Log);
+        orch.spawn_compute(&orch.generation(), duplicate_key, move |_| replacement);
         orch.wait_for_idle();
         assert_eq!(
             orch.cache
-                .get(&("pr:7".to_string(), PreviewMode::Log))
+                .get(&(pr_key(7), PreviewMode::Log))
                 .map(|v| v.clone()),
             Some("commit list".to_string()),
             "duplicate key short-circuits"
         );
 
         // `None` (forge failure) and `Some("")` both leave the slot empty.
-        orch.spawn_compute(
-            &orch.generation(),
-            ("pr:9".to_string(), PreviewMode::Log),
-            |_| None,
-        );
-        orch.spawn_compute(
-            &orch.generation(),
-            ("pr:8".to_string(), PreviewMode::Log),
-            |_| Some(String::new()),
-        );
+        orch.spawn_compute(&orch.generation(), (pr_key(9), PreviewMode::Log), |_| None);
+        orch.spawn_compute(&orch.generation(), (pr_key(8), PreviewMode::Log), |_| {
+            Some(String::new())
+        });
         orch.wait_for_idle();
         assert!(
-            !orch
-                .cache
-                .contains_key(&("pr:9".to_string(), PreviewMode::Log)),
+            !orch.cache.contains_key(&(pr_key(9), PreviewMode::Log)),
             "None is not cached"
         );
         assert!(
-            !orch
-                .cache
-                .contains_key(&("pr:8".to_string(), PreviewMode::Log)),
+            !orch.cache.contains_key(&(pr_key(8), PreviewMode::Log)),
             "empty string is not cached"
         );
     }
@@ -1148,13 +1225,14 @@ mod tests {
     /// not depend on speculative bulk precompute.
     #[test]
     fn preview_miss_is_served_by_demand_worker() {
-        use super::super::items::{LocalCheckout, LocalContent, PickerRow};
+        use super::super::items::{LocalCheckout, LocalContent, PickerRow, PickerRowSubject};
         use skim::prelude::{PreviewContext, SkimItem};
         use std::sync::Mutex;
         use std::sync::atomic::AtomicBool;
 
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
+        let row_id = item_key(&item);
 
         let row = PickerRow {
             search_base: String::new(),
@@ -1162,10 +1240,7 @@ mod tests {
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "main".to_string(),
             output_token: "main".to_string(),
-            preview_cache: Arc::clone(&orch.cache),
-            pr_status: Arc::new(Mutex::new(None)),
-            notifier: Arc::clone(orch.notifier()),
-            local: Some(LocalCheckout {
+            subject: PickerRowSubject::Local(LocalCheckout {
                 item: Arc::clone(&item),
                 demand: Arc::clone(orch.demand()),
                 spawn_gen: orch.generation(),
@@ -1174,6 +1249,9 @@ mod tests {
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
                 morphed: Arc::new(AtomicBool::new(false)),
             }),
+            preview_cache: Arc::clone(&orch.cache),
+            pr_status: Arc::new(Mutex::new(None)),
+            notifier: Arc::clone(orch.notifier()),
         };
 
         // The picker opens on UnifiedDiff — the process-global default tab,
@@ -1196,7 +1274,7 @@ mod tests {
 
         // The demand worker fills the key with the real diff. Bounded poll so
         // a dead worker fails instead of hanging the suite.
-        let key = ("main".to_string(), PreviewMode::UnifiedDiff);
+        let key = (row_id, PreviewMode::UnifiedDiff);
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !orch.cache.contains_key(&key) {
             assert!(
@@ -1218,11 +1296,11 @@ mod tests {
         let head = first.head().to_string();
         t.repo.run_command(&["branch", "branch-only"]).unwrap();
 
-        let mut offscreen = ListItem::new_branch(head.clone(), "offscreen".to_string());
-        offscreen.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        }));
+        let offscreen = as_worktree(
+            ListItem::new_branch(head.clone(), "offscreen".to_string()),
+            &t.path().join("offscreen"),
+            WorktreeData::default(),
+        );
         let offscreen = Arc::new(offscreen);
         let branch = Arc::new(ListItem::new_branch(head, "branch-only".to_string()));
 
@@ -1238,12 +1316,12 @@ mod tests {
         assert!(
             !orch
                 .cache
-                .contains_key(&("offscreen".to_string(), PreviewMode::UnifiedDiff)),
+                .contains_key(&(item_key(&offscreen), PreviewMode::UnifiedDiff)),
             "off-screen worktree should wait for selected-row demand"
         );
         assert!(
             orch.cache
-                .contains_key(&("branch-only".to_string(), PreviewMode::UnifiedDiff)),
+                .contains_key(&(item_key(&branch), PreviewMode::UnifiedDiff)),
             "branch-only default should be prewarmed from the committed diff"
         );
     }
@@ -1255,7 +1333,8 @@ mod tests {
     fn serve_demand_skips_already_filled_key() {
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
-        let key = ("main".to_string(), PreviewMode::WorkingTree);
+        let row_id = item_key(&item);
+        let key = (row_id.clone(), PreviewMode::WorkingTree);
         orch.fill_external(&orch.generation(), key.clone(), "already here".to_string());
 
         PreviewOrchestrator::serve_demand(
@@ -1286,6 +1365,7 @@ mod tests {
     fn serve_demand_contains_a_panicking_compute() {
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
+        let row_id = item_key(&item);
 
         PreviewOrchestrator::serve_demand(
             &orch.cache,
@@ -1301,9 +1381,7 @@ mod tests {
         );
 
         assert!(
-            !orch
-                .cache
-                .contains_key(&("main".to_string(), PreviewMode::Pr)),
+            !orch.cache.contains_key(&(row_id, PreviewMode::Pr)),
             "a panicked compute fills nothing"
         );
     }
@@ -1324,6 +1402,7 @@ mod tests {
         super::super::preview_cache::write_log(&repo, item.head(), 80, 24, &stale);
 
         let orch = orch_for(&t);
+        let row_id = item_key(&item);
         PreviewOrchestrator::serve_demand(
             &orch.cache,
             orch.notifier(),
@@ -1340,7 +1419,7 @@ mod tests {
 
         let in_memory = orch
             .cache
-            .get(&("main".to_string(), PreviewMode::Log))
+            .get(&(row_id, PreviewMode::Log))
             .expect("in-memory entry present")
             .clone();
         assert!(
@@ -1360,6 +1439,7 @@ mod tests {
         let (t, item) = dirty_worktree_item();
         let orch = orch_for(&t);
         let stale = orch.generation();
+        let row_id = item_key(&item);
 
         orch.refresh(Repository::at(t.path()).unwrap());
 
@@ -1371,7 +1451,7 @@ mod tests {
             (80, 24),
         );
         orch.spawn_summary(&stale, Arc::clone(&item), "/bin/cat".to_string());
-        orch.spawn_compute(&stale, ("pr:1".to_string(), PreviewMode::Log), |_| {
+        orch.spawn_compute(&stale, (pr_key(1), PreviewMode::Log), |_| {
             Some("stale".to_string())
         });
         PreviewOrchestrator::spawn_log_refresh(
@@ -1390,7 +1470,7 @@ mod tests {
             &orch.cache,
             orch.notifier(),
             &stale,
-            ("main".to_string(), PreviewMode::WorkingTree),
+            (row_id.clone(), PreviewMode::WorkingTree),
             "stale".to_string(),
         );
         assert!(
@@ -1406,8 +1486,7 @@ mod tests {
         );
         orch.wait_for_idle();
         assert!(
-            orch.cache
-                .contains_key(&("main".to_string(), PreviewMode::WorkingTree)),
+            orch.cache.contains_key(&(row_id, PreviewMode::WorkingTree)),
             "the live spawn's fill lands"
         );
     }
@@ -1521,16 +1600,18 @@ mod tests {
         let render_tx = Arc::new(OnceLock::new());
         render_tx.set(tx).unwrap();
         let orch = PreviewOrchestrator::new(Repository::at(t.path()).unwrap(), render_tx);
+        let main = branch_key("main");
+        let feature = branch_key("feature");
 
         // The selected row is showing main's working-tree diff (a cache miss, so
         // it's awaiting that key).
         orch.notifier()
-            .note_awaiting("main", PreviewMode::WorkingTree);
+            .note_awaiting(&main, PreviewMode::WorkingTree);
 
         // The awaited compute lands → skim is poked to repaint.
         orch.fill_external(
             &orch.generation(),
-            ("main".to_string(), PreviewMode::WorkingTree),
+            (main.clone(), PreviewMode::WorkingTree),
             "diff".to_string(),
         );
         assert!(
@@ -1541,12 +1622,12 @@ mod tests {
         // Fills for other rows / other tabs must not poke — no preview thrash.
         orch.fill_external(
             &orch.generation(),
-            ("feature".to_string(), PreviewMode::WorkingTree),
+            (feature, PreviewMode::WorkingTree),
             "x".to_string(),
         );
         orch.fill_external(
             &orch.generation(),
-            ("main".to_string(), PreviewMode::Log),
+            (main, PreviewMode::Log),
             "y".to_string(),
         );
         assert!(
@@ -1560,17 +1641,17 @@ mod tests {
         let t = TestRepo::new();
         let orch = orch_for(&t);
         orch.cache.insert(
-            ("branch-a".to_string(), PreviewMode::WorkingTree),
+            (branch_key("branch-a"), PreviewMode::WorkingTree),
             "x".to_string(),
         );
         orch.cache
-            .insert(("branch-b".to_string(), PreviewMode::Log), "xy".to_string());
+            .insert((branch_key("branch-b"), PreviewMode::Log), "xy".to_string());
         // Structural assertion — future field additions shouldn't flake the test.
         let entries = orch.cache_entries_json();
         let entries = entries.as_array().expect("entries array");
         assert_eq!(entries.len(), 2);
         for e in entries {
-            assert!(e["branch"].is_string());
+            assert!(e["row_id"].is_string());
             assert!(e["mode"].is_number());
             assert!(e["bytes"].is_number());
             assert!(e["content"].is_string());

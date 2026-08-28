@@ -316,10 +316,9 @@ use std::sync::LazyLock;
 use anstyle::Style;
 use color_print::cformat;
 use crossbeam_channel as chan;
-use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
+use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, terminal_width, truncate_visible,
     warning_message,
@@ -328,7 +327,7 @@ use worktrunk::styling::{
 use crate::commands::is_worktree_at_expected_path;
 use worktrunk::styling::println;
 
-use super::model::{CommitDetails, ItemKind, ListItem, StatusSymbols, WorktreeData};
+use super::model::{CommitDetails, ListItem, WorktreeData};
 use super::progressive::RenderTarget;
 use super::progressive_table::ProgressiveTable;
 
@@ -1027,26 +1026,32 @@ pub fn collect(
         Vec::new()
     };
 
+    // Build each Git subject once and keep it paired with the inventory entry
+    // it describes. The registered path remains available for display and
+    // commands; the subject's ID owns canonical path equality.
+    let worktree_subjects: Vec<(&WorktreeInfo, WorktreeRef)> =
+        worktrees.iter().map(|wt| (wt, wt.worktree_ref())).collect();
+
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
     // by letting git resolve the actual worktree root rather than using prefix matching.
-    // Canonicalize both paths to handle symlinks (e.g., macOS /var -> /private/var).
-    let current_worktree_path = repo.current_worktree().root().ok().and_then(|root| {
-        worktrees
-            .iter()
-            .find(|wt| canonicalize(&wt.path).map(|p| p == root).unwrap_or(false))
-            .map(|wt| wt.path.clone())
-    });
+    let current_worktree_id = repo.current_worktree().root().ok().map(WorktreeId::new);
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    let primary_path = repo.primary_worktree()?;
-    let main_worktree = primary_path
-        .as_ref()
-        .and_then(|p| worktrees.iter().find(|wt| wt.path == *p))
-        .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+    let primary_id = repo.primary_worktree()?.as_ref().map(WorktreeId::new);
+    let (main_worktree, main_worktree_id) = {
+        let (wt, worktree_ref) = primary_id
+            .as_ref()
+            .and_then(|id| {
+                worktree_subjects
+                    .iter()
+                    .find(|(_, worktree_ref)| worktree_ref.id() == id)
+            })
+            .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()))
+            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
+        (*wt, worktree_ref.id().clone())
+    };
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
@@ -1099,9 +1104,9 @@ pub fn collect(
     // Sort worktrees: current first, main second, then by timestamp descending
     // — unless `[list] sort` replaces that with its own order.
     let sorted_worktrees = sort_worktrees_with_cache(
-        worktrees,
-        &main_worktree,
-        current_worktree_path.as_ref(),
+        worktree_subjects,
+        &main_worktree_id,
+        current_worktree_id.as_ref(),
         &commit_details_map,
         &sort_terms,
     );
@@ -1112,10 +1117,6 @@ pub fn collect(
         sort_branch_rows(branches_without_worktrees, &commit_details_map, &sort_terms);
     let remote_branches = sort_branch_rows(remote_branches, &commit_details_map, &sort_terms);
 
-    // Pre-canonicalize main_worktree.path for is_main comparison
-    // (paths from git worktree list may differ based on symlinks or working directory)
-    let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
-
     // Branches living in more than one worktree. Every row on such a branch
     // is flagged, including the one `wt` resolves to: that choice is git's
     // listing order, so no row is the legitimate one.
@@ -1125,18 +1126,9 @@ pub fn collect(
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
-        .map(|wt| {
-            // Canonicalize paths for comparison - git worktree list may return different
-            // path representations depending on symlinks or which directory you run from
-            let wt_canonical = canonicalize(&wt.path).ok();
-            let is_main = match (&wt_canonical, &main_worktree_canonical) {
-                (Some(wt_c), Some(main_c)) => wt_c == main_c,
-                // Fallback to direct comparison if canonicalization fails
-                _ => wt.path == main_worktree.path,
-            };
-            let is_current = current_worktree_path
-                .as_ref()
-                .is_some_and(|cp| wt_canonical.as_ref() == Some(cp));
+        .map(|(wt, worktree_ref)| {
+            let is_main = worktree_ref.id() == &main_worktree_id;
+            let is_current = current_worktree_id.as_ref() == Some(worktree_ref.id());
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
 
@@ -1153,32 +1145,7 @@ pub fn collect(
                 .is_some_and(|branch| duplicated.contains(branch));
 
             // URL expanded post-skeleton to minimize time-to-skeleton
-            ListItem {
-                head: wt.head.clone(),
-                short_sha: String::new(),
-                branch: wt.branch.clone(),
-                commit: None,
-                counts: None,
-                branch_diff: None,
-                committed_trees_match: None,
-                has_file_changes: None,
-                would_merge_add: None,
-                is_patch_id_match: None,
-                is_ancestor: None,
-                is_orphan: None,
-                upstream: None,
-                pr_status: None,
-                url: None,
-                url_active: None,
-                summary: None,
-                has_merge_tree_conflicts: None,
-                user_marker: None,
-                status_symbols: StatusSymbols::default(),
-                statusline: None,
-                custom_values: Vec::new(),
-                seeded: super::model::SeededFacts::default(),
-                kind: ItemKind::Worktree(Box::new(worktree_data)),
-            }
+            ListItem::new_worktree(worktree_ref.clone(), worktree_data)
         })
         .collect();
 
@@ -1206,7 +1173,7 @@ pub fn collect(
     // move costs no fork. Rows the batch didn't cover (unborn branches, a failed
     // batch) keep the empty string and render an empty cell.
     for item in &mut all_items {
-        if let Some((short_sha, _, _)) = commit_details_map.get(&item.head) {
+        if let Some((short_sha, _, _)) = commit_details_map.get(item.head()) {
             item.short_sha = short_sha.clone();
         }
     }
@@ -1521,6 +1488,7 @@ pub fn collect(
     let fsmonitor_worktrees: Vec<_> = if repo.is_builtin_fsmonitor_enabled() {
         sorted_worktrees
             .iter()
+            .map(|(wt, _)| *wt)
             .filter(|wt| !wt.is_prunable())
             .collect()
     } else {
@@ -1659,7 +1627,7 @@ pub fn collect(
     // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
         for item in &mut all_items {
-            if item.branch.as_deref() == Some(prev)
+            if item.branch() == Some(prev)
                 && let Some(wt_data) = item.worktree_data_mut()
             {
                 wt_data.is_previous = true;
@@ -1680,7 +1648,7 @@ pub fn collect(
         if item.worktree_data().is_some_and(|d| d.is_prunable()) {
             continue;
         }
-        let Some((_, timestamp, commit_message)) = commit_details_map.get(&item.head) else {
+        let Some((_, timestamp, commit_message)) = commit_details_map.get(item.head()) else {
             continue;
         };
         item.commit = Some(CommitDetails {
@@ -1702,25 +1670,18 @@ pub fn collect(
     // Collect errors for display after rendering
     let mut errors: Vec<TaskError> = Vec::new();
 
-    // Prepare branch data if needed.
-    // Tuple: (item_idx, branch_name, commit_sha, is_remote)
-    let branch_data: Vec<(usize, String, String, bool)> =
-        if show_branches || show_remotes {
-            let mut all_branches = Vec::new();
-            if show_branches {
-                all_branches.extend(branches_without_worktrees.iter().enumerate().map(
-                    |(idx, (name, sha))| (branch_start_idx + idx, name.clone(), sha.clone(), false),
-                ));
-            }
-            if show_remotes {
-                all_branches.extend(remote_branches.iter().enumerate().map(
-                    |(idx, (name, sha))| (remote_start_idx + idx, name.clone(), sha.clone(), true),
-                ));
-            }
-            all_branches
-        } else {
-            Vec::new()
-        };
+    // Branch item indices; each item already owns its canonical Git subject.
+    let branch_indices: Vec<usize> = (show_branches)
+        .then(|| branch_start_idx..branch_start_idx + branches_without_worktrees.len())
+        .into_iter()
+        .flatten()
+        .chain(
+            (show_remotes)
+                .then(|| remote_start_idx..remote_start_idx + remote_branches.len())
+                .into_iter()
+                .flatten(),
+        )
+        .collect();
 
     // Phase 1: Generate all work items on the main thread. Work item
     // generation is fast (a fixed-size loop per item) and *must* run here
@@ -1730,31 +1691,29 @@ pub fn collect(
     let mut all_work_items = Vec::new();
 
     // Worktree work items
-    for (idx, wt) in sorted_worktrees.iter().enumerate() {
+    for (idx, item) in all_items
+        .iter_mut()
+        .enumerate()
+        .take(sorted_worktrees.len())
+    {
         all_work_items.extend(work_items_for_worktree(
             repo,
-            wt,
             idx,
             &options,
             &expected_results,
             &tx,
-            &mut all_items[idx],
+            item,
         ));
     }
 
     // Branch work items (local + remote)
-    for (item_idx, branch_name, commit_sha, is_remote) in &branch_data {
+    for item_idx in branch_indices {
         all_work_items.extend(work_items_for_branch(
             repo,
-            execution::BranchSpawn {
-                name: branch_name,
-                commit_sha,
-                item_idx: *item_idx,
-                is_remote: *is_remote,
-            },
+            item_idx,
             &options,
             &expected_results,
-            &mut all_items[*item_idx],
+            &mut all_items[item_idx],
         ));
     }
 
@@ -2133,23 +2092,23 @@ fn sort_branch_rows(
 /// prefix included: pinning two rows to the top would defeat the ordering the
 /// user asked for (`sort = ["path"]` exists to make the table read in path
 /// order). Without a spec the prefix and the timestamp fallback are unchanged.
-fn sort_worktrees_with_cache(
-    worktrees: &[WorktreeInfo],
-    main_worktree: &WorktreeInfo,
-    current_path: Option<&std::path::PathBuf>,
+fn sort_worktrees_with_cache<'a>(
+    worktrees: Vec<(&'a WorktreeInfo, WorktreeRef)>,
+    main_worktree_id: &WorktreeId,
+    current_worktree_id: Option<&WorktreeId>,
     commit_details: &std::collections::HashMap<String, (String, i64, String)>,
     sort_terms: &[super::sort::SortTerm],
-) -> Vec<WorktreeInfo> {
+) -> Vec<(&'a WorktreeInfo, WorktreeRef)> {
     let pin_current_and_primary = sort_terms.is_empty();
     // Embed priority and facts in the tuple to avoid parallel Vecs and
     // per-comparison map lookups.
     let mut with_sort_key: Vec<_> = worktrees
-        .iter()
-        .map(|wt| {
+        .into_iter()
+        .map(|(wt, worktree_ref)| {
             let priority = if pin_current_and_primary {
-                if current_path.is_some_and(|cp| &wt.path == cp) {
+                if current_worktree_id == Some(worktree_ref.id()) {
                     0 // Current first
-                } else if wt.path == main_worktree.path {
+                } else if worktree_ref.id() == main_worktree_id {
                     1 // Main second
                 } else {
                     2 // Rest by timestamp
@@ -2163,7 +2122,7 @@ fn sort_worktrees_with_cache(
                 &wt.head,
                 commit_details,
             );
-            (wt, priority, facts)
+            ((wt, worktree_ref), priority, facts)
         })
         .collect();
 
@@ -2172,10 +2131,7 @@ fn sort_worktrees_with_cache(
             .cmp(b_priority)
             .then_with(|| super::sort::compare(sort_terms, a, b))
     });
-    with_sort_key
-        .into_iter()
-        .map(|(wt, _, _)| wt.clone())
-        .collect()
+    with_sort_key.into_iter().map(|(row, _, _)| row).collect()
 }
 
 // ============================================================================
@@ -2192,37 +2148,10 @@ pub fn build_worktree_item(
     is_current: bool,
     is_previous: bool,
 ) -> ListItem {
-    ListItem {
-        head: wt.head.clone(),
-        short_sha: String::new(),
-        branch: wt.branch.clone(),
-        commit: None,
-        counts: None,
-        branch_diff: None,
-        committed_trees_match: None,
-        has_file_changes: None,
-        would_merge_add: None,
-        is_patch_id_match: None,
-        is_ancestor: None,
-        is_orphan: None,
-        upstream: None,
-        pr_status: None,
-        url: None,
-        url_active: None,
-        summary: None,
-        has_merge_tree_conflicts: None,
-        user_marker: None,
-        status_symbols: StatusSymbols::default(),
-        statusline: None,
-        custom_values: Vec::new(),
-        seeded: super::model::SeededFacts::default(),
-        kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
-            wt,
-            is_main,
-            is_current,
-            is_previous,
-        ))),
-    }
+    ListItem::new_worktree(
+        wt.worktree_ref(),
+        WorktreeData::from_worktree(wt, is_main, is_current, is_previous),
+    )
 }
 
 /// Populate computed fields for items in parallel (blocking).
@@ -2256,9 +2185,9 @@ pub fn populate_item(
     // timestamp/message bundle is skipped for prunable rows to match the old
     // task-queue UX where probes against a missing worktree dir failed.
     let is_prunable = item.worktree_data().is_some_and(|d| d.is_prunable());
-    if item.head != worktrunk::git::NULL_OID
-        && let Ok(map) = repo.commit_details_many(&[&item.head])
-        && let Some((short_sha, timestamp, commit_message)) = map.get(&item.head)
+    if item.head() != worktrunk::git::NULL_OID
+        && let Ok(map) = repo.commit_details_many(&[item.head()])
+        && let Some((short_sha, timestamp, commit_message)) = map.get(item.head())
     {
         item.short_sha = short_sha.clone();
         if !is_prunable {
@@ -2270,9 +2199,9 @@ pub fn populate_item(
     }
 
     // Extract worktree data (skip if not a worktree item)
-    let Some(data) = item.worktree_data() else {
+    if item.worktree_data().is_none() {
         return Ok(());
-    };
+    }
 
     // Populate default_branch / snapshot / integration_targets if the
     // caller didn't. Tasks read these through `TaskContext`; `None`
@@ -2306,24 +2235,10 @@ pub fn populate_item(
     // Collect errors (logged silently for statusline)
     let mut errors: Vec<TaskError> = Vec::new();
 
-    // Build a minimal WorktreeInfo so the shared work-item generator can
-    // run. The item lives on this (main) thread; the worker thread only
-    // executes prebuilt work items.
-    let wt = WorktreeInfo {
-        path: data.path.clone(),
-        head: item.head.clone(),
-        branch: item.branch.clone(),
-        bare: false,
-        detached: false,
-        locked: None,
-        prunable: None,
-    };
-
     // Generate work items on the main thread so the item can be seeded
     // with sentinels for skipped tasks (see `work_items_for_worktree`).
     let mut work_items = work_items_for_worktree(
         repo,
-        &wt,
         0, // Single item, always index 0
         &options,
         &expected_results,

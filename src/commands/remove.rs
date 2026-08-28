@@ -102,6 +102,7 @@ fn validate_remove_targets(
     // across candidates here. Errors propagate to per-candidate calls, which
     // fall back to capturing internally when None.
     let snapshot = repo.capture_refs().ok();
+    let mut seen_targets = HashSet::new();
 
     for branch_name in branches {
         let resolved = match repo.resolve_worktree(&branch_name) {
@@ -111,10 +112,21 @@ fn validate_remove_targets(
                 continue;
             }
         };
+        // Branch and path spellings are aliases for one registered worktree.
+        // Once resolution has produced the Git model's canonical identity,
+        // plan that target only once regardless of how many aliases were
+        // supplied.
+        if resolved
+            .id()
+            .is_some_and(|id| !seen_targets.insert(id.clone()))
+        {
+            continue;
+        }
 
         let target = match resolved {
-            ResolvedWorktree::Worktree { path, branch: _ } => {
-                // Use canonical paths to avoid symlink/normalization mismatches
+            ResolvedWorktree::Worktree { path, .. } => {
+                // `dunce::canonicalize` keeps the path spelling Git operates
+                // on; `WorktreeId` is only for matching aliases.
                 let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
 
                 // Remove exactly the resolved worktree by its path. Targeting by
@@ -126,7 +138,7 @@ fn validate_remove_targets(
                 // otherwise (see its shared-branch handling).
                 RemoveTarget::WorktreePath(path_canonical)
             }
-            ResolvedWorktree::BranchOnly { branch } => RemoveTarget::BranchOnly(branch),
+            ResolvedWorktree::BranchOnly { branch, .. } => RemoveTarget::BranchOnly(branch),
             // Resolution tried the argument as a branch and as a worktree path
             // and matched neither, so a directory sitting there is a leftover
             // skeleton rather than anything wt can remove. Only a typed
@@ -478,6 +490,29 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn validation_deduplicates_branch_and_path_aliases() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let plans = validate_remove_targets(
+            &repo,
+            vec![
+                "feature".to_string(),
+                worktree.to_string_lossy().into_owned(),
+            ],
+            true,
+            false,
+            false,
+        );
+
+        assert!(plans.errors.is_empty());
+        assert_eq!(plans.others.len(), 1);
+        assert!(plans.branch_only.is_empty());
+        assert!(plans.current.is_none());
+    }
 
     /// Resolution sees a registered worktree, but preparation discovers its
     /// directory is gone and degrades the result to BranchOnly. Ordered

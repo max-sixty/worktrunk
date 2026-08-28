@@ -933,7 +933,7 @@ impl Task for SummaryGenerateTask {
         };
 
         let branch = ctx.branch_ref.short_name().unwrap_or("(detached)");
-        let worktree_path = ctx.branch_ref.worktree_path.as_deref();
+        let worktree_path = ctx.branch_ref.worktree_path();
 
         let summary = crate::summary::generate_summary_core(
             branch,

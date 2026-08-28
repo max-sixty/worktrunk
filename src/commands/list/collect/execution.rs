@@ -22,9 +22,9 @@
 use std::sync::Arc;
 
 use crossbeam_channel as chan;
-use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
+use worktrunk::git::Repository;
 
-use super::super::model::{ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
+use super::super::model::{ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
 use super::tasks::{
     AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
@@ -234,7 +234,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             // waits and renders `·`.
         }
         TaskKind::WorkingTreeConflicts => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
+            if let Some(data) = item.worktree_data_mut() {
                 // `Some(None)` = "task did not run, fall back to the
                 // committed-HEAD merge-tree check" — matches the semantics
                 // of a clean working tree under `--full`.
@@ -242,7 +242,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             }
         }
         TaskKind::GitOperation => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
+            if let Some(data) = item.worktree_data_mut() {
                 data.git_operation = Some(None);
             }
         }
@@ -260,7 +260,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
 /// `MainState::None` (no symbol). Both are known at spawn time without
 /// any task output.
 pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
-    let is_main = matches!(&item.kind, ItemKind::Worktree(data) if data.is_main);
+    let is_main = item.is_main();
     item.status_symbols.main_state = Some(if is_main {
         super::super::model::MainState::IsMain
     } else {
@@ -322,7 +322,6 @@ pub(super) fn seed_prunable_item(item: &mut ListItem) {
 /// via Arc.
 pub fn work_items_for_worktree(
     repo: &Repository,
-    wt: &WorktreeInfo,
     item_idx: usize,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
@@ -332,7 +331,7 @@ pub fn work_items_for_worktree(
     // Prunable worktrees have their directory missing — no task can run.
     // Seed every gate directly so the cell shows just the `⊟` metadata
     // symbol rather than seven `·` placeholders.
-    if wt.is_prunable() {
+    if item.worktree_data().is_some_and(|data| data.is_prunable()) {
         seed_prunable_item(item);
         return vec![];
     }
@@ -344,9 +343,9 @@ pub fn work_items_for_worktree(
     // Expand URL template for this item (only if URL status is enabled).
     let item_url = if include_url {
         options.url_template.as_ref().and_then(|template| {
-            wt.branch.as_ref().and_then(|branch| {
+            item.branch().and_then(|branch| {
                 let mut vars = std::collections::HashMap::new();
-                vars.insert("branch", branch.as_str());
+                vars.insert("branch", branch);
                 worktrunk::config::expand_template(
                     template,
                     &vars,
@@ -376,7 +375,7 @@ pub fn work_items_for_worktree(
 
     let ctx = TaskContext {
         repo: repo.clone(),
-        branch_ref: BranchRef::from(wt),
+        branch_ref: item.branch_ref().clone(),
         item_idx,
         item_url,
         llm_command: options.llm_command.clone(),
@@ -385,7 +384,7 @@ pub fn work_items_for_worktree(
         snapshot: options.snapshot.clone(),
     };
 
-    let has_commits = wt.has_commits();
+    let has_commits = item.head() != worktrunk::git::NULL_OID;
 
     let mut items = Vec::with_capacity(15);
 
@@ -452,42 +451,20 @@ pub fn work_items_for_worktree(
 /// Task preconditions are enforced here, same as [`work_items_for_worktree`].
 ///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
-/// The `is_remote` flag indicates whether this is a remote-tracking branch (e.g., "origin/feature")
-/// vs a local branch. This is known definitively at collection time and avoids guessing later.
-/// Identity of a branch item being spawned (grouped to keep
-/// `work_items_for_branch` under the clippy arg-count limit).
-pub struct BranchSpawn<'a> {
-    pub name: &'a str,
-    pub commit_sha: &'a str,
-    pub item_idx: usize,
-    pub is_remote: bool,
-}
-
+/// The item's [`BranchRef`](worktrunk::git::BranchRef) already records whether
+/// it is local or remote, so this layer does not reconstruct ref qualification.
 pub fn work_items_for_branch(
     repo: &Repository,
-    branch: BranchSpawn<'_>,
+    item_idx: usize,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
     item: &mut ListItem,
 ) -> Vec<WorkItem> {
-    let BranchSpawn {
-        name: branch_name,
-        commit_sha,
-        item_idx,
-        is_remote,
-    } = branch;
-
     let run = &options.tasks;
-
-    let branch_ref = if is_remote {
-        BranchRef::remote_branch(branch_name, commit_sha)
-    } else {
-        BranchRef::local_branch(branch_name, commit_sha)
-    };
 
     let ctx = TaskContext {
         repo: repo.clone(),
-        branch_ref,
+        branch_ref: item.branch_ref().clone(),
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
         llm_command: options.llm_command.clone(),
@@ -547,6 +524,7 @@ pub fn work_items_for_branch(
 mod tests {
     use super::*;
     use crate::commands::list::collect::build_worktree_item;
+    use worktrunk::git::WorktreeInfo;
 
     /// Every seed arm must point the negative direction: `json_v2` trusts a
     /// positive `check_integration` match even when sibling signals were
@@ -655,8 +633,7 @@ mod tests {
         let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
         let mut item = build_worktree_item(&wt, true, false, false);
 
-        let items =
-            work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx, &mut item);
+        let items = work_items_for_worktree(&repo, 0, &options, &expected_results, &tx, &mut item);
 
         // No placeholder UrlStatus result was sent to the channel.
         assert!(rx.try_recv().is_err());

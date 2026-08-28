@@ -1,8 +1,8 @@
 //! Skim item implementations.
 //!
 //! The unified [`PickerRow`] (a branch/worktree row or a listed `--prs` row,
-//! distinguished by `local: Option<LocalCheckout>`) and the header row, both
-//! implementing `SkimItem` for the interactive selector.
+//! distinguished by [`PickerRowSubject`]) and the header row, both implementing
+//! `SkimItem` for the interactive selector.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -108,10 +108,42 @@ fn anchor_faint_under_selection(
     line
 }
 
-/// Cache key for pre-computed previews: `(row-key, mode)`, where the row-key is
-/// the row's [`PickerRow::preview_key`] — a branch for a worktree row, the
-/// `pr:N` / `mr:N` token for a listed `--prs` row.
-pub(super) type PreviewCacheKey = (String, PreviewMode);
+/// Canonical identity of a picker row.
+///
+/// Local rows wrap the Git model's [`worktrunk::git::GitItemId`], so
+/// worktrees are path-keyed and branch-only rows are full-ref-keyed. Listed
+/// PR/MR rows use their structured forge reference. Display labels and skim's
+/// string `output()` tokens are intentionally not identities.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) enum PickerRowId {
+    Local(worktrunk::git::GitItemId),
+    ChangeRequest(PrRef),
+}
+
+impl PickerRowId {
+    pub(super) fn local(item: &ListItem) -> Self {
+        Self::Local(item.id().clone())
+    }
+
+    pub(super) fn change_request(pr_ref: PrRef) -> Self {
+        Self::ChangeRequest(pr_ref)
+    }
+}
+
+impl std::fmt::Display for PickerRowId {
+    /// Tagged diagnostic form; never parsed back into an identity.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local(key) => key.fmt(f),
+            Self::ChangeRequest(pr_ref) => {
+                write!(f, "{}{}", pr_ref.ref_type().syntax(), pr_ref.number)
+            }
+        }
+    }
+}
+
+/// Cache key for pre-computed previews: `(canonical row identity, mode)`.
+pub(super) type PreviewCacheKey = (PickerRowId, PreviewMode);
 
 /// Cache for pre-computed previews, keyed by [`PreviewCacheKey`].
 /// Shared across all PickerRows for background pre-computation. This is the
@@ -414,15 +446,17 @@ pub(super) struct PickerRow {
     /// skeleton render and is replaced in place as data arrives; for a `--prs`
     /// row it's built once and never mutated.
     pub rendered: Arc<Mutex<String>>,
+    /// The row's identity-bearing data. Keeping local checkout data and listed
+    /// change-request identity in one enum makes the row key a derivation of
+    /// the subject rather than parallel state that constructors can mismatch.
+    pub subject: PickerRowSubject,
     /// Branch name (the head branch for a `--prs` row). Used by switch
-    /// selection, the `pr` pane's branch line, and — for a worktree row — the
-    /// preview cache key (see [`Self::preview_key`]).
+    /// selection and the `pr` pane's branch line; never as identity.
     pub branch_name: String,
     /// Selection result returned by `output()`, and the `shortcut_table` key.
     /// `worktree_output_token` (`worktree-path:<path>` or `<branch>`) for a
-    /// worktree row; `pr:N` / `mr:N` for a `--prs` row. Distinct from the
-    /// *preview* key (see [`Self::preview_key`]): for a worktree row the two
-    /// differ (path-token vs branch).
+    /// worktree row; `pr:N` / `mr:N` for a `--prs` row. This is a user-facing
+    /// address token, distinct from the typed preview key.
     pub output_token: String,
     /// Shared cache for pre-computed previews (all modes)
     pub preview_cache: PreviewCache,
@@ -434,11 +468,32 @@ pub(super) struct PickerRow {
     /// orchestrator pokes a repaint when that key's compute lands (see
     /// [`PreviewNotifier`]).
     pub notifier: Arc<PreviewNotifier>,
-    /// Local-branch data — `Some` for a local worktree or branch-only row,
-    /// `None` for a listed `--prs` row (whose head isn't available as a local
-    /// `ListItem`). Its presence is the single axis the preview/output paths
-    /// branch on.
-    pub local: Option<LocalCheckout>,
+}
+
+/// Identity-bearing data for one picker row.
+///
+/// Local rows derive their canonical key from the contained [`ListItem`];
+/// listed PR/MR rows derive it from their structured forge reference. This is
+/// also the single axis the preview and output paths branch on.
+pub(super) enum PickerRowSubject {
+    Local(LocalCheckout),
+    ChangeRequest(PrRef),
+}
+
+impl PickerRowSubject {
+    fn id(&self) -> PickerRowId {
+        match self {
+            Self::Local(local) => PickerRowId::local(&local.item),
+            Self::ChangeRequest(pr_ref) => PickerRowId::change_request(*pr_ref),
+        }
+    }
+
+    fn local(&self) -> Option<&LocalCheckout> {
+        match self {
+            Self::Local(local) => Some(local),
+            Self::ChangeRequest(_) => None,
+        }
+    }
 }
 
 /// The local-git-backed half of a [`PickerRow`]: present for local worktree and
@@ -479,18 +534,9 @@ pub(super) struct LocalCheckout {
 }
 
 impl PickerRow {
-    /// Key for every preview-cache read, the `pr`-pane memo, and the
-    /// `PreviewNotifier` `awaiting` record: the branch name for a worktree row
-    /// (its local previews are computed and cached by branch), the `pr:N` /
-    /// `mr:N` token for a `--prs` row (its deferred `log`/`comments` fetches key
-    /// by that token — see the `prs` module). Git forbids `:` in branch names,
-    /// so the two keyspaces never collide.
-    fn preview_key(&self) -> &str {
-        if self.local.is_some() {
-            &self.branch_name
-        } else {
-            &self.output_token
-        }
+    /// Key for every preview-cache read and notifier record.
+    pub(super) fn preview_key(&self) -> PickerRowId {
+        self.subject.id()
     }
 }
 
@@ -527,8 +573,9 @@ impl SkimItem for PickerRow {
         // An `alt-x` morph turned this worktree row into a branch-only row: its
         // selection token is the bare branch name, like any branch row (so a
         // later switch/`alt-x` treats it as a branch, and `alt-y` finds it under
-        // the re-keyed token). `--prs` rows have no `local`, so they never morph.
-        if let Some(local) = &self.local
+        // the re-keyed token). Listed PR/MR rows have no local checkout, so
+        // they never morph.
+        if let Some(local) = self.subject.local()
             && local.morphed.load(Ordering::Relaxed)
         {
             return Cow::Owned(self.branch_name.clone());
@@ -543,7 +590,7 @@ impl SkimItem for PickerRow {
         // (it's per-process picker state); everything else is derived in
         // `render_preview`, which takes the mode explicitly so it's testable
         // without touching that global state.
-        let default_mode = if self.local.is_some() {
+        let default_mode = if self.subject.local().is_some() {
             PreviewMode::UnifiedDiff
         } else {
             PreviewMode::Pr
@@ -556,9 +603,10 @@ impl SkimItem for PickerRow {
         // Record what this (selected) row is showing *before* reading the cache,
         // so a background fill that lands right after a miss still finds the key
         // set and pokes a repaint (see `PreviewNotifier`). Keyed by `preview_key`
-        // (branch for a worktree row, `pr:N` for a `--prs` row) so the awaited
-        // key matches the one the background fill writes.
-        self.notifier.note_awaiting(self.preview_key(), mode);
+        // so the awaited key matches the typed identity the background fill
+        // writes.
+        let preview_key = self.preview_key();
+        self.notifier.note_awaiting(&preview_key, mode);
         // A miss on a local-git tab means the placeholder below would sit
         // until background precompute reaches this (row, mode) — in a large
         // repo, seconds. Ask the demand worker to compute it now; the fill
@@ -569,12 +617,10 @@ impl SkimItem for PickerRow {
         // effort: a request parked in the instant before the morph is still
         // served from the frozen item.) A row an `alt-r` rebuild superseded
         // is refused at the channel via the spawn token it posts.
-        if let Some(local) = &self.local
+        if let Some(local) = self.subject.local()
             && mode.is_local_git()
             && !local.morphed.load(Ordering::Relaxed)
-            && !self
-                .preview_cache
-                .contains_key(&(self.preview_key().to_string(), mode))
+            && !self.preview_cache.contains_key(&(preview_key, mode))
         {
             local.demand.request(
                 Arc::clone(&local.item),
@@ -606,7 +652,7 @@ enum PrPreview {
 /// The three states the `pr` and `comments` tabs branch on, read from a live
 /// `pr_status` slot value without cloning the status. The discriminant mirrors
 /// [`PickerRow::pr_preview`] exactly. The `comments` pane is byte-identical
-/// within `HasPr` (its thread is branch-keyed and surfaced by `notify_filled`),
+/// within `HasPr` (its thread is row-keyed and surfaced by `notify_filled`),
 /// so the collect handler re-renders that tab on a *presence* change, not on
 /// every `pr_status` field — re-running it for an unchanged body would only
 /// reset the user's scroll. See [`PreviewNotifier`].
@@ -1050,7 +1096,7 @@ impl PickerRow {
             // branch-diff/upstream/summary) compute locally for a local row; a `--prs` row has no
             // checkout, so its `log` loads from the forge and the rest point at
             // the `pr` tab (see `render_listed_pr_mode`).
-            _ => match &self.local {
+            _ => match self.subject.local() {
                 Some(_) => self.preview_for_mode(mode, width, height),
                 None => self.render_listed_pr_mode(mode),
             },
@@ -1076,7 +1122,7 @@ impl PickerRow {
 
     /// The same live availability used by the tab bar and sequential cycling.
     fn tab_availability(&self) -> TabAvailability {
-        match &self.local {
+        match self.subject.local() {
             Some(local) => TabAvailability::worktree(
                 *local.local_content.lock().unwrap(),
                 local.has_upstream,
@@ -1098,7 +1144,7 @@ impl PickerRow {
     /// for a `--prs` row, whose slot is static, `prs::listed_pr_row` removes it
     /// when the row is (re)built on an `alt-r` reload.
     pub(super) fn render_pr_pane_cached(&self, width: usize) -> String {
-        let key = (self.preview_key().to_string(), PreviewMode::Pr);
+        let key = (self.preview_key(), PreviewMode::Pr);
         if let Some(cached) = self.preview_cache.get(&key) {
             return cached.value().clone();
         }
@@ -1127,10 +1173,10 @@ impl PickerRow {
     /// `--prs` row's comments tab. When the branch has an open PR, the thread is
     /// fetched in the background (spawned from `progressive_handler`'s
     /// `on_update`/`on_skeleton` once the CI fetch surfaces the PR) and read here
-    /// from the shared cache, keyed by branch name; a miss is the in-flight
-    /// window and shows the same loading placeholder a `--prs` row's tab does. No
-    /// PR — or a CI fetch that hasn't resolved yet — mirrors the `pr` tab's
-    /// empty/loading states, so the two PR-backed tabs stay consistent. The
+    /// from the shared cache, keyed by canonical row identity; a miss is the
+    /// in-flight window and shows the same loading placeholder a `--prs` row's
+    /// tab does. No PR — or a CI fetch that hasn't resolved yet — mirrors the
+    /// `pr` tab's empty/loading states, so the two PR-backed tabs stay consistent. The
     /// background fetch renders at the preview width, so this reads it back
     /// without re-wrapping (via `cached_or_loading`).
     fn render_comments_pane(&self) -> String {
@@ -1158,7 +1204,7 @@ impl PickerRow {
     /// once it lands.
     pub(super) fn cached_or_loading(&self, mode: PreviewMode) -> String {
         self.preview_cache
-            .get(&(self.preview_key().to_string(), mode))
+            .get(&(self.preview_key(), mode))
             .map(|v| v.value().clone())
             .unwrap_or_else(|| super::prs::pr_deferred_loading(mode))
     }
@@ -1183,9 +1229,9 @@ impl PickerRow {
     /// (see [`PreviewNotifier`]).
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, _height: usize) -> String {
         // Reached only for a worktree row (the `Some(_)` arm in `render_preview`),
-        // so `preview_key` is the branch — the key the orchestrator precomputes
-        // local previews under.
-        let cache_key = (self.preview_key().to_string(), mode);
+        // so the key is the canonical local identity the orchestrator
+        // precomputes under.
+        let cache_key = (self.preview_key(), mode);
         let content = self
             .preview_cache
             .get(&cache_key)
@@ -1326,7 +1372,7 @@ impl PickerRow {
     /// including committed, staged, unstaged, and untracked changes.
     fn compute_unified_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
-        let Some(wt_info) = item.worktree_data() else {
+        let Some(worktree_path) = item.worktree_path() else {
             // A branch-only row has no mutable worktree state, so its complete
             // diff is exactly the committed diff and can reuse that disk cache.
             return Self::compute_branch_diff_preview(repo, item, width);
@@ -1335,7 +1381,7 @@ impl PickerRow {
         // the complete view is exactly the committed view, so reuse its SHA-keyed
         // disk cache and skip the temporary index. A status failure falls through
         // to the diff itself, which may still succeed and is the better authority.
-        let worktree_state = Self::worktree_diff_state(repo, &wt_info.path);
+        let worktree_state = Self::worktree_diff_state(repo, worktree_path);
         if worktree_state == WorktreeDiffState::Clean {
             return Self::compute_branch_diff_preview(repo, item, width);
         }
@@ -1349,7 +1395,7 @@ impl PickerRow {
             return Self::unavailable_diff(branch, "complete diff");
         };
 
-        match Self::compute_live_worktree_diff(repo, &wt_info.path, base, width, worktree_state) {
+        match Self::compute_live_worktree_diff(repo, worktree_path, base, width, worktree_state) {
             Ok(Some(diff)) => diff,
             Ok(None) => {
                 let base_name = &spec.base_name;
@@ -1367,7 +1413,7 @@ impl PickerRow {
     /// Compute Tab 2: staged, unstaged, and untracked changes vs HEAD.
     fn compute_working_tree_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
-        let Some(wt_info) = item.worktree_data() else {
+        let Some(worktree_path) = item.worktree_path() else {
             let reset = Reset;
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is branch only — press Enter to create worktree\n"
@@ -1375,13 +1421,13 @@ impl PickerRow {
         };
 
         let reset = Reset;
-        let worktree_state = Self::worktree_diff_state(repo, &wt_info.path);
+        let worktree_state = Self::worktree_diff_state(repo, worktree_path);
         if worktree_state == WorktreeDiffState::Clean {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no working-tree changes\n"
             );
         }
-        match Self::compute_live_worktree_diff(repo, &wt_info.path, "HEAD", width, worktree_state) {
+        match Self::compute_live_worktree_diff(repo, worktree_path, "HEAD", width, worktree_state) {
             Ok(Some(diff)) => diff,
             Ok(None) => cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no working-tree changes\n"
@@ -1793,8 +1839,14 @@ impl PickerRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::list::model::WorktreeData;
     use ansi_str::AnsiStr;
     use insta::assert_snapshot;
+
+    fn as_worktree(item: ListItem, path: &std::path::Path, data: WorktreeData) -> ListItem {
+        let subject = worktrunk::git::WorktreeRef::new(path, item.branch(), item.head());
+        ListItem::new_worktree(subject, data)
+    }
 
     /// `anchor_faint_under_selection` recolors faint text to an explicit gray
     /// only on the selected row (and only foreground-less faint spans), so the
@@ -1880,7 +1932,11 @@ mod tests {
         }
     }
 
-    /// Build a worktree-backed [`PickerRow`] (`local: Some`) for tests, with the
+    fn test_local_row_id(branch: &str) -> PickerRowId {
+        PickerRowId::local(&test_local_checkout(branch).item)
+    }
+
+    /// Build a worktree-backed [`PickerRow`] for tests, with the
     /// given branch, preview cache, and live `pr_status` slot value; the local
     /// signals default (no upstream, no summaries, unknown diff content).
     fn worktree_test_row(
@@ -1888,16 +1944,17 @@ mod tests {
         preview_cache: PreviewCache,
         pr_status: Option<Option<PrStatus>>,
     ) -> PickerRow {
+        let local = test_local_checkout(branch);
         PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch.to_string(),
             output_token: branch.to_string(),
+            subject: PickerRowSubject::Local(local),
             preview_cache,
             pr_status: Arc::new(Mutex::new(pr_status)),
             notifier: PreviewNotifier::detached(),
-            local: Some(test_local_checkout(branch)),
         }
     }
 
@@ -2014,9 +2071,7 @@ mod tests {
     /// `ListItem`, matching exactly what the corresponding pane renders.
     #[test]
     fn local_content_mirrors_item_diff_state() {
-        use crate::commands::list::model::{
-            ItemKind, UpstreamStatus, WorkingTreeStatus, WorktreeData,
-        };
+        use crate::commands::list::model::{UpstreamStatus, WorkingTreeStatus, WorktreeData};
 
         // A branch-only row has no working tree, so its working-tree tab is empty
         // immediately (no loading window). The other signals are still unknown.
@@ -2084,11 +2139,14 @@ mod tests {
         // `working_tree` matches the temporary-index diff: tracked and untracked
         // changes both count.
         let worktree_with = |status: WorkingTreeStatus| {
-            let mut item = ListItem::new_branch("abc".into(), "feature".into());
-            item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-                working_tree_status: Some(status),
-                ..Default::default()
-            }));
+            let item = as_worktree(
+                ListItem::new_branch("abc".into(), "feature".into()),
+                std::path::Path::new("/tmp/feature"),
+                WorktreeData {
+                    working_tree_status: Some(status),
+                    ..Default::default()
+                },
+            );
             LocalContent::from_item(&item).working_tree
         };
         // staged, modified, renamed, deleted → tracked content present.
@@ -2105,8 +2163,11 @@ mod tests {
             "untracked alone is shown by the working-tree diff"
         );
         // A worktree whose status task hasn't landed yet stays loading.
-        let mut pending = ListItem::new_branch("abc".into(), "feature".into());
-        pending.kind = ItemKind::Worktree(Box::default());
+        let pending = as_worktree(
+            ListItem::new_branch("abc".into(), "feature".into()),
+            std::path::Path::new("/tmp/feature"),
+            WorktreeData::default(),
+        );
         assert_eq!(LocalContent::from_item(&pending).working_tree, None);
     }
 
@@ -2404,7 +2465,7 @@ mod tests {
         let cache_hit = {
             let preview_cache: PreviewCache = Arc::new(DashMap::new());
             preview_cache.insert(
-                ("feature".to_string(), PreviewMode::Summary),
+                (test_local_row_id("feature"), PreviewMode::Summary),
                 "Add auth module\n\nImplements JWT-based authentication.".to_string(),
             );
             worktree_test_row("feature", preview_cache, None)
@@ -2607,7 +2668,7 @@ mod tests {
         // A PR with the thread already cached → the cached thread is shown.
         let cache: PreviewCache = Arc::new(DashMap::new());
         cache.insert(
-            ("feature".to_string(), PreviewMode::Comments),
+            (test_local_row_id("feature"), PreviewMode::Comments),
             "@octocat\nLooks good\n".to_string(),
         );
         let with_thread = row(pr_status(Some(PrRef::pr(7))), Arc::clone(&cache));
@@ -2805,17 +2866,18 @@ mod tests {
         // invalidate the entry the way the collect handler's `on_update` does.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let slot: PrStatusSlot = Arc::new(Mutex::new(status("First title")));
-        let key = ("feature".to_string(), PreviewMode::Pr);
+        let local = test_local_checkout("feature");
+        let key = (PickerRowId::local(&local.item), PreviewMode::Pr);
         let row = PickerRow {
             search_base: String::new(),
             gutter: '@',
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: "feature".into(),
             output_token: "feature".into(),
+            subject: PickerRowSubject::Local(local),
             preview_cache: Arc::clone(&cache),
             pr_status: Arc::clone(&slot),
             notifier: PreviewNotifier::detached(),
-            local: Some(test_local_checkout("feature")),
         };
 
         // First render populates the shared cache.
@@ -2903,7 +2965,7 @@ mod tests {
 
     #[test]
     fn unified_diff_is_net_change_and_subsidiary_diffs_include_untracked() {
-        use crate::commands::list::model::{ItemKind, WorktreeData};
+        use crate::commands::list::model::WorktreeData;
 
         let (t, repo) = repo_with_main();
         let shared = t.path().join("shared.txt");
@@ -2925,11 +2987,7 @@ mod tests {
         repo.run_command(&["config", "status.showUntrackedFiles", "no"])
             .unwrap();
 
-        let mut item = item_at(&repo, "feature");
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        }));
+        let item = as_worktree(item_at(&repo, "feature"), t.path(), WorktreeData::default());
 
         let real_index = repo.current_worktree().git_dir().unwrap().join("index");
         let index_before = std::fs::read(&real_index).unwrap();
@@ -2962,7 +3020,7 @@ mod tests {
 
     #[test]
     fn worktree_diff_surfaces_full_diff_command_failure() {
-        use crate::commands::list::model::{ItemKind, WorktreeData};
+        use crate::commands::list::model::WorktreeData;
 
         let (t, repo) = repo_with_main();
         std::fs::write(t.path().join(".gitattributes"), "*.txt diff=explode\n").unwrap();
@@ -2975,11 +3033,7 @@ mod tests {
             .unwrap();
         std::fs::write(t.path().join("tracked.txt"), "changed\n").unwrap();
 
-        let mut item = item_at(&repo, "main");
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        }));
+        let item = as_worktree(item_at(&repo, "main"), t.path(), WorktreeData::default());
 
         let unified = PickerRow::compute_unified_diff_preview(&repo, &item, 80);
         let working = PickerRow::compute_working_tree_preview(&repo, &item, 80);
@@ -3119,14 +3173,10 @@ mod tests {
     fn working_tree_preview_clean_worktree_headline() {
         // A worktree with no uncommitted changes renders the empty-state
         // headline (the diff body is `None`).
-        use crate::commands::list::model::{ItemKind, WorktreeData};
+        use crate::commands::list::model::WorktreeData;
 
         let (t, repo) = repo_with_main();
-        let mut item = item_at(&repo, "main");
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: t.path().to_path_buf(),
-            ..Default::default()
-        }));
+        let item = as_worktree(item_at(&repo, "main"), t.path(), WorktreeData::default());
 
         let output = PickerRow::compute_working_tree_preview(&repo, &item, 80);
         assert!(

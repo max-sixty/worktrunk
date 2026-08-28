@@ -18,6 +18,10 @@ fn main_only_repo() -> TestRepo {
     TestRepo::standard_main_only()
 }
 
+fn worktree_row_id(path: &std::path::Path) -> String {
+    worktrunk::git::GitItemId::from(worktrunk::git::WorktreeId::new(path)).to_string()
+}
+
 /// Install a strict fake summary command through TestRepo's cross-platform
 /// mock-PATH wiring. Tests observe its external call log to distinguish the
 /// generated-summary route from the static mode-5 config hint.
@@ -99,15 +103,13 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
         "expected at least one cache entry, got: {stdout}"
     );
 
-    // Every entry has {branch: string, mode: u8, bytes: usize, content: string}. Asserting
+    // Every entry has {row_id: string, mode: u8, bytes: usize, content: string}. Asserting
     // schema (not specific branches/modes) keeps the test robust to fixture
     // changes while still covering the dump format.
     for e in entries {
         assert!(
-            e["branch"]
-                .as_str()
-                .is_some_and(|branch| !branch.is_empty()),
-            "entry missing nonempty branch: {e}"
+            e["row_id"].as_str().is_some_and(|key| !key.is_empty()),
+            "entry missing nonempty row ID: {e}"
         );
         assert!(
             e["mode"]
@@ -140,7 +142,7 @@ fn test_picker_dry_run_emits_configured_rows_and_cache_json(
 }
 
 /// The speculative default-preview producer runs before list collection. It
-/// must carry a real HEAD, or it can poison the `(branch, UnifiedDiff)` cache
+/// must carry a real HEAD, or it can poison the `(row, UnifiedDiff)` cache
 /// key with an error pane before the collected row tries to fill it. One Rayon
 /// worker makes that ordering deterministic. The hidden-untracked setting also
 /// pins that the shared cleanliness signal cannot suppress the file.
@@ -150,7 +152,7 @@ fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
 ) {
     repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
     std::fs::write(repo.path().join("untracked-preview.txt"), "preview\n").unwrap();
-    let branch = repo.current_branch();
+    let row_id = worktree_row_id(repo.path());
 
     let output = repo
         .wt_command()
@@ -172,7 +174,7 @@ fn test_picker_dry_run_speculative_complete_diff_uses_real_head(
         .as_array()
         .expect("top-level `entries` array")
         .iter()
-        .find(|entry| entry["branch"] == branch && entry["mode"] == 1)
+        .find(|entry| entry["row_id"] == row_id && entry["mode"] == 1)
         .expect("current branch has a complete-diff cache entry");
     let content = complete["content"].as_str().expect("content is a string");
 
@@ -202,6 +204,7 @@ fn test_picker_dry_run_tempdir_inside_worktree_has_no_worktrunk_artifacts(
     repo.run_git(&["commit", "-m", "track local temp directory"]);
     std::fs::write(repo.path().join("loose.txt"), "loose\n").unwrap();
     let branch = repo.current_branch();
+    let row_id = worktree_row_id(repo.path());
 
     let output = repo
         .wt_command()
@@ -225,7 +228,7 @@ fn test_picker_dry_run_tempdir_inside_worktree_has_no_worktrunk_artifacts(
     for mode in [1, 2] {
         let pane = entries
             .iter()
-            .find(|entry| entry["branch"] == branch && entry["mode"] == mode)
+            .find(|entry| entry["row_id"] == row_id && entry["mode"] == mode)
             .unwrap_or_else(|| panic!("branch {branch} has mode-{mode} cache entry"));
         let content = pane["content"].as_str().expect("content is a string");
         assert!(
@@ -261,6 +264,7 @@ fn test_picker_dry_run_includes_untracked_outside_sparse_checkout(
     std::fs::create_dir_all(&hidden).unwrap();
     std::fs::write(hidden.join("loose.txt"), "loose\n").unwrap();
     let branch = repo.current_branch();
+    let row_id = worktree_row_id(repo.path());
 
     let output = repo
         .wt_command()
@@ -282,7 +286,7 @@ fn test_picker_dry_run_includes_untracked_outside_sparse_checkout(
     for mode in [1, 2] {
         let pane = entries
             .iter()
-            .find(|entry| entry["branch"] == branch && entry["mode"] == mode)
+            .find(|entry| entry["row_id"] == row_id && entry["mode"] == mode)
             .unwrap_or_else(|| panic!("branch {branch} has mode-{mode} cache entry"));
         let content = pane["content"].as_str().expect("content is a string");
         assert!(
@@ -439,25 +443,27 @@ fn test_picker_dry_run_shows_cached_pr_numbers(mut repo: TestRepo) {
     );
 
     // The worktree row with a PR spawns a `comments` background fetch keyed by
-    // its branch name (PreviewMode::Comments == 8) — the same fetch a `--prs`
-    // row makes, so the comments tab is no longer `--prs`-only. In this no-network
+    // its canonical worktree identity (PreviewMode::Comments == 8) — the same
+    // fetch a `--prs` row makes, so the comments tab is no longer `--prs`-only. In this no-network
     // test the entry holds a terminal pane (a "couldn't load" on a GitHub remote,
     // or a "forge unsupported" note otherwise), but its presence proves the fetch
-    // fired and keyed by branch. The PR-less row spawns no such fetch.
-    let comments_branches: Vec<&str> = parsed["entries"]
+    // fired and keyed by row. The PR-less row spawns no such fetch.
+    let comments_keys: Vec<&str> = parsed["entries"]
         .as_array()
         .expect("top-level `entries` array")
         .iter()
         .filter(|e| e["mode"] == 8)
-        .map(|e| e["branch"].as_str().expect("branch is a string"))
+        .map(|e| e["row_id"].as_str().expect("row_id is a string"))
         .collect();
+    let feature_a_key = worktree_row_id(repo.worktree_path("feature-a"));
+    let feature_b_key = worktree_row_id(repo.worktree_path("feature-b"));
     assert!(
-        comments_branches.contains(&"feature-a"),
-        "the PR-bearing worktree row spawns a branch-keyed comments fetch, got: {comments_branches:?}"
+        comments_keys.contains(&feature_a_key.as_str()),
+        "the PR-bearing worktree row spawns a row-ID-keyed comments fetch, got: {comments_keys:?}"
     );
     assert!(
-        !comments_branches.contains(&"feature-b"),
-        "the PR-less worktree row spawns no comments fetch, got: {comments_branches:?}"
+        !comments_keys.contains(&feature_b_key.as_str()),
+        "the PR-less worktree row spawns no comments fetch, got: {comments_keys:?}"
     );
 }
 

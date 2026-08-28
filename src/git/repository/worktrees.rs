@@ -12,6 +12,7 @@ use super::{
     GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
     normalize_selector, resolve_input_path,
 };
+use crate::git::WorktreeId;
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
@@ -418,14 +419,16 @@ impl Repository {
                 .map_err(|_| GitError::NotInWorktree {
                     action: Some("resolve @".into()),
                 })?;
-            // root() returns canonicalized path, so canonicalize worktree paths
-            // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
+            // Compare canonical identities so alternate path spellings (for
+            // example macOS `/var` and `/private/var`) select one inventory
+            // entry without changing Git's registered path.
+            let current_id = WorktreeId::new(&path);
             let branch = self
                 .list_worktrees()?
                 .iter()
-                .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
+                .find(|wt| wt.id() == current_id)
                 .and_then(|wt| wt.branch.clone());
-            return Ok(ResolvedWorktree::Worktree { path, branch });
+            return Ok(ResolvedWorktree::worktree(path, branch));
         }
 
         self.resolve_selector(&self.expand_selector(name)?)
@@ -443,10 +446,7 @@ impl Repository {
         let token = selector.token();
 
         if let Some(path) = self.worktree_for_branch(token)? {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: Some(token.to_string()),
-            });
+            return Ok(ResolvedWorktree::worktree(path, Some(token.to_string())));
         }
 
         // Both remaining steps are about the token as a path, so
@@ -456,16 +456,11 @@ impl Repository {
         // to create, and a directory sitting at that spelling is the clobber
         // check's business.
         if !selector.names_a_path() {
-            return Ok(ResolvedWorktree::BranchOnly {
-                branch: token.to_string(),
-            });
+            return Ok(ResolvedWorktree::branch_only(token.to_string()));
         }
 
         if let Some((path, wt_branch)) = self.worktree_at_input_path(token)? {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: wt_branch,
-            });
+            return Ok(ResolvedWorktree::worktree(path, wt_branch));
         }
 
         // Nothing matched, so say which of the two the selector was reaching
@@ -473,9 +468,7 @@ impl Repository {
         // returns on `is_valid_branch_name` before touching the filesystem.
         Ok(match self.path_selector_directory(token) {
             Some(path) => ResolvedWorktree::NoWorktreeAtPath { path },
-            None => ResolvedWorktree::BranchOnly {
-                branch: token.to_string(),
-            },
+            None => ResolvedWorktree::branch_only(token.to_string()),
         })
     }
 
@@ -493,13 +486,15 @@ impl Repository {
                 branch: Some(branch),
                 ..
             } => Ok(branch),
-            ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            ResolvedWorktree::BranchOnly { branch, .. } => Ok(branch),
             // A path spelling can't be the branch the caller is about to key
             // state by.
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }
-            ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
+            ResolvedWorktree::Worktree {
+                path, branch: None, ..
+            } => Err(GitError::DetachedHead {
                 action: Some(cformat!(
                     "{action} — <bold>{}</> is detached",
                     format_path_for_display(&path)
@@ -523,7 +518,7 @@ impl Repository {
     pub fn require_worktree(&self, name: &str) -> anyhow::Result<PathBuf> {
         match self.resolve_worktree(name)? {
             ResolvedWorktree::Worktree { path, .. } => Ok(path),
-            ResolvedWorktree::BranchOnly { branch } => Err(self.no_worktree_error(branch)),
+            ResolvedWorktree::BranchOnly { branch, .. } => Err(self.no_worktree_error(branch)),
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }

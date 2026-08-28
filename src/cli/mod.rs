@@ -1670,8 +1670,8 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ base_worktree_path }}`    | Base worktree path |
 |           | `{{ target }}`                | Target branch name |
 |           | `{{ target_worktree_path }}`  | Target worktree path (when target has a worktree) |
-|           | `{{ pr_number }}`             | PR/MR number (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
-|           | `{{ pr_url }}`                | PR/MR web URL (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
+|           | `{{ pr_number }}`             | PR/MR number (switch and create hooks; when switching via `pr:N` / `mr:N`) |
+|           | `{{ pr_url }}`                | PR/MR web URL (switch and create hooks; when switching via `pr:N` / `mr:N`) |
 | repo      | `{{ repo }}`                  | Repository directory name |
 |           | `{{ repo_path }}`             | Absolute path to repository root |
 |           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |
@@ -1701,7 +1701,7 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 
 `cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
 
-- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination
+- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination when that worktree already exists — a switch that creates one has no destination directory yet, so `worktree_path` stays on the source (use `pre-start` to work in the new worktree)
 - `post-remove`: the active worktree is gone, so the hook runs in the primary worktree
 - `post-merge` with removal: the active worktree is gone, so the hook runs in the target worktree
 

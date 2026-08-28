@@ -1,6 +1,6 @@
 //! Git operations and repository management
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Submodules
 mod ci_platform;
@@ -32,6 +32,7 @@ mod test;
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
 // - git diff --shortstat (accesses pack files and indexes via mmap)
+use crate::path::canonicalize_with_parents;
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -529,7 +530,8 @@ impl HookType {
 ///
 /// # Construction
 ///
-/// - From a worktree: `BranchRef::from(&worktree_info)`
+/// - From a worktree: `worktree_info.worktree_ref()` and then
+///   [`WorktreeRef::into_branch_ref()`]
 /// - For a local branch: `BranchRef::local_branch("feature", "abc123")`
 /// - For a remote branch: `BranchRef::remote_branch("origin/feature", "abc123")`
 ///
@@ -539,6 +541,9 @@ impl HookType {
 /// which returns `Some(WorkingTree)` only when this ref has a worktree path.
 #[derive(Debug, Clone)]
 pub struct BranchRef {
+    /// Repository-scoped identity of this inventory item. Constructed with the
+    /// snapshot so downstream users never reinterpret paths or ref names.
+    id: GitItemId,
     /// Full git ref (e.g., `refs/heads/feature`, `refs/remotes/origin/feature`).
     /// `None` for detached HEAD.
     ///
@@ -547,19 +552,114 @@ pub struct BranchRef {
     /// literally named `origin/foo`, and `git rev-parse origin/foo` then picks
     /// `refs/heads/origin/foo` over `refs/remotes/origin/foo`. With the full
     /// ref there is nothing to disambiguate.
-    pub full_ref: Option<String>,
+    full_ref: Option<String>,
     /// Commit SHA this branch/worktree points to.
     pub commit_sha: String,
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
-    pub worktree_path: Option<PathBuf>,
+    worktree_path: Option<PathBuf>,
+}
+
+/// Canonical snapshot of a registered worktree.
+///
+/// This is the typed construction boundary for worktree-backed items. Inner
+/// layers can accept it instead of an arbitrary [`BranchRef`], which makes a
+/// missing worktree path unrepresentable while preserving the same canonical
+/// [`WorktreeId`] used for equality.
+#[derive(Debug, Clone)]
+pub struct WorktreeRef(BranchRef);
+
+/// Canonical identity of one registered worktree.
+///
+/// Git's registered path remains available separately for display and command
+/// execution. Equality uses the canonical path so aliases such as `/var` and
+/// `/private/var` name the same worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WorktreeId(PathBuf);
+
+impl WorktreeId {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self(canonicalize_with_parents(path.as_ref()))
+    }
+}
+
+/// Repository-scoped identity for a worktree or branch-only item.
+///
+/// This is deliberately separate from every adjacent string representation:
+///
+/// - a worktree is identified by its canonical path, because detached
+///   worktrees have no ref and Git can force-check out one branch more than
+///   once;
+/// - a branch-only item is identified by its full ref, so a local branch named
+///   `origin/foo` cannot collide with `refs/remotes/origin/foo`.
+///
+/// The key identifies the item, not its current content. Caches whose values
+/// depend on a commit or tree must include that content signature separately.
+/// Likewise, user-facing selectors and display labels are representations of
+/// an item, not substitutes for this key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GitItemId(GitItemIdKind);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum GitItemIdKind {
+    Worktree(WorktreeId),
+    Ref(String),
+}
+
+impl GitItemId {
+    /// Identify a worktree by the canonical form used for path comparisons.
+    fn worktree(path: impl AsRef<Path>) -> Self {
+        WorktreeId::new(path).into()
+    }
+
+    /// Identify a branch-only item by an already-qualified ref.
+    fn full_ref(full_ref: impl Into<String>) -> Self {
+        Self(GitItemIdKind::Ref(full_ref.into()))
+    }
+
+    fn local_branch(branch: &str) -> Self {
+        Self::full_ref(local_ref(branch))
+    }
+
+    fn remote_branch(branch: &str) -> Self {
+        Self::full_ref(remote_ref(branch))
+    }
+}
+
+fn local_ref(branch: &str) -> String {
+    format!("refs/heads/{branch}")
+}
+
+fn remote_ref(branch: &str) -> String {
+    format!("refs/remotes/{branch}")
+}
+
+impl From<WorktreeId> for GitItemId {
+    fn from(id: WorktreeId) -> Self {
+        Self(GitItemIdKind::Worktree(id))
+    }
+}
+
+impl std::fmt::Display for GitItemId {
+    /// Tagged diagnostic form. Equality and hashing use the structured key;
+    /// this string exists only for logs and test-only cache inventories.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            GitItemIdKind::Worktree(id) => {
+                write!(f, "worktree:{}", id.0.to_string_lossy())
+            }
+            GitItemIdKind::Ref(full_ref) => write!(f, "ref:{full_ref}"),
+        }
+    }
 }
 
 impl BranchRef {
     /// Create a BranchRef for a local branch without a worktree.
     pub fn local_branch(branch: &str, commit_sha: &str) -> Self {
+        let full_ref = local_ref(branch);
         Self {
-            full_ref: Some(format!("refs/heads/{branch}")),
+            id: GitItemId::local_branch(branch),
+            full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
         }
@@ -571,11 +671,18 @@ impl BranchRef {
     /// as produced by `%(refname:lstrip=2)` in `list_remote_branches`. It is
     /// stored as `refs/remotes/<branch>`.
     pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
+        let full_ref = remote_ref(branch);
         Self {
-            full_ref: Some(format!("refs/remotes/{branch}")),
+            id: GitItemId::remote_branch(branch),
+            full_ref: Some(full_ref),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
         }
+    }
+
+    /// Repository-scoped identity of this worktree or branch-only item.
+    pub fn id(&self) -> &GitItemId {
+        &self.id
     }
 
     /// Get a working tree handle for this branch's worktree.
@@ -588,9 +695,9 @@ impl BranchRef {
             .map(|p| repo.worktree_at(p.clone()))
     }
 
-    /// Returns true if this branch has a worktree.
-    pub fn has_worktree(&self) -> bool {
-        self.worktree_path.is_some()
+    /// Git's registered path for a worktree-backed item.
+    pub fn worktree_path(&self) -> Option<&Path> {
+        self.worktree_path.as_deref()
     }
 
     /// Full git ref (e.g., `refs/heads/feature`, `refs/remotes/origin/feature`),
@@ -632,20 +739,30 @@ impl BranchRef {
     }
 }
 
-impl From<&WorktreeInfo> for BranchRef {
-    fn from(wt: &WorktreeInfo) -> Self {
-        // `WorktreeInfo.branch` is the short form produced by
-        // `parse_porcelain_list` (one `refs/heads/` prefix stripped). Worktrees
-        // always point at local branches, so re-qualifying with `refs/heads/`
-        // gives the full ref. Note: git permits a branch literally named
-        // `refs/heads/foo`; in that case `wt.branch == "refs/heads/foo"` and
-        // this produces `refs/heads/refs/heads/foo` — which is the correct full
-        // ref for that pathological branch, so we don't special-case it.
-        Self {
-            full_ref: wt.branch.as_deref().map(|b| format!("refs/heads/{b}")),
-            commit_sha: wt.head.clone(),
-            worktree_path: Some(wt.path.clone()),
+impl WorktreeRef {
+    /// Capture a worktree's identity and Git snapshot once while preserving
+    /// the registered path spelling for commands and display.
+    pub fn new(path: impl Into<PathBuf>, branch: Option<&str>, commit_sha: &str) -> Self {
+        let path = path.into();
+        Self(BranchRef {
+            id: WorktreeId::new(&path).into(),
+            full_ref: branch.map(local_ref),
+            commit_sha: commit_sha.to_string(),
+            worktree_path: Some(path),
+        })
+    }
+
+    /// Canonical worktree identity captured by [`Self::new`].
+    pub fn id(&self) -> &WorktreeId {
+        match &self.0.id.0 {
+            GitItemIdKind::Worktree(id) => id,
+            GitItemIdKind::Ref(_) => unreachable!("WorktreeRef always contains a worktree ID"),
         }
+    }
+
+    /// Pass the already-canonicalized subject to an inner layer.
+    pub fn into_branch_ref(self) -> BranchRef {
+        self.0
     }
 }
 
@@ -676,6 +793,21 @@ pub fn path_dir_name(path: &std::path::Path) -> &str {
 }
 
 impl WorktreeInfo {
+    /// Canonical identity of this inventory entry. The registered path remains
+    /// unchanged on [`Self::path`] for display and Git operations.
+    pub fn id(&self) -> WorktreeId {
+        WorktreeId::new(&self.path)
+    }
+
+    /// Build the canonical worktree subject for this inventory entry.
+    pub fn worktree_ref(&self) -> WorktreeRef {
+        // `branch` is the short form produced by `parse_porcelain_list` (one
+        // `refs/heads/` prefix stripped). Re-qualifying it in the worktree
+        // constructor preserves even a pathological branch literally named
+        // `refs/heads/foo` as `refs/heads/refs/heads/foo`.
+        WorktreeRef::new(self.path.clone(), self.branch.as_deref(), &self.head)
+    }
+
     /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
     ///
     /// Prunable worktrees cannot be operated on - the directory doesn't exist.
@@ -937,7 +1069,7 @@ mod tests {
             prunable: None,
         };
 
-        let branch_ref = BranchRef::from(&wt);
+        let branch_ref = wt.worktree_ref().into_branch_ref();
 
         assert_eq!(branch_ref.full_ref(), Some("refs/heads/feature"));
         assert_eq!(branch_ref.short_name(), Some("feature"));
@@ -946,7 +1078,7 @@ mod tests {
             branch_ref.worktree_path,
             Some(PathBuf::from("/repo.feature"))
         );
-        assert!(branch_ref.has_worktree());
+        assert!(branch_ref.worktree_path().is_some());
         assert!(!branch_ref.is_remote()); // Worktrees are always local
     }
 
@@ -958,7 +1090,7 @@ mod tests {
         assert_eq!(branch_ref.short_name(), Some("feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
-        assert!(!branch_ref.has_worktree());
+        assert!(branch_ref.worktree_path().is_none());
         assert!(!branch_ref.is_remote());
     }
 
@@ -970,7 +1102,7 @@ mod tests {
         assert_eq!(branch_ref.short_name(), Some("origin/feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
-        assert!(!branch_ref.has_worktree());
+        assert!(branch_ref.worktree_path().is_none());
         assert!(branch_ref.is_remote());
     }
 
@@ -995,13 +1127,39 @@ mod tests {
     }
 
     #[test]
+    fn branch_ref_preserves_git_item_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let first_path = root.path().join("first");
+        let second_path = root.path().join("second");
+        std::fs::create_dir_all(&first_path).unwrap();
+        std::fs::create_dir_all(&second_path).unwrap();
+
+        // Worktree state belongs to the checkout, not to its branch or commit.
+        // Two detached worktrees at one commit and two force-checkouts of one
+        // branch therefore remain distinct keys.
+        assert_ne!(
+            WorktreeRef::new(&first_path, None, "abc").id(),
+            WorktreeRef::new(&second_path, None, "abc").id()
+        );
+
+        // Equivalent path spellings converge on the same checkout identity.
+        let same_path = WorktreeRef::new(first_path.join("."), None, "abc");
+        assert_eq!(
+            WorktreeRef::new(&first_path, None, "abc").id(),
+            same_path.id()
+        );
+
+        // A short name is presentation; the full ref is identity.
+        assert_ne!(
+            BranchRef::local_branch("origin/foo", "abc").id(),
+            BranchRef::remote_branch("origin/foo", "abc").id()
+        );
+    }
+
+    #[test]
     fn test_branch_ref_detached_has_no_ref() {
         // Detached HEAD has no branch name — callers fall back to commit_sha.
-        let detached = BranchRef {
-            full_ref: None,
-            commit_sha: "abc".into(),
-            worktree_path: None,
-        };
+        let detached = WorktreeRef::new("/tmp/detached", None, "abc").into_branch_ref();
         assert_eq!(detached.full_ref(), None);
         assert_eq!(detached.short_name(), None);
         assert!(!detached.is_remote());
@@ -1183,11 +1341,11 @@ mod tests {
             prunable: None,
         };
 
-        let branch_ref = BranchRef::from(&wt);
+        let branch_ref = wt.worktree_ref().into_branch_ref();
 
         assert_eq!(branch_ref.full_ref(), None);
         assert_eq!(branch_ref.short_name(), None);
         assert_eq!(branch_ref.commit_sha, "def456");
-        assert!(branch_ref.has_worktree());
+        assert!(branch_ref.worktree_path().is_some());
     }
 }
