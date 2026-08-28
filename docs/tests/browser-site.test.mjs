@@ -275,11 +275,19 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
         contrastRatio(homepageTerminalStyles.quoted, homepageTerminalStyles.background) >= 4.5,
         `${theme} quoted shell string falls below 4.5:1 contrast`,
       );
-      assert.deepEqual(homepageTerminalStyles.gutterIndexes, [1, 4, 5, 6, 7]);
-      assert.equal(homepageTerminalStyles.joins.length, 3);
+      assert.deepEqual(
+        homepageTerminalStyles.gutterIndexes,
+        [1, 4, 5, 6, 7],
+        `${theme} merge gutter rows moved — regenerate from quickstart_merge.snap`,
+      );
+      assert.equal(
+        homepageTerminalStyles.joins.length,
+        3,
+        `${theme} merge gutter run is no longer three adjacent joins`,
+      );
       assert.ok(
-        homepageTerminalStyles.joins.every((gap) => gap <= 0),
-        `${theme} merge gutter has a visible gap between rows`,
+        homepageTerminalStyles.joins.every((gap) => Math.abs(gap) < 0.5),
+        `${theme} merge gutter does not sit flush between rows`,
       );
       assert.equal(
         new Set(homepageTerminalStyles.lineHeights).size,
