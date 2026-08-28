@@ -9,6 +9,14 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -25,8 +33,10 @@ info:
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -44,7 +54,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mdefault-branch[0m  Default branch detection and override
   [1m[36mlogs[0m            Operation and debug logs
   [1m[36mmarker[0m          Branch markers
-  [1m[36mvars[0m            [experimental] Custom variables per branch
+  [1m[36mvars[0m            Custom variables per branch
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -73,7 +83,7 @@ State is stored in [2m.git/[0m (config entries and log files), separate from c
 - [1mcache[0m: Regenerable caches — CI status, summaries, git commands, hints, and the [2mwt switch -[0m target
 - [1mdefault-branch[0m: The repository's default branch ([2mmain[0m, [2mmaster[0m, etc.)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
-- [1mvars[0m: [experimental] Custom variables per branch
+- [1mvars[0m: Custom variables per branch
 - [1mlogs[0m: Operation and debug logs
 
 [1m[32mExamples[0m

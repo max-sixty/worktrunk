@@ -3193,6 +3193,63 @@ json-schema = 1
     });
 }
 
+/// Retired settings are ordinary unknown fields: loading warns, while
+/// `wt config update` leaves the file untouched instead of treating them as
+/// migrations it still owns.
+#[rstest]
+fn test_config_update_leaves_retired_keys_for_unknown_field_warnings(repo: TestRepo) {
+    let content = r#"[commit.generation]
+template-file = "/tmp/commit-template"
+squash-template-file = "/tmp/squash-template"
+
+[switch.picker]
+timeout-ms = 500
+
+[list]
+json-schema = 1
+"#;
+    fs::write(repo.test_config_path(), content).unwrap();
+
+    let load_output = repo.wt_command().arg("list").output().unwrap();
+    assert!(
+        load_output.status.success(),
+        "config load should succeed: {}",
+        String::from_utf8_lossy(&load_output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&load_output.stderr);
+    for key in [
+        "commit.generation.template-file",
+        "commit.generation.squash-template-file",
+        "switch.picker.timeout-ms",
+    ] {
+        assert!(
+            stderr.contains("has unknown field") && stderr.contains(key),
+            "expected an unknown-field warning for {key}, got: {stderr}"
+        );
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "config update should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        content
+    );
+}
+
 /// `wt config update` writes `[list] json-schema = 2` when the key is unset,
 /// adopting the upcoming default, and a second run has nothing left to do —
 /// the pending-default loop closes.

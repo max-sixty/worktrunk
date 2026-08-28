@@ -482,8 +482,6 @@ pub enum DeprecationKind {
     NoFf,
     /// `no-cd` in `[switch]` (use `cd` instead).
     NoCd,
-    /// `timeout-ms` under `[switch.picker]` (removed — picker renders progressively).
-    SwitchPickerTimeout,
     /// `task-timeout-ms` under `[list]` (removed — `[list] timeout-ms` bounds
     /// the collect phase).
     ListTaskTimeout,
@@ -575,16 +573,7 @@ enum RulePass {
 /// bottom, so a row's position is both its warning-emission position and its
 /// migration position. Detection applies each rule to a scratch copy that
 /// earlier rules have already migrated, so a rule reports a pattern in its
-/// post-migration shape — e.g. a `timeout-ms` written under `[select]` is
-/// reported by the timeout rule after the `[select]` rule moves it under
-/// `[switch.picker]`.
-///
-/// Most rows rewrite disjoint keys, but one ordering is load-bearing:
-/// - `[select]` → `[switch.picker]` precedes the `timeout-ms` strip rule so a
-///   `timeout-ms` written under `[select]` is first moved to `switch.picker`,
-///   where the strip rule then removes it. The `no-cd` and `timeout-ms` rules
-///   both match an inline `switch` directly, so the move is the only ordering
-///   dependency — no inline-to-standard conversion is relied on.
+/// post-migration shape.
 ///
 /// The `[ci]` → `[forge]` rule is order-independent: `[forge]` takes over
 /// `[ci]`'s explicit document position (see [`migrate_ci_doc`]), so its
@@ -641,14 +630,6 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     // switch.no-cd → switch.cd (inverted).
     DeprecationRule::Structural(|doc| {
         migrate_negated_bool_doc(doc, "switch", "no-cd", "cd", DeprecationKind::NoCd)
-    }),
-    // switch.picker.timeout-ms — removed; the picker renders progressively.
-    DeprecationRule::Structural(|doc| {
-        if for_each_config_table_mut(doc, |_, table| remove_switch_picker_timeout_in(table)) {
-            vec![DeprecationKind::SwitchPickerTimeout]
-        } else {
-            Vec::new()
-        }
     }),
     // list.task-timeout-ms — removed; `[list] timeout-ms` bounds the collect
     // phase, and the drain has its own fallback bound.
@@ -1109,7 +1090,7 @@ fn migrate_negated_bool(table: &mut toml_edit::Table, old_key: &str, new_key: &s
 /// The inline-table counterpart of [`migrate_negated_bool`], for a section
 /// written inline as `merge = { no-ff = true }`. `toml_edit` surfaces a regular
 /// `[merge]` section and an inline `merge = { … }` as different node types, so
-/// both forms need their own walk (mirroring [`remove_switch_picker_timeout_in`]).
+/// both forms need their own walk.
 fn migrate_negated_bool_inline(
     table: &mut toml_edit::InlineTable,
     old_key: &str,
@@ -1190,40 +1171,13 @@ fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &st
     modified
 }
 
-/// Remove `timeout-ms` from `switch.picker` in a table (top-level or project).
-/// An emptied `picker` is left in place — it round-trips harmlessly.
-///
-/// Both `switch` and its `picker` can be written as a section table or inline
-/// (`switch = { picker = { ... } }`); `toml_edit` surfaces these as different
-/// node types, so every shape gets its own branch — matching the inline-aware
-/// `no-cd`/`no-ff` rules. A `picker` nested inside an inline `switch` is itself
-/// always inline.
-fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
-    match table.get_mut("switch") {
-        // `[switch]` section: `picker` may be a section or inline table.
-        Some(toml_edit::Item::Table(switch)) => match switch.get_mut("picker") {
-            Some(toml_edit::Item::Table(t)) => t.remove("timeout-ms").is_some(),
-            Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(it))) => {
-                it.remove("timeout-ms").is_some()
-            }
-            _ => false,
-        },
-        // Inline `switch = { picker = { ... } }`: `picker` is itself inline.
-        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(switch))) => switch
-            .get_mut("picker")
-            .and_then(|p| p.as_inline_table_mut())
-            .is_some_and(|it| it.remove("timeout-ms").is_some()),
-        _ => false,
-    }
-}
-
 /// Remove `key` from a top-level `section` in a table (top-level or project).
 /// An emptied section is left in place — it round-trips harmlessly.
 ///
 /// A section can be written as a section table (`[list]`) or inline
 /// (`list = { … }`); `toml_edit` surfaces these as different node types, so
 /// each shape gets its own branch — matching the inline-aware `no-cd`/`no-ff`
-/// rules and the two-level [`remove_switch_picker_timeout_in`].
+/// rules.
 fn remove_section_key_in(table: &mut toml_edit::Table, section: &str, key: &str) -> bool {
     match table.get_mut(section) {
         Some(toml_edit::Item::Table(t)) => t.remove(key).is_some(),
@@ -1697,15 +1651,6 @@ fn format_warning_lines<'a>(
                     ))
                 );
             }
-            DeprecationKind::SwitchPickerTimeout => {
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    warning_message(cformat!(
-                        "{label}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively"
-                    ))
-                );
-            }
             DeprecationKind::ListTaskTimeout => {
                 let _ = writeln!(
                     out,
@@ -1808,9 +1753,7 @@ pub fn key_belongs_in<C: WorktrunkConfig>(key: &str) -> Option<&'static str> {
 const USER_ONLY_COMMIT_GENERATION_PATHS: &[&str] = &[
     "commit.generation.command",
     "commit.generation.template",
-    "commit.generation.template-file",
     "commit.generation.squash-template",
-    "commit.generation.squash-template-file",
 ];
 
 /// Returns the config where a misplaced *nested* key belongs.
@@ -3291,6 +3234,8 @@ json-schema = 1
             "[merge]\nno-ff = \"yes\"\n",
             "[merge]\nff = true\nno-ff = \"yes\"\n",
             "merge = { no-ff = \"yes\" }\n",
+            // retired deprecations are left for generic unknown-field handling
+            "switch = { picker = { timeout-ms = 500 } }\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
         ];
@@ -3314,8 +3259,6 @@ json-schema = 1
             // like the section form
             "merge = { no-ff = true }\n",
             "switch = { no-cd = true }\n",
-            // timeout-ms under an inline `switch` is stripped like the section form
-            "switch = { picker = { timeout-ms = 500 } }\n",
             "[select]\ntimeout-ms = 500\n",
             // list.task-timeout-ms, section and inline forms (project-scoped so
             // the appended `[list]` below isn't a duplicate table)
@@ -3445,11 +3388,10 @@ json-schema = 1
         assert_eq!(migrate_content(""), "");
     }
 
-    /// A `timeout-ms` written under `[select]` is reported by the timeout
-    /// rule after the `[select]` rule moves it under `[switch.picker]`.
-    /// (Previously it was dropped on load with only the `[select]` warning.)
+    /// A retired `timeout-ms` key under `[select]` does not add a second
+    /// deprecation after the section is migrated to `[switch.picker]`.
     #[test]
-    fn test_select_timeout_ms_warns_both_kinds() {
+    fn test_select_timeout_ms_warns_for_select() {
         let deprecations = detect_deprecations(
             "[select]\npager = \"delta\"\ntimeout-ms = 500\n",
             ConfigFileKind::User,
@@ -3458,10 +3400,13 @@ json-schema = 1
             k,
             DeprecationKind::Select
         )));
-        assert!(has_kind(&deprecations, |k| matches!(
-            k,
-            DeprecationKind::SwitchPickerTimeout
-        )));
+        assert_eq!(
+            deprecations
+                .iter()
+                .filter(|kind| !kind.is_pending_default())
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -4228,115 +4173,20 @@ json-schema = 1
     }
 
     #[test]
-    fn test_detect_switch_picker_timeout_top_level() {
+    fn test_switch_picker_timeout_is_left_for_unknown_field_handling() {
         let content = r#"
 [switch.picker]
 pager = "delta"
 timeout-ms = 500
-"#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
-        assert!(has_kind(&deprecations, |k| matches!(
-            k,
-            DeprecationKind::SwitchPickerTimeout
-        )));
-        assert!(!deprecations.is_empty());
-    }
 
-    #[test]
-    fn test_detect_switch_picker_timeout_project_level() {
-        let content = r#"
-[projects."github.com/user/repo".switch.picker]
-timeout-ms = 300
+[list]
+json-schema = 1
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
-        assert!(has_kind(&deprecations, |k| matches!(
-            k,
-            DeprecationKind::SwitchPickerTimeout
-        )));
-    }
-
-    #[test]
-    fn test_detect_switch_picker_timeout_inline_table() {
-        let content = r#"
-[switch]
-picker = { pager = "delta", timeout-ms = 500 }
-"#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
-        assert!(has_kind(&deprecations, |k| matches!(
-            k,
-            DeprecationKind::SwitchPickerTimeout
-        )));
-    }
-
-    #[test]
-    fn test_migrate_switch_picker_timeout_inline_table() {
-        let content = r#"
-[switch]
-picker = { pager = "delta", timeout-ms = 500 }
-"#;
-        let result = migrate_content(content);
-        assert!(!result.contains("timeout-ms"));
-        assert!(result.contains("pager"));
-    }
-
-    #[test]
-    fn test_detect_switch_picker_timeout_absent() {
-        let content = r#"
-[switch.picker]
-pager = "delta"
-"#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
-        assert!(!has_kind(&deprecations, |k| matches!(
-            k,
-            DeprecationKind::SwitchPickerTimeout
-        )));
-    }
-
-    #[test]
-    fn test_migrate_switch_picker_timeout_removes_key() {
-        let content = r#"
-[switch.picker]
-pager = "delta"
-timeout-ms = 500
-"#;
-        let result = migrate_content(content);
-        assert!(
-            !result.contains("timeout-ms"),
-            "Should strip timeout-ms: {result}"
+        assert!(detect_deprecations(content, ConfigFileKind::User).is_empty());
+        assert_eq!(
+            compute_migrated_content(content, ConfigFileKind::User),
+            content
         );
-        assert!(
-            result.contains("pager"),
-            "Should preserve sibling keys: {result}"
-        );
-    }
-
-    #[test]
-    fn test_migrate_switch_picker_timeout_project_level() {
-        let content = r#"
-[projects."github.com/user/repo".switch.picker]
-pager = "bat"
-timeout-ms = 100
-"#;
-        let result = migrate_content(content);
-        assert!(!result.contains("timeout-ms"));
-        assert!(result.contains("pager"));
-    }
-
-    #[test]
-    fn test_migrate_switch_picker_timeout_noop_when_absent() {
-        let content = r#"
-[switch.picker]
-pager = "delta"
-"#;
-        let result = migrate_content(content);
-        assert_eq!(result, content);
-    }
-
-    #[test]
-    fn test_migrate_switch_picker_timeout_invalid_toml() {
-        let content = "this is { not valid toml";
-        let result = migrate_content(content);
-        assert_eq!(result, content);
     }
 
     #[test]
@@ -4441,7 +4291,6 @@ timeout-ms = 500
                 DeprecationKind::CiSection,
                 DeprecationKind::NoFf,
                 DeprecationKind::NoCd,
-                DeprecationKind::SwitchPickerTimeout,
                 DeprecationKind::ListTaskTimeout,
                 DeprecationKind::JsonSchemaUnset,
             ],
@@ -4457,7 +4306,6 @@ timeout-ms = 500
         ▲ User config: [ci] is deprecated in favor of [forge]
         ▲ User config: merge.no-ff is deprecated in favor of merge.ff (inverted)
         ▲ User config: switch.no-cd is deprecated in favor of switch.cd (inverted)
-        ▲ User config: switch.picker.timeout-ms is no longer used — the picker now renders progressively
         ▲ User config: list.task-timeout-ms is no longer used — list.timeout-ms bounds the collect phase
         ▲ User config: [list] json-schema is unset; a future release switches the JSON default to schema 2
         "#);

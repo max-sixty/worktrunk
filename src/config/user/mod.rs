@@ -311,9 +311,9 @@ fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
 /// would silently stop it running.
 ///
 /// Only removals precede the merge, but a removal can still leave a document
-/// that no longer deserializes: [`exclusive_sibling`] and [`is_atomic_section`]
-/// name the sections that have to go as a unit, and the removals degrade as a
-/// unit behind them — they land on a candidate, and a candidate that stops
+/// that no longer deserializes: [`is_atomic_section`] names the sections that
+/// have to go as a unit, and the removals degrade as a unit behind them — they
+/// land on a candidate, and a candidate that stops
 /// deserializing or validating is dropped for the plain merge rather than
 /// handed to [`UserConfig::finalize`], which would answer a stranded required
 /// field by wiping the config to defaults. The layer itself applies either way.
@@ -370,7 +370,7 @@ fn deserialize_and_validate(table: &toml::Table) -> Result<(), String> {
 }
 
 /// Remove from `entry` every leaf `overlay` sets. `section` tracks the path
-/// walked so far, for [`exclusive_sibling`] and the predicates beside it.
+/// walked so far for the predicates beside it.
 fn drop_overridden_keys<'a>(
     entry: &mut toml::Table,
     overlay: &'a toml::Table,
@@ -379,12 +379,6 @@ fn drop_overridden_keys<'a>(
     for (key, value) in overlay {
         if is_compose_only(section, key) {
             continue;
-        }
-
-        // An exclusive pair goes as a unit, whether or not `entry` carries
-        // `key` itself: the project's partner alone would still win the merge.
-        if let Some(sibling) = exclusive_sibling(section, key) {
-            entry.remove(sibling);
         }
 
         match (entry.get_mut(key.as_str()), value) {
@@ -410,28 +404,6 @@ fn drop_overridden_keys<'a>(
     }
 }
 
-/// The key that `key` clears when both are set under `section`.
-///
-/// `[commit.generation]` rejects `template` alongside `template-file`
-/// (`UserConfig::validate`), and setting either clears the other when a
-/// project entry merges over the global one
-/// (`CommitGenerationConfig::merge_with`).
-/// So a layer that sets one member has to displace *both* at
-/// project scope: dropping only its own key would leave the project's partner
-/// to win the merge — the ranking this pass exists to remove.
-fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
-    if section != ["commit", "generation"] {
-        return None;
-    }
-    match key {
-        "template" => Some("template-file"),
-        "template-file" => Some("template"),
-        "squash-template" => Some("squash-template-file"),
-        "squash-template-file" => Some("squash-template"),
-        _ => None,
-    }
-}
-
 /// A table whose entries the merge replaces whole, so removing one of an
 /// entry's leaves neither removes the precedence nor leaves the entry usable.
 ///
@@ -443,7 +415,7 @@ fn exclusive_sibling(section: &[&str], key: &str) -> Option<&'static str> {
 /// strand a column that no longer deserializes.
 ///
 /// `section` is the path of the containing table, so this asks "are this
-/// table's children atomic", the way [`exclusive_sibling`] asks about a pair.
+/// table's children atomic".
 fn is_atomic_section(section: &[&str]) -> bool {
     section == ["list", "custom-columns"]
 }

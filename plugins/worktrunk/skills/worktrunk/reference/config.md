@@ -514,7 +514,7 @@ squash-template = """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
-#### Appending to the prompt [experimental]
+#### Appending to the prompt
 
 `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 
@@ -569,7 +569,7 @@ hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 
 When many repositories share one self-hosted host, name it once in user config with a [pattern-keyed `[projects]` entry](https://worktrunk.dev/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.
 
-## Commit-message append [experimental]
+## Commit-message append
 
 `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 
@@ -975,7 +975,7 @@ State is stored in `.git/` (config entries and log files), separate from configu
 - **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](https://worktrunk.dev/config/#wt-config-state-cache)
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](https://worktrunk.dev/config/#wt-config-state-default-branch)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](https://worktrunk.dev/config/#wt-config-state-marker)
-- **vars**: [experimental] [Custom variables per branch](https://worktrunk.dev/config/#wt-config-state-vars)
+- **vars**: [Custom variables per branch](https://worktrunk.dev/config/#wt-config-state-vars)
 - **logs**: [Operation and debug logs](https://worktrunk.dev/config/#wt-config-state-logs)
 
 ### Examples
@@ -1029,7 +1029,7 @@ Commands:
   default-branch  Default branch detection and override
   logs            Operation and debug logs
   marker          Branch markers
-  vars            [experimental] Custom variables per branch
+  vars            Custom variables per branch
 
 Options:
   -h, --help
@@ -1441,8 +1441,6 @@ Global Options:
 
 ## wt config state vars
 
-[experimental]
-
 Custom variables per branch.
 
 Store custom variables per branch. Values are stored as-is — plain strings or JSON.
@@ -1496,7 +1494,7 @@ Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain
 ### Command reference
 
 ```
-wt config state vars - [experimental] Custom variables per branch
+wt config state vars - Custom variables per branch
 
 Usage: wt config state vars [OPTIONS] <COMMAND>
 

@@ -29,7 +29,7 @@
 #
 # When many repositories share one self-hosted host, name it once in user config with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.
 #
-# ## Commit-message append [experimental]
+# ## Commit-message append
 #
 # `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 #

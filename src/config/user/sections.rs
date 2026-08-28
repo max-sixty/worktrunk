@@ -67,20 +67,10 @@ pub struct CommitGenerationConfig {
     #[serde(default)]
     pub template: Option<String>,
 
-    /// Path to template file (mutually exclusive with template)
-    /// Supports tilde expansion (e.g., "~/.config/worktrunk/commit-template.txt")
-    #[serde(default, rename = "template-file")]
-    pub template_file: Option<String>,
-
     /// Inline template for squash commit message prompt
     /// Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}
     #[serde(default, rename = "squash-template")]
     pub squash_template: Option<String>,
-
-    /// Path to squash template file (mutually exclusive with squash-template)
-    /// Supports tilde expansion (e.g., "~/.config/worktrunk/squash-template.txt")
-    #[serde(default, rename = "squash-template-file")]
-    pub squash_template_file: Option<String>,
 
     /// Inline text appended to the commit and squash prompts inside a
     /// `<user-guidance>` block, after the main template's `<style>`
@@ -91,8 +81,6 @@ pub struct CommitGenerationConfig {
     /// template. The project config has a `[commit.generation]
     /// template-append` of its own; it renders into a separate
     /// `<project-guidance>` block right after this one.
-    ///
-    /// *(Experimental — may change in future releases.)*
     #[serde(default, rename = "template-append")]
     pub template_append: Option<String>,
 }
@@ -109,33 +97,13 @@ impl CommitGenerationConfig {
 
 impl Merge for CommitGenerationConfig {
     fn merge_with(&self, other: &Self) -> Self {
-        // For template/template_file pairs: if project sets one, it clears the other
-        // This prevents violating mutual exclusivity when global has one and project has the other
-        let (template, template_file) = if other.template.is_some() {
-            (other.template.clone(), None)
-        } else if other.template_file.is_some() {
-            (None, other.template_file.clone())
-        } else {
-            (self.template.clone(), self.template_file.clone())
-        };
-
-        let (squash_template, squash_template_file) = if other.squash_template.is_some() {
-            (other.squash_template.clone(), None)
-        } else if other.squash_template_file.is_some() {
-            (None, other.squash_template_file.clone())
-        } else {
-            (
-                self.squash_template.clone(),
-                self.squash_template_file.clone(),
-            )
-        };
-
         Self {
             command: other.command.clone().or_else(|| self.command.clone()),
-            template,
-            template_file,
-            squash_template,
-            squash_template_file,
+            template: other.template.clone().or_else(|| self.template.clone()),
+            squash_template: other
+                .squash_template
+                .clone()
+                .or_else(|| self.squash_template.clone()),
             template_append: other
                 .template_append
                 .clone()

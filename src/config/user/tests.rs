@@ -852,26 +852,20 @@ fn test_merge_merge_config() {
 fn test_merge_commit_generation_config() {
     let base = CommitGenerationConfig {
         command: Some("llm -m claude-haiku-4.5".to_string()),
-        template: None,
-        template_file: Some("~/.config/template.txt".to_string()),
+        template: Some("base template".to_string()),
         squash_template: None,
-        squash_template_file: None,
         template_append: None,
     };
     let override_config = CommitGenerationConfig {
         command: Some("claude -p --model=haiku".to_string()), // Override
-        template: Some("custom".to_string()),                 // Override (was None)
-        template_file: None,                                  // Fall back to base
+        template: Some("custom".to_string()),                 // Override
         squash_template: None,
-        squash_template_file: None,
         template_append: None,
     };
 
     let merged = base.merge_with(&override_config);
     assert_eq!(merged.command, Some("claude -p --model=haiku".to_string()));
     assert_eq!(merged.template, Some("custom".to_string()));
-    // When project sets template, template_file is cleared to maintain mutual exclusivity
-    assert_eq!(merged.template_file, None);
 }
 
 #[test]
@@ -893,84 +887,6 @@ fn test_merge_commit_generation_template_append() {
         base.merge_with(&CommitGenerationConfig::default())
             .template_append,
         Some("base append".to_string())
-    );
-}
-
-#[test]
-fn test_commit_generation_merge_mutual_exclusivity() {
-    // Global has template_file, project has template
-    // Merged result should only have template (project wins, clears template_file)
-    let global = CommitGenerationConfig {
-        template_file: Some("~/.config/template.txt".to_string()),
-        ..Default::default()
-    };
-    let project = CommitGenerationConfig {
-        template: Some("inline template".to_string()),
-        ..Default::default()
-    };
-
-    let merged = global.merge_with(&project);
-    assert_eq!(merged.template, Some("inline template".to_string()));
-    assert_eq!(merged.template_file, None); // Cleared because project set template
-
-    // Reverse: global has template, project has template_file
-    let global = CommitGenerationConfig {
-        template: Some("global template".to_string()),
-        ..Default::default()
-    };
-    let project = CommitGenerationConfig {
-        template_file: Some("project-file.txt".to_string()),
-        ..Default::default()
-    };
-
-    let merged = global.merge_with(&project);
-    assert_eq!(merged.template, None); // Cleared because project set template_file
-    assert_eq!(merged.template_file, Some("project-file.txt".to_string()));
-
-    // Neither set in project: inherit both from global
-    let global = CommitGenerationConfig {
-        template: Some("global template".to_string()),
-        ..Default::default()
-    };
-    let project = CommitGenerationConfig::default();
-
-    let merged = global.merge_with(&project);
-    assert_eq!(merged.template, Some("global template".to_string()));
-    assert_eq!(merged.template_file, None);
-}
-
-#[test]
-fn test_commit_generation_merge_squash_template_mutual_exclusivity() {
-    // Global has squash_template_file, project has squash_template
-    // Merged result should only have squash_template (project wins)
-    let global = CommitGenerationConfig {
-        squash_template_file: Some("~/.config/squash.txt".to_string()),
-        ..Default::default()
-    };
-    let project = CommitGenerationConfig {
-        squash_template: Some("inline squash".to_string()),
-        ..Default::default()
-    };
-
-    let merged = global.merge_with(&project);
-    assert_eq!(merged.squash_template, Some("inline squash".to_string()));
-    assert_eq!(merged.squash_template_file, None);
-
-    // Reverse: global has squash_template, project has squash_template_file
-    let global = CommitGenerationConfig {
-        squash_template: Some("global squash".to_string()),
-        ..Default::default()
-    };
-    let project = CommitGenerationConfig {
-        squash_template_file: Some("project-squash.txt".to_string()),
-        ..Default::default()
-    };
-
-    let merged = global.merge_with(&project);
-    assert_eq!(merged.squash_template, None);
-    assert_eq!(
-        merged.squash_template_file,
-        Some("project-squash.txt".to_string())
     );
 }
 
@@ -1761,27 +1677,6 @@ worktree-path = "/worktrees/{{ branch | sanitize }}"
         "Absolute paths should be allowed: {:?}",
         result.err()
     );
-}
-
-#[test]
-fn test_validation_template_mutual_exclusivity() {
-    let cases = [
-        ("[commit-generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
-        ("[commit-generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
-        ("[projects.\"github.com/user/repo\".commit-generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
-        ("[projects.\"github.com/user/repo\".commit-generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
-        ("[commit.generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
-        ("[commit.generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
-        ("[projects.\"github.com/user/repo\".commit.generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
-        ("[projects.\"github.com/user/repo\".commit.generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
-    ];
-    for content in cases {
-        let err = UserConfig::load_from_str(content).unwrap_err().to_string();
-        assert!(
-            err.contains("mutually exclusive"),
-            "{content}: expected 'mutually exclusive', got: {err}"
-        );
-    }
 }
 
 // =========================================================================
@@ -2935,53 +2830,6 @@ width = 30
     let column = loaded(table).list(Some(PROJECT)).custom_columns["Ticket"].clone();
     assert_eq!(column.template, "from-cli-project");
     assert_eq!(column.width, None, "the column went as a unit here too");
-}
-
-#[test]
-fn test_layer_displaces_exclusive_sibling() {
-    // Each `[commit.generation]` pair clears itself, so overriding one member
-    // has to displace both at project scope: leaving the project's partner
-    // would let it win the merge, and it would fail validation next to the
-    // global key the same entry now answers with.
-    let pairs = [
-        ("template", "template-file"),
-        ("template-file", "template"),
-        ("squash-template", "squash-template-file"),
-        ("squash-template-file", "squash-template"),
-    ];
-    for (overridden, partner) in pairs {
-        let base = base_with_project(&format!(
-            "[projects.\"{PROJECT}\".commit.generation]\n{partner} = \"/project.txt\"\n"
-        ));
-        let (table, warnings) = apply_overrides(
-            base,
-            &[&format!("commit.generation.{overridden} = \"from-cli\"")],
-        );
-        assert!(warnings.is_empty(), "{overridden}: {warnings:?}");
-        let config = loaded(table);
-        config
-            .validate()
-            .unwrap_or_else(|e| panic!("{overridden}: {e}"));
-        let generation = config.commit_generation(Some(PROJECT));
-        let value = |key: &str| match key {
-            "template" => generation.template.as_deref(),
-            "template-file" => generation.template_file.as_deref(),
-            "squash-template" => generation.squash_template.as_deref(),
-            _ => generation.squash_template_file.as_deref(),
-        };
-        assert_eq!(value(overridden), Some("from-cli"), "{overridden}");
-        assert_eq!(value(partner), None, "{overridden} should clear {partner}");
-    }
-
-    // A `[commit.generation]` key that is in no pair displaces only itself.
-    let base = base_with_project(&format!(
-        "[projects.\"{PROJECT}\".commit.generation]\ncommand = \"project-llm\"\ntemplate-file = \"/project.txt\"\n"
-    ));
-    let (table, warnings) = apply_overrides(base, &["commit.generation.command = \"cli-llm\""]);
-    assert!(warnings.is_empty());
-    let generation = loaded(table).commit_generation(Some(PROJECT));
-    assert_eq!(generation.command.as_deref(), Some("cli-llm"));
-    assert_eq!(generation.template_file.as_deref(), Some("/project.txt"));
 }
 
 #[test]

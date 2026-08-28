@@ -68,7 +68,7 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base (three-dot) with the default branch |
-| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) [experimental] |
+| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
@@ -116,7 +116,7 @@ Color precedence resolves the fold: changes-requested (magenta) outranks running
 
 CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`ci.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries [experimental]
+### LLM summaries
 
 Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 

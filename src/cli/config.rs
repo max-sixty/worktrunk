@@ -693,7 +693,7 @@ $ wt config plugins opencode install
 - **cache**: [Regenerable caches — CI status, summaries, git commands, hints, and the `wt switch -` target](/config/#wt-config-state-cache)
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](/config/#wt-config-state-default-branch)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](/config/#wt-config-state-marker)
-- **vars**: [experimental] [Custom variables per branch](/config/#wt-config-state-vars)
+- **vars**: [Custom variables per branch](/config/#wt-config-state-vars)
 - **logs**: [Operation and debug logs](/config/#wt-config-state-logs)
 
 ## Examples
@@ -1070,7 +1070,7 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
         format: GlobalFormatFlag,
     },
 
-    /// \[experimental\] Custom variables per branch
+    /// Custom variables per branch
     #[command(
         name = "vars",
         after_long_help = r#"Store custom variables per branch. Values are stored as-is — plain strings or JSON.

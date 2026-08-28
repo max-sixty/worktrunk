@@ -161,7 +161,7 @@ Output as JSON for scripting:
  main↕    Commits ahead/behind default branch                                   
  main…±   Line diffs since the merge-base (three-dot) with the default branch   
  Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and    
-          [2mcommit.generation[0m [experimental]                                      
+          [2mcommit.generation[0m                                                     
  Remote⇅  Commits ahead/behind tracking branch                                  
  CI       PR/MR number colored by pipeline status; [2m--full[0m only                  
  Path     Worktree directory                                                    
@@ -233,7 +233,7 @@ branches with an upstream. Local-only branches show blank; remote-only branches
 — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60
  seconds; use [2mwt config state[0m to view or clear.
 
-[32mLLM summaries [experimental][0m
+[32mLLM summaries[0m
 
 Reuses the [2mcommit.generation[0m command — the same LLM that generates commit 
 messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results 

@@ -23,7 +23,7 @@ expression: "migration_diff(content, &migrated)"
 +
 +[switch.picker]
  pager = "delta"
--timeout-ms = 500
+ timeout-ms = 500
  
  [merge]
 -no-ff = true

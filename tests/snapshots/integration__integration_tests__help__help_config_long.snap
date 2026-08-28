@@ -520,7 +520,7 @@ Default template:
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-[1mAppending to the prompt [experimental][0m
+[1mAppending to the prompt[0m
 
 [2mtemplate-append[0m adds personal conventions to the commit and squash prompts without restating the whole template:
 
@@ -565,7 +565,7 @@ The forge is read from the remote's hostname: any host carrying [2mgithub[0m, 
 
 When many repositories share one self-hosted host, name it once in user config with a pattern-keyed [2m[projects][0m entry instead of repeating this block in each repo. A repository's own [2m[forge][0m still wins, field by field.
 
-[1m[32mCommit-message append [experimental][0m
+[1m[32mCommit-message append[0m
 
 [2mtemplate-append[0m adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 

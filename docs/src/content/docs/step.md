@@ -36,8 +36,8 @@ $ wt step push
 - [`push`](#wt-step-push) — Fast-forward target to current branch
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
-- [`eval`](#wt-step-eval) — <span class="badge-experimental"></span> Evaluate a template expression
-- [`for-each`](#wt-step-for-each) — <span class="badge-experimental"></span> Run a command in every worktree
+- [`eval`](#wt-step-eval) — Evaluate a template expression
+- [`for-each`](#wt-step-for-each) — Run a command in every worktree
 - [`promote`](#wt-step-promote) — <span class="badge-experimental"></span> Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — <span class="badge-experimental"></span> Move worktrees to expected paths
@@ -66,10 +66,10 @@ Commands:
   push          Fast-forward target to current branch
   diff          Show all changes since branching
   copy-ignored  Copy gitignored files to another worktree
-  eval          [experimental] Evaluate a template expression
-  for-each      [experimental] Run command in each worktree
+  eval          Evaluate a template expression
+  for-each      Run command in each worktree
   promote       [experimental] Swap a branch into the main worktree
-  prune         [experimental] Remove worktrees merged into the default branch
+  prune         Remove worktrees merged into the default branch
   relocate      [experimental] Move worktrees to expected paths
   tether        [experimental] Run a command; kill its whole process tree when its worktree is
                 removed
@@ -690,8 +690,6 @@ Global Options:
 
 ## wt step eval
 
-<span class="badge-experimental"></span>
-
 Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
 
 All [hook template variables and filters](/hook/#template-variables) are available.
@@ -743,7 +741,7 @@ feature/auth-oauth2
 ### Command reference
 
 ```text wt-command-reference
-wt step eval - [experimental] Evaluate a template expression
+wt step eval - Evaluate a template expression
 
 Prints the result to stdout for use in scripts and shell substitutions.
 
@@ -787,8 +785,6 @@ Global Options:
 
 ## wt step for-each
 
-<span class="badge-experimental"></span>
-
 Run command in each worktree. Executes sequentially with real-time output; continues past command failures.
 
 A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
@@ -830,7 +826,7 @@ $ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev
 ### Command reference
 
 ```text wt-command-reference
-wt step for-each - [experimental] Run command in each worktree
+wt step for-each - Run command in each worktree
 
 Executes sequentially with real-time output; continues past command failures.
 
@@ -965,8 +961,6 @@ Global Options:
 
 ## wt step prune
 
-<span class="badge-experimental"></span>
-
 Remove worktrees merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
@@ -1005,7 +999,7 @@ $ wt step prune
 ### Command reference
 
 ```text wt-command-reference
-wt step prune - [experimental] Remove worktrees merged into the default branch
+wt step prune - Remove worktrees merged into the default branch
 
 Usage: wt step prune [OPTIONS]
 

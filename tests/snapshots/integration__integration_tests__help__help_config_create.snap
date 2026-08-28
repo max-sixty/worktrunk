@@ -476,7 +476,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# """[0m
 [107m [0m [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# #### Appending to the prompt [experimental][0m
+[107m [0m [2m# #### Appending to the prompt[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:[0m
 [107m [0m [2m#[0m
@@ -526,7 +526,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# When many repositories share one self-hosted host, name it once in user config with a pattern-keyed `[projects]` entry (https://worktrunk.dev/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Commit-message append [experimental][0m
+[107m [0m [2m# ## Commit-message append[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:[0m
 [107m [0m [2m#[0m

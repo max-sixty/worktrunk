@@ -1,16 +1,12 @@
 use anyhow::Context;
-use color_print::cformat;
 use shell_escape::unix::escape;
 use std::borrow::Cow;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository};
-use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::{Cmd, ShellConfig};
-use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
 use minijinja::value::{Enumerator, Object, Value};
@@ -126,9 +122,6 @@ fn format_reproduction_command(base_cmd: &str, llm_command: &str) -> String {
         format!("{} | {}", base_cmd, llm_command)
     }
 }
-
-/// Track whether template-file deprecation warning has been shown this session
-static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// Byte budget for the diff embedded in a prompt. ~25k tokens for typical
 /// code; syntax-dense content (hashes, minified assets) tokenizes as low as
@@ -555,48 +548,6 @@ enum TemplateType {
     Squash,
 }
 
-/// Load template from inline, file, or default
-fn load_template(
-    inline: Option<&String>,
-    file: Option<&String>,
-    default: &str,
-    file_type_name: &str,
-) -> anyhow::Result<String> {
-    match (inline, file) {
-        (Some(inline), None) => Ok(inline.clone()),
-        (None, Some(path)) => {
-            // Show deprecation warning once per session
-            if !TEMPLATE_FILE_WARNING_SHOWN.swap(true, Ordering::Relaxed) {
-                eprintln!(
-                    "{}",
-                    warning_message(format!(
-                        "{file_type_name} is deprecated and will be removed in a future release. Use inline template instead. To request this feature, comment on: https://github.com/max-sixty/worktrunk/issues/444"
-                    ))
-                );
-            }
-
-            let expanded_path = PathBuf::from(shellexpand::tilde(path).as_ref());
-            std::fs::read_to_string(&expanded_path).map_err(|e| {
-                anyhow::Error::from(worktrunk::git::GitError::Other {
-                    message: cformat!(
-                        "Failed to read {} <bold>{}</>: {}",
-                        file_type_name,
-                        format_path_for_display(&expanded_path),
-                        e
-                    ),
-                })
-            })
-        }
-        (None, None) => Ok(default.to_string()),
-        (Some(_), Some(_)) => {
-            unreachable!(
-                "Config validation should prevent both {} options",
-                file_type_name
-            )
-        }
-    }
-}
-
 /// Build prompt from template using minijinja
 ///
 /// Template variables available to both commit and squash templates:
@@ -621,21 +572,14 @@ fn build_prompt(
     // Get template source based on type
     let (template, type_name) = match template_type {
         TemplateType::Commit => (
-            load_template(
-                config.template.as_ref(),
-                config.template_file.as_ref(),
-                DEFAULT_TEMPLATE,
-                "template-file",
-            )?,
+            config.template.as_deref().unwrap_or(DEFAULT_TEMPLATE),
             "Template",
         ),
         TemplateType::Squash => (
-            load_template(
-                config.squash_template.as_ref(),
-                config.squash_template_file.as_ref(),
-                DEFAULT_SQUASH_TEMPLATE,
-                "squash-template-file",
-            )?,
+            config
+                .squash_template
+                .as_deref()
+                .unwrap_or(DEFAULT_SQUASH_TEMPLATE),
             "Squash template",
         ),
     };
@@ -650,7 +594,7 @@ fn build_prompt(
 
     // Render template with minijinja - all variables available to all templates
     let env = Environment::new();
-    let tmpl = env.template_from_str(&template)?;
+    let tmpl = env.template_from_str(template)?;
 
     // Reverse commits so they're in chronological order (oldest first).
     //
@@ -1310,9 +1254,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: Some("Branch: {{ branch }}\nDiff: {{ git_diff }}".to_string()),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
         let context = commit_context("my diff", "feature", None, "repo");
@@ -1326,9 +1268,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: Some("{{ unclosed".to_string()),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
         let context = commit_context("diff", "main", None, "repo");
@@ -1341,9 +1281,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: Some("   ".to_string()),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
         let context = commit_context("diff", "main", None, "repo");
@@ -1359,9 +1297,7 @@ mod tests {
                 "Repo: {{ repo }}\nBranch: {{ branch }}\nDiff: {{ git_diff }}\n{% for c in recent_commits %}{{ c }}\n{% endfor %}"
                     .to_string(),
             ),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
         let commits = vec!["commit1".to_string(), "commit2".to_string()];
@@ -1637,12 +1573,10 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            template_file: None,
             squash_template: Some(
                 "Target: {{ target_branch }}\n{% for c in commits %}{{ c }}\n{% endfor %}"
                     .to_string(),
             ),
-            squash_template_file: None,
             template_append: None,
         };
         let commit_details = vec![
@@ -1667,14 +1601,12 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            template_file: None,
             squash_template: Some(
                 r#"{% for detail in commit_details %}{{ loop.index }}. {{ detail.subject }}
 {{ detail.body }}
 {% endfor %}"#
                     .to_string(),
             ),
-            squash_template_file: None,
             template_append: None,
         };
         let commit_details = vec![
@@ -1711,9 +1643,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            template_file: None,
             squash_template: Some("{% for x in commits %}{{ x }".to_string()),
-            squash_template_file: None,
             template_append: None,
         };
         let commit_details = vec![];
@@ -1727,9 +1657,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            template_file: None,
             squash_template: Some("  \n  ".to_string()),
-            squash_template_file: None,
             template_append: None,
         };
         let commit_details = vec![];
@@ -1744,12 +1672,10 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            template_file: None,
             squash_template: Some(
                 "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commits %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
                     .to_string(),
             ),
-            squash_template_file: None,
             template_append: None,
         };
         let commit_details = vec![
@@ -1801,9 +1727,7 @@ Diff follows:
 {{ git_diff }}"#
                     .to_string(),
             ),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
 
@@ -1846,7 +1770,6 @@ Diff follows:
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            template_file: None,
             squash_template: Some(
                 r#"Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}
 {% if commits | length > 1 -%}
@@ -1859,7 +1782,6 @@ Single commit: {{ commits[0] }}
 {%- endif %}"#
                     .to_string(),
             ),
-            squash_template_file: None,
             template_append: None,
         };
 
@@ -1902,113 +1824,6 @@ Single commit: {{ commits[0] }}
     }
 
     #[test]
-    fn test_build_commit_prompt_with_template_file() {
-        let temp_dir = std::env::temp_dir();
-        let template_path = temp_dir.join("test_commit_template.txt");
-        std::fs::write(
-            &template_path,
-            "Branch: {{ branch }}\nRepo: {{ repo }}\nDiff: {{ git_diff }}",
-        )
-        .unwrap();
-
-        let config = CommitGenerationConfig {
-            command: None,
-            template: None,
-            template_file: Some(template_path.to_string_lossy().to_string()),
-            squash_template: None,
-            squash_template_file: None,
-            template_append: None,
-        };
-        let context = commit_context("my diff", "feature", None, "myrepo");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            "Branch: feature\nRepo: myrepo\nDiff: my diff"
-        );
-
-        // Cleanup
-        std::fs::remove_file(&template_path).ok();
-    }
-
-    #[test]
-    fn test_build_commit_prompt_with_missing_template_file() {
-        let config = CommitGenerationConfig {
-            command: None,
-            template: None,
-            template_file: Some("/nonexistent/path/template.txt".to_string()),
-            squash_template: None,
-            squash_template_file: None,
-            template_append: None,
-        };
-        let context = commit_context("diff", "main", None, "repo");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        // OS error text varies by platform, so use contains
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Failed to read template-file"), "{err}");
-        assert!(err.contains("/nonexistent/path/template.txt"), "{err}");
-    }
-
-    #[test]
-    fn test_build_squash_prompt_with_template_file() {
-        let temp_dir = std::env::temp_dir();
-        let template_path = temp_dir.join("test_squash_template.txt");
-        std::fs::write(
-            &template_path,
-            "Target: {{ target_branch }}\nBranch: {{ branch }}\n{% for c in commits %}{{ c }}\n{% endfor %}",
-        )
-        .unwrap();
-
-        let config = CommitGenerationConfig {
-            command: None,
-            template: None,
-            template_file: None,
-            squash_template: None,
-            squash_template_file: Some(template_path.to_string_lossy().to_string()),
-            template_append: None,
-        };
-        let commit_details = vec![
-            CommitMessageDetail {
-                subject: "A".to_string(),
-                body: String::new(),
-            },
-            CommitMessageDetail {
-                subject: "B".to_string(),
-                body: String::new(),
-            },
-        ];
-        let context = squash_context("diff", "feature", None, "repo", &commit_details, "main");
-        let result = build_prompt(&config, TemplateType::Squash, &context);
-        assert!(result.is_ok());
-        // Commits are reversed for chronological order
-        assert_eq!(result.unwrap(), "Target: main\nBranch: feature\nB\nA\n");
-
-        // Cleanup
-        std::fs::remove_file(&template_path).ok();
-    }
-
-    #[test]
-    fn test_build_commit_prompt_with_tilde_expansion() {
-        // This test verifies tilde expansion works - it should attempt to read
-        // from the expanded home directory path
-        let config = CommitGenerationConfig {
-            command: None,
-            template: None,
-            template_file: Some("~/nonexistent_template_for_test.txt".to_string()),
-            squash_template: None,
-            squash_template_file: None,
-            template_append: None,
-        };
-        let context = commit_context("diff", "main", None, "repo");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        // Should fail because file doesn't exist
-        // OS error text varies by platform, so use contains
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Failed to read template-file"), "{err}");
-        assert!(err.contains("~/nonexistent_template_for_test.txt"), "{err}");
-    }
-
-    #[test]
     fn test_commit_template_can_access_squash_variables() {
         // Verify that commit templates can access squash-specific variables without errors
         // (they're empty/None for regular commits, but shouldn't cause template errors)
@@ -2018,9 +1833,7 @@ Single commit: {{ commits[0] }}
                 "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit subjects: {{ commits | length }}\nCommit details: {{ commit_details | length }}"
                     .to_string(),
             ),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
         let context = commit_context("diff", "feature", None, "repo");

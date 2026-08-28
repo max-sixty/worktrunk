@@ -833,7 +833,7 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base (three-dot) with the default branch |
-| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) [experimental] |
+| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
@@ -881,7 +881,7 @@ Color precedence resolves the fold: changes-requested (magenta) outranks running
 
 CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`ci.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries [experimental]
+### LLM summaries
 
 Reuses the [`commit.generation`](/config/#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
@@ -1514,8 +1514,8 @@ $ wt step push
 - [`push`](#wt-step-push) — Fast-forward target to current branch
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
-- [`eval`](#wt-step-eval) — [experimental] Evaluate a template expression
-- [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
+- [`eval`](#wt-step-eval) — Evaluate a template expression
+- [`for-each`](#wt-step-for-each) — Run a command in every worktree
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
@@ -2409,7 +2409,7 @@ squash-template = """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
-#### Appending to the prompt [experimental]
+#### Appending to the prompt
 
 `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 
@@ -2464,7 +2464,7 @@ hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 
 When many repositories share one self-hosted host, name it once in user config with a [pattern-keyed `[projects]` entry](/config/#user-project-specific-settings) instead of repeating this block in each repo. A repository's own `[forge]` still wins, field by field.
 
-## Commit-message append [experimental]
+## Commit-message append
 
 `template-append` adds project-wide conventions to the LLM commit and squash prompts, shared so every teammate's LLM sees the same style guide:
 

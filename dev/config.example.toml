@@ -399,7 +399,7 @@
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 #
-# #### Appending to the prompt [experimental]
+# #### Appending to the prompt
 #
 # `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 #

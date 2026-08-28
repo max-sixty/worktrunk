@@ -428,7 +428,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         format: crate::cli::SwitchFormat,
     },
 
-    /// \[experimental\] Evaluate a template expression
+    /// Evaluate a template expression
     ///
     /// Prints the result to stdout for use in scripts and shell substitutions.
     #[command(
@@ -490,7 +490,7 @@ feature/auth-oauth2
         format: crate::cli::SwitchFormat,
     },
 
-    /// \[experimental\] Run command in each worktree
+    /// Run command in each worktree
     ///
     /// Executes sequentially with real-time output; continues past command failures.
     #[command(
@@ -601,7 +601,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
         format: crate::cli::SwitchFormat,
     },
 
-    /// \[experimental\] Remove worktrees merged into the default branch
+    /// Remove worktrees merged into the default branch
     #[command(
         after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
