@@ -373,29 +373,43 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     );
 }
 
-/// `--create` from a remote tracking branch defaults `branch.autoSetupMerge` to
-/// git's `simple` rather than git's own `true`, so the new branch inherits the
-/// base's upstream only when the two share a name. Under `true`, a branch
-/// created from `origin/release` tracks `origin/release`, and a bare `git push`
-/// under `push.default = upstream` pushes the new work to `release` — GitHub
-/// issue #713.
+/// `--create` from a remote tracking branch sets the new branch's upstream only
+/// when the two share a name. Otherwise the branch created from `origin/release`
+/// tracks `origin/release`, and a bare `git push` under `push.default = upstream`
+/// pushes the new work to `release` — GitHub issue #713.
 ///
-/// An explicit `branch.autoSetupMerge` wins: `wt` picks a different default, it
-/// does not override the setting. The previous implementation — a post-hoc
-/// `git branch --unset-upstream` — overrode every setting, and failed the whole
-/// command with exit 128 whenever the user's config meant git had set no
-/// upstream for it to unset.
+/// `wt` forces `branch.autoSetupMerge = simple` for the creation, so the outcome
+/// is the same under every value the user configures: git's `true` and `always`
+/// would otherwise track a differently-named base, and its `false` and `inherit`
+/// would deny a same-named one the tracking that is the point of it.
 #[rstest]
-fn test_switch_create_from_remote_base_upstream(#[from(repo_with_remote)] repo: TestRepo) {
-    // `release` on origin only, so it can serve as a remote base whose name a
-    // new branch either shares or doesn't.
+fn test_switch_create_from_remote_base_upstream(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[values(
+        None,
+        Some("simple"),
+        Some("false"),
+        Some("inherit"),
+        Some("true"),
+        Some("always")
+    )]
+    auto_setup_merge: Option<&str>,
+) {
+    if let Some(value) = auto_setup_merge {
+        repo.run_git(&["config", "branch.autoSetupMerge", value]);
+    }
+
+    // `release` and `hotfix` on origin only, so each can serve as a remote base
+    // whose name a new branch either shares or doesn't.
     repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&["push", "origin", "main:hotfix"]);
+    repo.run_git(&["push", "origin", "main:staging"]);
     repo.run_git(&["fetch", "origin"]);
 
-    let create = |branch: &str| {
+    let create = |branch: &str, base: &str| {
         let output = repo
             .wt_command()
-            .args(["switch", "--create", branch, "--base=origin/release"])
+            .args(["switch", "--create", branch, &format!("--base={base}")])
             .output()
             .unwrap();
         assert!(
@@ -423,26 +437,124 @@ fn test_switch_create_from_remote_base_upstream(#[from(repo_with_remote)] repo: 
     };
 
     // Different name: no upstream, so a bare `git push` cannot reach `release`.
-    create("my-feature");
-    assert_eq!(upstream("my-feature"), None);
+    create("my-feature", "origin/release");
+    assert_eq!(upstream("my-feature"), None, "{auto_setup_merge:?}");
 
-    // Same name: the tracking git would set points at the branch's own remote
-    // counterpart, which is what tracking is for — it stays.
-    create("release");
-    assert_eq!(upstream("release").as_deref(), Some("origin/release"));
-
-    // `false` means git sets no upstream at all; nothing to undo, nothing to fail.
-    repo.run_git(&["config", "branch.autoSetupMerge", "false"]);
-    create("no-auto-setup");
-    assert_eq!(upstream("no-auto-setup"), None);
-
-    // `always` is the user asking for git's inheriting behaviour explicitly.
-    repo.run_git(&["config", "branch.autoSetupMerge", "always"]);
-    create("explicit-always");
+    // Same name: the upstream is the new branch's own remote counterpart,
+    // which is what tracking is for.
+    create("release", "origin/release");
     assert_eq!(
-        upstream("explicit-always").as_deref(),
-        Some("origin/release")
+        upstream("release").as_deref(),
+        Some("origin/release"),
+        "{auto_setup_merge:?}"
     );
+
+    // A bare base name resolves to the remote-only branch, and is judged by the
+    // same rule once resolved.
+    create("hotfix", "hotfix");
+    assert_eq!(
+        upstream("hotfix").as_deref(),
+        Some("origin/hotfix"),
+        "{auto_setup_merge:?}"
+    );
+
+    // A fully qualified base names the same remote branch, so it tracks too.
+    create("staging", "refs/remotes/origin/staging");
+    assert_eq!(
+        upstream("staging").as_deref(),
+        Some("origin/staging"),
+        "{auto_setup_merge:?}"
+    );
+}
+
+/// The name match is git's to make, because only git maps a remote-tracking ref
+/// back to its branch through the fetch refspec. Splitting `<remote>/<branch>`
+/// at the first slash gets a remote whose own name contains one wrong in both
+/// directions: `team/fork/release` would read as branch `fork/release`, so
+/// `--create fork/release` would be handed the upstream that pushes it to
+/// `release`, and `--create release` would be denied its own counterpart.
+#[rstest]
+fn test_switch_create_base_on_remote_with_slash(#[from(repo_with_remote)] repo: TestRepo) {
+    let origin_url = repo.git_output(&["remote", "get-url", "origin"]);
+    repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&["remote", "add", "team/fork", origin_url.trim()]);
+    repo.run_git(&["fetch", "team/fork"]);
+
+    let create = |branch: &str| {
+        let output = repo
+            .wt_command()
+            .args(["switch", "--create", branch, "--base=team/fork/release"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch --create {branch} should succeed; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    let upstream = |branch: &str| -> Option<String> {
+        let output = repo
+            .git_command()
+            .args([
+                "rev-parse",
+                "--abbrev-ref",
+                &format!("{branch}@{{upstream}}"),
+            ])
+            .run()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+
+    create("fork/release");
+    assert_eq!(
+        upstream("fork/release"),
+        None,
+        "fork/release must not inherit the base's upstream"
+    );
+
+    create("release");
+    assert_eq!(
+        upstream("release").as_deref(),
+        Some("team/fork/release"),
+        "release is the base's own counterpart"
+    );
+}
+
+/// A remote-tracking ref the fetch refspec doesn't map — hand-fetched into a
+/// single-branch clone — still creates its worktree. Git's `simple` declines the
+/// tracking it can't work out; `git worktree add --track` would fail the whole
+/// command with "starting point 'origin/release' is not a branch", after the
+/// branch name has already been taken.
+#[rstest]
+fn test_switch_create_base_outside_fetch_refspec(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+    repo.run_git(&[
+        "fetch",
+        "origin",
+        "refs/heads/release:refs/remotes/origin/release",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "release", "--base=origin/release"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --create release should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let branches = repo.git_output(&["branch", "--list", "release"]);
+    assert!(branches.contains("release"), "release should be created");
 }
 
 /// When local branch already exists and tracks a remote, should report

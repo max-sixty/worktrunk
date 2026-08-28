@@ -468,8 +468,9 @@ fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
 /// returns the remote-qualified form so the validation in
 /// [`resolve_switch_target`] doesn't reject `wt switch -c new --base
 /// remote-only-branch`. Git's rev-parse doesn't auto-expand `foo` to
-/// `refs/remotes/origin/foo`. The new branch's upstream is unset downstream
-/// to keep `git push` from targeting the base.
+/// `refs/remotes/origin/foo`. The remote-qualified form is also what lets the
+/// creation site's `branch.autoSetupMerge = simple` see a remote branch at all,
+/// so `--base release` and `--base origin/release` set up the same tracking.
 fn resolve_base_ref(
     repo: &Repository,
     base: &str,
@@ -1044,22 +1045,35 @@ fn execute_switch(
                     let worktree_path_str = worktree_path.to_string_lossy();
                     let mut args: Vec<&str> = Vec::new();
 
-                    // Safety: for an explicitly requested branch, default
-                    // `branch.autoSetupMerge` to `simple` rather than git's
-                    // `true`. Under `true`, `git worktree add -b feature
-                    // origin/main` sets `feature` to track `origin/main`, so a
-                    // bare `git push` under `push.default = upstream` pushes the
-                    // new work to `main` (#713). `simple` is git's own narrower
-                    // mode: it sets tracking only when the new branch's name
-                    // matches the remote branch's, which is exactly the case
-                    // where inherited tracking is correct. An explicit setting
-                    // wins — `wt` picks a different default, it does not override
-                    // the user's configuration.
+                    // Safety: for an explicitly requested branch, `wt` decides
+                    // tracking rather than the user's `branch.autoSetupMerge`.
+                    // `-c` outranks every config file, so the outcome is the same
+                    // on every machine. Git's `simple` is the rule `wt` wants: an
+                    // upstream only when the new branch's name matches the remote
+                    // branch it starts from, which is exactly when inherited
+                    // tracking is right. Git's default `true`, and `always`, would
+                    // have `--create feature --base origin/release` track
+                    // `origin/release`, so a bare `git push` under
+                    // `push.default = upstream` pushes the new work to `release`
+                    // (#713); `false` and `inherit` would deny `--create release
+                    // --base origin/release` the tracking that is the point of a
+                    // same-named branch.
+                    //
+                    // `wt` sets git's rule rather than picking `--track` /
+                    // `--no-track` from a name comparison of its own, because only
+                    // git maps the base back to a remote branch through the fetch
+                    // refspec. Splitting `<remote>/<branch>` reads
+                    // `team/fork/release` as branch `fork/release`, so the verdict
+                    // inverts both ways, and a refspec that renames into a
+                    // sub-namespace does the same. `--track` is also a hard demand
+                    // where `simple` is best-effort: it fails the whole command
+                    // when the base isn't refspec-mapped, as in a single-branch
+                    // clone holding a hand-fetched ref.
                     //
                     // Only the `--create` paths need it. The DWIM paths below
                     // create `feature` from `origin/feature`, where the names
                     // match and `simple` and `true` agree.
-                    if *create_branch && repo.config_value("branch.autoSetupMerge")?.is_none() {
+                    if *create_branch {
                         args.extend(["-c", "branch.autoSetupMerge=simple"]);
                     }
 
