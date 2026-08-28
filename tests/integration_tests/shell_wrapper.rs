@@ -811,6 +811,96 @@ mod unix_tests {
         });
     }
 
+    /// The nushell wrapper reports a failing `wt` without spawning a POSIX shell.
+    ///
+    /// `Shell::Nushell` is not platform-gated — `wt config shell install` writes
+    /// this wrapper on Windows whenever `nu` is on PATH, and stock Windows has no
+    /// `sh`. Exit-code propagation runs on *every* failing `wt` command, so a `sh`
+    /// dependency there appended a ``Command `sh` not found`` trace (printing the
+    /// wrapper's own source) to each one and flattened the real exit code to 1
+    /// (#3944).
+    ///
+    /// Restricting PATH to `nu` and `git` reproduces the only property of Windows
+    /// that this path depends on — no POSIX shell to spawn — so the regression is
+    /// covered on the Unix runners where the nushell wrapper is actually tested.
+    #[rstest]
+    fn test_nushell_wrapper_failure_needs_no_posix_shell(mut repo: TestRepo) {
+        repo.add_worktree("existing");
+
+        // A PATH with no `sh`/`bash`/`dash`: just the shell under test, the git
+        // that `wt switch` shells out to, and the `rm` the wrapper's own Unix
+        // cleanup branch calls externally (`^rm`). Dropping `rm` would leak every
+        // `mktemp` file, silently — the branch is wrapped in `try` — and would
+        // also make the test less faithful to the platform it stands in for:
+        // Windows takes the `$nu.os-info.family` branch, where cleanup uses the
+        // nushell builtin and does run.
+        let bin_dir = tempfile::tempdir().unwrap();
+        for tool in ["nu", "git", "rm"] {
+            let resolved = which::which(tool)
+                .unwrap_or_else(|e| panic!("{tool} must be installed to run tests: {e}"));
+            std::os::unix::fs::symlink(resolved, bin_dir.path().join(tool)).unwrap();
+        }
+        let sanitized_path = bin_dir.path().display().to_string();
+
+        // Re-creating an existing branch fails, so the wrapper takes its
+        // exit-code propagation branch.
+        let output = exec_through_wrapper_with_env(
+            "nu",
+            &repo,
+            "switch",
+            &["--create", "existing"],
+            repo.root_path(),
+            &[],
+            &[("PATH", &sanitized_path)],
+        );
+
+        assert_eq!(
+            output.exit_code, 1,
+            "failure should propagate as exit 1.\nOutput:\n{}",
+            output.combined
+        );
+        assert!(
+            output.combined.contains("already exists"),
+            "wt's own error should still reach the terminal.\nOutput:\n{}",
+            output.combined
+        );
+        // The shape the bug produced: nushell rendering a spawn failure for the
+        // wrapper's internals on top of wt's error.
+        assert!(
+            !output.combined.contains("External command failed")
+                && !output.combined.contains("not found"),
+            "wrapper leaked a nushell external-command error.\nOutput:\n{}",
+            output.combined
+        );
+
+        // The other half of the bug: a failed spawn flattens every exit code to
+        // 1, so an exit-1 command can't tell the two templates apart. `wt config
+        // alias show <unknown>` exits 2 entirely inside wt (`unknown_alias_error`
+        // in `src/commands/config/alias.rs`), so the code only survives if the
+        // wrapper's propagation command actually ran.
+        let output = exec_through_wrapper_with_env(
+            "nu",
+            &repo,
+            "config",
+            &["alias", "show", "no-such-alias"],
+            repo.root_path(),
+            &[],
+            &[("PATH", &sanitized_path)],
+        );
+
+        assert_eq!(
+            output.exit_code, 2,
+            "wt's exit code should propagate unchanged, not flatten to 1.\nOutput:\n{}",
+            output.combined
+        );
+        assert!(
+            !output.combined.contains("External command failed")
+                && !output.combined.contains("not found"),
+            "wrapper leaked a nushell external-command error.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
@@ -989,10 +1079,10 @@ mod unix_tests {
     /// with coverage, and the assertion that distinguishes the two is whether the
     /// wrapper reached its own end — observable here as an empty `TMPDIR`.
     ///
-    /// The wrapper's terminal `^sh -c $"exit ($exit_code)"` is *meant* to abort
-    /// the caller, since that's how the code propagates; the driving script wraps
-    /// the call in nushell's own `try` so that intended propagation doesn't hide
-    /// whether cleanup ran first.
+    /// The wrapper's terminal `^$nu.current-exe -c $"exit ($exit_code)"` is
+    /// *meant* to abort the caller, since that's how the code propagates; the
+    /// driving script wraps the call in nushell's own `try` so that intended
+    /// propagation doesn't hide whether cleanup ran first.
     #[rstest]
     fn test_nu_wrapper_execute_failure_runs_cleanup(repo: TestRepo) {
         // A dedicated TMPDIR so the wrapper's `mktemp` files are the only

@@ -238,9 +238,9 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
         // Switch: source branch (`base`) and destination (`target`).
-        // `pr_number`/`pr_url` are populated for `post-switch` when creating
-        // via `pr:N` / `mr:N`; pre-switch fires before the PR/MR API call,
-        // so they're never set there but remain accepted for portability.
+        // `pr_number`/`pr_url` are populated whenever the switch was named by
+        // `pr:N` / `mr:N` — the forge answers before `pre-switch` runs, so
+        // both hooks see the same values.
         PreSwitch | PostSwitch => &[
             "base",
             "base_worktree_path",

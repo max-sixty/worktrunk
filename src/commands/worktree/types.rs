@@ -33,12 +33,6 @@ pub enum SwitchResult {
         base_worktree_path: Option<String>,
         /// Remote tracking branch if auto-created from remote (e.g., "origin/feature")
         from_remote: Option<String>,
-        /// PR/MR number when created via `pr:N` / `mr:N` (carried into post-* hook
-        /// templates as `pr_number`).
-        pr_number: Option<u32>,
-        /// PR/MR web URL when created via `pr:N` / `mr:N` (carried into post-* hook
-        /// templates as `pr_url`).
-        pr_url: Option<String>,
     },
 }
 
@@ -94,11 +88,26 @@ pub enum CreationMethod {
         /// URL to push to (the fork's URL). `None` when using a prefixed branch
         /// name (e.g., `contributor/main`) because push won't work.
         fork_push_url: Option<String>,
-        /// Web URL for the PR/MR.
-        ref_url: String,
         /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").
         remote: String,
     },
+}
+
+/// Identity of the PR/MR a `pr:N` / `mr:N` argument resolved to.
+///
+/// Resolved once, before `pre-switch` hooks run, then held by whoever needs it:
+/// the `ResolvedTarget` `pre-switch` reads, the plan `pre-start` reads, and the
+/// pipeline's own clone behind the post-* hooks — an `Existing` switch builds no
+/// `SwitchPlan::Create` at all. So `pr_number` / `pr_url` reach every switch
+/// hook whether the PR came from this repo or a fork. Reading it back off
+/// [`CreationMethod::ForkRef`] used to be the only source, which silently left
+/// same-repo PRs (the common case) with both variables unset.
+#[derive(Debug, Clone)]
+pub struct RefIdentity {
+    /// The PR/MR number the user typed.
+    pub number: u32,
+    /// Web URL of the PR/MR.
+    pub url: String,
 }
 
 /// Validated plan for a switch operation.
@@ -122,6 +131,10 @@ pub enum SwitchPlan {
         worktree_path: PathBuf,
         /// How to create the worktree
         method: CreationMethod,
+        /// The PR/MR this switch resolved from, when the argument was
+        /// `pr:N` / `mr:N`. Source of the `pr_number` / `pr_url` hook
+        /// variables.
+        ref_identity: Option<RefIdentity>,
         /// True when a stale path occupies `worktree_path` and `--clobber` was
         /// given — `execute_switch` backs it up before creating the worktree.
         needs_clobber_backup: bool,
@@ -588,8 +601,6 @@ mod tests {
                     base_branch: Some("main".to_string()),
                     base_worktree_path: Some("/test/main".to_string()),
                     from_remote: None,
-                    pr_number: None,
-                    pr_url: None,
                 },
                 PathBuf::from("/test/created"),
             ),
@@ -601,8 +612,6 @@ mod tests {
                     base_branch: None,
                     base_worktree_path: None,
                     from_remote: Some("origin/feature".to_string()),
-                    pr_number: None,
-                    pr_url: None,
                 },
                 PathBuf::from("/test/remote"),
             ),

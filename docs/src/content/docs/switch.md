@@ -32,6 +32,8 @@ $ wt switch https://github.com/owner/repo/pull/123   # ...or paste the PR's URL
 
 The `--create` flag creates a new branch from `--base` — the default branch unless specified. Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
+`--create` from a remote base is the exception. For the branch it creates, `wt` defaults git's `branch.autoSetupMerge` to `simple` instead of git's own `true`, so the new branch tracks its base only when the two share a name: `--create release --base origin/release` tracks `origin/release`, while `--create feature --base origin/release` — and the bare `--base release` that resolves to it — gets no upstream. Git's default would have `feature` track `origin/release`, so under `push.default = upstream` a bare `git push` would push the new work to `release`. A `branch.autoSetupMerge` set in git config takes precedence over that default. Publishing such a branch takes `git push --set-upstream origin <branch>`, or git's `push.autoSetupRemote = true` set once, after which a bare `git push` from the new worktree publishes it and configures its tracking.
+
 ## Creating worktrees
 
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:

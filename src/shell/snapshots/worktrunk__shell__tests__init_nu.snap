@@ -123,6 +123,12 @@ export def --env --wrapped wt [...args] {
         # Env changes (export) won't persist in the nushell session, but no
         # worktrunk code emits export directives.
         #
+        # This path still requires `sh`, unlike the exit propagation below: an
+        # exec body is a POSIX snippet by construction (`ShellEscapeMode::Posix`),
+        # so there is no nushell-native command to hand it to. It only fires for
+        # `--execute`, and which shell should run those bodies on Windows is an
+        # open question — see issue #3944.
+        #
         # `try` for the same reason as the binary call above: a body that exits
         # non-zero raises a ShellError that would unwind the whole `def`, skipping
         # cleanup (leaking all three temp files) and discarding the stdout this
@@ -166,9 +172,20 @@ export def --env --wrapped wt [...args] {
         # Using a failing external command (not `error make`) so nushell treats it
         # identically to the original non-zero exit — minimal display in scripts,
         # no verbose source trace.
+        #
+        # nushell itself is the external command, not `sh`: `Shell::Nushell` isn't
+        # platform-gated, so this wrapper is installed on Windows whenever `nu` is
+        # on PATH, and there `sh` doesn't exist. A missing `sh` turns every failing
+        # `wt` command into a "Command `sh` not found" trace that prints the
+        # wrapper's own source and flattens the real exit code to 1 — the opposite
+        # of what this branch is for. `$nu.current-exe` is always present by
+        # construction, and using one path on every platform keeps the branch Unix
+        # CI exercises identical to the one Windows runs. `--no-std-lib` halves
+        # the startup this costs (~9 ms to ~4.5 ms on nu 0.115); `exit` is a core
+        # builtin, so propagation is unaffected.
         if $exit_code != 0 {
             if ($output | is-not-empty) { print -n $output }
-            ^sh -c $"exit ($exit_code)"
+            ^$nu.current-exe --no-config-file --no-std-lib -c $"exit ($exit_code)"
         } else if ($output | is-not-empty) {
             $output
         }

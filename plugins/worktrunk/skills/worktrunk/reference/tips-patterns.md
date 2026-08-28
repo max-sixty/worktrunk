@@ -236,6 +236,14 @@ git rebase $(wt config state default-branch)
 
 In hooks and aliases, the same value is the `{{ default_branch }}` [template variable](https://worktrunk.dev/hook/#template-variables); reserve this command for plain shell scripts.
 
+## Override `default-branch` for one clone
+
+When the integration branch differs from the remote's `HEAD`, set a [clone-local override](https://worktrunk.dev/config/#wt-config-state-default-branch):
+
+```bash
+wt config state default-branch set integration
+```
+
 ## Task runners in hooks
 
 Reference Taskfile/Justfile/Makefile in hooks:

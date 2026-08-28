@@ -11,6 +11,13 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -30,6 +37,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -71,7 +79,7 @@ Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
 In a hook or alias template, prefer the [2m{{ default_branch }}[0m template variable; [2m$(wt config state default-branch)[0m is for plain shell scripts.
 
-Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
+Without a subcommand, runs [2mget[0m. [2mset[0m stores the override in the repository's local git config. The override adds no project file and applies to every linked worktree in the clone. [2mclear[0m then [2mget[0m re-detects. The branch must exist locally for [2mwt list[0m comparisons.
 
 [2mdefault-branch get[0m resolves the value and caches it on a miss; the aggregate [2mwt config state get[0m only reports the cache (read-only), so it can show [2m(none)[0m until something populates it.
 
@@ -84,7 +92,7 @@ Worktrunk detects the default branch automatically:
 3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s, abandoned after 10s
 4. [1mLocal inference[0m — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. The cache isn't re-validated on every command, so a later change to [2morigin/HEAD[0m — a renamed default branch followed by [2mgit remote set-head origin -a[0m — isn't picked up automatically. [2mwt config state[0m flags the drift when the cached value differs from the remote's local HEAD; [2mset[0m adopts the new branch and [2mclear[0m re-detects.
+Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. The cache isn't re-validated on every command, so a later change to [2morigin/HEAD[0m — a renamed default branch followed by [2mgit remote set-head origin -a[0m — isn't picked up automatically. [2mwt config state[0m flags the drift when the cached value differs from the remote's local HEAD — expected for a deliberate override; [2mset[0m adopts the new branch and [2mclear[0m re-detects.
 
 An abandoned remote query is the one case that isn't cached: the branch it inferred locally answers that command, but a value guessed while the remote was unreachable would otherwise become permanent, so the next command queries again.
 
