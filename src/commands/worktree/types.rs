@@ -66,13 +66,14 @@ pub enum CreationMethod {
         /// When `--base pr:N` / `--base mr:N` (same-repo) is paired with `--create`,
         /// the user's intent is "create a new branch tracking the PR/MR's source
         /// branch on the remote", so `git push` from the new worktree pushes back
-        /// to that PR/MR. The base is that source branch's remote-tracking name,
-        /// so `branch.autoSetupMerge = simple` sets the tracking itself when the
-        /// new branch shares the source branch's name. It sets none when the user
-        /// picked a different name, which is the case this pair serves: we capture
-        /// the (remote, branch) pair and configure tracking explicitly after `git
-        /// worktree add` succeeds, reaching the same answer git does where the two
-        /// overlap. `None` for any other base resolution.
+        /// to that PR/MR. `branch.autoSetupMerge = simple` doesn't cover it. When a
+        /// local branch already has the source branch's name, the base is that bare
+        /// name, which git reads as a local base and gives no tracking at all. When
+        /// the base is the remote-tracking name instead, `simple` sets tracking only
+        /// if the new branch shares that name, and the case this serves is the one
+        /// the user named differently. So we capture the (remote, branch) pair and
+        /// configure tracking explicitly after `git worktree add` succeeds. `None`
+        /// for any other base resolution.
         base_pr_upstream: Option<(String, String)>,
     },
     /// Fork PR/MR: fetch from refs/pull/N/head or refs/merge-requests/N/head,

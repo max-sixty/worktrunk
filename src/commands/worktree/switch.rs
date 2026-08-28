@@ -504,16 +504,9 @@ fn resolve_base_ref(
 }
 
 /// Resolve `pr:{N}` / `mr:{N}` for `--base`. Same-repo returns the source
-/// branch under its remote-tracking name plus the (remote, branch) the new
-/// branch should track; fork returns the PR head SHA so we don't create a
-/// tracking branch for a ref the user hasn't asked to check out.
-///
-/// The same-repo fetch writes only `refs/remotes/<remote>/<branch>`, and git's
-/// rev-parse never expands a bare name to a remote-tracking ref, so a base
-/// spelled bare fails the validation in [`resolve_switch_target`] whenever the
-/// PR's source branch isn't already a local branch. The remote-tracking name
-/// also bases the new branch on the head just fetched, rather than on a local
-/// branch of the same name that may sit behind or ahead of the PR.
+/// branch plus the (remote, branch) the new branch should track; fork returns
+/// the PR head SHA so we don't create a tracking branch for a ref the user
+/// hasn't asked to check out.
 fn resolve_remote_ref_as_base(
     repo: &Repository,
     provider: &dyn RemoteRefProvider,
@@ -536,10 +529,19 @@ fn resolve_remote_ref_as_base(
     if !info.is_cross_repo {
         fetch_same_repo_branch(repo, &info)?;
         let remote = remote_ref::find_remote(repo, &info)?;
-        return Ok((
-            format!("{remote}/{}", info.source_branch),
-            Some((remote, info.source_branch.clone())),
-        ));
+        let branch = &info.source_branch;
+        // The fetch above writes only `refs/remotes/<remote>/<branch>`, so a
+        // source branch nobody has checked out locally resolves only under its
+        // remote: git's rev-parse never expands a bare name to a
+        // remote-tracking ref, and the bare name would fail the base
+        // validation in `resolve_switch_target`. Same rule, same spelling as
+        // the remote-only base above.
+        let base = if repo.ref_exists(branch)? {
+            branch.clone()
+        } else {
+            format!("{remote}/{branch}")
+        };
+        return Ok((base, Some((remote, branch.clone()))));
     }
 
     let remote = remote_ref::find_remote(repo, &info)?;
