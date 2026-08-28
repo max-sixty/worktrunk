@@ -79,20 +79,9 @@ Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
 In a hook or alias template, prefer the [2m{{ default_branch }}[0m template variable; [2m$(wt config state default-branch)[0m is for plain shell scripts.
 
-Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
+Without a subcommand, runs [2mget[0m. [2mset[0m stores the override in the repository's local git config. The override adds no project file and applies to every linked worktree in the clone. [2mclear[0m then [2mget[0m re-detects. The branch must exist locally for [2mwt list[0m comparisons.
 
 [2mdefault-branch get[0m resolves the value and caches it on a miss; the aggregate [2mwt config state get[0m only reports the cache (read-only), so it can show [2m(none)[0m until something populates it.
-
-[1m[32mOverriding without a config file[0m
-
-[2mset[0m writes [2mworktrunk.default-branch[0m to the repository's local git config, which git never commits or pushes — so the override stays on one machine. There is no config-file key for the default branch, so this is the only way to override detection:
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state default-branch set integration[0m
-[107m [0m [2m[0m[2m[34m✓[0m[2m Set default branch to integration[0m
-
-That covers a repo whose remote [2mHEAD[0m names a branch other than the one to integrate against, without adding a Worktrunk file to a repository owned by someone else. Local git config lives in the common git dir, so one [2mset[0m applies to every linked worktree of that clone.
-
-Check the branch out locally first. With only [2morigin/integration[0m fetched, [2mset[0m warns that the branch doesn't exist locally, and every [2mwt list[0m repeats that warning with a hint to clear the override, then skips the comparisons against the default branch.
 
 [1m[32mDetection[0m
 
@@ -103,7 +92,7 @@ Worktrunk detects the default branch automatically:
 3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s, abandoned after 10s
 4. [1mLocal inference[0m — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. The cache isn't re-validated on every command, so a later change to [2morigin/HEAD[0m — a renamed default branch followed by [2mgit remote set-head origin -a[0m — isn't picked up automatically. [2mwt config state[0m flags the drift when the cached value differs from the remote's local HEAD — expected for a deliberate override, and inspection-only either way; [2mset[0m adopts the new branch and [2mclear[0m re-detects.
+Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access. The cache isn't re-validated on every command, so a later change to [2morigin/HEAD[0m — a renamed default branch followed by [2mgit remote set-head origin -a[0m — isn't picked up automatically. [2mwt config state[0m flags the drift when the cached value differs from the remote's local HEAD; [2mset[0m adopts the new branch and [2mclear[0m re-detects.
 
 An abandoned remote query is the one case that isn't cached: the branch it inferred locally answers that command, but a value guessed while the remote was unreachable would otherwise become permanent, so the next command queries again.
 
