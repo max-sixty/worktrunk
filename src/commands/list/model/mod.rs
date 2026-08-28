@@ -17,17 +17,13 @@ pub mod stats;
 pub mod status_symbols;
 pub mod statusline_segment;
 
-// Re-export public types at the module level for convenience.
-// These re-exports are used by sibling modules (e.g., json_output.rs, render.rs)
-// via `crate::commands::list::model::...` paths. The allow is needed because
-// rustc doesn't track re-export usage across module boundaries.
-#[allow(unused_imports)]
-pub use item::{BranchScope, Collected, ItemKind, ListData, ListItem, SeededFacts, WorktreeData};
-#[allow(unused_imports)]
+// Re-export public types at the module level for convenience. Sibling modules
+// (e.g. json_output.rs, render.rs) reach them via
+// `crate::commands::list::model::...`. Every name here has such a caller, so
+// the set stays warning-clean on its own: a re-export that loses its last
+// caller shows up as `unused_imports` rather than being carried indefinitely.
+pub use item::{BranchScope, Collected, ItemKind, ListData, ListItem, WorktreeData};
 pub use state::{Divergence, MainState, OperationState, WorktreeState};
-#[allow(unused_imports)]
-pub use stats::{ActiveUpstream, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
-#[allow(unused_imports)]
+pub use stats::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
 pub use status_symbols::{PositionMask, StatusSymbols, WorkingTreeStatus};
-#[allow(unused_imports)]
 pub use statusline_segment::StatuslineSegment;

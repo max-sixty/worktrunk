@@ -915,7 +915,8 @@ mod tests {
     use worktrunk::git::InProgressOperation;
 
     use crate::commands::list::ci_status::PrRef;
-    use crate::commands::list::model::{AheadBehind, SeededFacts, UpstreamStatus};
+    use crate::commands::list::model::item::SeededFacts;
+    use crate::commands::list::model::{AheadBehind, UpstreamStatus};
 
     fn item_with(branch: &str) -> ListItem {
         ListItem::new_branch("a".repeat(40), branch.to_string())
