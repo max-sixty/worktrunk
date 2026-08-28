@@ -64,6 +64,25 @@ struct ResolvedTarget {
     ref_identity: Option<RefIdentity>,
 }
 
+impl ResolvedTarget {
+    /// A target with no PR/MR identity — every form but `pr:N` / `mr:N`.
+    fn new(selector: Selector, method: CreationMethod) -> Self {
+        Self {
+            selector,
+            method,
+            ref_identity: None,
+        }
+    }
+
+    /// Attach the PR/MR the argument named. Called on the single return path
+    /// of [`resolve_remote_ref`], so a fork resolution can't reach the plan
+    /// without an identity the way it could when each arm set the field.
+    fn with_ref_identity(mut self, identity: RefIdentity) -> Self {
+        self.ref_identity = Some(identity);
+        self
+    }
+}
+
 static GITHUB_PROVIDER: GitHubProvider = GitHubProvider;
 static GITEA_PROVIDER: GiteaProvider = GiteaProvider;
 static AZURE_DEVOPS_PROVIDER: AzureDevOpsProvider = AzureDevOpsProvider;
@@ -220,24 +239,27 @@ fn resolve_remote_ref(
         .into());
     }
 
-    if info.is_cross_repo {
-        return resolve_fork_ref(repo, provider, number, &info);
-    }
+    let target = if info.is_cross_repo {
+        resolve_fork_ref(repo, provider, number, &info)?
+    } else {
+        // Same-repo ref: fetch the branch to ensure remote tracking refs exist
+        fetch_same_repo_branch(repo, &info)?;
+        ResolvedTarget::new(
+            Selector::rewritten_to(info.source_branch),
+            CreationMethod::Regular {
+                create_branch: false,
+                base_branch: None,
+                base_pr_upstream: None,
+            },
+        )
+    };
 
-    // Same-repo ref: fetch the branch to ensure remote tracking refs exist
-    fetch_same_repo_branch(repo, &info)?;
-    Ok(ResolvedTarget {
-        selector: Selector::rewritten_to(info.source_branch),
-        method: CreationMethod::Regular {
-            create_branch: false,
-            base_branch: None,
-            base_pr_upstream: None,
-        },
-        ref_identity: Some(RefIdentity {
-            number,
-            url: info.url,
-        }),
-    })
+    // Every path out of here resolved the same PR/MR, so the identity is set
+    // once here rather than repeated on each arm of `resolve_fork_ref`.
+    Ok(target.with_ref_identity(RefIdentity {
+        number,
+        url: info.url,
+    }))
 }
 
 /// Resolve a fork (cross-repo) PR/MR.
@@ -274,18 +296,14 @@ fn resolve_fork_ref(
                     ref_type.display(number)
                 ))
             );
-            return Ok(ResolvedTarget {
-                selector: Selector::rewritten_to(local_branch),
-                method: CreationMethod::Regular {
+            return Ok(ResolvedTarget::new(
+                Selector::rewritten_to(local_branch),
+                CreationMethod::Regular {
                     create_branch: false,
                     base_branch: None,
                     base_pr_upstream: None,
                 },
-                ref_identity: Some(RefIdentity {
-                    number,
-                    url: info.url.clone(),
-                }),
-            });
+            ));
         }
 
         // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
@@ -305,18 +323,14 @@ fn resolve_fork_ref(
                             ref_type.display(number)
                         ))
                     );
-                    return Ok(ResolvedTarget {
-                        selector: Selector::rewritten_to(prefixed),
-                        method: CreationMethod::Regular {
+                    return Ok(ResolvedTarget::new(
+                        Selector::rewritten_to(prefixed),
+                        CreationMethod::Regular {
                             create_branch: false,
                             base_branch: None,
                             base_pr_upstream: None,
                         },
-                        ref_identity: Some(RefIdentity {
-                            number,
-                            url: info.url.clone(),
-                        }),
-                    });
+                    ));
                 }
                 // Prefixed branch exists but tracks something else - error
                 return Err(GitError::BranchTracksDifferentRef {
@@ -330,20 +344,16 @@ fn resolve_fork_ref(
             // Use prefixed branch name; push won't work (None for fork_push_url)
             // This is GitHub-only (GitLab doesn't support prefixed names)
             let remote = remote_ref::find_remote(repo, info)?;
-            return Ok(ResolvedTarget {
-                selector: Selector::rewritten_to(prefixed),
-                method: CreationMethod::ForkRef {
+            return Ok(ResolvedTarget::new(
+                Selector::rewritten_to(prefixed),
+                CreationMethod::ForkRef {
                     ref_type,
                     number,
                     ref_path: provider.ref_path(number),
                     fork_push_url: None,
                     remote,
                 },
-                ref_identity: Some(RefIdentity {
-                    number,
-                    url: info.url.clone(),
-                }),
-            });
+            ));
         }
 
         // GitLab doesn't support prefixed branch names - error
@@ -395,20 +405,16 @@ fn resolve_fork_ref(
         }
     };
 
-    Ok(ResolvedTarget {
-        selector: Selector::rewritten_to(local_branch),
-        method: CreationMethod::ForkRef {
+    Ok(ResolvedTarget::new(
+        Selector::rewritten_to(local_branch),
+        CreationMethod::ForkRef {
             ref_type,
             number,
             ref_path: provider.ref_path(number),
             fork_push_url,
             remote,
         },
-        ref_identity: Some(RefIdentity {
-            number,
-            url: info.url.clone(),
-        }),
-    })
+    ))
 }
 
 /// Fetch a same-repo PR/MR's source branch with an explicit refspec so the
@@ -599,6 +605,14 @@ fn resolve_switch_target(
     if let Some(target) = ref_target {
         return Ok(target);
     }
+    // Everything below treats `branch` as a branch name, so a `pr:N` token
+    // arriving unresolved would go looking for a literal branch called
+    // `pr:101`. One caller today, and it always resolves first — this is what
+    // fails the tests if a second one forgets to.
+    debug_assert!(
+        parse_ref_shortcut(branch).is_none(),
+        "`pr:`/`mr:` must reach plan_switch pre-resolved (resolve_ref_shortcut_target)"
+    );
 
     // Regular branch switch. `expand_selector` normalizes the token and
     // expands `@` / `-` / `^`, reporting whether it rewrote anything.
@@ -689,22 +703,21 @@ fn resolve_switch_target(
         None
     };
 
-    Ok(ResolvedTarget {
+    Ok(ResolvedTarget::new(
         // Under `--create` the argument names a branch that does not exist
         // yet, so it is not a path to look up — stated here, where `create`
         // lives, rather than re-tested at each arm that consults it.
-        selector: if create {
+        if create {
             selector.branch_only()
         } else {
             selector
         },
-        method: CreationMethod::Regular {
+        CreationMethod::Regular {
             create_branch: create,
             base_branch,
             base_pr_upstream,
         },
-        ref_identity: None,
-    })
+    ))
 }
 
 /// Validate that we can create a worktree at the given path.
@@ -1211,11 +1224,12 @@ fn execute_switch(
                 })
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-            // PR/MR identity travels into both the pre-start hook below and the
-            // SwitchResult — TemplateVars::for_post_switch then forwards it to
-            // background post-switch / post-start hooks. It rides the plan, not
-            // `method`: a same-repo PR resolves to `CreationMethod::Regular`,
-            // and reading `method` left the common case with no `pr_number`.
+            // PR/MR identity for the pre-start hook below. It rides the plan,
+            // not `method`: a same-repo PR resolves to
+            // `CreationMethod::Regular`, and reading `method` left the common
+            // case with no `pr_number`. The post-* hooks get the same value
+            // from the pipeline's own copy rather than back off the
+            // `SwitchResult`, which would leave the `Existing` path unserved.
             let (pr_number, pr_url) = match &ref_identity {
                 Some(RefIdentity { number, url }) => (Some(*number), Some(url.clone())),
                 None => (None, None),
@@ -1250,8 +1264,6 @@ fn execute_switch(
                     base_branch,
                     base_worktree_path,
                     from_remote,
-                    pr_number,
-                    pr_url,
                 },
                 SwitchBranchInfo {
                     branch: Some(branch),
@@ -1797,6 +1809,9 @@ impl SwitchPipeline<'_> {
         // switches), or the branch they branched from (creates). "target"
         // matches the bare vars (the destination) — kept symmetric with
         // pre-switch.
+        // `pr_number` / `pr_url` come from the resolved argument, not from
+        // `result` — a `pr:N` switch onto a branch that already has a worktree
+        // returns `SwitchResult::Existing`, which knows nothing about the PR.
         let mut template_vars =
             TemplateVars::for_post_switch(&result, &branch_info, &source_branch, &source_path);
         if let Some(identity) = &ref_identity {
