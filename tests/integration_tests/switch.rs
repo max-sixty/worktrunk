@@ -3371,11 +3371,12 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `pre-start`, `post-start`, and `post-switch` hooks on PR/MR-created worktrees
-/// see `pr_number` and `pr_url` in their template context. Both GitHub PRs and
-/// GitLab MRs canonicalize to the same `pr_*` names — hook authors don't need
-/// to branch on platform. Pre-switch fires before PR resolution and never sees
-/// them.
+/// Every hook on a PR/MR-created worktree — `pre-switch`, `pre-start`,
+/// `post-start`, `post-switch` — sees `pr_number` and `pr_url` in its template
+/// context. Both GitHub PRs and GitLab MRs canonicalize to the same `pr_*`
+/// names — hook authors don't need to branch on platform. `pre-switch` fires
+/// before the worktree exists but after the forge answered, so it names the
+/// PR's branch rather than the raw `pr:N` token (#3934).
 #[rstest]
 fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
@@ -3404,7 +3405,8 @@ fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     fs::create_dir_all(repo.root_path().join(".config")).unwrap();
     fs::write(
         repo.root_path().join(".config/wt.toml"),
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+        r#"pre-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
 post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
 post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
 "#,
@@ -3462,7 +3464,12 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
     );
 
     let expected = "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42";
-    for marker in ["pre_start.txt", "post_start.txt", "post_switch.txt"] {
+    for marker in [
+        "pre_switch.txt",
+        "pre_start.txt",
+        "post_start.txt",
+        "post_switch.txt",
+    ] {
         let path = repo.root_path().join(marker);
         // post-* hooks run in the background; poll until the file appears.
         wait_for_file_content(&path);
@@ -3472,6 +3479,97 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
             contents.trim(),
             expected,
             "{marker} hook should see canonical pr_number and pr_url variables",
+        );
+    }
+}
+
+/// A **same-repo** `pr:N` switch has to fill the same template variables as a
+/// fork one. Two things used to go missing here (#3934): `pre-switch` ran
+/// before the forge was queried, so `branch` / `target` carried the literal
+/// `pr:101` token; and `pr_number` / `pr_url` were read back off
+/// `CreationMethod::ForkRef`, which a same-repo PR never produces — so the
+/// common case saw them unset in every hook.
+#[rstest]
+fn test_switch_pr_same_repo_hooks_see_resolved_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Push the PR's source branch to the remote, then drop the local branch so
+    // the switch takes the create path (the reporter's case: the PR's worktree
+    // does not exist yet).
+    repo.run_git(&["branch", "feature-auth"]);
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // `pre-switch` runs in the invoking worktree, before the destination
+    // exists — so it reports the branch it is switching to, not a path.
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+post-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:101 should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:101 failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let expected = "branch=feature-auth target=feature-auth pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101";
+    for marker in ["pre_switch.txt", "post_switch.txt"] {
+        let path = repo.root_path().join(marker);
+        // post-switch runs in the background; poll until the file appears.
+        wait_for_file_content(&path);
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{marker} should have been written: {e}"));
+        assert_eq!(
+            contents.trim(),
+            expected,
+            "{marker} should name the PR's branch and carry its pr_* variables",
         );
     }
 }

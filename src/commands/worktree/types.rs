@@ -94,11 +94,24 @@ pub enum CreationMethod {
         /// URL to push to (the fork's URL). `None` when using a prefixed branch
         /// name (e.g., `contributor/main`) because push won't work.
         fork_push_url: Option<String>,
-        /// Web URL for the PR/MR.
-        ref_url: String,
         /// Resolved remote name where PR/MR refs live (e.g., "origin", "upstream").
         remote: String,
     },
+}
+
+/// Identity of the PR/MR a `pr:N` / `mr:N` argument resolved to.
+///
+/// Resolved once, before `pre-switch` hooks run, and then carried through the
+/// plan — so `pr_number` / `pr_url` reach every switch hook whether the PR
+/// came from this repo or a fork. Reading it back off
+/// [`CreationMethod::ForkRef`] used to be the only source, which silently left
+/// same-repo PRs (the common case) with both variables unset.
+#[derive(Debug, Clone)]
+pub struct RefIdentity {
+    /// The PR/MR number the user typed.
+    pub number: u32,
+    /// Web URL of the PR/MR.
+    pub url: String,
 }
 
 /// Validated plan for a switch operation.
@@ -122,6 +135,10 @@ pub enum SwitchPlan {
         worktree_path: PathBuf,
         /// How to create the worktree
         method: CreationMethod,
+        /// The PR/MR this switch resolved from, when the argument was
+        /// `pr:N` / `mr:N`. Source of the `pr_number` / `pr_url` hook
+        /// variables.
+        ref_identity: Option<RefIdentity>,
         /// True when a stale path occupies `worktree_path` and `--clobber` was
         /// given — `execute_switch` backs it up before creating the worktree.
         needs_clobber_backup: bool,
