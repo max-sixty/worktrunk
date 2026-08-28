@@ -468,9 +468,9 @@ fn parse_ref_shortcut(input: &str) -> Option<(RefType, u32)> {
 /// returns the remote-qualified form so the validation in
 /// [`resolve_switch_target`] doesn't reject `wt switch -c new --base
 /// remote-only-branch`. Git's rev-parse doesn't auto-expand `foo` to
-/// `refs/remotes/origin/foo`. The remote-qualified form is also what lets the
-/// creation site's `branch.autoSetupMerge = simple` see a remote branch at all,
-/// so `--base release` and `--base origin/release` set up the same tracking.
+/// `refs/remotes/origin/foo`, though `git worktree add` would DWIM the bare
+/// form on its own — so the qualification is load-bearing for the validation,
+/// not for the creation.
 fn resolve_base_ref(
     repo: &Repository,
     base: &str,

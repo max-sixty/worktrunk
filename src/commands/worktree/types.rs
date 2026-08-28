@@ -66,11 +66,11 @@ pub enum CreationMethod {
         /// When `--base pr:N` / `--base mr:N` (same-repo) is paired with `--create`,
         /// the user's intent is "create a new branch tracking the PR/MR's source
         /// branch on the remote", so `git push` from the new worktree pushes back
-        /// to that PR/MR. The base here is the PR/MR's source branch under its
-        /// bare name, which `branch.autoSetupMerge = simple` never reads as a
-        /// remote branch, so it sets no tracking — we capture the (remote,
-        /// branch) pair and configure tracking explicitly after `git worktree
-        /// add` succeeds. `None` for any other base resolution.
+        /// to that PR/MR. That branch may carry any name, and
+        /// `branch.autoSetupMerge = simple` sets an upstream only where the new
+        /// branch shares it, so we capture the (remote, branch) pair here and
+        /// configure tracking explicitly after `git worktree add` succeeds.
+        /// `None` for any other base resolution.
         base_pr_upstream: Option<(String, String)>,
     },
     /// Fork PR/MR: fetch from refs/pull/N/head or refs/merge-requests/N/head,

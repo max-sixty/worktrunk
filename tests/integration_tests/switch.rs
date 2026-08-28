@@ -525,9 +525,10 @@ fn test_switch_create_base_on_remote_with_slash(#[from(repo_with_remote)] repo: 
 }
 
 /// Switching to a remote-only branch creates the tracking branch the docs
-/// promise, under every `branch.autoSetupMerge`. The names match by
-/// construction here, so the same rule `--create` runs under settles it — git's
-/// `false` and `inherit` would otherwise leave the branch with no upstream.
+/// promise. The names match by construction here, so the same rule `--create`
+/// runs under settles it; the values worth enumerating are the two that would
+/// otherwise leave the branch with no upstream, against the default and the
+/// most permissive as controls.
 #[rstest]
 fn test_switch_dwim_from_remote_tracks(
     #[from(repo_with_remote)] repo: TestRepo,
@@ -598,6 +599,19 @@ fn test_switch_create_base_outside_fetch_refspec(#[from(repo_with_remote)] repo:
     );
     let branches = repo.git_output(&["branch", "--list", "release"]);
     assert!(branches.contains("release"), "release should be created");
+
+    // `simple` declines the tracking rather than guessing at it: git can't work
+    // out which remote branch `origin/release` stands for without a refspec.
+    let upstream = repo
+        .git_command()
+        .args(["rev-parse", "--abbrev-ref", "release@{upstream}"])
+        .run()
+        .unwrap();
+    assert!(
+        !upstream.status.success(),
+        "release should have no upstream, got {}",
+        String::from_utf8_lossy(&upstream.stdout).trim()
+    );
 }
 
 /// When local branch already exists and tracks a remote, should report
