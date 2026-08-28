@@ -4,9 +4,9 @@
 
 ### Improved
 
-- **Established automation and LLM customization interfaces are now stable**: `wt step eval`, `wt step for-each`, `wt step prune`, LLM branch summaries, `wt config state vars`, and `commit.generation.template-append` are no longer marked experimental.
+- **Established automation and LLM customization interfaces are now stable**: `wt step eval`, `wt step for-each`, `wt step prune`, LLM branch summaries, `wt config state vars`, and `commit.generation.template-append` are no longer marked experimental. ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
 
-- **Deprecated config compatibility has been removed**: `commit.generation.template-file` and `squash-template-file` are no longer supported; put the file contents in `template` or `squash-template` instead. `switch.picker.timeout-ms` now follows the generic unknown-field path instead of being removed by `wt config update`. (Breaking.)
+- **Deprecated config compatibility has been removed**: `commit.generation.template-file` and `squash-template-file` are no longer supported; put the file contents in `template` or `squash-template` instead. `switch.picker.timeout-ms` now follows the generic unknown-field path instead of being removed by `wt config update`. (Breaking.) ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
 
 - **The `wt switch` picker opens on one unified diff**: local rows combine committed, staged, unstaged, and untracked changes. Tab skips empty subsidiary views, while `Alt-1` through `Alt-8` retain direct access. [Docs](https://worktrunk.dev/switch/#interactive-picker) ([#3865](https://github.com/max-sixty/worktrunk/pull/3865))
 

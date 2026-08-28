@@ -120,8 +120,6 @@ See [`wt merge`](/merge/) and [`wt step`](/step/) for full documentation.
 
 ## Branch summaries
 
-<span class="badge-experimental"></span>
-
 With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
 
 Summaries appear in:
@@ -197,8 +195,6 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 See `wt config create --help` for the full default templates.
 
 ## Appending to the prompt
-
-<span class="badge-experimental"></span>
 
 `template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:
 
