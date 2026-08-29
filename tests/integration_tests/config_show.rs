@@ -3962,6 +3962,14 @@ fn test_plugin_layout_is_consolidated() {
         );
     }
 
+    let marker_commands = all_commands
+        .iter()
+        .filter(|command| command.contains("config state marker"))
+        .collect::<Vec<_>>();
+    assert_eq!(marker_commands.len(), 6);
+    for command in marker_commands {
+        assert!(command.contains(r#"-C "$CLAUDE_PROJECT_DIR""#));
+    }
     let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
         .as_str()
         .expect("WorktreeRemove hook must define a command");

@@ -150,6 +150,8 @@ The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/conf
 
 `Stop` fires at turn-end, so 🤖 returns to 💬 when a turn completes. `SessionEnd` clears the marker when the main thread ends.
 
+Codex and Gemini marker commands still resolve from the hook process's cwd. When either harness exposes a stable session project directory, pass that directory to Worktrunk with global `-C`, as Claude does with `$CLAUDE_PROJECT_DIR`.
+
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 
 Codex's mirrored `skills/` and Gemini's `${extensionPath}/skills/` both carry the entire skill set, including `wt-switch-create`, which depends on Claude session-cwd switching (`EnterWorktree`) that neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single authored `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
