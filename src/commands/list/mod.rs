@@ -3,9 +3,9 @@
 //! # Performance
 //!
 //! `wt list` runs multiple git commands per worktree in parallel using Rayon. Performance
-//! depends heavily on git's internal caches for the commands that read working-tree state,
-//! and on worktrunk's own on-disk caches for the commit-graph-derived ones (see
-//! "Worktrunk's Own Caches" below).
+//! depends heavily on git's internal caches, and — for the commit-graph-derived commands —
+//! on worktrunk's own on-disk caches, which elide those commands entirely on a warm cache
+//! (see "Worktrunk's Own Caches" below).
 //!
 //! ## Time to First Information
 //!
