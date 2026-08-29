@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **The `wt switch` picker survives a preview longer than 65,535 lines**: skim keeps the preview pane's line count in a `u16`, so a branch whose diff against the default branch ran past that aborted `wt` with exit 101 a few seconds after the picker painted — on screen, the picker appeared to close by itself. Preview panes now cap at 60,000 lines and say so above the pane. ([#3959](https://github.com/max-sixty/worktrunk/pull/3959), fixes [#3958](https://github.com/max-sixty/worktrunk/issues/3958), thanks @sandertammesoo for reporting and diagnosing)
+
 - **`wt list` no longer grows `.git/objects` during advisory conflict checks**: untracked content stays visible but is excluded from synthetic trees, and all probe-only objects use temporary storage. ([#3906](https://github.com/max-sixty/worktrunk/pull/3906), fixes [#3883](https://github.com/max-sixty/worktrunk/issues/3883), thanks @srobroek for reporting and the original fix)
 
 - **`HEAD±` counts untracked files without inflating moves**: `wt list`, the picker, and statusline include untracked lines. Tracked deletions paired with untracked destinations count as renames, so pure moves are line-neutral and edited moves show only their edits. `HEAD±` now always detects renames, regardless of `diff.renames`. ([#3925](https://github.com/max-sixty/worktrunk/pull/3925))
