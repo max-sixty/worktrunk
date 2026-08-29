@@ -125,7 +125,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::shell_exec::Cmd;
 
@@ -503,6 +503,23 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
 
+/// Process-local coordination for Git's worktree registry, keyed by the
+/// canonical Git common directory. Every [`Repository`] for the same common
+/// directory shares one read/write lock. The dedicated
+/// [`Repository::list_worktrees`] accessor takes the read side, while
+/// [`Repository::prune_worktree_entry`] and [`Repository::remove_worktree`]
+/// take the write side.
+///
+/// Guards are non-reentrant: a guarded operation must not call another of
+/// these accessors. In `wt step prune`, the lock order is the command's
+/// `check_lock` followed by this registry lock; code holding a registry guard
+/// must never acquire `check_lock`.
+///
+/// External Git processes and raw worktree commands issued through
+/// [`Repository::run_command`] do not honor this lock.
+static WORKTREE_REGISTRY_LOCKS: LazyLock<DashMap<PathBuf, Arc<RwLock<()>>>> =
+    LazyLock::new(DashMap::new);
+
 /// Process-wide map of `worktree_path -> canonicalized worktree root`,
 /// keyed by the canonicalized path used as the cache key (same convention as
 /// [`Repository::worktree_at`] / [`WorkingTree`]).
@@ -751,6 +768,8 @@ pub struct Repository {
     git_common_dir: PathBuf,
     /// Cached data for this repository. Shared across clones via Arc.
     pub(super) cache: Arc<RepoCache>,
+    /// Shared by every `Repository` that resolves to `git_common_dir`.
+    worktree_registry_lock: Arc<RwLock<()>>,
     /// When set, object-writing git plumbing is redirected into a temporary
     /// object database. `None` for the normal persistent path. See
     /// [`Repository::redirect_objects_for_observation`].
@@ -808,6 +827,10 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+        let worktree_registry_lock = WORKTREE_REGISTRY_LOCKS
+            .entry(git_common_dir.clone())
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone();
 
         let cache = RepoCache::default();
         // Consume any `git config --list -z` map preloaded by
@@ -835,8 +858,23 @@ impl Repository {
             discovery_path,
             git_common_dir,
             cache: Arc::new(cache),
+            worktree_registry_lock,
             temporary_object_store: None,
         })
+    }
+
+    /// Share registry coordination across fresh repository caches.
+    pub(super) fn worktree_registry_read(&self) -> RwLockReadGuard<'_, ()> {
+        self.worktree_registry_lock
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Exclude registry readers and other teardowns for this repository.
+    pub(super) fn worktree_registry_write(&self) -> RwLockWriteGuard<'_, ()> {
+        self.worktree_registry_lock
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     /// Return a clone whose object-writing git plumbing is redirected into a

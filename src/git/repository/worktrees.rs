@@ -36,7 +36,10 @@ impl Repository {
         self.cache
             .worktrees
             .get_or_try_init(|| {
-                let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
+                let stdout = {
+                    let _registry = self.worktree_registry_read();
+                    self.run_command(&["worktree", "list", "--porcelain"])?
+                };
                 let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
@@ -221,18 +224,17 @@ impl Repository {
     ///
     /// # Concurrent calls
     ///
-    /// `wt step prune` removes several entries at once, but **serializes the
-    /// teardowns** — this and every other `git worktree remove` — behind
-    /// `RemovalContext::registry_lock` (see the `prune` module). It has to:
-    /// naming one entry bounds what a call *deletes*, not what it *reads*.
+    /// This method and [`Repository::remove_worktree`] serialize their `git
+    /// worktree remove` commands with each other for the same repository.
+    /// Naming one entry bounds what a call *deletes*, not what it *reads*.
     /// `git worktree remove` enumerates *every* sibling under `.git/worktrees/`
     /// and reads each one's `commondir` while resolving its target, so a
     /// teardown overlapping another worker's teardown — or a branch delete's
     /// `list_worktrees` probe — can read an entry mid-deletion and fail
     /// (`failed to read …/commondir` / `Invalid path …/.git/worktrees/<id>`).
-    /// That is git's own TOCTOU between the enumerator's `readdir` and its
-    /// `open`; it holds however wt schedules its removals, so wt closes the
-    /// window by not letting two registry mutations overlap (issue #3661).
+    /// That is Git's own TOCTOU between the enumerator's `readdir` and its
+    /// `open`. The repository-scoped write lock closes the in-process window;
+    /// [`Repository::list_worktrees`] takes the matching read side.
     ///
     /// Git also `rmdir`s the containing `.git/worktrees` once the last entry
     /// goes, but that only succeeds on an already-empty directory, and every
@@ -247,6 +249,7 @@ impl Repository {
         // porcelain as UTF-8, so this only fires if that edge ever stops
         // guaranteeing it — a bare `?` rather than a rendered path.
         let path_str = path.to_str().context("worktree path is not valid UTF-8")?;
+        let _registry = self.worktree_registry_write();
         self.run_command(&["worktree", "remove", path_str])?;
         Ok(())
     }
@@ -294,6 +297,17 @@ impl Repository {
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
+        let mut args = vec!["worktree", "remove"];
+        if use_force {
+            args.push("--force");
+        }
+        args.push(path_str);
+
+        // The synthesized-force cleanliness check and destructive command are
+        // one critical section. If this waited for another registry teardown
+        // after the check, a concurrent writer could dirty the worktree before
+        // `--force` bypassed Git's own dirty gate.
+        let _registry = self.worktree_registry_write();
         if use_force && !force {
             // Synthesized force (submodule worktree, not user-requested).
             // `--force` will suppress git's dirty check, so re-validate
@@ -307,11 +321,6 @@ impl Repository {
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
-        let mut args = vec!["worktree", "remove"];
-        if use_force {
-            args.push("--force");
-        }
-        args.push(path_str);
 
         self.run_command(&args)?;
         Ok(())
