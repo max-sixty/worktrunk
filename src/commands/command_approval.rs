@@ -25,7 +25,7 @@ use color_print::cformat;
 use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, hint_message, info_message, prompt_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_heading, hint_message, prompt_message,
     stderr, warning_message,
 };
 
@@ -124,21 +124,24 @@ fn print_command_batch(header: impl std::fmt::Display, commands: &[&ApprovableCo
 
 /// The batch `wt config approvals add --yes` is about to trust. Nothing is
 /// being asked, but the batch still prints: it is the record of what an
-/// unattended run just approved. Lives beside [`prompt_for_batch_approval`]
+/// unattended run just approved. Lives beside [`prompt_for_batch_review`]
 /// so the two headers stay parallel.
 pub fn announce_batch_approval(commands: &[&ApprovableCommand], project_id: &str) {
     let project_name = display_project_name(project_id);
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
     print_command_batch(
-        info_message(cformat!(
-            "Approving <bold>{count}</> command{plural} for <bold>{project_name}</> (--yes):"
-        )),
+        format_heading(
+            &cformat!(
+                "Approving <bold>{count}</> command{plural} for <bold>{project_name}</> (--yes):"
+            ),
+            None,
+        ),
         commands,
     );
 }
 
-pub fn prompt_for_batch_approval(
+fn prompt_for_batch_approval(
     commands: &[&ApprovableCommand],
     project_id: &str,
 ) -> anyhow::Result<bool> {
@@ -162,9 +165,10 @@ pub fn prompt_for_batch_review(
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
-    let header = info_message(cformat!(
-        "Review <bold>{count}</> command{plural} for <bold>{project_name}</>:"
-    ));
+    let header = format_heading(
+        &cformat!("Review <bold>{count}</> command{plural} for <bold>{project_name}</>:"),
+        None,
+    );
     prompt_for_batch_approval_with_header(commands, header)
 }
 
