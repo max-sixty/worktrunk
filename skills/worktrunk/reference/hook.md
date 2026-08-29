@@ -163,7 +163,7 @@ Undefined variables error — use conditionals or defaults for optional behavior
 
 ```toml
 [pre-start]
-# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
+# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature --base origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
