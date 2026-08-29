@@ -908,6 +908,41 @@ struct Tab {
     has_content: bool,
 }
 
+/// Longest preview body handed to skim, in lines.
+///
+/// skim keeps the pane's line count in a `u16` and `unwrap()`s the conversion
+/// (`total_lines` in skim 5.6.5's `src/tui/preview.rs`), so a body over 65,535
+/// lines aborts the whole process instead of rendering — the picker paints,
+/// then dies once the preview lands (#3958). A `git diff <default>...<branch>`
+/// on a long-lived branch clears that on its own. The cap sits under the
+/// ceiling rather than at it because the body isn't the whole pane: the tab bar
+/// and this notice ride above it and count toward the same total.
+const MAX_PREVIEW_LINES: usize = 60_000;
+
+/// Cap a preview body at [`MAX_PREVIEW_LINES`], returning the body to render
+/// and, when it was cut, the notice that says so.
+///
+/// The notice goes above the body rather than at the cut, where 60,000 lines of
+/// scrolling separate it from the reader.
+fn cap_preview_lines(mut body: String) -> (String, Option<String>) {
+    // The line that ends the budget: everything through its newline is kept.
+    let Some((last_newline, _)) = body.match_indices('\n').nth(MAX_PREVIEW_LINES - 1) else {
+        return (body, None);
+    };
+    let keep = last_newline + 1;
+    if keep == body.len() {
+        // Exactly the budget, newline-terminated — nothing to cut, nothing to say.
+        return (body, None);
+    }
+    body.truncate(keep);
+    (
+        body,
+        Some(cformat!(
+            "{INFO_SYMBOL} <dim>Preview truncated to {MAX_PREVIEW_LINES} lines</>\n"
+        )),
+    )
+}
+
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
 /// Every full-form tab keeps its `N: label` text — only the formatting varies,
@@ -930,43 +965,6 @@ struct Tab {
 /// active tab keeps its label. The two style signals survive — empty digits dim,
 /// the active digit+label bolds — so navigation works at any width. `width` is
 /// the preview pane width skim reports.
-/// Longest preview body handed to skim, in lines.
-///
-/// skim keeps the pane's line count in a `u16` and `unwrap()`s the conversion
-/// (`total_lines` in skim 5.6.5's `src/tui/preview.rs`), so a body over 65,535
-/// lines aborts the whole process instead of rendering — the picker paints,
-/// then dies once the preview lands (#3958). A `git diff <default>...<branch>`
-/// on a long-lived branch clears that on its own. The cap sits under the
-/// ceiling rather than at it: the same `u16` bounds the pane's scroll offset,
-/// so lines past it can't be scrolled to anyway, and the tab bar and this
-/// notice ride above the body.
-const MAX_PREVIEW_LINES: usize = 60_000;
-
-/// Cap a preview body at [`MAX_PREVIEW_LINES`], returning the body to render
-/// and, when it was cut, the notice that says so.
-///
-/// The notice goes above the body rather than at the cut, where 60,000 lines of
-/// scrolling separate it from the reader.
-fn cap_preview_lines(body: String) -> (String, Option<String>) {
-    // The line that ends the budget: everything through its newline is kept.
-    let Some((last_newline, _)) = body.match_indices('\n').nth(MAX_PREVIEW_LINES - 1) else {
-        return (body, None);
-    };
-    let keep = last_newline + 1;
-    if keep == body.len() {
-        // Exactly the budget, newline-terminated — nothing to cut, nothing to say.
-        return (body, None);
-    }
-    let mut body = body;
-    body.truncate(keep);
-    (
-        body,
-        Some(cformat!(
-            "{INFO_SYMBOL} <dim>Preview truncated to {MAX_PREVIEW_LINES} lines</>\n"
-        )),
-    )
-}
-
 pub(super) fn render_preview_tabs(
     mode: PreviewMode,
     avail: TabAvailability,
