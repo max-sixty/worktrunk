@@ -123,6 +123,10 @@ end-to-end against codex-cli 0.144.1 (scratch marketplaces through
 
 ## Known Limitations
 
+### Status stays on the launch worktree (Claude)
+
+Claude marker hooks resolve through `-C "$CLAUDE_PROJECT_DIR"`. `EnterWorktree` does not change that directory, so the marker stays on the launch worktree for the session. Sessions launched outside a repository have no activity marker.
+
 ### Status persists after user interrupt (Claude)
 
 The Claude hooks track activity via git config (`worktrunk.state.{branch}.marker`):
