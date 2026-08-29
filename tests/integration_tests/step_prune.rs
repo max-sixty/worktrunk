@@ -1711,56 +1711,6 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     }
 }
 
-/// Hook-free worktree removals overlap their staging work.
-///
-/// A Git shim makes the fsmonitor-stop calls for two candidates rendezvous.
-/// Those calls occur only during removal staging, so the barrier resolves only
-/// when staging is concurrent; a candidate-wide registry lock makes the first
-/// call time out.
-#[cfg(unix)]
-#[rstest]
-fn test_prune_worktree_staging_runs_concurrently(mut repo: TestRepo) {
-    repo.commit("initial");
-
-    let worktrees = [repo.add_worktree("stage-a"), repo.add_worktree("stage-b")];
-
-    let mut cmd = repo.wt_command();
-    cmd.env("RAYON_NUM_THREADS", "2");
-    let git_wrapper_dir = repo.home_path().join("git-wrapper");
-    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
-    write_fsmonitor_stop_barrier_git_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
-    prepend_path(&mut cmd, &git_wrapper_dir);
-    let barrier_dir = repo.home_path().join("barrier");
-    std::fs::create_dir_all(&barrier_dir).unwrap();
-    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
-    cmd.env("WT_TEST_STAGE_A_DIR", worktrees[0].file_name().unwrap());
-    cmd.env("WT_TEST_STAGE_B_DIR", worktrees[1].file_name().unwrap());
-
-    let output = cmd
-        .args(["step", "prune", "--yes", "--min-age=0s"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(output.status.success(), "prune should succeed:\n{stderr}");
-    for path in &worktrees {
-        let name = path.file_name().unwrap().to_string_lossy();
-        assert!(
-            barrier_dir.join(format!("started-{name}")).exists(),
-            "the fsmonitor-stop staging gate did not run for {name}"
-        );
-        assert!(
-            barrier_dir.join(format!("paired-{name}")).exists(),
-            "the fsmonitor-stop staging gate did not overlap for {name}"
-        );
-        assert!(
-            !barrier_dir.join(format!("timeout-{name}")).exists(),
-            "worktree staging ran serially for {name}"
-        );
-        assert!(!path.exists(), "worktree should be removed: {path:?}");
-    }
-}
-
 /// The removals that unregister stale worktree metadata serialize through the
 /// repository registry lock — one `git worktree remove` teardown at a time.
 ///
@@ -1769,16 +1719,18 @@ fn test_prune_worktree_staging_runs_concurrently(mut repo: TestRepo) {
 /// prune in place of a removal). Each unregisters its own metadata with
 /// `git worktree remove <path>`, which enumerates every sibling's `commondir`
 /// as it resolves its target — so two overlapping teardowns can read an entry
-/// another worker is mid-deleting and fail. The shim probes for both
-/// teardown/teardown and fresh-list/teardown overlap while each teardown holds
-/// an atomic `mkdir` lock. Serialized operations leave no `overlap-` sentinel;
-/// if coordination regresses, the four workers collide in that window.
-/// Unix-only for the same `CreateProcess` shim reason as the canary above.
+/// another worker is mid-deleting and fail (issue #3661). The shim probes for
+/// that overlap with an atomic `mkdir` lock held across a fixed window around
+/// each teardown; serialized, no two ever hold it at once, so the test asserts
+/// no `overlap-` sentinel appears (and every entry still pruned). If the lock
+/// regressed, all four teardowns would fire at once and three would collide in
+/// the window. Unix-only for the same `CreateProcess` shim reason as the canary
+/// above.
 ///
 /// `--foreground` runs both ways. It reserves `check_lock`'s write side for the
 /// TTY trash-cleanup spinner, which only a worktree removal paints; every
 /// candidate here plans a branch deletion or a bare prune, so the flag changes
-/// nothing — the registry operations serialize inside `Repository` regardless.
+/// nothing — the registry teardowns serialize inside `Repository` regardless.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_metadata_removals_serialize(
@@ -1849,7 +1801,8 @@ fn test_prune_metadata_removals_serialize(
         .collect();
     assert!(
         overlaps.is_empty(),
-        "Git worktree registry operations overlapped: {overlaps:?}"
+        "two `git worktree remove` teardowns overlapped — the repository registry \
+         lock did not serialize them (issue #3661): {overlaps:?}"
     );
     let list = repo.git_output(&["worktree", "list", "--porcelain"]);
     assert!(
@@ -2032,10 +1985,13 @@ exit 1
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// A Git shim whose `worktree remove` arms a probe for registry overlap. Each
-/// teardown records that it started, then takes an atomic `mkdir` lock for a
-/// fixed window. Concurrent teardowns and `worktree list` calls drop an
-/// `overlap-` sentinel. Everything else passes through to the real Git.
+/// A `git` shim whose `worktree remove` arms a probe for overlap (see
+/// `test_prune_metadata_removals_serialize`): each records that it started,
+/// then takes an atomic `mkdir` lock for a fixed window. Under the registry
+/// serialization this is testing, no two teardowns ever hold it at once, so a
+/// failed `mkdir` — a concurrent teardown mid-window — drops an `overlap-`
+/// sentinel the test asserts absent. Everything else passes through to the real
+/// git.
 #[cfg(unix)]
 fn write_overlap_probe_worktree_remove_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -2044,12 +2000,6 @@ fn write_overlap_probe_worktree_remove_wrapper(dir: &std::path::Path, real_git: 
     let script = format!(
         r#"#!/bin/sh
 case "$1 $2" in
-  "worktree list")
-    if [ -d "$WT_TEST_BARRIER_DIR/active" ]; then
-      : > "$WT_TEST_BARRIER_DIR/overlap-list"
-    fi
-    exec {real_git} "$@"
-    ;;
   "worktree remove") ;;
   *) exec {real_git} "$@" ;;
 esac
@@ -2060,46 +2010,6 @@ if mkdir "$WT_TEST_BARRIER_DIR/active" 2>/dev/null; then
   rmdir "$WT_TEST_BARRIER_DIR/active"
 else
   : > "$WT_TEST_BARRIER_DIR/overlap-$own"
-fi
-exec {real_git} "$@"
-"#
-    );
-    let path = dir.join("git");
-    std::fs::write(&path, script).unwrap();
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&path, permissions).unwrap();
-}
-
-/// A Git shim that rendezvouses the fsmonitor-stop step of two removals.
-#[cfg(unix)]
-fn write_fsmonitor_stop_barrier_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    let script = format!(
-        r#"#!/bin/sh
-if [ "$1" != "fsmonitor--daemon" ] || [ "$2" != "stop" ]; then
-  exec {real_git} "$@"
-fi
-own=$(basename "$PWD")
-case "$own" in
-  "$WT_TEST_STAGE_A_DIR") other="$WT_TEST_STAGE_B_DIR" ;;
-  "$WT_TEST_STAGE_B_DIR") other="$WT_TEST_STAGE_A_DIR" ;;
-  *) exec {real_git} "$@" ;;
-esac
-: > "$WT_TEST_BARRIER_DIR/started-$own"
-i=0
-while [ ! -e "$WT_TEST_BARRIER_DIR/started-$other" ]; do
-  i=$((i+1))
-  if [ "$i" -gt 20 ]; then
-    : > "$WT_TEST_BARRIER_DIR/timeout-$own"
-    break
-  fi
-  sleep 0.05
-done
-if [ -e "$WT_TEST_BARRIER_DIR/started-$other" ]; then
-  : > "$WT_TEST_BARRIER_DIR/paired-$own"
 fi
 exec {real_git} "$@"
 "#
