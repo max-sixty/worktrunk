@@ -4496,16 +4496,7 @@ fn test_switch_base_pr_source_branch_remote_only(#[from(repo_with_remote)] repo:
     fs::write(repo.root_path().join("auth.txt"), "auth").unwrap();
     repo.run_git(&["add", "auth.txt"]);
     repo.run_git(&["commit", "-m", "PR commit"]);
-    let pr_head = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["rev-parse", "HEAD"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
+    let pr_head = repo.head_sha();
     repo.run_git(&["push", "origin", "feature-auth"]);
     repo.run_git(&["checkout", "main"]);
     repo.run_git(&["branch", "-D", "feature-auth"]);
@@ -4546,42 +4537,15 @@ fn test_switch_base_pr_source_branch_remote_only(#[from(repo_with_remote)] repo:
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let created_head = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["rev-parse", "feat/review-101"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
+    let created_head = repo.git_output(&["rev-parse", "feat/review-101"]);
     assert_eq!(
         created_head, pr_head,
         "new branch should start at the PR's source branch"
     );
 
     // Tracking still points at the PR's source branch (#2497).
-    let remote = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["config", "--get", "branch.feat/review-101.remote"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
-    let merge = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["config", "--get", "branch.feat/review-101.merge"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
+    let remote = repo.git_output(&["config", "--get", "branch.feat/review-101.remote"]);
+    let merge = repo.git_output(&["config", "--get", "branch.feat/review-101.merge"]);
     assert_eq!(
         remote, "origin",
         "branch.feat/review-101.remote should be set so `git push` knows where to push"

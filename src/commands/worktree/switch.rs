@@ -504,9 +504,10 @@ fn resolve_base_ref(
 }
 
 /// Resolve `pr:{N}` / `mr:{N}` for `--base`. Same-repo returns the source
-/// branch plus the (remote, branch) the new branch should track; fork returns
-/// the PR head SHA so we don't create a tracking branch for a ref the user
-/// hasn't asked to check out.
+/// branch — under its own name, or `<remote>/<branch>` when no local branch
+/// has that name — plus the (remote, branch) the new branch should track; fork
+/// returns the PR head SHA so we don't create a tracking branch for a ref the
+/// user hasn't asked to check out.
 fn resolve_remote_ref_as_base(
     repo: &Repository,
     provider: &dyn RemoteRefProvider,
