@@ -3,7 +3,9 @@
 //! # Performance
 //!
 //! `wt list` runs multiple git commands per worktree in parallel using Rayon. Performance
-//! depends heavily on git's internal caches, not worktrunk-specific caching.
+//! depends heavily on git's internal caches for the commands that read working-tree state,
+//! and on worktrunk's own on-disk caches for the commit-graph-derived ones (see
+//! "Worktrunk's Own Caches" below).
 //!
 //! ## Time to First Information
 //!
@@ -105,11 +107,12 @@
 //! is git's cache; worktrunk reads it but does not set it. Clear it with
 //! `wt config state default-branch clear`.
 //!
-//! A collect also reads and writes the on-disk caches under `.git/wt/cache/`, so the
-//! per-worktree git commands above are what a *cold* cache costs. The authoritative
-//! inventory — every directory, its key scheme, and when an entry goes stale — is the
-//! `## Caching` table in [`collect`]; don't restate it here. Clear those with
-//! `wt config state cache clear`.
+//! A collect also reads and writes the on-disk caches under `.git/wt/cache/`, so some of the
+//! per-worktree git commands above — the ahead/behind counts and the branch line diff — are
+//! what a *cold* cache costs, while `git status` and the working-tree diff run on every
+//! invocation regardless. The authoritative inventory — every directory, its key scheme, and
+//! when an entry goes stale — is the `## Caching` table in [`collect`]; don't restate it
+//! here. Clear those with `wt config state cache clear`.
 //!
 //! ## Performance Characteristics
 //!
