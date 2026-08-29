@@ -4483,6 +4483,79 @@ fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRep
     );
 }
 
+/// Regression: `wt switch --create X --base pr:N` against a same-repo PR whose
+/// source branch exists only on the remote — the shape a fresh clone has for
+/// someone else's PR. The fetch writes just `refs/remotes/<remote>/<branch>`,
+/// and git's rev-parse never expands a bare name to a remote-tracking ref, so
+/// resolving the base to the bare name failed validation with "No branch, tag,
+/// or commit named <branch>".
+#[rstest]
+fn test_switch_base_pr_source_branch_remote_only(#[from(repo_with_remote)] repo: TestRepo) {
+    // Publish the PR's source branch, then drop the local branch.
+    repo.run_git(&["checkout", "-b", "feature-auth"]);
+    fs::write(repo.root_path().join("auth.txt"), "auth").unwrap();
+    repo.run_git(&["add", "auth.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let pr_head = repo.head_sha();
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args([
+        "switch",
+        "--create",
+        "feat/review-101",
+        "--base",
+        "pr:101",
+        "--no-cd",
+    ]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch should run");
+    assert!(
+        output.status.success(),
+        "wt switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let created_head = repo.git_output(&["rev-parse", "feat/review-101"]);
+    assert_eq!(
+        created_head, pr_head,
+        "new branch should start at the PR's source branch"
+    );
+
+    // Tracking still points at the PR's source branch (#2497).
+    let remote = repo.git_output(&["config", "--get", "branch.feat/review-101.remote"]);
+    let merge = repo.git_output(&["config", "--get", "branch.feat/review-101.merge"]);
+    assert_eq!(
+        remote, "origin",
+        "branch.feat/review-101.remote should be set so `git push` knows where to push"
+    );
+    assert_eq!(
+        merge, "refs/heads/feature-auth",
+        "branch.feat/review-101.merge should target the PR's source branch on the remote"
+    );
+}
+
 /// `wt switch --create X --base pr:N` resolves a fork PR to its head commit
 /// SHA via refs/pull/N/head without creating a tracking branch.
 #[rstest]

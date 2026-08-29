@@ -194,20 +194,6 @@ pub struct ListConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<String>,
 
-    /// Row order for the `wt list` table and the `wt switch` picker: column
-    /// names, most significant first, each optionally prefixed with `-` for
-    /// descending (`sort = ["path", "-age"]`). Only columns whose value is
-    /// known before the table paints are sortable — `branch`, `path`,
-    /// `commit`, `age`, `message`. Empty means the default order: current
-    /// worktree first, primary second, then newest commit first. A non-empty
-    /// value drops that two-row prefix and keeps newest-first only as a
-    /// tiebreak. Rows are ordered within their group (worktrees, branch-only,
-    /// remote), never across. Set as a TOML array in config files.
-    // TODO(list-columns-env): `WORKTRUNK__LIST__SORT` is unwired for the same
-    // reason `columns` is — see the note there.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sort: Vec<String>,
-
     /// Custom columns, keyed by header text. See [`ListColumnConfig`].
     ///
     /// *(Experimental — fields may change in future releases.)*
@@ -270,14 +256,6 @@ impl Merge for ListConfig {
         } else {
             other.columns.clone()
         };
-        // Same wholesale replace, for the same reason: a sort spec is an
-        // ordering, so merging terms across layers would invent an order
-        // neither layer asked for.
-        let sort = if other.sort.is_empty() {
-            self.sort.clone()
-        } else {
-            other.sort.clone()
-        };
         Self {
             full: other.full.or(self.full),
             branches: other.branches.or(self.branches),
@@ -286,7 +264,6 @@ impl Merge for ListConfig {
             json_schema: other.json_schema.or(self.json_schema),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
             columns,
-            sort,
             custom_columns,
         }
     }

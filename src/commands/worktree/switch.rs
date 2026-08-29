@@ -506,9 +506,10 @@ fn resolve_base_ref(
 }
 
 /// Resolve `pr:{N}` / `mr:{N}` for `--base`. Same-repo returns the source
-/// branch name plus the (remote, branch) the new branch should track; fork
-/// returns the PR head SHA so we don't create a tracking branch for a ref
-/// the user hasn't asked to check out.
+/// branch — under its own name, or `<remote>/<branch>` when no local branch
+/// has that name — plus the (remote, branch) the new branch should track; fork
+/// returns the PR head SHA so we don't create a tracking branch for a ref the
+/// user hasn't asked to check out.
 fn resolve_remote_ref_as_base(
     repo: &Repository,
     provider: &dyn RemoteRefProvider,
@@ -531,10 +532,19 @@ fn resolve_remote_ref_as_base(
     if !info.is_cross_repo {
         fetch_same_repo_branch(repo, &info)?;
         let remote = remote_ref::find_remote(repo, &info)?;
-        return Ok((
-            info.source_branch.clone(),
-            Some((remote, info.source_branch.clone())),
-        ));
+        let branch = &info.source_branch;
+        // The fetch above writes only `refs/remotes/<remote>/<branch>`, so a
+        // source branch nobody has checked out locally resolves only under its
+        // remote: git's rev-parse never expands a bare name to a
+        // remote-tracking ref, and the bare name would fail the base
+        // validation in `resolve_switch_target`. Same rule, same spelling as
+        // the remote-only base above.
+        let base = if repo.ref_exists(branch)? {
+            branch.clone()
+        } else {
+            format!("{remote}/{branch}")
+        };
+        return Ok((base, Some((remote, branch.clone()))));
     }
 
     let remote = remote_ref::find_remote(repo, &info)?;
