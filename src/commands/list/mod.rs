@@ -98,14 +98,18 @@
 //!    - `git gc` consolidates loose objects into packs
 //!    - More efficient for tree/blob access in diffs
 //!
-//! ## Worktrunk's Only Cache: Default Branch
+//! ## Worktrunk's Own Caches
 //!
-//! Worktrunk caches only the default branch name (main/master) in
+//! The default branch name (main/master) is cached in
 //! `git config worktrunk.default-branch`. The remote HEAD ref (e.g., `origin/HEAD`)
-//! is git's cache; worktrunk reads it but does not set it. All other data is fetched
-//! fresh on each `wt list` invocation.
+//! is git's cache; worktrunk reads it but does not set it. Clear it with
+//! `wt config state default-branch clear`.
 //!
-//! Clear cache with: `wt config state default-branch clear`
+//! A collect also reads and writes the on-disk caches under `.git/wt/cache/`, so the
+//! per-worktree git commands above are what a *cold* cache costs. The authoritative
+//! inventory — every directory, its key scheme, and when an entry goes stale — is the
+//! `## Caching` table in [`collect`]; don't restate it here. Clear those with
+//! `wt config state cache clear`.
 //!
 //! ## Performance Characteristics
 //!
