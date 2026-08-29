@@ -2901,14 +2901,17 @@ mod tests {
 
         let pane = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
         let lines = pane.lines().count();
+        // The pane opens with the tab bar, so the notice is a few lines in; the
+        // head is what an assertion failure needs to show (the body is a
+        // megabyte of diff).
+        let head = pane.lines().take(6).collect::<Vec<_>>().join("\n");
         assert!(
             lines < u16::MAX as usize,
             "pane must stay countable by skim's u16: {lines} lines"
         );
         assert!(
-            pane.contains("Preview truncated"),
-            "truncation is stated, not silent: {:?}",
-            pane.lines().take(6).collect::<Vec<_>>()
+            head.contains("Preview truncated"),
+            "truncation is stated above the pane: {head:?}"
         );
 
         // A pane under the cap is handed through whole, notice-free.
@@ -2929,10 +2932,10 @@ mod tests {
             "+ a line of diff\n".repeat(MAX_PREVIEW_LINES),
         );
         let exact = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
+        let exact_head = exact.lines().take(6).collect::<Vec<_>>().join("\n");
         assert!(
-            !exact.contains("Preview truncated"),
-            "no notice at the cap: {:?}",
-            exact.lines().take(6).collect::<Vec<_>>()
+            !exact_head.contains("Preview truncated"),
+            "no notice at the cap: {exact_head:?}"
         );
     }
 
