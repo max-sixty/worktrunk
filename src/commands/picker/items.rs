@@ -930,6 +930,43 @@ struct Tab {
 /// active tab keeps its label. The two style signals survive — empty digits dim,
 /// the active digit+label bolds — so navigation works at any width. `width` is
 /// the preview pane width skim reports.
+/// Longest preview body handed to skim, in lines.
+///
+/// skim keeps the pane's line count in a `u16` and `unwrap()`s the conversion
+/// (`total_lines` in skim 5.6.5's `src/tui/preview.rs`), so a body over 65,535
+/// lines aborts the whole process instead of rendering — the picker paints,
+/// then dies once the preview lands (#3958). A `git diff <default>...<branch>`
+/// on a long-lived branch clears that on its own. The cap sits under the
+/// ceiling rather than at it: the same `u16` bounds the pane's scroll offset,
+/// so lines past it can't be scrolled to anyway, and the tab bar and this
+/// notice ride above the body.
+const MAX_PREVIEW_LINES: usize = 60_000;
+
+/// Cap a preview body at [`MAX_PREVIEW_LINES`], returning the body to render
+/// and, when it was cut, the notice that says so.
+///
+/// The notice goes above the body rather than at the cut, where 60,000 lines of
+/// scrolling separate it from the reader.
+fn cap_preview_lines(body: String) -> (String, Option<String>) {
+    // The line that ends the budget: everything through its newline is kept.
+    let Some((last_newline, _)) = body.match_indices('\n').nth(MAX_PREVIEW_LINES - 1) else {
+        return (body, None);
+    };
+    let keep = last_newline + 1;
+    if keep == body.len() {
+        // Exactly the budget, newline-terminated — nothing to cut, nothing to say.
+        return (body, None);
+    }
+    let mut body = body;
+    body.truncate(keep);
+    (
+        body,
+        Some(cformat!(
+            "{INFO_SYMBOL} <dim>Preview truncated to {MAX_PREVIEW_LINES} lines</>\n"
+        )),
+    )
+}
+
 pub(super) fn render_preview_tabs(
     mode: PreviewMode,
     avail: TabAvailability,
@@ -1085,8 +1122,7 @@ impl PickerRow {
     /// rather than the process-wide picker mode.
     fn render_preview(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         let avail = self.tab_availability();
-        let mut result = render_preview_tabs(mode, avail, width);
-        result.push_str(&match mode {
+        let body = match mode {
             // The PR-backed tabs read the same `pr_status` slot for both row
             // kinds: `pr` renders from it, `comments` reads the background-fetched
             // thread when the row has a PR (always, for a `--prs` row).
@@ -1100,7 +1136,15 @@ impl PickerRow {
                 Some(_) => self.preview_for_mode(mode, width, height),
                 None => self.render_listed_pr_mode(mode),
             },
-        });
+        };
+        // Every pane converges here, so the cap sits here too — a `comments`
+        // thread or a forge `log` reaches skim by the same route a diff does.
+        let (body, notice) = cap_preview_lines(body);
+        let mut result = render_preview_tabs(mode, avail, width);
+        if let Some(notice) = notice {
+            result.push_str(&notice);
+        }
+        result.push_str(&body);
         result
     }
 
@@ -2839,6 +2883,56 @@ mod tests {
         assert!(
             text.contains("Loading complete diff"),
             "non-pr arm placeholder: {text:?}"
+        );
+    }
+
+    #[test]
+    fn preview_caps_a_pane_longer_than_skim_can_count() {
+        // skim keeps the pane's line count in a `u16` and unwraps the
+        // conversion, so handing it a longer pane aborts the picker rather than
+        // rendering (#3958). A `git diff <default>...<branch>` on a long-lived
+        // branch clears 65,535 lines on its own.
+        let cache: PreviewCache = Arc::new(DashMap::new());
+        let row = worktree_test_row("feature", Arc::clone(&cache), None);
+        cache.insert(
+            (row.preview_key(), PreviewMode::BranchDiff),
+            "+ a line of diff\n".repeat(70_000),
+        );
+
+        let pane = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
+        let lines = pane.lines().count();
+        assert!(
+            lines < u16::MAX as usize,
+            "pane must stay countable by skim's u16: {lines} lines"
+        );
+        assert!(
+            pane.contains("Preview truncated"),
+            "truncation is stated, not silent: {:?}",
+            pane.lines().take(6).collect::<Vec<_>>()
+        );
+
+        // A pane under the cap is handed through whole, notice-free.
+        cache.insert(
+            (row.preview_key(), PreviewMode::BranchDiff),
+            "+ a line of diff\n".repeat(10),
+        );
+        let short = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
+        assert!(
+            !short.contains("Preview truncated"),
+            "no notice under the cap: {short:?}"
+        );
+
+        // Exactly the budget, newline-terminated: the cut point is the end of
+        // the body, so nothing is dropped and nothing is claimed.
+        cache.insert(
+            (row.preview_key(), PreviewMode::BranchDiff),
+            "+ a line of diff\n".repeat(MAX_PREVIEW_LINES),
+        );
+        let exact = row.render_preview(PreviewMode::BranchDiff, WIDE, 24);
+        assert!(
+            !exact.contains("Preview truncated"),
+            "no notice at the cap: {:?}",
+            exact.lines().take(6).collect::<Vec<_>>()
         );
     }
 
