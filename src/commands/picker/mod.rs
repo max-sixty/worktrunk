@@ -1720,15 +1720,11 @@ pub fn handle_picker(
     ));
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
-    // Speculative warm-up: in the default order the picker sorts the current
-    // worktree first, and the default tab (UnifiedDiff = comparison base
-    // through the worktree, including untracked files) is what skim will
-    // render first. Kicking this off before `collect::collect` overlaps
-    // preview compute with list collection.
-    // A `[list] sort` spec moves the current worktree off row 0, and the row
-    // that lands there isn't known until collect has the commit-details batch
-    // this warm-up is racing — so under a spec this degrades to a plain cache
-    // prime, paying off only if the user navigates to the current worktree.
+    // Speculative warm-up: the picker sorts the current worktree first, and
+    // the default tab (UnifiedDiff = comparison base through the worktree,
+    // including untracked files) is what skim will render first. Kicking this
+    // off before `collect::collect` overlaps preview compute with list
+    // collection.
     // The real spawn later skips this key via `contains_key`.
     if let (Ok(Some(branch)), Ok(path), Ok(Some(head))) = (
         current_worktree.branch(),

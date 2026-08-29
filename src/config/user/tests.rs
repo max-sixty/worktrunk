@@ -291,7 +291,6 @@ fn test_list_config_serde() {
         json_schema: None,
         timeout_ms: None,
         columns: vec!["branch".into(), "ci".into(), "path".into()],
-        sort: vec!["path".into()],
         custom_columns: Default::default(),
     };
     let json = serde_json::to_string(&config).unwrap();
@@ -666,7 +665,6 @@ fn test_merge_list_config() {
         json_schema: None,
         timeout_ms: Some(2000),
         columns: vec!["branch".into(), "ci".into()],
-        sort: vec!["path".into()],
         custom_columns: Default::default(),
     };
     let override_config = ListConfig {
@@ -677,7 +675,6 @@ fn test_merge_list_config() {
         json_schema: None,
         timeout_ms: None,    // Should fall back to base
         columns: Vec::new(), // Empty → fall back to base
-        sort: Vec::new(),    // Empty → fall back to base
         custom_columns: Default::default(),
     };
 
@@ -688,28 +685,23 @@ fn test_merge_list_config() {
     assert_eq!(merged.summary, Some(true)); // From base
     assert_eq!(merged.timeout_ms, Some(2000)); // From base
     assert_eq!(merged.columns, vec!["branch", "ci"]); // From base (override empty)
-    assert_eq!(merged.sort, vec!["path"]); // From base (override empty)
 }
 
 #[test]
 fn test_merge_list_config_columns_replace() {
     // A non-empty override replaces the whole list (it's an ordering, not a
-    // keyed set), unlike the per-key union used for custom_columns. `sort` is
-    // an ordering too and follows the same rule.
+    // keyed set), unlike the per-key union used for custom_columns.
     let base = ListConfig {
         columns: vec!["branch".into(), "ci".into(), "path".into()],
-        sort: vec!["path".into(), "branch".into()],
         ..Default::default()
     };
     let override_config = ListConfig {
         columns: vec!["status".into(), "branch".into()],
-        sort: vec!["-age".into()],
         ..Default::default()
     };
 
     let merged = base.merge_with(&override_config);
     assert_eq!(merged.columns, vec!["status", "branch"]);
-    assert_eq!(merged.sort, vec!["-age"]);
 }
 
 #[test]
@@ -1059,7 +1051,6 @@ fn test_list_config_accessor_methods_with_values() {
         json_schema: None,
         timeout_ms: Some(3000),
         columns: Vec::new(),
-        sort: Vec::new(),
         custom_columns: Default::default(),
     };
     assert!(config.full());
