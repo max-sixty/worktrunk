@@ -1,35 +1,15 @@
-//! Azure DevOps PR provider.
-//!
-//! Implements `RemoteRefProvider` for Azure DevOps Pull Requests using the `az` CLI.
-//! Requires the `azure-devops` extension (`az extension add --name azure-devops`).
+//! Azure DevOps PR backend using the `az` CLI. Requires the `azure-devops`
+//! extension (`az extension add --name azure-devops`).
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
-use super::{CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error};
+use super::{CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error};
 use crate::git::canonical_url_path_segment;
 use crate::git::ci_platform::host_is_within;
 use crate::git::url::{GitRemoteUrl, authority_host};
 use crate::git::{ForgeKind, Repository};
 use crate::shell_exec::Cmd;
-
-/// Azure DevOps Pull Request provider.
-#[derive(Debug, Clone, Copy)]
-pub struct AzureDevOpsProvider;
-
-impl RemoteRefProvider for AzureDevOpsProvider {
-    fn forge_kind(&self) -> ForgeKind {
-        ForgeKind::AzureDevOps
-    }
-
-    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
-        fetch_pr_info(number, repo)
-    }
-
-    fn ref_path(&self, number: u32) -> String {
-        format!("pull/{}/head", number)
-    }
-}
 
 /// Construct an Azure DevOps remote URL for a repo.
 ///
@@ -230,7 +210,7 @@ pub fn azure_devops_extension_installed(repo_root: &std::path::Path) -> bool {
         .is_none_or(|extensions| extensions.iter().any(|e| e.name == "azure-devops"))
 }
 
-fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
     let pr_id = pr_number.to_string();
 
@@ -297,8 +277,8 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         .unwrap_or(&response.source_ref_name)
         .to_string();
 
-    // Validate at the provider boundary — same as the GitHub/GitLab/Gitea
-    // providers — so an empty or `refs/heads/`-only sourceRefName produces a
+    // Validate at the forge backend boundary — same as the GitHub/GitLab/Gitea
+    // backends — so an empty or `refs/heads/`-only sourceRefName produces a
     // clear diagnostic rather than confusing downstream git/path errors.
     if source_branch.is_empty() {
         bail!(
@@ -357,19 +337,6 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_ref_path() {
-        let provider = AzureDevOpsProvider;
-        assert_eq!(provider.ref_path(550), "pull/550/head");
-        assert_eq!(provider.tracking_ref(550), "refs/pull/550/head");
-    }
-
-    #[test]
-    fn test_ref_type() {
-        let provider = AzureDevOpsProvider;
-        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
-    }
 
     #[test]
     fn test_parse_web_url_dev_azure() {

@@ -1,6 +1,4 @@
-//! GitLab MR provider.
-//!
-//! Implements `RemoteRefProvider` for GitLab Merge Requests using the `glab` CLI.
+//! GitLab MR backend using the `glab` CLI.
 //!
 //! # API Differences from GitHub
 //!
@@ -27,29 +25,9 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{
-    CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
-    run_cli_api,
+    CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value, run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
-
-/// GitLab Merge Request provider.
-#[derive(Debug, Clone, Copy)]
-pub struct GitLabProvider;
-
-impl RemoteRefProvider for GitLabProvider {
-    fn forge_kind(&self) -> ForgeKind {
-        ForgeKind::GitLab
-    }
-
-    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
-        let repo_root = repo.repo_path()?;
-        fetch_mr_info(number, repo_root)
-    }
-
-    fn ref_path(&self, number: u32) -> String {
-        format!("merge-requests/{}/head", number)
-    }
-}
 
 /// Raw JSON response from `glab api projects/:id/merge_requests/<number>`.
 #[derive(Debug, Deserialize)]
@@ -77,7 +55,8 @@ struct GlabProject {
 }
 
 /// Fetch MR information from GitLab using the `glab` CLI.
-fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
+pub(super) fn fetch_mr_info(mr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+    let repo_root = repo.repo_path()?;
     let api_path = format!("projects/:id/merge_requests/{}", mr_number);
     let args = ["api", api_path.as_str()];
     let output = run_cli_api(CliApiRequest {
@@ -283,19 +262,6 @@ pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
 mod tests {
     use super::*;
     use crate::git::remote_ref::RemoteRefInfo;
-
-    #[test]
-    fn test_ref_path() {
-        let provider = GitLabProvider;
-        assert_eq!(provider.ref_path(42), "merge-requests/42/head");
-        assert_eq!(provider.tracking_ref(42), "refs/merge-requests/42/head");
-    }
-
-    #[test]
-    fn test_ref_type() {
-        let provider = GitLabProvider;
-        assert_eq!(provider.ref_type(), crate::git::RefType::Mr);
-    }
 
     #[test]
     fn test_fork_remote_url_formats() {

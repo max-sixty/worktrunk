@@ -11,7 +11,7 @@ use crate::git::{GitRemoteUrl, RefType, Repository};
 /// A known forge.
 ///
 /// This is the canonical identity shared by configuration, remote-host
-/// classification, remote-ref providers, and CI dispatch. Unknown hosts stay
+/// classification, remote-ref dispatch, and CI dispatch. Unknown hosts stay
 /// outside the enum as `None`; callers that expose an explicit `unknown` value
 /// add it only at that output boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]

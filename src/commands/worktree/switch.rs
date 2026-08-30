@@ -16,13 +16,10 @@ use worktrunk::config::{
     UserConfig, ValidationScope, VarScope, referenced_vars_for_templates, template_references_var,
     validate_template,
 };
-use worktrunk::git::remote_ref::{
-    self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
-    RemoteRefProvider, parse_ref_url,
-};
+use worktrunk::git::remote_ref::{self, RemoteRefInfo, parse_ref_url};
 use worktrunk::git::{
     ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
-    SwitchSuggestionCtx, WorktreeId, current_or_recover,
+    SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover,
 };
 use worktrunk::shell_exec::{
     ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
@@ -83,10 +80,6 @@ impl ResolvedTarget {
     }
 }
 
-static GITHUB_PROVIDER: GitHubProvider = GitHubProvider;
-static GITEA_PROVIDER: GiteaProvider = GiteaProvider;
-static AZURE_DEVOPS_PROVIDER: AzureDevOpsProvider = AzureDevOpsProvider;
-
 /// Format PR/MR context for gutter display after fetching.
 ///
 /// Returns two lines for gutter formatting:
@@ -111,7 +104,7 @@ fn format_ref_context(info: &RemoteRefInfo) -> String {
     )
 }
 
-/// Choose which provider should handle `pr:<number>` resolution.
+/// Choose which forge should handle `pr:<number>` resolution.
 ///
 /// Priority:
 /// 1. The configured `forge.platform` (`github` / `gitea` / `azure-devops`) —
@@ -125,17 +118,14 @@ fn format_ref_context(info: &RemoteRefInfo) -> String {
 ///
 /// The default-to-GitHub fall-through means a self-hosted Gitea on a branded
 /// host (e.g. `git.example.com`) without `tea login add` will see a single
-/// GitHub error (with hint to set `forge.platform = "gitea"`), instead of a
-/// wrapped two-provider error.
-fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRefProvider> {
+/// GitHub error with a hint to set `forge.platform = "gitea"`.
+fn choose_pr_forge(repo: &Repository) -> anyhow::Result<ForgeKind> {
     if let Some(platform_raw) = repo.configured_forge_platform() {
         match platform_raw.to_ascii_lowercase().parse::<ForgeKind>() {
-            Ok(ForgeKind::GitHub) => return Ok(&GITHUB_PROVIDER),
-            Ok(ForgeKind::Gitea) => return Ok(&GITEA_PROVIDER),
-            Ok(ForgeKind::AzureDevOps) => return Ok(&AZURE_DEVOPS_PROVIDER),
             Ok(ForgeKind::GitLab) => {
                 bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
             }
+            Ok(platform) => return Ok(platform),
             Err(_) => bail!(
                 "Invalid forge.platform value `{platform_raw}` (from `[forge]` in project \
                  config or a `[projects]` entry in user config); \
@@ -155,13 +145,13 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRe
     let has_forge = |forge| all_parsed.iter().any(|url| url.forge_kind() == Some(forge));
 
     if has_forge(ForgeKind::GitHub) {
-        return Ok(&GITHUB_PROVIDER);
+        return Ok(ForgeKind::GitHub);
     }
     if has_forge(ForgeKind::Gitea) {
-        return Ok(&GITEA_PROVIDER);
+        return Ok(ForgeKind::Gitea);
     }
     if has_forge(ForgeKind::AzureDevOps) {
-        return Ok(&AZURE_DEVOPS_PROVIDER);
+        return Ok(ForgeKind::AzureDevOps);
     }
     if has_forge(ForgeKind::GitLab) {
         bail!("Detected GitLab remote; use mr:<number> instead of pr:<number>")
@@ -179,52 +169,52 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<&'static dyn RemoteRe
         .and_then(|url| GitRemoteUrl::parse(&url))
         .map(|u| u.host().to_string())
     else {
-        return Ok(&GITHUB_PROVIDER);
+        return Ok(ForgeKind::GitHub);
     };
 
     if remote_ref::gitea::is_authed_for(&host) && !remote_ref::github::is_authed_for(&host) {
-        Ok(&GITEA_PROVIDER)
+        Ok(ForgeKind::Gitea)
     } else {
-        Ok(&GITHUB_PROVIDER)
+        Ok(ForgeKind::GitHub)
     }
 }
 
 /// Fetch PR/MR info while showing a "still waiting" status.
 ///
-/// The host lookup (`gh`/`glab` API) captures its output and can stall on a slow
-/// network, so without feedback the command looks frozen. The watchdog clears
+/// The forge CLI captures its output and can stall on a slow network, so
+/// without feedback the command looks frozen. The watchdog clears
 /// before the caller prints the resolved ref context. No command gutter — the
 /// host CLI invocation isn't readily available here, and the status line alone
 /// is the signal.
 fn fetch_ref_info(
-    provider: &dyn RemoteRefProvider,
+    forge: ForgeKind,
     number: u32,
     repo: &Repository,
 ) -> anyhow::Result<RemoteRefInfo> {
     let _watchdog = worktrunk::progress::Watchdog::start(
-        &format!("the {} lookup", provider.ref_type().name()),
+        &format!("the {} lookup", forge.ref_type().name()),
         None,
     );
-    provider.fetch_info(number, repo)
+    remote_ref::fetch_info(forge, number, repo)
 }
 
-/// Resolve a remote ref (PR or MR) using the unified provider interface.
+/// Resolve a remote ref (PR or MR) through the selected forge.
 fn resolve_remote_ref(
     repo: &Repository,
-    provider: &dyn RemoteRefProvider,
+    forge: ForgeKind,
     number: u32,
     create: bool,
 ) -> anyhow::Result<ResolvedTarget> {
-    let ref_type = provider.ref_type();
+    let ref_type = forge.ref_type();
     let symbol = ref_type.symbol();
 
-    // Fetch ref info (network call via gh/glab CLI)
+    // Fetch ref info through the forge CLI.
     eprintln!(
         "{}",
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let info = fetch_ref_info(provider, number, repo)?;
+    let info = fetch_ref_info(forge, number, repo)?;
 
     // Display context with URL (as gutter under fetch progress)
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
@@ -240,7 +230,7 @@ fn resolve_remote_ref(
     }
 
     let target = if info.is_cross_repo {
-        resolve_fork_ref(repo, provider, number, &info)?
+        resolve_fork_ref(repo, forge, number, &info)?
     } else {
         // Same-repo ref: fetch the branch to ensure remote tracking refs exist
         fetch_same_repo_branch(repo, &info)?;
@@ -265,13 +255,14 @@ fn resolve_remote_ref(
 /// Resolve a fork (cross-repo) PR/MR.
 fn resolve_fork_ref(
     repo: &Repository,
-    provider: &dyn RemoteRefProvider,
+    forge: ForgeKind,
     number: u32,
     info: &RemoteRefInfo,
 ) -> anyhow::Result<ResolvedTarget> {
-    let ref_type = provider.ref_type();
+    let ref_type = forge.ref_type();
     let repo_root = repo.repo_path()?;
     let local_branch = info.source_branch.clone();
+    let tracking_ref = remote_ref::tracking_ref(forge, number);
     let expected_remote = match remote_ref::find_remote(repo, info) {
         Ok(remote) => Some(remote),
         Err(e) => {
@@ -281,11 +272,10 @@ fn resolve_fork_ref(
     };
 
     // Check if branch already exists and is tracking this ref
-    if let Some(tracks_this) = remote_ref::branch_tracks_ref(
+    if let Some(tracks_this) = branch_tracks_ref(
         repo_root,
         &local_branch,
-        provider,
-        number,
+        &tracking_ref,
         expected_remote.as_deref(),
     ) {
         if tracks_this {
@@ -308,11 +298,10 @@ fn resolve_fork_ref(
 
         // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
-            if let Some(prefixed_tracks) = remote_ref::branch_tracks_ref(
+            if let Some(prefixed_tracks) = branch_tracks_ref(
                 repo_root,
                 &prefixed,
-                provider,
-                number,
+                &tracking_ref,
                 expected_remote.as_deref(),
             ) {
                 if prefixed_tracks {
@@ -341,22 +330,22 @@ fn resolve_fork_ref(
                 .into());
             }
 
-            // Use prefixed branch name; push won't work (None for fork_push_url)
-            // This is GitHub-only (GitLab doesn't support prefixed names)
+            // GitHub and Gitea support prefixed branch names. This path has no
+            // fork push URL, so the branch remains fetch-only.
             let remote = remote_ref::find_remote(repo, info)?;
             return Ok(ResolvedTarget::new(
                 Selector::rewritten_to(prefixed),
                 CreationMethod::ForkRef {
                     ref_type,
                     number,
-                    ref_path: provider.ref_path(number),
+                    ref_path: remote_ref::ref_path(forge, number),
                     fork_push_url: None,
                     remote,
                 },
             ));
         }
 
-        // GitLab doesn't support prefixed branch names - error
+        // GitLab and Azure DevOps don't support prefixed branch names.
         return Err(GitError::BranchTracksDifferentRef {
             branch: local_branch,
             ref_type,
@@ -369,7 +358,7 @@ fn resolve_fork_ref(
     // Resolve remote and URLs based on platform.
     let (fork_push_url, remote) = match ref_type {
         RefType::Pr => {
-            // GitHub: URLs already in info, just find remote.
+            // PR backends include fork URLs in the initial response.
             let remote = remote_ref::find_remote(repo, info)?;
             (info.fork_push_url.clone(), remote)
         }
@@ -410,7 +399,7 @@ fn resolve_fork_ref(
         CreationMethod::ForkRef {
             ref_type,
             number,
-            ref_path: provider.ref_path(number),
+            ref_path: remote_ref::ref_path(forge, number),
             fork_push_url,
             remote,
         },
@@ -478,11 +467,11 @@ fn resolve_base_ref(
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
     if let Some((ref_type, number)) = parse_ref_shortcut(base) {
-        let provider: &dyn RemoteRefProvider = match ref_type {
-            RefType::Pr => choose_pr_provider(repo)?,
-            RefType::Mr => &GitLabProvider,
+        let forge = match ref_type {
+            RefType::Pr => choose_pr_forge(repo)?,
+            RefType::Mr => ForgeKind::GitLab,
         };
-        return resolve_remote_ref_as_base(repo, provider, number);
+        return resolve_remote_ref_as_base(repo, forge, number);
     }
 
     let selector = repo.expand_selector(base)?;
@@ -512,10 +501,10 @@ fn resolve_base_ref(
 /// user hasn't asked to check out.
 fn resolve_remote_ref_as_base(
     repo: &Repository,
-    provider: &dyn RemoteRefProvider,
+    forge: ForgeKind,
     number: u32,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
-    let ref_type = provider.ref_type();
+    let ref_type = forge.ref_type();
     let symbol = ref_type.symbol();
 
     eprintln!(
@@ -526,7 +515,7 @@ fn resolve_remote_ref_as_base(
         ))
     );
 
-    let info = fetch_ref_info(provider, number, repo)?;
+    let info = fetch_ref_info(forge, number, repo)?;
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
 
     if !info.is_cross_repo {
@@ -549,8 +538,13 @@ fn resolve_remote_ref_as_base(
 
     let remote = remote_ref::find_remote(repo, &info)?;
     let display = ref_type.display(number);
-    repo.run_command(&["fetch", "--", &remote, &provider.tracking_ref(number)])
-        .with_context(|| cformat!("Failed to fetch <bold>{display}</> from {remote}"))?;
+    repo.run_command(&[
+        "fetch",
+        "--",
+        &remote,
+        &remote_ref::tracking_ref(forge, number),
+    ])
+    .with_context(|| cformat!("Failed to fetch <bold>{display}</> from {remote}"))?;
     let sha = repo
         .run_command(&["rev-parse", "FETCH_HEAD"])
         .context("Failed to resolve FETCH_HEAD to a commit SHA")?
@@ -584,22 +578,22 @@ fn resolve_ref_shortcut_target(
     let Some((ref_type, number)) = parse_ref_shortcut(branch) else {
         return Ok(None);
     };
-    // Fail closed on a malformed project config before any provider is chosen:
+    // Fail closed on a malformed project config before choosing a forge:
     // `forge.platform` lives there, and `configured_forge_platform` reports a
     // config that won't parse as "unset", which would route an intended
     // override to the wrong CLI. The hook-approval gate used to be what
     // surfaced this, but that no longer runs first.
     repo.project_config()?;
-    // --base is invalid with pr:/mr: syntax (check before provider selection,
+    // --base is invalid with pr:/mr: syntax (check before forge selection,
     // which may invoke a forge CLI to inspect authentication).
     if base.is_some() {
         return Err(GitError::RefBaseConflict { ref_type, number }.into());
     }
-    let provider: &dyn RemoteRefProvider = match ref_type {
-        RefType::Pr => choose_pr_provider(repo)?,
-        RefType::Mr => &GitLabProvider,
+    let forge = match ref_type {
+        RefType::Pr => choose_pr_forge(repo)?,
+        RefType::Mr => ForgeKind::GitLab,
     };
-    resolve_remote_ref(repo, provider, number, create).map(Some)
+    resolve_remote_ref(repo, forge, number, create).map(Some)
 }
 
 /// Resolve the switch target, handling --create/--base flags.
@@ -2327,7 +2321,7 @@ mod tests {
     }
 
     #[test]
-    fn choose_pr_provider_prefers_github_over_azure() {
+    fn choose_pr_forge_prefers_github_over_azure() {
         // Mixed-remote setup: a repo with both a GitHub remote and an Azure
         // DevOps remote falls through to GitHub. Operators with an explicit
         // preference set `forge.platform`.
@@ -2340,15 +2334,12 @@ mod tests {
             "https://dev.azure.com/myorg/proj/_git/myrepo",
         ]);
 
-        assert_eq!(
-            choose_pr_provider(&test.repo).unwrap().forge_kind(),
-            ForgeKind::GitHub
-        );
+        assert_eq!(choose_pr_forge(&test.repo).unwrap(), ForgeKind::GitHub);
     }
 
     #[test]
-    fn choose_pr_provider_azure_only() {
-        // Azure-only repo (no GitHub remote) gets the Azure provider.
+    fn choose_pr_forge_azure_only() {
+        // Azure-only repo (no GitHub remote) uses Azure DevOps.
         let test = TestRepo::with_initial_commit();
         test.run_git(&[
             "remote",
@@ -2357,25 +2348,19 @@ mod tests {
             "https://dev.azure.com/myorg/proj/_git/myrepo",
         ]);
 
-        assert_eq!(
-            choose_pr_provider(&test.repo).unwrap().forge_kind(),
-            ForgeKind::AzureDevOps
-        );
+        assert_eq!(choose_pr_forge(&test.repo).unwrap(), ForgeKind::AzureDevOps);
     }
 
     #[test]
-    fn choose_pr_provider_no_recognised_remote() {
+    fn choose_pr_forge_no_recognised_remote() {
         // Falls back to GitHub when no recognisable forge remote exists,
         // preserving the existing error message from `gh`.
         let test = TestRepo::with_initial_commit();
-        assert_eq!(
-            choose_pr_provider(&test.repo).unwrap().forge_kind(),
-            ForgeKind::GitHub
-        );
+        assert_eq!(choose_pr_forge(&test.repo).unwrap(), ForgeKind::GitHub);
     }
 
     #[test]
-    fn choose_pr_provider_forge_platform_override_wins() {
+    fn choose_pr_forge_platform_override_wins() {
         // The bug worth covering: a mixed-remote repo where the user explicitly
         // pinned `forge.platform = "azure-devops"`. Without the override, the
         // GitHub remote would win — and the user has no way to redirect `pr:N`.
@@ -2391,14 +2376,11 @@ mod tests {
         ]);
         test.write_project_config("[forge]\nplatform = \"azure-devops\"\n");
 
-        assert_eq!(
-            choose_pr_provider(&test.repo).unwrap().forge_kind(),
-            ForgeKind::AzureDevOps
-        );
+        assert_eq!(choose_pr_forge(&test.repo).unwrap(), ForgeKind::AzureDevOps);
     }
 
     #[test]
-    fn choose_pr_provider_forge_platform_github_in_azure_only_repo() {
+    fn choose_pr_forge_platform_github_in_azure_only_repo() {
         // Inverse override: Azure-only remotes but `forge.platform = "github"`.
         // Verifies the config arm flips the inferred-from-remotes default.
         let test = TestRepo::with_initial_commit();
@@ -2410,9 +2392,6 @@ mod tests {
         ]);
         test.write_project_config("[forge]\nplatform = \"github\"\n");
 
-        assert_eq!(
-            choose_pr_provider(&test.repo).unwrap().forge_kind(),
-            ForgeKind::GitHub
-        );
+        assert_eq!(choose_pr_forge(&test.repo).unwrap(), ForgeKind::GitHub);
     }
 }
