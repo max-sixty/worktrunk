@@ -3991,7 +3991,7 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    // Untracked content forces WorkingTreeDiffTask to inspect the unborn tree.
+    // Untracked content forces the working-tree diff task to inspect the unborn tree.
     std::fs::write(orphan_path.join("untracked.txt"), "content\n").unwrap();
 
     let output = repo
@@ -4207,7 +4207,7 @@ fn test_list_tolerates_missing_index(mut repo: TestRepo) {
 
     let feature = repo.add_worktree("feature");
 
-    // Dirty the worktree so WorkingTreeConflictsTask exercises the temp-index path.
+    // Dirty the worktree so the working-tree conflict task exercises the temp-index path.
     std::fs::write(feature.join("shared.txt"), "feature changes").unwrap();
     std::fs::write(feature.join("untracked.txt"), "extra\n").unwrap();
 

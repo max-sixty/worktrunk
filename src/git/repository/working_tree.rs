@@ -476,7 +476,7 @@ impl<'a> WorkingTree<'a> {
     /// each want porcelain (e.g., working-tree diff + conflict detection during
     /// `wt list`) share a single subprocess. Uses `--no-optional-locks` to avoid
     /// index-lock contention with the `git write-tree` run by
-    /// `WorkingTreeConflictsTask` in parallel. Explicitly requests normal
+    /// the working-tree conflict task in parallel. Explicitly requests normal
     /// untracked-file reporting so `status.showUntrackedFiles=no` cannot make
     /// an untracked-only worktree look clean to callers.
     pub fn status_porcelain_cached(&self) -> anyhow::Result<String> {
@@ -1066,7 +1066,7 @@ impl<'a> WorkingTree<'a> {
 /// operations there. Today the callers are
 /// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
 /// untracked, used by list and statusline),
-/// `WorkingTreeConflictsTask` (write-tree of tracked changes, for
+/// the working-tree conflict task (write-tree of tracked changes, for
 /// merge-conflict probing), `wt step diff` (diff vs target merge-base with
 /// untracked), `wt step commit --dry-run` (mirror its `--stage` mode without
 /// changing the user's index), and the `wt switch` unified/working preview tabs.
@@ -1692,7 +1692,7 @@ mod tests {
     fn temp_index_tolerates_missing_real_index() {
         // A worktree whose `<gitdir>/index` file is absent must not error
         // when callers ask for a temp index — git itself treats a missing
-        // index as empty, and the WorkingTreeConflictsTask used to surface
+        // index as empty, and the working-tree conflict task used to surface
         // this as a misleading `working-tree conflict check (Failed to copy
         // index file)` footer.
         let test = TestRepo::with_initial_commit();

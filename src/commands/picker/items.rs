@@ -737,7 +737,7 @@ pub(super) struct LocalContent {
     summary_working_tree: Option<bool>,
     /// `branch_diff`: the branch has commits ahead of the mainline tip
     /// (`counts.ahead > 0`), or it is an orphan (no merge base — see
-    /// [`Self::from_item`]). `counts` is `AheadBehindTask`'s answer, measured
+    /// [`Self::from_item`]). `counts` is the ahead/behind task's answer, measured
     /// against the **upstream-aware** comparison base
     /// (`TaskContext::comparison_base` — the upstream ref when the local default
     /// lags it), so a stale fork default doesn't inflate it. The branch-diff and

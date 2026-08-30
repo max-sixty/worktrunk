@@ -1510,7 +1510,7 @@ pub fn collect(
         // here on a cold cache is serial — it blocks this scope, and the
         // big task pool can't open until it returns. Nothing downstream of
         // work-item generation actually needs the ahead/behind *counts*
-        // (only the per-row `AheadBehindTask` reads them, and it has a
+        // (only the per-row ahead/behind task reads them, and it has a
         // per-SHA fallback) — only the cheap `for-each-ref refs/heads/
         // refs/remotes/` ref scan gates work-item generation. So the walk
         // could become a single work item in the pool, overlapping the
@@ -1542,7 +1542,7 @@ pub fn collect(
             // just gates on its data dependency.
             //
             // Scope to branches that will actually render an
-            // `UpstreamTask` row: with `--branches` that's every local;
+            // Upstream-task row: with `--branches` that's every local;
             // without it that's just the worktree-attached subset.
             // Otherwise plain `wt list` on a repo with many stale
             // tracking branches would block the worker pool on a serial

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use color_print::cformat;
+use serde::{Deserialize, Serialize};
 use worktrunk::HookType;
 use worktrunk::config::{
     Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, VarsMode,
@@ -22,7 +23,7 @@ use super::hook_filter::HookSource;
 use crate::output::concurrent::{ConcurrentCommand, run_concurrent_commands};
 use crate::output::{DirectivePassthrough, execute_shell_command};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PreparedCommand {
     pub name: Option<String>,
     /// Raw template, rendered against `context` when the command runs.
@@ -50,7 +51,7 @@ impl PreparedCommand {
 }
 
 /// A step in a prepared pipeline, mirroring `HookStep`.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum PreparedStep {
     Single(PreparedCommand),
     Concurrent(Vec<PreparedCommand>),

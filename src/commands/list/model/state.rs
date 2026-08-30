@@ -327,7 +327,7 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
 /// result reflects the tracked working state better than the HEAD-only probe.
 /// When `has_working_tree_conflicts` is
 /// `Some(Some(b))`, fire/rule out on `b` and ignore the HEAD probe.
-/// `MergeTreeConflictsTask` skips its merge-tree call in that case to
+/// The merge-tree conflict task skips its merge-tree call in that case to
 /// avoid a redundant subprocess (returning a sentinel `false` that this
 /// gate ignores).
 ///
@@ -802,7 +802,7 @@ mod tests {
             Tier::RuledOut
         );
         // WT probe is authoritative: rule out even when HEAD probe was
-        // skipped (None) because MergeTreeConflictsTask deferred to it.
+        // skipped (None) because the merge-tree conflict task deferred to it.
         assert_eq!(
             tier_would_conflict(None, Some(Some(false)), true),
             Tier::RuledOut
@@ -816,7 +816,7 @@ mod tests {
         // WT probe is authoritative: rule out even when HEAD probe says
         // "would conflict" (uncommitted changes resolve it). This
         // combination shouldn't arise in production — the
-        // `MergeTreeConflictsTask` skip-when-dirty path keeps HEAD as a
+        // The merge-tree conflict task's skip-when-dirty path keeps HEAD as a
         // sentinel `false` whenever WT is `Some(Some(_))` — but pin the
         // contract so a future refactor that reorders the matches
         // doesn't silently regress.

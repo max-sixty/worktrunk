@@ -2,7 +2,7 @@
 //!
 //! Contains the flat parallelism infrastructure:
 //! - `WorkItem` - unit of work for the thread pool
-//! - `dispatch_task()` - route TaskKind to the correct Task implementation
+//! - `TaskKind::compute()` - route each task to its computation
 //! - `work_items_for_worktree()` / `work_items_for_branch()` - generate work items
 //! - `ExpectedResults` - track expected results for timeout diagnostics
 //! - `seed_skipped_task_defaults()` - conservative sentinels for skipped tasks
@@ -26,12 +26,7 @@ use worktrunk::git::Repository;
 
 use super::super::model::{ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
-use super::tasks::{
-    AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
-    HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask, SummaryGenerateTask, Task,
-    TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask, WorkingTreeConflictsTask,
-    WorkingTreeDiffTask, WouldMergeAddTask,
-};
+use super::tasks::TaskContext;
 use super::types::{TaskError, TaskKind, TaskResult};
 
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
@@ -75,32 +70,11 @@ pub struct WorkItem {
 impl WorkItem {
     /// Execute this work item, returning the task result.
     pub fn execute(self) -> Result<TaskResult, TaskError> {
-        let result = dispatch_task(self.kind, self.ctx);
+        let result = self.kind.compute(self.ctx);
         if let Ok(ref task_result) = result {
             debug_assert_eq!(TaskKind::from(task_result), self.kind);
         }
         result
-    }
-}
-
-/// Dispatch a task by kind, calling the appropriate Task::compute().
-fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskError> {
-    match kind {
-        TaskKind::AheadBehind => AheadBehindTask::compute(ctx),
-        TaskKind::CommittedTreesMatch => CommittedTreesMatchTask::compute(ctx),
-        TaskKind::HasFileChanges => HasFileChangesTask::compute(ctx),
-        TaskKind::WouldMergeAdd => WouldMergeAddTask::compute(ctx),
-        TaskKind::IsAncestor => IsAncestorTask::compute(ctx),
-        TaskKind::BranchDiff => BranchDiffTask::compute(ctx),
-        TaskKind::WorkingTreeDiff => WorkingTreeDiffTask::compute(ctx),
-        TaskKind::MergeTreeConflicts => MergeTreeConflictsTask::compute(ctx),
-        TaskKind::WorkingTreeConflicts => WorkingTreeConflictsTask::compute(ctx),
-        TaskKind::GitOperation => GitOperationTask::compute(ctx),
-        TaskKind::UserMarker => UserMarkerTask::compute(ctx),
-        TaskKind::Upstream => UpstreamTask::compute(ctx),
-        TaskKind::CiStatus => CiStatusTask::compute(ctx),
-        TaskKind::UrlStatus => UrlStatusTask::compute(ctx),
-        TaskKind::SummaryGenerate => SummaryGenerateTask::compute(ctx),
     }
 }
 
@@ -363,7 +337,7 @@ pub fn work_items_for_worktree(
     // Send the URL through the drain channel so the row redraws as soon as
     // the result is processed. Without this round trip, the URL would only
     // appear when *some other* task happens to complete and trigger a
-    // refresh — often the slow `UrlStatusTask` itself.
+    // refresh — often the slow URL-status task itself.
     if include_url && let Some(ref url) = item_url {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         let _ = tx.send(Ok(TaskResult::UrlStatus {
@@ -399,8 +373,8 @@ pub fn work_items_for_worktree(
         TaskKind::UserMarker,
         TaskKind::WorkingTreeConflicts,
         TaskKind::BranchDiff,
-        // MergeTreeConflictsTask peeks the shared porcelain cache and
-        // skips its own merge-tree call when WorkingTreeConflictsTask
+        // The merge-tree conflict task peeks the shared porcelain cache and
+        // skips its own merge-tree call when the working-tree conflict task
         // will produce an authoritative dirty-tree result.
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
@@ -653,6 +627,6 @@ mod tests {
     // single authority, and `test_required_tasks_for_render` pins that the gate
     // drops SummaryGenerate when no LLM is configured. The spawn loop's "skip
     // what isn't planned" rule is covered by the UrlStatus test above. If a
-    // caller plans Summary without a command anyway, `SummaryGenerateTask`
+    // caller plans Summary without a command anyway, the summary-generation task
     // returns a clean error rather than misbehaving (tasks.rs).
 }

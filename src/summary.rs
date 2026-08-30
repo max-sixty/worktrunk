@@ -294,7 +294,7 @@ pub(crate) fn render_prompt(diff: &str, stat: &str) -> anyhow::Result<String> {
 /// with clean worktree). Returns `Ok(Some(full_summary))` on success. Errors
 /// propagate from template rendering or LLM execution.
 ///
-/// Both `generate_summary` (TUI) and `SummaryGenerateTask` (list column) delegate
+/// Both `generate_summary` (TUI) and the list summary task delegate
 /// to this function, wrapping its result with their own error formatting.
 pub(crate) fn generate_summary_core(
     branch: &str,
