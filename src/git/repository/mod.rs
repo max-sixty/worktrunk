@@ -118,6 +118,11 @@
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
 //! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//! - Serialization: `WORKTREE_REGISTRY_LOCKS` (this module) — one `RwLock` per
+//!   canonical git common dir, handed to each `Repository` at construction so
+//!   `list_worktrees` reads and `git worktree remove` teardowns can't overlap.
+//!   Keyed like a cache but holding no git data, so nothing in it goes stale;
+//!   see the static's own doc comment for the ordering rules.
 //!
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
