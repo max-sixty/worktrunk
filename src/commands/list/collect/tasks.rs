@@ -891,6 +891,50 @@ fn has_tracked_changes(status_output: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::git::BranchRef;
+    use worktrunk::testing::TestRepo;
+
+    fn task_context(test: &TestRepo) -> TaskContext {
+        TaskContext {
+            repo: test.repo.clone(),
+            branch_ref: BranchRef::local_branch("feature", "deadbeef"),
+            item_idx: 3,
+            item_url: None,
+            llm_command: None,
+            default_branch: None,
+            integration_targets: None,
+            snapshot: None,
+        }
+    }
+
+    #[test]
+    fn url_status_without_url_is_inert() {
+        let test = TestRepo::new();
+
+        let result = TaskKind::UrlStatus.compute(task_context(&test)).unwrap();
+
+        assert!(matches!(
+            result,
+            TaskResult::UrlStatus {
+                item_idx: 3,
+                url: None,
+                active: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn summary_without_command_keeps_task_identity() {
+        let test = TestRepo::new();
+
+        let error = TaskKind::SummaryGenerate
+            .compute(task_context(&test))
+            .unwrap_err();
+
+        assert_eq!(error.item_idx, 3);
+        assert_eq!(error.kind, TaskKind::SummaryGenerate);
+        assert_eq!(error.message, "summary generation requires an LLM command");
+    }
 
     #[test]
     fn test_first_line_simple() {
