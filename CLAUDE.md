@@ -7,12 +7,14 @@ cargo run -- hook pre-merge --yes   # all tests + lints (runs automatically in w
 ```
 
 Claude Code web: run `task setup-web` first. Test commands, isolation, and coverage investigation: `tests/CLAUDE.md`.
-Codex Cloud: use the setup in `dev/codex.sh`.
+Codex Cloud: use the setup in `.codex/cloud.sh`.
 
 ## Project Status
 
 Maturing mode: a growing user base, so balance clean design with compatibility.
 
+- New features are welcome, but a command, option, user-facing concept, or configuration key is a product decision. Its user value must justify the code and documentation surface it adds.
+- Consolidate or remove existing prose and machinery before adding another explanation, mode, or special case.
 - External-interface breaks need justification (a real improvement, not cleanup); prefer deprecation warnings over silent breaks.
 - **Protected interfaces:** config file format (`wt.toml`, user config) and CLI flags/arguments. Everything else (internal APIs, output formatting, log locations) is flexible.
 - No Rust library compatibility concerns (CLI tool only).
@@ -30,7 +32,7 @@ Use consistently in docs, help text, and code comments:
 
 ## Skills
 
-Load relevant skills before starting; reload when scope changes mid-session. Project-local skills in `.claude/skills/`:
+Load relevant skills before starting; reload when scope changes mid-session. Project-local skills live in `.claude/skills/`, with `.agents/skills` linking Codex to the same files:
 
 - `writing-user-outputs` — before editing code that calls `warning_message`, `hint_message`, `error_message`, `info_message`, `eprintln`, `println`, or otherwise produces user-visible strings (CLI help, progress UI, snapshots).
 - `running-tend` — operating in CI or writing tend workflows.
@@ -44,7 +46,7 @@ Load relevant skills before starting; reload when scope changes mid-session. Pro
 
 ## Documentation
 
-Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/content/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/content/`, skill-only pages like `shell-integration.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept --test integration -- test_help` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
+Behavior changes require doc updates. `src/cli/mod.rs` (`after_long_help` plus clap attributes) is the PRIMARY SOURCE for command pages; their rendered mirrors in `docs/src/content/docs/` and `skills/worktrunk/reference/` are generated, as is all of `plugins/worktrunk/skills/` — but both directories also hold hand-edited primaries (non-command docs in `docs/src/content/docs/`, skill-only pages like `shell-integration.md` in the reference dir), so check which file is primary in the sync taxonomy before editing. Ask: "does `--help` still describe what the code does?" `cargo test --test integration test_docs_are_in_sync` checks doc sync; editing help text (`after_long_help`, `about`, arg docs) also changes the rendered `--help` snapshots, which that test leaves untouched — `cargo insta test --accept --test integration -- test_help` regenerates them (the pre-merge hook runs both). Sync taxonomy, help-text authoring (three render contexts, link text, config-TOML blocks): `docs/CLAUDE.md`.
 
 ## Plugin Layout
 
@@ -59,14 +61,15 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **No implicit destructive side effects** — never silently delete/overwrite as a side effect of an unrelated operation; make cleanup a separate explicit action the user chooses.
 - **Favor the failing variant on races** — `git reset --keep` (fails if tracked files were modified) over `--hard`; `git checkout --merge` over `--force`. If no safer variant exists, document the risk inline.
 - **Time-of-check vs time-of-use** — be conservative when there's a gap between the safety check and the operation. `wt merge` verifies clean before rebasing, but files could appear before cleanup — don't force-remove during cleanup.
-- **Replace files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every write to a file worktrunk can't put back (rc files, shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
+- **Replace full files, never truncate them** — `fs::write` truncates before it writes, so a crash mid-write leaves the file empty. Every full-file rewrite worktrunk can't put back (shell wrappers, `config.toml`, `approvals.toml`, another tool's `settings.json`) goes through `utils::write_atomically`, which renames a sibling temp file over the target; the spec on that function covers symlinks, mode, and what a rename costs. When a user-owned file was observed missing, `utils::write_new_atomically` refuses to overwrite one that appears before persistence. Adding to an existing Bash, Zsh, or PowerShell rc file instead opens it in append mode, so a stale snapshot cannot replace concurrent edits; never truncate the file to recover from an append error. Don't grow the install path into a rebuild. Removal still rewrites those rc files whole (`uninstall_previewed_lines`), which is why the `write_atomically` spec still names them. Regenerable content (the cache, the `-vv` diagnostic report) keeps the plain write.
+- **Shell-config concurrency has a deliberate boundary** — the append lock coordinates Worktrunk installers, and no-clobber creation turns the missing-file race into a fail-and-rerun outcome. An editor save racing rc-file uninstall can still be overwritten; accept this final check-to-rename window because sidecar locks, backups, retries, and extra pre-rename checks do not close it. Revisit after an observed incident or a simpler write design. Worktrunk-owned wrappers and completions use last-writer-wins semantics, as does the merge into another tool's `settings.json`.
 
 These stop where git's own protections stop, and matching git is deliberate in each case. The named spec says why:
 
 - `wt merge` and `wt step push` overwrite an ignored file in the destination worktree whose path the incoming commits track, exactly as a `git merge` run there would (`src/commands/worktree/push.rs`).
 - Removal's final dirty-worktree gate is answered by the fsmonitor daemon under `core.fsmonitor`, exactly as `git worktree remove`'s own gate is (`src/git/remove.rs`).
 
-Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
+Full inventory: FAQ [What files does Worktrunk create?](docs/src/content/docs/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/src/content/docs/faq.md#what-can-worktrunk-delete). Review new code that changes this surface against those sections.
 
 ## Command Execution Principles
 

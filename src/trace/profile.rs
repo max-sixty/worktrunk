@@ -16,7 +16,9 @@
 //! - **Where is work wasted?** — [`CacheReport`] flags commands re-run with the
 //!   same context (a cache miss that should have been a hit). Commands that read
 //!   stdin are excluded — their real input isn't in the command string, so
-//!   identical command lines aren't necessarily identical work.
+//!   identical command lines aren't necessarily identical work. Subprocesses
+//!   that build the `-vv` diagnostic report are also excluded from every
+//!   aggregate; the raw trace retains them for debugging.
 //!
 //! The analysis ([`Profile::from_entries`], [`CacheReport::from_entries`]) is pure
 //! data over `&[TraceEntry]` and carries no styling, so it compiles without the
@@ -34,6 +36,7 @@ use serde::Serialize;
 
 use crate::styling::format_heading;
 
+use super::emit::DIAGNOSTIC_CONTEXT;
 use super::{TraceEntry, TraceEntryKind, TraceResult};
 
 /// How many individual calls [`Profile::slowest`] retains.
@@ -79,12 +82,12 @@ fn ser_opt_dur_us<S: serde::Serializer>(d: &Option<Duration>, s: S) -> Result<S:
 /// same fields, so the two views can't drift.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Profile {
-    /// First → last record, across commands, spans, and instant events.
+    /// First → last profiled record, across commands, spans, and instant events.
     #[serde(rename = "traced_us", serialize_with = "ser_dur_us")]
     pub traced: Duration,
-    /// Number of subprocess (command) records.
+    /// Number of profiled subprocess (command) records.
     pub command_count: usize,
-    /// Σ of every subprocess duration.
+    /// Σ of every profiled subprocess duration.
     #[serde(rename = "command_total_us", serialize_with = "ser_dur_us")]
     pub command_total: Duration,
     /// Σ of in-process span durations (config load, repo open, …).
@@ -96,7 +99,7 @@ pub struct Profile {
     pub parallelism: Option<f64>,
     /// Most subprocesses in flight simultaneously. `None` without timestamps.
     pub peak_concurrency: Option<usize>,
-    /// Distinct thread IDs that ran subprocesses.
+    /// Distinct thread IDs that ran profiled subprocesses.
     pub thread_count: usize,
     /// Derived `wt list` latencies from the collect milestones.
     pub key_intervals: KeyIntervals,
@@ -302,6 +305,18 @@ pub(super) fn command_label(command: &str, context: Option<&str>, result: &Trace
     label
 }
 
+/// Entries produced by the command being profiled.
+///
+/// The diagnostic collector runs after that command and appends to the same
+/// trace under a reserved context. Every subprocess aggregate uses this
+/// boundary — the timeline's `traced` span deliberately does not, since it
+/// reconciles against a `wall` that includes the collector.
+pub(super) fn profile_entries(entries: &[TraceEntry]) -> impl Iterator<Item = &TraceEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.context.as_deref() != Some(DIAGNOSTIC_CONTEXT))
+}
+
 /// Microseconds of an entry's duration (zero for instant events).
 fn entry_dur_us(entry: &TraceEntry) -> u64 {
     match &entry.kind {
@@ -315,9 +330,10 @@ fn entry_dur_us(entry: &TraceEntry) -> u64 {
 impl Profile {
     /// Build a profile from parsed trace entries.
     pub fn from_entries(entries: &[TraceEntry]) -> Self {
-        let min_start = entries.iter().filter_map(|e| e.start_time_us).min();
-        let max_end = entries
-            .iter()
+        let min_start = profile_entries(entries)
+            .filter_map(|e| e.start_time_us)
+            .min();
+        let max_end = profile_entries(entries)
             .filter_map(|e| e.start_time_us.map(|s| s + entry_dur_us(e)))
             .max();
         let traced = match (min_start, max_end) {
@@ -335,7 +351,7 @@ impl Profile {
         let mut intervals: Vec<(u64, u64)> = Vec::new();
         let mut slowest: Vec<Slow> = Vec::new();
 
-        for entry in entries {
+        for entry in profile_entries(entries) {
             match &entry.kind {
                 TraceEntryKind::Command {
                     command,
@@ -409,8 +425,7 @@ impl Profile {
         let (parallelism, peak_concurrency) = concurrency(&intervals);
 
         let base = min_start.unwrap_or(0);
-        let mut milestones: Vec<(&str, u64)> = entries
-            .iter()
+        let mut milestones: Vec<(&str, u64)> = profile_entries(entries)
             .filter_map(|e| match &e.kind {
                 TraceEntryKind::Instant { name } => e.start_time_us.map(|s| (name.as_str(), s)),
                 _ => None,
@@ -676,7 +691,7 @@ impl CacheReport {
         // (command, context) → durations of every run, in microseconds.
         let mut pair_durations: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
 
-        for entry in entries {
+        for entry in profile_entries(entries) {
             if let TraceEntryKind::Command {
                 command,
                 duration,

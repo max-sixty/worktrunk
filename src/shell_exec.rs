@@ -51,6 +51,35 @@
 //! keep running as orphans. [`cancel_background_commands`] lets the foreground
 //! thread stop that work — both what is running and what has yet to start —
 //! once nobody is left to read its results.
+//!
+//! ## Timed waits
+//!
+//! Unix has no "wait for this child, but give up after N milliseconds" syscall,
+//! so every deadline here (`Cmd::timeout`, `Cmd::delayed_stream`, the picker's
+//! pager) goes through [`shared_child::SharedChild`]: `waitid(WNOWAIT)` for the
+//! blocking wait, and for the timed one a `SIGCHLD` self-pipe it polls against
+//! the deadline. Windows needs none of that — it waits the process handle.
+//!
+//! **Why not `wait-timeout`.** wt used it until #3856. Its `SIGCHLD` handler
+//! pokes an `AF_UNIX` socketpair with `send()` and `panic!`s on any errno but
+//! `WouldBlock`; the handler is `extern "C"`, so that panic cannot unwind and
+//! goes straight to `abort()`. Under a sandbox that denies the send (the Codex
+//! CLI's `workspace-write` mode) every timed wait in wt became an uncatchable
+//! `SIGABRT` with no diagnostic. `shared_child` reaches the same signal through
+//! `signal_hook`, whose wake deliberately discards write errors — a missed
+//! wakeup costs at worst a wait that runs to its deadline, which is what a
+//! deadline is for. It also probes the wake fd and falls back to `write()` on a
+//! pipe, so the syscall that sandbox denies is not even on the path.
+//!
+//! **When the timed wait itself fails.** Setting a deadline is fallible — each
+//! call allocates a pipe and registers a handler — so each site decides what a
+//! failed `wait_timeout` means instead of propagating it. Where the deadline
+//! bounds wall-clock (`run_with_timeout_impl`, the pager) the site tears the
+//! child down, because a wait it cannot observe bounds nothing. Where it only
+//! decides when output starts streaming ([`Cmd::delayed_stream`]) the site
+//! streams. No site fails the command: a denied syscall in wt's own machinery
+//! is not the child's fault, and erroring over one repeats #3856 in a quieter
+//! form.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -63,7 +92,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use wait_timeout::ChildExt;
+use shared_child::SharedChild;
 
 use crate::git::{GitError, WorktrunkError};
 use crate::sync::Semaphore;
@@ -163,9 +192,8 @@ fn is_cancellable_thread() -> bool {
 /// Register a freshly spawned child as cancellable for as long as the returned
 /// guard lives. Returns `None` when this thread's commands aren't subject to
 /// cancellation (see [`is_cancellable_thread`]).
-fn track_if_cancellable(child: &std::process::Child) -> Option<BackgroundPid> {
+fn track_if_cancellable(pid: u32) -> Option<BackgroundPid> {
     is_cancellable_thread().then(|| {
-        let pid = child.id();
         BACKGROUND_PIDS.lock().unwrap().insert(pid);
         let guard = BackgroundPid(pid);
         // Re-read after publishing the PID, closing the window between this
@@ -813,6 +841,7 @@ pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 /// that [`log_output`] prepends to each block in `subprocess.log`, so the two
 /// render the command identically.
 fn command_header(cmd: &str, context: Option<&str>) -> String {
+    let context = crate::trace::emit::diagnostic_context().or(context);
     match context {
         Some(ctx) => format!("$ {cmd} [{ctx}]"),
         None => format!("$ {cmd}"),
@@ -973,15 +1002,15 @@ fn run_with_timeout_impl(
         cmd.process_group(0);
     }
 
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let _tracked = track_if_cancellable(&child);
+    let child = SharedChild::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?;
+    let _tracked = track_if_cancellable(child.id());
 
-    let mut child_stdout = child.stdout.take();
-    let mut child_stderr = child.stderr.take();
+    let mut child_stdout = child.take_stdout();
+    let mut child_stderr = child.take_stderr();
 
     std::thread::scope(|s| {
         let stdout_thread = s.spawn(|| {
@@ -1001,8 +1030,8 @@ fn run_with_timeout_impl(
             Ok::<_, std::io::Error>(buf)
         });
 
-        match child.wait_timeout(timeout)? {
-            Some(status) => {
+        match child.wait_timeout(timeout) {
+            Ok(Some(status)) => {
                 let stdout = stdout_thread.join().unwrap()?;
                 let stderr = stderr_thread.join().unwrap()?;
                 Ok(std::process::Output {
@@ -1011,14 +1040,18 @@ fn run_with_timeout_impl(
                     stderr,
                 })
             }
-            None => {
+            // Timed out, or the wait itself failed. A failed wait has to tear the
+            // tree down too: propagating it instead would leave the child running,
+            // and the scope's join then blocks on `read_to_end` until the child
+            // closes its pipes — the caller waits out the full runtime the timeout
+            // exists to bound, and gets back an error that isn't `TimedOut`.
+            outcome => {
                 kill_timed_out_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
-                Err(std::io::Error::new(
-                    ErrorKind::TimedOut,
-                    "command timed out",
-                ))
+                Err(outcome.err().unwrap_or_else(|| {
+                    std::io::Error::new(ErrorKind::TimedOut, "command timed out")
+                }))
             }
         }
     })
@@ -1030,6 +1063,18 @@ fn run_with_timeout_impl(
 /// pid is the pgid and the TERM → KILL escalation reaches every member. SIGTERM
 /// first for the same reason [`signal_background_pid`] uses it: git's lockfile
 /// handlers run on TERM, so an interrupted git cleans up after itself.
+///
+/// Signalling by pid is safe here because the caller still holds an unreaped
+/// [`shared_child::SharedChild`]: a timed wait uses `waitid(WNOWAIT)`, so a child
+/// that exited on the deadline's other side is a zombie that keeps its pid
+/// reserved until the caller's own `wait()`. The pid cannot name a different
+/// process group by the time the signal lands.
+///
+/// The same unreaped zombie means the escalation's liveness probe reads the
+/// group as alive for the entire grace, so its final SIGKILL fires even when
+/// every member exited on the TERM. Accepted: that sweep is a no-op against a
+/// dead group (see [`forward_signal_with_escalation`]), and holding the zombie
+/// is what pins the pgid.
 #[cfg(unix)]
 fn kill_timed_out_tree(pid: u32) {
     forward_signal_with_escalation(pid as i32, signal_hook::consts::SIGTERM);
@@ -1616,7 +1661,7 @@ impl Cmd {
 
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let _tracked = track_if_cancellable(&child);
+                    let _tracked = track_if_cancellable(child.id());
                     // Write stdin data in an inner scope so the handle DROPS
                     // (closing the pipe) before `wait_with_output` — otherwise a
                     // child that reads stdin to EOF (e.g. `git … --stdin`) blocks
@@ -1646,7 +1691,7 @@ impl Cmd {
                 .stderr(Stdio::piped());
             match cmd.spawn() {
                 Ok(child) => {
-                    let _tracked = track_if_cancellable(&child);
+                    let _tracked = track_if_cancellable(child.id());
                     child.wait_with_output()
                 }
                 Err(e) => Err(e),
@@ -1779,7 +1824,7 @@ impl Cmd {
                 return Err(e);
             }
         };
-        let _first_tracked = track_if_cancellable(&first_child);
+        let _first_tracked = track_if_cancellable(first_child.id());
         let first_stdout = first_child
             .stdout
             .take()
@@ -1819,7 +1864,7 @@ impl Cmd {
                 return Err(e);
             }
         };
-        let _second_tracked = track_if_cancellable(&second_child);
+        let _second_tracked = track_if_cancellable(second_child.id());
 
         // `first`'s stderr must be drained concurrently with `second`'s
         // execution; otherwise pathological stderr volume (~64 KiB pipe
@@ -2108,7 +2153,7 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts (the delay threshold is crossed).
+    /// starts.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2157,7 +2202,7 @@ impl Cmd {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = match cmd.spawn() {
+        let child = match SharedChild::spawn(&mut cmd) {
             Ok(child) => child,
             Err(e) => {
                 trace.fail(&e);
@@ -2165,8 +2210,8 @@ impl Cmd {
             }
         };
 
-        let stdout = child.stdout.take().expect("stdout was piped");
-        let stderr = child.stderr.take().expect("stderr was piped");
+        let stdout = child.take_stdout().expect("stdout was piped");
+        let stderr = child.take_stderr().expect("stderr was piped");
 
         // Shared state: when true, output streams directly; when false, buffers.
         let streaming = Arc::new(AtomicBool::new(false));
@@ -2192,13 +2237,17 @@ impl Cmd {
                         trace.complete(status.success());
                         return stream_exit_result(status, &buffer, &cmd_str);
                     }
-                    // Threshold exceeded — fall through to streaming.
-                    Ok(None) => {}
-                    Err(e) => {
-                        let _ = stdout_handle.join();
-                        let _ = stderr_handle.join();
-                        trace.fail(&e);
-                        return Err(e).context("Failed to wait for command");
+                    // No status yet: the threshold passed, or the timed wait
+                    // itself failed. Both fall through to streaming. A failed
+                    // wait means the deadline machinery broke — `sigchld`
+                    // allocates a pipe and registers a handler per call, which
+                    // a sandbox or an fd limit can deny — not that the child
+                    // misbehaved, and Phase 2's `wait()` is a bare `waitid`
+                    // with neither, so it still returns the real status.
+                    // Failing here would turn a denied syscall into a failed
+                    // command, which is the shape of #3856.
+                    outcome => {
+                        tracing::debug!(?outcome, "No exit status yet; switching to streaming");
                     }
                 }
             }
@@ -2234,6 +2283,12 @@ impl Cmd {
 // Signal forwarding helpers (Unix only)
 // ============================================================================
 
+/// One `killpg(pgid, 0)` liveness probe. Only `ESRCH` proves the group empty;
+/// everything else counts as alive. That makes the probe conservative in one
+/// specific way: an exited-but-unreaped member (a zombie) still registers —
+/// Linux answers `Ok`, macOS `EPERM` — so a group whose members all exited
+/// keeps reading alive until someone reaps them. See
+/// [`forward_signal_with_escalation`] for why that over-report is safe.
 #[cfg(unix)]
 fn process_group_alive(pgid: i32) -> bool {
     match nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None) {
@@ -2243,10 +2298,25 @@ fn process_group_alive(pgid: i32) -> bool {
     }
 }
 
+/// Poll [`process_group_alive`] until the group is gone or `grace` expires,
+/// returning `true` when the group died within the grace. The first probe is
+/// immediate, so an already-empty group costs no sleep at all, and a group
+/// whose members exit (and are reaped) mid-grace is noticed within one poll
+/// interval rather than at the deadline.
 #[cfg(unix)]
-fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
-    std::thread::sleep(grace);
-    !process_group_alive(pgid)
+fn group_died_within(pgid: i32, grace: Duration) -> bool {
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+    let deadline = Instant::now() + grace;
+    loop {
+        if !process_group_alive(pgid) {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        std::thread::sleep(remaining.min(POLL_INTERVAL));
+    }
 }
 
 /// Single-shot signal delivery to a specific PID. Used in shared-pgroup mode
@@ -2265,32 +2335,55 @@ pub fn forward_signal_to_pid(pid: i32, sig: i32) {
     let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix_sig);
 }
 
+/// Signal a child process group and sweep stragglers: send `sig` (SIGINT or
+/// SIGTERM; anything else is ignored), give the group a 200 ms grace to exit,
+/// and SIGKILL whatever still remains. SIGINT inserts a SIGTERM round (with
+/// its own grace) before the SIGKILL, so an interrupted git still runs its
+/// TERM-time lockfile cleanup before force-kill.
+///
+/// "Still remains" is `process_group_alive`'s answer, and that probe counts
+/// an exited-but-unreaped member as alive — it cannot tell a zombie from live
+/// work. The over-report errs in the safe direction on both sides:
+///
+/// - Every member already exited, the leader just isn't reaped yet: the grace
+///   runs to its deadline and the final SIGKILL lands on a dead group, which
+///   is a no-op — a signal to a fully-exited process is discarded and cannot
+///   change its recorded exit status, so TERM-time cleanup that already ran is
+///   not undone. `kill_timed_out_tree` is permanently in this position: its
+///   caller holds the group leader unreaped throughout (see its doc), so on
+///   that path the sweep always fires, harmlessly.
+/// - A member is genuinely alive at the deadline: the probe is accurate and
+///   the SIGKILL is the intended escalation. For a SIGSTOP'd member it is the
+///   only signal that works — a stopped process runs no TERM handler, so the
+///   sweep is what keeps teardown bounded.
+///
+/// Callers whose children are reaped concurrently — `Cmd::stream`'s main
+/// thread waiting while the signal-forwarder thread runs this, tether's
+/// supervisor — get the accurate reading: the poll loop returns at the first
+/// probe after the reap, so escalating over a cooperative child costs one
+/// poll interval, not the full grace. A reap does unpin the pgid, leaving the
+/// microseconds between a probe that read alive and the following `killpg` as
+/// the accepted recycling exposure — unchanged from the fixed-sleep
+/// predecessor, and shared by every killpg-after-grace design.
 #[cfg(unix)]
 pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
+    use nix::sys::signal::Signal;
+
     let pgid = nix::unistd::Pid::from_raw(pgid);
-    let initial_signal = match sig {
-        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
-        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+    let chain: &[Signal] = match sig {
+        signal_hook::consts::SIGINT => &[Signal::SIGINT, Signal::SIGTERM],
+        signal_hook::consts::SIGTERM => &[Signal::SIGTERM],
         _ => return,
     };
 
-    let _ = nix::sys::signal::killpg(pgid, initial_signal);
-
-    let grace = std::time::Duration::from_millis(200);
-    // Escalate if process doesn't exit gracefully
-    if sig == signal_hook::consts::SIGINT {
-        if !wait_for_exit(pgid.as_raw(), grace) {
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
-            if !wait_for_exit(pgid.as_raw(), grace) {
-                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
-            }
-        }
-    } else {
-        // SIGTERM - escalate directly to SIGKILL
-        if !wait_for_exit(pgid.as_raw(), grace) {
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+    let grace = Duration::from_millis(200);
+    for step in chain {
+        let _ = nix::sys::signal::killpg(pgid, *step);
+        if group_died_within(pgid.as_raw(), grace) {
+            return;
         }
     }
+    let _ = nix::sys::signal::killpg(pgid, Signal::SIGKILL);
 }
 
 #[cfg(test)]
@@ -2649,6 +2742,42 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
     }
 
+    /// The `wait-timeout` crate has to stay out of the dependency graph, however
+    /// it gets there.
+    ///
+    /// Its `SIGCHLD` handler pokes a socketpair with `send()` and `panic!`s on any
+    /// errno but `WouldBlock`. That handler is `extern "C"`, so the panic cannot
+    /// unwind — it goes straight to `abort()`. Under a sandbox that denies the send
+    /// (the Codex CLI's `workspace-write` mode), every timed wait in `wt` became an
+    /// uncatchable `SIGABRT` with no diagnostic (#3856). `shared_child` wakes
+    /// through `signal_hook`, which discards wake-write errors by design.
+    ///
+    /// The lockfile is read at runtime, not `include_str!`d: a compile-time embed
+    /// has to ship in every packaged build, which `embedded_assets_ship_in_package`
+    /// enforces and `Cargo.lock` doesn't satisfy. Tests only ever run from the
+    /// source tree, so the manifest dir is always there.
+    #[test]
+    fn test_wait_timeout_crate_stays_out_of_the_dependency_graph() {
+        let lockfile = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+        let lockfile = std::fs::read_to_string(&lockfile).expect("read Cargo.lock");
+        assert!(
+            !lockfile.contains("name = \"wait-timeout\""),
+            "wait-timeout is back in the dependency graph; its SIGCHLD handler \
+             aborts wt when the self-pipe write fails (#3856)"
+        );
+    }
+
+    /// A command that can't be spawned at all fails as a spawn error, not as a
+    /// timeout — the deadline path never starts, so the caller doesn't wait it out.
+    #[test]
+    fn test_cmd_timeout_surfaces_a_spawn_failure() {
+        let err = Cmd::new("worktrunk-no-such-program-3856")
+            .timeout(Duration::from_secs(30))
+            .run()
+            .unwrap_err();
+        assert_ne!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
     /// The timeout has to bound wall-clock, not just signal the direct child.
     /// A grandchild inherits the child's stderr pipe, so one that survives the
     /// kill holds the write end open and the output readers block on it — which
@@ -2855,6 +2984,40 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn test_cmd_delayed_stream_crosses_the_threshold() {
+        // A command that outlives the threshold leaves phase 1 with no status
+        // (`wait_timeout` returns `Ok(None)`), which switches the readers to
+        // streaming, and phase 2 then reports the real exit.
+        //
+        // What pins the switch is where the late output goes: a streamed line
+        // is written to stderr instead of the buffer, so the error carries
+        // none of it. Had phase 1 returned a status instead, `late` would
+        // still be buffered and would show up here. The other thresholds never
+        // reach this arm — `0` streams without waiting, `-1` skips phase 1.
+        //
+        // The child writes 450 ms after the threshold passes. Only the switch
+        // has to land in that window, and it follows the wait immediately, so
+        // the margin covers a deschedule far longer than anything the suite
+        // produces. The threshold stays well above zero for the opposite
+        // reason: were `remaining` to reach it already spent, phase 1 would
+        // skip the wait entirely and the test would pass without reaching the
+        // arm it exists to cover.
+        let err = Cmd::new("sh")
+            .args(["-c", "sleep 0.5; echo late 1>&2; exit 3"])
+            .delayed_stream(50, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output written after the switch must stream, not buffer"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn test_cmd_delayed_stream_streams_then_reports_failure() {
         // delay_ms=0 streams immediately (phase-1 threshold crossed → progress
         // message + buffer drain), and a non-zero exit surfaces as a
@@ -3042,6 +3205,80 @@ mod tests {
         // Use a signal number that's not SIGINT or SIGTERM
         super::forward_signal_with_escalation(1, 999);
         // No panic = success (function returns early for unknown signals)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_group_died_within_immediate_for_reaped_group() {
+        // A reaped child leaves an empty group: the first (immediate) probe
+        // reads ESRCH and the grace loop returns without sleeping. This pins
+        // the early exit that keeps escalation cheap for the callers whose
+        // children are reaped concurrently (signal forwarder, tether).
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", ":"]).process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let pgid = child.id() as i32;
+        child.wait().unwrap();
+
+        let start = Instant::now();
+        // Grace far longer than any plausible scheduling stall, so returning
+        // early is structurally distinguishable from having slept it, and the
+        // bound below is a safety net rather than a race.
+        assert!(super::group_died_within(pgid, Duration::from_secs(30)));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "an empty group must exit the grace loop on the first probe; took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_group_died_within_times_out_on_live_group() {
+        // Probing our own (live) process group runs the full grace and
+        // reports the group still alive.
+        let pgid = nix::unistd::getpgrp().as_raw();
+        let grace = Duration::from_millis(50);
+        let start = Instant::now();
+        assert!(!super::group_died_within(pgid, grace));
+        assert!(start.elapsed() >= grace);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_escalation_full_grace_and_inert_sweep_when_leader_unreaped() {
+        // Replays `kill_timed_out_tree`'s position: the caller holds the group
+        // leader unreaped while escalating. The child has already exited when
+        // escalation starts (stdout EOF is the barrier — the pipe closes when
+        // the process exits, so this needs no scheduling assumptions), but
+        // nobody reaps it, so the liveness probe counts the zombie, the grace
+        // runs to its deadline, and the final group SIGKILL fires against the
+        // dead group. The recorded exit must come through untouched — signals
+        // to a fully-exited group are discarded.
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "exit 7"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0);
+        let mut child = cmd.spawn().unwrap();
+        let pid = child.id() as i32;
+        let mut eof = Vec::new();
+        child.stdout.take().unwrap().read_to_end(&mut eof).unwrap();
+
+        let start = Instant::now();
+        super::forward_signal_with_escalation(pid, signal_hook::consts::SIGTERM);
+        assert!(
+            start.elapsed() >= Duration::from_millis(200),
+            "with the leader unreaped the group must read alive for the whole grace"
+        );
+
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(7),
+            "the TERM and the post-grace SIGKILL must not alter the recorded exit"
+        );
     }
 
     #[test]

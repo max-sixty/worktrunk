@@ -14,7 +14,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 List all worktrees:
 
-```
+```console
 $ wt list
   Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02  30m   Add API tests
@@ -27,7 +27,7 @@ $ wt list
 
 Include CI status and LLM summaries:
 
-```
+```console
 $ wt list --full
   Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
@@ -40,7 +40,7 @@ $ wt list --full
 
 Include branches that don't have worktrees:
 
-```
+```console
 $ wt list --branches --full
   Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
@@ -55,7 +55,7 @@ $ wt list --branches --full
 
 Output as JSON for scripting:
 
-```bash
+```console
 $ wt list --format=json
 ```
 
@@ -65,10 +65,10 @@ $ wt list --format=json
 |--------|-------|
 | Branch | Branch name; a detached worktree has none, so it shows its short hash in dim yellow |
 | Status | Compact symbols (see below) |
-| HEAD± | Uncommitted changes: +added -deleted lines |
+| HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base (three-dot) with the default branch |
-| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) [experimental] |
+| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
 | Path | Worktree directory |
@@ -116,7 +116,7 @@ Color precedence resolves the fold: changes-requested (magenta) outranks running
 
 CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`ci.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries [experimental]
+### LLM summaries
 
 Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
@@ -171,7 +171,7 @@ The single highest-priority state describing the branch's relation to the defaul
 | `∅` | `"orphan"` | No common ancestor with the default branch |
 | `_` | `"empty"` | Same commit as the default branch, working tree clean — safe to remove; row dimmed |
 | `⊂` | `"integrated"` | Content [integrated](https://worktrunk.dev/remove/#branch-cleanup) into the default branch or merge target via different history; the matching check is in `integration_reason`; row dimmed |
-| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes uncommitted changes |
+| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes tracked uncommitted changes |
 | `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
 | `↕` | `"diverged"` | Both ahead of and behind the default branch |
 | `↑` | `"ahead"` | Has commits the default branch doesn't |
@@ -277,7 +277,7 @@ Schema 1 names map directly: `commit` → `head`, `working_tree` →
 `url_active` → `dev_server`, `statusline`/`symbols`/`columns` → `display.*`,
 and the per-item `repo` moves to the envelope's `repo.forge`.
 
-```bash
+```console
 # Current worktree path (for scripts)
 $ wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'
 
@@ -300,7 +300,7 @@ optional there rather than required-and-null.
 
 The original bare-array format, and the default while unset:
 
-```bash
+```console
 # Current worktree path (for scripts)
 $ wt list --format=json | jq -r '.[] | select(.is_current) | .path'
 

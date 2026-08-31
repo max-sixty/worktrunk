@@ -2,7 +2,7 @@
 //!
 //! Contains the flat parallelism infrastructure:
 //! - `WorkItem` - unit of work for the thread pool
-//! - `dispatch_task()` - route TaskKind to the correct Task implementation
+//! - `TaskKind::compute()` - route each task to its computation
 //! - `work_items_for_worktree()` / `work_items_for_branch()` - generate work items
 //! - `ExpectedResults` - track expected results for timeout diagnostics
 //! - `seed_skipped_task_defaults()` - conservative sentinels for skipped tasks
@@ -22,16 +22,11 @@
 use std::sync::Arc;
 
 use crossbeam_channel as chan;
-use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
+use worktrunk::git::Repository;
 
-use super::super::model::{ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
+use super::super::model::{ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::CollectOptions;
-use super::tasks::{
-    AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
-    HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask, SummaryGenerateTask, Task,
-    TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask, WorkingTreeConflictsTask,
-    WorkingTreeDiffTask, WouldMergeAddTask,
-};
+use super::tasks::TaskContext;
 use super::types::{TaskError, TaskKind, TaskResult};
 
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
@@ -75,32 +70,11 @@ pub struct WorkItem {
 impl WorkItem {
     /// Execute this work item, returning the task result.
     pub fn execute(self) -> Result<TaskResult, TaskError> {
-        let result = dispatch_task(self.kind, self.ctx);
+        let result = self.kind.compute(self.ctx);
         if let Ok(ref task_result) = result {
             debug_assert_eq!(TaskKind::from(task_result), self.kind);
         }
         result
-    }
-}
-
-/// Dispatch a task by kind, calling the appropriate Task::compute().
-fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskError> {
-    match kind {
-        TaskKind::AheadBehind => AheadBehindTask::compute(ctx),
-        TaskKind::CommittedTreesMatch => CommittedTreesMatchTask::compute(ctx),
-        TaskKind::HasFileChanges => HasFileChangesTask::compute(ctx),
-        TaskKind::WouldMergeAdd => WouldMergeAddTask::compute(ctx),
-        TaskKind::IsAncestor => IsAncestorTask::compute(ctx),
-        TaskKind::BranchDiff => BranchDiffTask::compute(ctx),
-        TaskKind::WorkingTreeDiff => WorkingTreeDiffTask::compute(ctx),
-        TaskKind::MergeTreeConflicts => MergeTreeConflictsTask::compute(ctx),
-        TaskKind::WorkingTreeConflicts => WorkingTreeConflictsTask::compute(ctx),
-        TaskKind::GitOperation => GitOperationTask::compute(ctx),
-        TaskKind::UserMarker => UserMarkerTask::compute(ctx),
-        TaskKind::Upstream => UpstreamTask::compute(ctx),
-        TaskKind::CiStatus => CiStatusTask::compute(ctx),
-        TaskKind::UrlStatus => UrlStatusTask::compute(ctx),
-        TaskKind::SummaryGenerate => SummaryGenerateTask::compute(ctx),
     }
 }
 
@@ -234,7 +208,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             // waits and renders `·`.
         }
         TaskKind::WorkingTreeConflicts => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
+            if let Some(data) = item.worktree_data_mut() {
                 // `Some(None)` = "task did not run, fall back to the
                 // committed-HEAD merge-tree check" — matches the semantics
                 // of a clean working tree under `--full`.
@@ -242,7 +216,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             }
         }
         TaskKind::GitOperation => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
+            if let Some(data) = item.worktree_data_mut() {
                 data.git_operation = Some(None);
             }
         }
@@ -260,7 +234,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
 /// `MainState::None` (no symbol). Both are known at spawn time without
 /// any task output.
 pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
-    let is_main = matches!(&item.kind, ItemKind::Worktree(data) if data.is_main);
+    let is_main = item.is_main();
     item.status_symbols.main_state = Some(if is_main {
         super::super::model::MainState::IsMain
     } else {
@@ -322,7 +296,6 @@ pub(super) fn seed_prunable_item(item: &mut ListItem) {
 /// via Arc.
 pub fn work_items_for_worktree(
     repo: &Repository,
-    wt: &WorktreeInfo,
     item_idx: usize,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
@@ -332,7 +305,7 @@ pub fn work_items_for_worktree(
     // Prunable worktrees have their directory missing — no task can run.
     // Seed every gate directly so the cell shows just the `⊟` metadata
     // symbol rather than seven `·` placeholders.
-    if wt.is_prunable() {
+    if item.worktree_data().is_some_and(|data| data.is_prunable()) {
         seed_prunable_item(item);
         return vec![];
     }
@@ -344,9 +317,9 @@ pub fn work_items_for_worktree(
     // Expand URL template for this item (only if URL status is enabled).
     let item_url = if include_url {
         options.url_template.as_ref().and_then(|template| {
-            wt.branch.as_ref().and_then(|branch| {
+            item.branch().and_then(|branch| {
                 let mut vars = std::collections::HashMap::new();
-                vars.insert("branch", branch.as_str());
+                vars.insert("branch", branch);
                 worktrunk::config::expand_template(
                     template,
                     &vars,
@@ -364,7 +337,7 @@ pub fn work_items_for_worktree(
     // Send the URL through the drain channel so the row redraws as soon as
     // the result is processed. Without this round trip, the URL would only
     // appear when *some other* task happens to complete and trigger a
-    // refresh — often the slow `UrlStatusTask` itself.
+    // refresh — often the slow URL-status task itself.
     if include_url && let Some(ref url) = item_url {
         expected_results.expect(item_idx, TaskKind::UrlStatus);
         let _ = tx.send(Ok(TaskResult::UrlStatus {
@@ -376,17 +349,16 @@ pub fn work_items_for_worktree(
 
     let ctx = TaskContext {
         repo: repo.clone(),
-        branch_ref: BranchRef::from(wt),
+        branch_ref: item.branch_ref().clone(),
         item_idx,
         item_url,
         llm_command: options.llm_command.clone(),
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
-        include_untracked_in_working_diff: options.include_untracked_in_working_diff,
     };
 
-    let has_commits = wt.has_commits();
+    let has_commits = item.head() != worktrunk::git::NULL_OID;
 
     let mut items = Vec::with_capacity(15);
 
@@ -401,8 +373,8 @@ pub fn work_items_for_worktree(
         TaskKind::UserMarker,
         TaskKind::WorkingTreeConflicts,
         TaskKind::BranchDiff,
-        // MergeTreeConflictsTask peeks the shared porcelain cache and
-        // skips its own merge-tree call when WorkingTreeConflictsTask
+        // The merge-tree conflict task peeks the shared porcelain cache and
+        // skips its own merge-tree call when the working-tree conflict task
         // will produce an authoritative dirty-tree result.
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
@@ -453,51 +425,26 @@ pub fn work_items_for_worktree(
 /// Task preconditions are enforced here, same as [`work_items_for_worktree`].
 ///
 /// The `repo` parameter is cloned into each TaskContext, sharing its cache via Arc.
-/// The `is_remote` flag indicates whether this is a remote-tracking branch (e.g., "origin/feature")
-/// vs a local branch. This is known definitively at collection time and avoids guessing later.
-/// Identity of a branch item being spawned (grouped to keep
-/// `work_items_for_branch` under the clippy arg-count limit).
-pub struct BranchSpawn<'a> {
-    pub name: &'a str,
-    pub commit_sha: &'a str,
-    pub item_idx: usize,
-    pub is_remote: bool,
-}
-
+/// The item's [`BranchRef`](worktrunk::git::BranchRef) already records whether
+/// it is local or remote, so this layer does not reconstruct ref qualification.
 pub fn work_items_for_branch(
     repo: &Repository,
-    branch: BranchSpawn<'_>,
+    item_idx: usize,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
     item: &mut ListItem,
 ) -> Vec<WorkItem> {
-    let BranchSpawn {
-        name: branch_name,
-        commit_sha,
-        item_idx,
-        is_remote,
-    } = branch;
-
     let run = &options.tasks;
-
-    let branch_ref = if is_remote {
-        BranchRef::remote_branch(branch_name, commit_sha)
-    } else {
-        BranchRef::local_branch(branch_name, commit_sha)
-    };
 
     let ctx = TaskContext {
         repo: repo.clone(),
-        branch_ref,
+        branch_ref: item.branch_ref().clone(),
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
         llm_command: options.llm_command.clone(),
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
-        // Branches have no working tree; the flag is only consumed by
-        // WorkingTreeDiffTask, which doesn't run for branch items.
-        include_untracked_in_working_diff: false,
     };
 
     let mut items = Vec::with_capacity(11);
@@ -551,6 +498,7 @@ pub fn work_items_for_branch(
 mod tests {
     use super::*;
     use crate::commands::list::collect::build_worktree_item;
+    use worktrunk::git::WorktreeInfo;
 
     /// Every seed arm must point the negative direction: `json_v2` trusts a
     /// positive `check_integration` match even when sibling signals were
@@ -659,8 +607,7 @@ mod tests {
         let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
         let mut item = build_worktree_item(&wt, true, false, false);
 
-        let items =
-            work_items_for_worktree(&repo, &wt, 0, &options, &expected_results, &tx, &mut item);
+        let items = work_items_for_worktree(&repo, 0, &options, &expected_results, &tx, &mut item);
 
         // No placeholder UrlStatus result was sent to the channel.
         assert!(rx.try_recv().is_err());
@@ -680,6 +627,6 @@ mod tests {
     // single authority, and `test_required_tasks_for_render` pins that the gate
     // drops SummaryGenerate when no LLM is configured. The spawn loop's "skip
     // what isn't planned" rule is covered by the UrlStatus test above. If a
-    // caller plans Summary without a command anyway, `SummaryGenerateTask`
+    // caller plans Summary without a command anyway, the summary-generation task
     // returns a clean error rather than misbehaving (tasks.rs).
 }

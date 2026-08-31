@@ -7,11 +7,11 @@ Source docs/demos/tapes/shared-commands.tape
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 # 1. Show current worktrees
 Type "wt list"
+Show
+Sleep 300ms
 Enter
 Sleep 2s
 
@@ -51,6 +51,6 @@ Type "wt remove"
 Enter
 Sleep 5s
 
+Hide
 Type "exit"
 Enter
-Sleep 500ms

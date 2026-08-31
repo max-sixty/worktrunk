@@ -8,6 +8,7 @@ pub use worktrunk::testing::mock_commands;
 pub use worktrunk::testing::*;
 
 pub mod list_snapshots;
+pub mod source_scan;
 // Progressive output tests use PTY and are Unix-only for now
 #[cfg(unix)]
 pub mod progressive_output;
@@ -493,6 +494,16 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
     // Pass through LLVM coverage profiling environment for subprocess coverage.
     // Without this, spawned binaries can't write coverage data.
     pass_coverage_env_to_pty_cmd(cmd);
+}
+
+/// Build a minimal PATH that keeps the test process's Git while excluding
+/// user-installed tools such as `wt`, `claude`, and `codex`.
+#[cfg(unix)]
+pub fn setup_minimal_path_with_git(bin_dir: &Path) -> String {
+    std::fs::create_dir_all(bin_dir).unwrap();
+    let git = which::which("git").expect("git must be installed to run tests");
+    std::os::unix::fs::symlink(git, bin_dir.join("git")).unwrap();
+    format!("{}:/usr/bin:/bin", bin_dir.display())
 }
 
 /// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
@@ -1419,8 +1430,19 @@ mod tests {
         let needle = ["CARGO_BIN_EXE_", "wt\""].concat();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut offenders = Vec::new();
+        // Counted per root rather than in aggregate: the sole offender lives
+        // under `src`, so the equality below is satisfied by that root alone
+        // and would pass unchanged if `tests` or `benches` stopped yielding
+        // `.rs` files — the absence claim silently narrowing to one third of
+        // what it names. See "Guards that scan source text" in
+        // `tests/CLAUDE.md`.
         for dir in ["src", "tests", "benches"] {
-            scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+            let seen = scan_for_needle(&root.join(dir), &needle, root, &mut offenders);
+            assert!(
+                seen > 0,
+                "{dir}/ holds no .rs files — this guard asserts absence, so it \
+                 would now be passing over nothing there"
+            );
         }
         assert_eq!(
             offenders,
@@ -1431,17 +1453,21 @@ mod tests {
         );
     }
 
-    fn scan_for_needle(dir: &Path, needle: &str, root: &Path, offenders: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                scan_for_needle(&path, needle, root, offenders);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
-                && std::fs::read_to_string(&path).unwrap().contains(needle)
-            {
+    /// Collect files under `dir` containing `needle`, returning how many `.rs`
+    /// files were read. `#[must_use]` for the same reason `visit_files` is:
+    /// the caller asserts absence, so it has to answer for coverage.
+    #[must_use]
+    fn scan_for_needle(
+        dir: &Path,
+        needle: &str,
+        root: &Path,
+        offenders: &mut Vec<PathBuf>,
+    ) -> usize {
+        super::source_scan::visit_files(dir, "rs", "spawn-pin scan", &mut |path, contents| {
+            if contents.contains(needle) {
                 offenders.push(path.strip_prefix(root).unwrap().to_path_buf());
             }
-        }
+        })
     }
 
     /// Every PTY spawn routes through [`configure_pty_command`] (directly or

@@ -358,7 +358,7 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     );
 
     // The new branch must exist and must NOT track the remote base
-    // (same safety property as test_switch_create_from_remote_base_no_upstream).
+    // (same safety property as test_switch_create_from_remote_base_upstream).
     let branch_output = repo.git_output(&["branch", "--list", "new-wt"]);
     assert!(branch_output.contains("new-wt"), "branch should be created");
 
@@ -373,38 +373,244 @@ fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: Test
     );
 }
 
-/// When creating a new branch from a remote tracking branch (e.g., origin/main),
-/// the new branch should NOT track the remote base branch.
-/// This prevents accidental `git push` to the base branch (e.g., pushing to main).
-/// This is the bug fix for GitHub issue #713.
+/// `--create` from a remote tracking branch sets the new branch's upstream only
+/// when the two share a name. Otherwise the branch created from `origin/release`
+/// tracks `origin/release`, and a bare `git push` under `push.default = upstream`
+/// pushes the new work to `release` — GitHub issue #713.
+///
+/// `wt` forces `branch.autoSetupMerge = simple` for the creation, so the outcome
+/// is the same under every value the user configures: git's `true` and `always`
+/// would otherwise track a differently-named base, and its `false` and `inherit`
+/// would deny a same-named one the tracking that is the point of it.
 #[rstest]
-fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] repo: TestRepo) {
-    // Create a new branch with --base pointing to a remote tracking branch
-    let output = repo
-        .wt_command()
-        .args(["switch", "--create", "my-feature", "--base=origin/main"])
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "switch should succeed");
+fn test_switch_create_from_remote_base_upstream(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[values(
+        None,
+        Some("simple"),
+        Some("false"),
+        Some("inherit"),
+        Some("true"),
+        Some("always")
+    )]
+    auto_setup_merge: Option<&str>,
+) {
+    if let Some(value) = auto_setup_merge {
+        repo.run_git(&["config", "branch.autoSetupMerge", value]);
+    }
 
-    // Verify the branch was created
-    let branch_output = repo.git_output(&["branch", "--list", "my-feature"]);
-    assert!(
-        branch_output.contains("my-feature"),
-        "branch should be created"
+    // `release`, `hotfix`, and `staging` on origin only, so each can serve as a
+    // remote base whose name a new branch either shares or doesn't.
+    repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&["push", "origin", "main:hotfix"]);
+    repo.run_git(&["push", "origin", "main:staging"]);
+    repo.run_git(&["fetch", "origin"]);
+
+    let create = |branch: &str, base: &str| {
+        let output = repo
+            .wt_command()
+            .args(["switch", "--create", branch, &format!("--base={base}")])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch --create {branch} should succeed; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let branches = repo.git_output(&["branch", "--list", branch]);
+        assert!(branches.contains(branch), "{branch} should be created");
+    };
+    let upstream = |branch: &str| -> Option<String> {
+        let output = repo
+            .git_command()
+            .args([
+                "rev-parse",
+                "--abbrev-ref",
+                &format!("{branch}@{{upstream}}"),
+            ])
+            .run()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+
+    // Different name: no upstream, so a bare `git push` cannot reach `release`.
+    create("my-feature", "origin/release");
+    assert_eq!(upstream("my-feature"), None, "{auto_setup_merge:?}");
+
+    // Same name: the upstream is the new branch's own remote counterpart,
+    // which is what tracking is for.
+    create("release", "origin/release");
+    assert_eq!(
+        upstream("release").as_deref(),
+        Some("origin/release"),
+        "{auto_setup_merge:?}"
     );
 
-    // Verify the branch does NOT have an upstream (no tracking)
-    // Using rev-parse to check for upstream - should fail for untracked branches
-    let upstream_check = repo
+    // A bare base name resolves to the remote-only branch, and is judged by the
+    // same rule once resolved.
+    create("hotfix", "hotfix");
+    assert_eq!(
+        upstream("hotfix").as_deref(),
+        Some("origin/hotfix"),
+        "{auto_setup_merge:?}"
+    );
+
+    // A fully qualified base names the same remote branch, so it tracks too.
+    create("staging", "refs/remotes/origin/staging");
+    assert_eq!(
+        upstream("staging").as_deref(),
+        Some("origin/staging"),
+        "{auto_setup_merge:?}"
+    );
+}
+
+/// The name match is git's to make, because only git maps a remote-tracking ref
+/// back to its branch through the fetch refspec. Splitting `<remote>/<branch>`
+/// at the first slash gets a remote whose own name contains one wrong in both
+/// directions: `team/fork/release` would read as branch `fork/release`, so
+/// `--create fork/release` would be handed the upstream that pushes it to
+/// `release`, and `--create release` would be denied its own counterpart.
+#[rstest]
+fn test_switch_create_base_on_remote_with_slash(#[from(repo_with_remote)] repo: TestRepo) {
+    let origin_url = repo.git_output(&["remote", "get-url", "origin"]);
+    repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&["remote", "add", "team/fork", origin_url.trim()]);
+    repo.run_git(&["fetch", "team/fork"]);
+
+    let create = |branch: &str| {
+        let output = repo
+            .wt_command()
+            .args(["switch", "--create", branch, "--base=team/fork/release"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "switch --create {branch} should succeed; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    let upstream = |branch: &str| -> Option<String> {
+        let output = repo
+            .git_command()
+            .args([
+                "rev-parse",
+                "--abbrev-ref",
+                &format!("{branch}@{{upstream}}"),
+            ])
+            .run()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+
+    create("fork/release");
+    assert_eq!(
+        upstream("fork/release"),
+        None,
+        "fork/release must not inherit the base's upstream"
+    );
+
+    create("release");
+    assert_eq!(
+        upstream("release").as_deref(),
+        Some("team/fork/release"),
+        "release is the base's own counterpart"
+    );
+}
+
+/// Switching to a remote-only branch creates the tracking branch the docs
+/// promise. The names match by construction here, so the same rule `--create`
+/// runs under settles it; the values worth enumerating are the two that would
+/// otherwise leave the branch with no upstream, against the default and the
+/// most permissive as controls.
+#[rstest]
+fn test_switch_dwim_from_remote_tracks(
+    #[from(repo_with_remote)] repo: TestRepo,
+    #[values(None, Some("false"), Some("inherit"), Some("always"))] auto_setup_merge: Option<&str>,
+) {
+    if let Some(value) = auto_setup_merge {
+        repo.run_git(&["config", "branch.autoSetupMerge", value]);
+    }
+    repo.run_git(&["branch", "dwim-feature"]);
+    repo.run_git(&["push", "origin", "dwim-feature"]);
+    repo.run_git(&["branch", "-D", "dwim-feature"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "dwim-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch dwim-feature should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let upstream = repo
         .git_command()
-        .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
+        .args(["rev-parse", "--abbrev-ref", "dwim-feature@{upstream}"])
         .run()
         .unwrap();
-
     assert!(
-        !upstream_check.status.success(),
-        "branch should NOT have upstream tracking (to prevent accidental push to origin/main)"
+        upstream.status.success(),
+        "dwim-feature should track its remote counterpart ({auto_setup_merge:?})"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&upstream.stdout).trim(),
+        "origin/dwim-feature",
+        "{auto_setup_merge:?}"
+    );
+}
+
+/// A remote-tracking ref the fetch refspec doesn't map — hand-fetched into a
+/// single-branch clone — still creates its worktree. Git's `simple` declines the
+/// tracking it can't work out; `git worktree add --track` would fail the whole
+/// command with "starting point 'origin/release' is not a branch", after the
+/// branch name has already been taken.
+#[rstest]
+fn test_switch_create_base_outside_fetch_refspec(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["push", "origin", "main:release"]);
+    repo.run_git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+    repo.run_git(&[
+        "fetch",
+        "origin",
+        "refs/heads/release:refs/remotes/origin/release",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "release", "--base=origin/release"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --create release should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let branches = repo.git_output(&["branch", "--list", "release"]);
+    assert!(branches.contains("release"), "release should be created");
+
+    // `simple` declines the tracking rather than guessing at it: git can't work
+    // out which remote branch `origin/release` stands for without a refspec.
+    let upstream = repo
+        .git_command()
+        .args(["rev-parse", "--abbrev-ref", "release@{upstream}"])
+        .run()
+        .unwrap();
+    assert!(
+        !upstream.status.success(),
+        "release should have no upstream, got {}",
+        String::from_utf8_lossy(&upstream.stdout).trim()
     );
 }
 
@@ -2646,16 +2852,16 @@ fn test_switch_prs_dry_run_github(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        entries.iter().any(|e| e["branch"] == "pr:42"),
+        entries.iter().any(|e| e["row_id"] == "pr:42"),
         "expected a pr:42 cache entry proving the PR row rendered, got:\n{stdout}"
     );
 }
 
 /// The `log` tab on a `--prs` row loads its commits in the background: as each
 /// PR row streams in, `spawn_pr_previews` kicks off `gh pr view <n> --json
-/// commits` on `COLLECT_POOL`, keyed by the row's `pr:{N}` token. The dry-run
-/// path joins that work and dumps the preview cache, so a `{branch:"pr:42",
-/// mode:2}` (Log) entry with non-empty bytes proves the whole mechanism end to
+/// commits` on `COLLECT_POOL`, keyed by the row's structured PR identity. The dry-run
+/// path joins that work and dumps the preview cache, so a `{row_id:"pr:42",
+/// mode:4}` (Log) entry with non-empty bytes proves the whole mechanism end to
 /// end: `spawn_compute` → `compute_pr_log` → `parse_github_commits` → cache.
 ///
 /// `headRefOid` here is a SHA that isn't in the test repo's object store, so
@@ -2695,10 +2901,10 @@ fn test_switch_prs_dry_run_github_log_tab(repo: TestRepo) {
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
-    // Mode 2 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
+    // Mode 4 is Log (see `PreviewMode`); the row keys its cache by `pr:42`.
     let log_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2757,7 +2963,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
     let entries = parsed["entries"].as_array().expect("entries array");
     let log_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 2)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 4)
         .unwrap_or_else(|| panic!("no pr:42 Log cache entry in dump:\n{stdout}"));
     assert!(
         log_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2766,12 +2972,12 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
 
     // The comments tab has no local path, so its forge fetch failed (pr view →
     // exit 1); the closure caches a terminal "couldn't load" pane rather than
-    // leaving the slot empty. Mode 7 is Comments. A non-empty entry here can only
+    // leaving the slot empty. Mode 8 is Comments. A non-empty entry here can only
     // be that failure pane — a successful comments fetch is impossible with
     // `pr view` rigged to exit 1.
     let comments_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| {
             panic!("failed comments fetch must cache a couldn't-load pane:\n{stdout}")
         });
@@ -2786,7 +2992,7 @@ fn test_switch_prs_dry_run_github_log_tab_local(repo: TestRepo) {
 /// strand the tab on its loading spinner for the session — there's no in-session
 /// retry). Here the PR carries no `headRefOid`, so the `log` tab can't take the
 /// local fast path and must hit the forge API, and `gh pr view` is rigged to
-/// exit 1 — so both the `log` (mode 2) and `comments` (mode 7) cache entries are
+/// exit 1 — so both the `log` (mode 4) and `comments` (mode 8) cache entries are
 /// present and non-empty, each the couldn't-load pane.
 #[rstest]
 fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
@@ -2822,11 +3028,11 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     // Both deferred tabs cached a terminal couldn't-load pane (non-empty), never
-    // an empty slot. Modes: 2 = Log, 7 = Comments.
-    for (mode, tab) in [(2, "log"), (7, "comments")] {
+    // an empty slot. Modes: 4 = Log, 8 = Comments.
+    for (mode, tab) in [(4, "log"), (8, "comments")] {
         let entry = entries
             .iter()
-            .find(|e| e["branch"] == "pr:42" && e["mode"] == mode)
+            .find(|e| e["row_id"] == "pr:42" && e["mode"] == mode)
             .unwrap_or_else(|| panic!("no pr:42 {tab} cache entry in dump:\n{stdout}"));
         assert!(
             entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2835,10 +3041,10 @@ fn test_switch_prs_dry_run_github_deferred_fetch_failure(repo: TestRepo) {
     }
 }
 
-/// The `comments` tab (7) loads the PR discussion in the background, the same
+/// The `comments` tab (8) loads the PR discussion in the background, the same
 /// way the `log` tab loads commits: `spawn_pr_previews` fires `gh pr view <n>
-/// --json comments` keyed by the row's `pr:{N}` token. A `{branch:"pr:42",
-/// mode:7}` entry in the dry-run cache dump proves `compute_pr_comments` →
+/// --json comments` keyed by the row's structured PR identity. A `{row_id:"pr:42",
+/// mode:8}` entry in the dry-run cache dump proves `compute_pr_comments` →
 /// `render_github_comments` → cache ran end to end. (`gh pr view --json
 /// commits` and `--json comments` both match the mock's `pr view` key, so the
 /// canned response carries both arrays; serde ignores the one each renderer
@@ -2875,10 +3081,10 @@ fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
-    // Mode 7 is Comments; the row keys its cache by `pr:42`.
+    // Mode 8 is Comments; the row keys its cache by `pr:42`.
     let comments_entry = entries
         .iter()
-        .find(|e| e["branch"] == "pr:42" && e["mode"] == 7)
+        .find(|e| e["row_id"] == "pr:42" && e["mode"] == 8)
         .unwrap_or_else(|| panic!("no pr:42 Comments cache entry in dump:\n{stdout}"));
     assert!(
         comments_entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -2913,7 +3119,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
     assert!(
-        entries.iter().any(|e| e["branch"] == "mr:7"),
+        entries.iter().any(|e| e["row_id"] == "mr:7"),
         "expected an mr:7 cache entry proving the MR row rendered, got:\n{stdout}"
     );
 }
@@ -2921,7 +3127,7 @@ fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
 /// GitLab counterpart of the GitHub `_log_tab` / `_comments_tab` dry-run tests:
 /// an MR row's deferred `log` and `comments` tabs load via background `glab api
 /// --paginate projects/:fullpath/merge_requests/<n>/commits` / `…/notes?sort=asc`
-/// calls keyed by the row's `mr:{N}` token. Both `mode:2` (Log) and `mode:7`
+/// calls keyed by the row's structured MR identity. Both `mode:4` (Log) and `mode:8`
 /// (Comments) cache entries with non-empty bytes prove `compute_pr_log` /
 /// `compute_pr_comments` → `parse_gitlab_commits` / `render_gitlab_notes` →
 /// cache for the GitLab forge — the half the unit tests (canned JSON straight
@@ -2964,10 +3170,10 @@ fn test_switch_prs_dry_run_gitlab_deferred_tabs(repo: TestRepo) {
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
     let entries = parsed["entries"].as_array().expect("entries array");
-    for (mode, label) in [(2, "Log"), (7, "Comments")] {
+    for (mode, label) in [(4, "Log"), (8, "Comments")] {
         let entry = entries
             .iter()
-            .find(|e| e["branch"] == "mr:7" && e["mode"] == mode)
+            .find(|e| e["row_id"] == "mr:7" && e["mode"] == mode)
             .unwrap_or_else(|| panic!("no mr:7 {label} cache entry in dump:\n{stdout}"));
         assert!(
             entry["bytes"].as_u64().unwrap_or(0) > 0,
@@ -3371,11 +3577,12 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `pre-start`, `post-start`, and `post-switch` hooks on PR/MR-created worktrees
-/// see `pr_number` and `pr_url` in their template context. Both GitHub PRs and
-/// GitLab MRs canonicalize to the same `pr_*` names — hook authors don't need
-/// to branch on platform. Pre-switch fires before PR resolution and never sees
-/// them.
+/// Every hook on a PR/MR-created worktree — `pre-switch`, `pre-start`,
+/// `post-start`, `post-switch` — sees `pr_number` and `pr_url` in its template
+/// context. Both GitHub PRs and GitLab MRs canonicalize to the same `pr_*`
+/// names — hook authors don't need to branch on platform. `pre-switch` fires
+/// before the worktree exists but after the forge answered, so it names the
+/// PR's branch rather than the raw `pr:N` token (#3934).
 #[rstest]
 fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
@@ -3404,7 +3611,8 @@ fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     fs::create_dir_all(repo.root_path().join(".config")).unwrap();
     fs::write(
         repo.root_path().join(".config/wt.toml"),
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+        r#"pre-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
 post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
 post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
 "#,
@@ -3462,7 +3670,12 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
     );
 
     let expected = "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42";
-    for marker in ["pre_start.txt", "post_start.txt", "post_switch.txt"] {
+    for marker in [
+        "pre_switch.txt",
+        "pre_start.txt",
+        "post_start.txt",
+        "post_switch.txt",
+    ] {
         let path = repo.root_path().join(marker);
         // post-* hooks run in the background; poll until the file appears.
         wait_for_file_content(&path);
@@ -3474,6 +3687,169 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
             "{marker} hook should see canonical pr_number and pr_url variables",
         );
     }
+}
+
+/// A **same-repo** `pr:N` switch has to fill the same template variables as a
+/// fork one. Two things used to go missing here (#3934): `pre-switch` ran
+/// before the forge was queried, so `branch` / `target` carried the literal
+/// `pr:101` token; and `pr_number` / `pr_url` were read back off
+/// `CreationMethod::ForkRef`, which a same-repo PR never produces — so the
+/// common case saw them unset in every hook.
+#[rstest]
+fn test_switch_pr_same_repo_hooks_see_resolved_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Push the PR's source branch to the remote, then drop the local branch so
+    // the switch takes the create path (the reporter's case: the PR's worktree
+    // does not exist yet).
+    repo.run_git(&["branch", "feature-auth"]);
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    // `pre-switch` runs in the invoking worktree, before the destination
+    // exists — so it reports the branch it is switching to, not a path.
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+post-switch = "echo 'branch={{ branch }} target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:101", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:101 should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:101 failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let expected = "branch=feature-auth target=feature-auth pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101";
+    for marker in ["pre_switch.txt", "post_switch.txt"] {
+        let path = repo.root_path().join(marker);
+        // post-switch runs in the background; poll until the file appears.
+        wait_for_file_content(&path);
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{marker} should have been written: {e}"));
+        assert_eq!(
+            contents.trim(),
+            expected,
+            "{marker} should name the PR's branch and carry its pr_* variables",
+        );
+    }
+}
+
+/// A second `wt switch pr:N`, onto the worktree the first one created, is the
+/// path with nothing else to fall back on. It returns `SwitchResult::Existing`,
+/// which carries no PR identity of its own and no base branch — so `pr_number`
+/// / `pr_url` reach `post-switch` only because the pipeline keeps the resolved
+/// identity past `plan_switch`, and `target_worktree_path` reaches `pre-switch`
+/// only because the forge answered before the hook ran (#3934). Both go silently
+/// missing again if either is dropped; the create-path tests above stay green.
+#[rstest]
+fn test_switch_pr_existing_worktree_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["branch", "feature-auth"]);
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let run_switch = |mock_bin: &std::path::Path| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:101", "--yes"]);
+        configure_mock_cli_env(&mut cmd, mock_bin);
+        let output = cmd.output().expect("wt switch pr:101 should run");
+        assert!(
+            output.status.success(),
+            "wt switch pr:101 failed: stdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    };
+
+    // First switch creates the worktree. Hooks are configured only afterwards,
+    // so the markers below can't be left over from the create path.
+    run_switch(&mock_bin);
+
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "echo 'target={{ target }} target_worktree_path={{ target_worktree_path }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_switch.txt"
+post-switch = "echo 'target={{ target }} pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+
+    // Second switch lands on the existing worktree (the command runs from the
+    // primary worktree, so this is `Existing`, not `AlreadyAt`).
+    run_switch(&mock_bin);
+
+    let post_switch = repo.root_path().join("post_switch.txt");
+    wait_for_file_content(&post_switch);
+    assert_eq!(
+        fs::read_to_string(&post_switch).unwrap().trim(),
+        "target=feature-auth pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101",
+        "post-switch on an existing worktree should still carry the PR identity",
+    );
+
+    let pre_switch = fs::read_to_string(repo.root_path().join("pre_switch.txt"))
+        .expect("pre_switch.txt should have been written");
+    let pre_switch = pre_switch.trim();
+    let dest = pre_switch
+        .split("target_worktree_path=")
+        .nth(1)
+        .and_then(|rest| rest.split(" pr_number=").next())
+        .unwrap_or_else(|| panic!("no target_worktree_path in: {pre_switch}"));
+    assert!(
+        std::path::Path::new(dest).is_dir(),
+        "pre-switch `target_worktree_path` should name the branch's existing worktree, got: {dest}"
+    );
+    assert!(
+        pre_switch.starts_with("target=feature-auth "),
+        "pre-switch should name the PR's branch, got: {pre_switch}"
+    );
+    assert!(
+        pre_switch.ends_with("pr_number=101 pr_url=https://github.com/owner/test-repo/pull/101"),
+        "pre-switch should carry the PR identity, got: {pre_switch}"
+    );
 }
 
 /// `wt switch pr:N` resolves `post-start` etc. from the **invoking** worktree's
@@ -4104,6 +4480,79 @@ fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRep
         merge,
         format!("refs/heads/{pr_source_branch}"),
         "branch.swa-65.merge should target the PR's source branch on the remote"
+    );
+}
+
+/// Regression: `wt switch --create X --base pr:N` against a same-repo PR whose
+/// source branch exists only on the remote — the shape a fresh clone has for
+/// someone else's PR. The fetch writes just `refs/remotes/<remote>/<branch>`,
+/// and git's rev-parse never expands a bare name to a remote-tracking ref, so
+/// resolving the base to the bare name failed validation with "No branch, tag,
+/// or commit named <branch>".
+#[rstest]
+fn test_switch_base_pr_source_branch_remote_only(#[from(repo_with_remote)] repo: TestRepo) {
+    // Publish the PR's source branch, then drop the local branch.
+    repo.run_git(&["checkout", "-b", "feature-auth"]);
+    fs::write(repo.root_path().join("auth.txt"), "auth").unwrap();
+    repo.run_git(&["add", "auth.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let pr_head = repo.head_sha();
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args([
+        "switch",
+        "--create",
+        "feat/review-101",
+        "--base",
+        "pr:101",
+        "--no-cd",
+    ]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch should run");
+    assert!(
+        output.status.success(),
+        "wt switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let created_head = repo.git_output(&["rev-parse", "feat/review-101"]);
+    assert_eq!(
+        created_head, pr_head,
+        "new branch should start at the PR's source branch"
+    );
+
+    // Tracking still points at the PR's source branch (#2497).
+    let remote = repo.git_output(&["config", "--get", "branch.feat/review-101.remote"]);
+    let merge = repo.git_output(&["config", "--get", "branch.feat/review-101.merge"]);
+    assert_eq!(
+        remote, "origin",
+        "branch.feat/review-101.remote should be set so `git push` knows where to push"
+    );
+    assert_eq!(
+        merge, "refs/heads/feature-auth",
+        "branch.feat/review-101.merge should target the PR's source branch on the remote"
     );
 }
 
@@ -4903,8 +5352,8 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 // ============================================================================
 // PR Syntax Tests on Gitea remotes
 //
-// These exercise `pr:<N>` against a Gitea remote (host detection picks the
-// `tea` provider; provider selection is in choose_pr_provider). The remote
+// These exercise `pr:<N>` against a Gitea remote (`choose_pr_forge` selects
+// Gitea, whose backend calls `tea`). The remote
 // URLs use `gitea.example.com` so `GitRemoteUrl::is_gitea()` matches and the
 // ambiguous fallback is skipped — the runtime calls only the mock `tea`,
 // not real `gh`.
@@ -4914,7 +5363,7 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 /// stderr and `body` on stdout — the two streams a real `tea` writes for one
 /// HTTP response.
 ///
-/// The status is what the Gitea provider classifies on, so every test states
+/// The status is what the Gitea backend classifies on, so every test states
 /// the one it stands for rather than leaving it implied. Returns the mock bin
 /// directory; pass it to `configure_mock_cli_env`.
 fn setup_mock_tea(repo: &TestRepo, status: &str, body: &str) -> std::path::PathBuf {
@@ -5169,8 +5618,8 @@ fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRe
     });
 }
 
-/// `forge.platform = "gitea"` selects the Gitea provider directly, even when
-/// the remote URL doesn't look like Gitea (no ambiguous two-provider fallback).
+/// `forge.platform = "gitea"` selects Gitea directly, even when the remote URL
+/// doesn't look like Gitea.
 #[rstest]
 fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {
     // Non-Gitea-looking URL — without `forge.platform` set we'd hit the ambiguous path.
@@ -5250,11 +5699,11 @@ fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: T
     });
 }
 
-/// Malformed project config must fail closed before `pr:` provider fallback.
+/// Malformed project config must fail closed before `pr:` forge fallback.
 /// Otherwise an intended `forge.platform` override on an opaque/self-hosted
 /// remote can be ignored and route to the wrong CLI.
 #[rstest]
-fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
+fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
     #[from(repo_with_remote)] repo: TestRepo,
 ) {
     repo.run_git(&[
@@ -5278,7 +5727,7 @@ fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
         )
         .command(
             "api",
-            MockResponse::stderr("GH provider fallback was invoked\n").with_exit_code(42),
+            MockResponse::stderr("GH fallback was invoked\n").with_exit_code(42),
         )
         .command("_default", MockResponse::exit(42))
         .write(&mock_bin);
@@ -5304,14 +5753,13 @@ fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
         "expected TOML parse diagnostic, got:\n{stderr}"
     );
     assert!(
-        !stderr.contains("GH provider fallback was invoked"),
-        "provider fallback should not run after malformed project config:\n{stderr}"
+        !stderr.contains("GH fallback was invoked"),
+        "forge fallback should not run after malformed project config:\n{stderr}"
     );
 }
 
 /// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
-/// installed the GitHub provider bails with the install hint — a single,
-/// readable error rather than a wrapped two-provider message.
+/// installed, the GitHub backend returns its install hint.
 #[rstest]
 fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
     let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
@@ -5741,8 +6189,8 @@ fn test_switch_pr_gitea_proxy_error_page(#[from(repo_with_remote)] repo: TestRep
 // ============================================================================
 // PR Syntax Tests on Azure DevOps remotes
 //
-// These exercise `pr:<N>` against an Azure DevOps remote. Host detection picks
-// the `az` provider (provider selection is in choose_pr_provider). The remote
+// These exercise `pr:<N>` against an Azure DevOps remote. `choose_pr_forge`
+// selects Azure DevOps, whose backend calls `az`. The remote
 // URLs use `dev.azure.com` / `*.visualstudio.com` so `GitRemoteUrl::is_azure_devops()`
 // matches and the ambiguous fallback is skipped — the runtime calls only the
 // mock `az`, not real `gh`.
@@ -5912,7 +6360,7 @@ fn test_switch_pr_azure_project_name_with_spaces(#[from(repo_with_remote)] mut r
 
 /// A full Azure DevOps PR web URL passed to `wt switch` resolves the same as the
 /// `pr:N` shortcut: the URL normalises to `pr:101` (shape-based `parse_ref_url`),
-/// dispatch selects `AzureDevOpsProvider`, and the worktree is created. The
+/// dispatch selects Azure DevOps, and the worktree is created. The
 /// snapshot should match `switch_pr_azure_same_repo`, since both forms converge
 /// on the same shortcut.
 #[rstest]
@@ -5955,7 +6403,7 @@ fn test_switch_pr_azure_web_url(#[from(repo_with_remote)] mut repo: TestRepo) {
 }
 
 /// Regression: an Azure PR whose `sourceRefName` is just `refs/heads/`
-/// (empty branch after stripping) must fail at the provider boundary with a
+/// (empty branch after stripping) must fail at the forge boundary with a
 /// clear message — matching GitHub/GitLab/Gitea — not produce a confusing
 /// downstream git/path error.
 #[rstest]
@@ -6134,7 +6582,7 @@ fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 /// `az` not installed: with an Azure remote, dispatch routes to the Azure
-/// provider, which bails with the install hint when `az` isn't on PATH.
+/// backend, which returns the install hint when `az` isn't on PATH.
 #[rstest]
 fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -6157,7 +6605,7 @@ fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRep
     });
 }
 
-/// `forge.platform = "azure-devops"` selects the Azure provider directly, even
+/// `forge.platform = "azure-devops"` selects Azure DevOps directly, even
 /// when the remote URL doesn't look like Azure DevOps.
 #[rstest]
 fn test_switch_pr_azure_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {

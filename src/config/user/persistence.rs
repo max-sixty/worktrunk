@@ -11,7 +11,6 @@
 use crate::config::{ConfigError, UnknownTree, compute_unknown_tree};
 
 use super::UserConfig;
-use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
     /// Recursively convert inline tables to standard tables for readability.
@@ -220,43 +219,8 @@ impl UserConfig {
                     "projects.{project}.worktree-path cannot be empty"
                 )));
             }
-
-            if let Some(ref cg) = project_config.commit.generation {
-                Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
-            }
         }
 
-        if let Some(ref cg) = self.commit.generation {
-            if cg.template.is_some() && cg.template_file.is_some() {
-                return Err(ConfigError(
-                    "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
-                ));
-            }
-
-            if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
-                return Err(ConfigError(
-                    "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn validate_commit_generation(
-        cg: &CommitGenerationConfig,
-        prefix: &str,
-    ) -> Result<(), ConfigError> {
-        if cg.template.is_some() && cg.template_file.is_some() {
-            return Err(ConfigError(format!(
-                "{prefix}.commit-generation.template and template-file are mutually exclusive"
-            )));
-        }
-        if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
-            return Err(ConfigError(format!(
-                "{prefix}.commit-generation.squash-template and squash-template-file are mutually exclusive"
-            )));
-        }
         Ok(())
     }
 }

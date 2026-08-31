@@ -1034,7 +1034,8 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
-        cmd.env("PATH", "/usr/bin:/bin");
+        let path = crate::common::setup_minimal_path_with_git(&temp_home.path().join("bin"));
+        cmd.env("PATH", path);
         cmd.env(
             "ZDOTDIR",
             crate::common::canonicalize(temp_home.path())
@@ -1083,7 +1084,8 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
-        cmd.env("PATH", "/usr/bin:/bin");
+        let path = crate::common::setup_minimal_path_with_git(&temp_home.path().join("bin"));
+        cmd.env("PATH", path);
         cmd.env(
             "ZDOTDIR",
             crate::common::canonicalize(temp_home.path())
@@ -3191,6 +3193,63 @@ json-schema = 1
     });
 }
 
+/// Retired settings are ordinary unknown fields: loading warns, while
+/// `wt config update` leaves the file untouched instead of treating them as
+/// migrations it still owns.
+#[rstest]
+fn test_config_update_leaves_retired_keys_for_unknown_field_warnings(repo: TestRepo) {
+    let content = r#"[commit.generation]
+template-file = "/tmp/commit-template"
+squash-template-file = "/tmp/squash-template"
+
+[switch.picker]
+timeout-ms = 500
+
+[list]
+json-schema = 1
+"#;
+    fs::write(repo.test_config_path(), content).unwrap();
+
+    let load_output = repo.wt_command().arg("list").output().unwrap();
+    assert!(
+        load_output.status.success(),
+        "config load should succeed: {}",
+        String::from_utf8_lossy(&load_output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&load_output.stderr);
+    for key in [
+        "commit.generation.template-file",
+        "commit.generation.squash-template-file",
+        "switch.picker.timeout-ms",
+    ] {
+        assert!(
+            stderr.contains("has unknown field") && stderr.contains(key),
+            "expected an unknown-field warning for {key}, got: {stderr}"
+        );
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "config update should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        content
+    );
+}
+
 /// `wt config update` writes `[list] json-schema = 2` when the key is unset,
 /// adopting the upcoming default, and a second run has nothing left to do —
 /// the pending-default loop closes.
@@ -3686,6 +3745,24 @@ fn test_plugin_layout_is_consolidated() {
     let read = |p: &str| fs::read_to_string(root.join(p)).unwrap();
     let json = |p: &str| serde_json::from_str::<serde_json::Value>(&read(p)).unwrap();
 
+    // Repo-local maintainer skills are authored once for Claude and exposed to
+    // Codex through its conventional .agents/skills discovery path. Windows
+    // checkouts with core.symlinks=false materialize the link as a plain file;
+    // that accepted limitation is documented in plugins/worktrunk/CLAUDE.md.
+    #[cfg(unix)]
+    {
+        let codex_skills = root.join(".agents/skills");
+        assert_eq!(
+            fs::read_link(&codex_skills).unwrap(),
+            std::path::Path::new("../.claude/skills"),
+            ".agents/skills must point at the authored Claude maintainer skills"
+        );
+        assert!(
+            codex_skills.join("running-tend/SKILL.md").is_file(),
+            ".agents/skills must resolve to the repo-local maintainer skills"
+        );
+    }
+
     // Repo root keeps ONLY the two loader-mandated marketplace pointers.
     assert!(
         !root.join(".claude-plugin/plugin.json").exists()
@@ -3808,9 +3885,11 @@ fn test_plugin_layout_is_consolidated() {
          Codex's installer drops symlinks"
     );
     let mut dirs = vec![plugin_skills];
+    let mut mirrored = 0usize;
     while let Some(dir) = dirs.pop() {
         for entry in fs::read_dir(&dir).unwrap() {
             let entry = entry.unwrap();
+            mirrored += 1;
             assert!(
                 !entry.path().is_symlink(),
                 "{} is a symlink — the plugin skills mirror must hold only regular files \
@@ -3822,11 +3901,21 @@ fn test_plugin_layout_is_consolidated() {
             }
         }
     }
+    // The assertion above is absence, so an empty mirror satisfies it over
+    // nothing — see "Guards that scan source text" in `tests/CLAUDE.md`.
+    assert!(
+        mirrored > 0,
+        "plugins/worktrunk/skills is empty — the mirror never generated, so the \
+         symlink invariant above just passed over nothing"
+    );
+
     // Every repo-root skill dir carries a SKILL.md, since the convention scan
     // silently ignores a directory without one.
+    let mut skill_dirs = 0usize;
     for entry in fs::read_dir(root.join("skills")).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_dir() {
+            skill_dirs += 1;
             assert!(
                 entry.path().join("SKILL.md").exists(),
                 "skills/{} has no SKILL.md — Claude's convention scan silently ignores it",
@@ -3834,6 +3923,7 @@ fn test_plugin_layout_is_consolidated() {
             );
         }
     }
+    assert!(skill_dirs > 0, "skills/ holds no skill directories");
 
     // The WorktreeRemove hook must not force-delete unmerged branches (#2939).
     // Claude Code auto-fires WorktreeRemove on session exit for any worktree
@@ -3872,6 +3962,25 @@ fn test_plugin_layout_is_consolidated() {
         );
     }
 
+    let marker_commands = all_commands
+        .iter()
+        .filter(|command| command.contains("config state marker"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        marker_commands.len(),
+        6,
+        "expected all 6 Claude marker hooks (UserPromptSubmit, Notification, \
+         PreToolUse, PermissionRequest, Stop, SessionEnd); a newly added one \
+         must be pinned too. hooks.json:\n{hooks}"
+    );
+    for command in marker_commands {
+        assert!(
+            command.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
+            "marker hook must pin the directory it resolves against, or a shell \
+             `cd` during a turn retargets it to another repository (#3921). \
+             command:\n{command}"
+        );
+    }
     let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
         .as_str()
         .expect("WorktreeRemove hook must define a command");

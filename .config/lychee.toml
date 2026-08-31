@@ -1,8 +1,8 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
-# Root directory for resolving absolute paths (e.g., /assets/...)
-root_dir = "docs/static"
+# Built Astro root for resolving absolute routes and assets.
+root_dir = "docs/dist"
 
 # Network resilience - handles transient failures
 max_retries = 6
@@ -21,10 +21,7 @@ cache_exclude_status = "400..=599"  # Don't cache errors (only successes)
 
 # Exclude sites that block GitHub Actions or have reliability issues
 exclude = [
-    # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
-    "/@/",
-
-    # Links to files under docs/static/ that `test_docs_are_in_sync` generates.
+    # Links to files under docs/public/ that `test_docs_are_in_sync` generates.
     # It guarantees their existence, and they point at the live site — so a
     # newly added one always 404s until the site is deployed. The first pattern
     # covers llms.txt's self-referential index entries; prose and template
@@ -92,10 +89,10 @@ exclude_path = [
     # Generated plugin-skills mirror: a byte-identical copy of `skills/`, synced
     # by `test_docs_are_in_sync`. Every file here is already link-checked at its
     # authored `skills/` source, where `reference/README.md` is a symlink to the
-    # repo-root README and its relative `docs/static/logo.png` resolves. The sync
+    # repo-root README and its relative `docs/public/logo.png` resolves. The sync
     # dereferences that symlink into a real file, so under the mirror the
     # repo-root-relative image path resolves to a nonexistent
-    # `plugins/worktrunk/skills/worktrunk/reference/docs/static/logo.png`.
+    # `plugins/worktrunk/skills/worktrunk/reference/docs/public/logo.png`.
     # Excluding the redundant copy avoids that false positive without losing
     # coverage (the authored source is still checked).
     "plugins/worktrunk/skills/",

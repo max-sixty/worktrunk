@@ -34,6 +34,18 @@ fn mock_bin_dir(name: &str, response: MockResponse) -> TempDir {
     dir
 }
 
+/// Limit PATH to a supported Git executable, excluding every `wt-*` custom
+/// subcommand without bypassing wt's startup requirements.
+fn set_git_only_path(cmd: &mut Command) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    MockConfig::new("git")
+        .version("git version 2.43.0")
+        .write(dir.path());
+    cmd.env("PATH", dir.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", dir.path());
+    dir
+}
+
 #[test]
 fn custom_subcommand_runs_wt_prefixed_binary_on_path() {
     // `wt wt-test-extcmd-ok` should find `wt-wt-test-extcmd-ok` on PATH.
@@ -144,10 +156,7 @@ printf 'retired=%s\ncd=%s\nexec=%s\n' "${WORKTRUNK_DIRECTIVE_FILE-unset}" "${WOR
 #[test]
 fn custom_subcommand_not_found_prints_clap_error() {
     let mut cmd = wt_command();
-    // Clear PATH so no `wt-*` binaries can be discovered, then add a single
-    // empty dir so `which` has somewhere to look.
-    let empty = TempDir::new().unwrap();
-    cmd.env("PATH", empty.path());
+    let _git_only_path = set_git_only_path(&mut cmd);
     cmd.arg("definitely-not-a-wt-subcommand");
 
     let output = cmd.output().expect("failed to run wt");
@@ -170,8 +179,7 @@ fn custom_subcommand_not_found_prints_clap_error() {
 #[test]
 fn custom_subcommand_typo_suggests_closest_builtin() {
     let mut cmd = wt_command();
-    let empty = TempDir::new().unwrap();
-    cmd.env("PATH", empty.path());
+    let _git_only_path = set_git_only_path(&mut cmd);
     cmd.arg("siwtch"); // typo of `switch`
 
     let output = cmd.output().expect("failed to run wt");
@@ -195,8 +203,7 @@ fn custom_subcommand_nested_suggestion_wins_over_path_lookup() {
     // not on PATH. The nested tip is layered on top of clap's standard
     // unrecognized-subcommand error.
     let mut cmd = wt_command();
-    let empty = TempDir::new().unwrap();
-    cmd.env("PATH", empty.path());
+    let _git_only_path = set_git_only_path(&mut cmd);
     cmd.arg("squash");
 
     let output = cmd.output().expect("failed to run wt");

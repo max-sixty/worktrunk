@@ -16,7 +16,8 @@
 //! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS`
 //!
 //! When adding stdout output:
-//! - Use `worktrunk::styling::println`. Where the consumer renders the escapes
+//! - Use `styling`'s `println` — `worktrunk::styling` from the binary's modules,
+//!   `crate::styling` from the library's. Where the consumer renders the escapes
 //!   and is never a tty (the statusline, `--help-page`), declare that once at
 //!   the top of the command with `ColorChoice::Always.write_global()` — the
 //!   global anstream consults before tty detection — and print normally.
@@ -32,13 +33,13 @@
 //! what that buys — narration redirected to a file carries no escapes.
 
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 
 use path_slash::PathExt as _;
 use rstest::rstest;
 
+use crate::common::source_scan::visit_files;
 use crate::common::{TestRepo, repo};
 
 /// Paths (relative to src/) that are allowed to use println!/print! for stdout.
@@ -98,6 +99,16 @@ const ALLOWED_LINE_PATTERNS: &[&str] = &[
     r#"println!("Hello, world!");"#,
 ];
 
+/// How to name the `styling` module, for a failure message a contributor pastes
+/// straight back into the file that tripped it.
+///
+/// `src/` holds both crates: `src/lib.rs` declares the library's modules (`git`,
+/// `config`, `shell_exec`, …) and `src/main.rs` the binary's (`cli`, `commands`,
+/// `display`, …). `worktrunk::` resolves only in the second, so a message naming
+/// it alone hands a library file code that cannot compile — and neither scan can
+/// catch that, since both accept any call prefixed with `styling::`.
+const STYLING_PATH_BY_CRATE: &str = "`worktrunk::styling` in the binary's modules (the ones `src/main.rs` declares), `crate::styling` in the library's (the ones `src/lib.rs` declares)";
+
 /// No file under `src/` writes to stdout unless it is listed as a surface that
 /// deliberately does. The scan covers the whole crate rather than just
 /// `src/commands/`: `src/help.rs` carries the answer for `--help-page` and
@@ -114,37 +125,35 @@ fn check_no_unexpected_stdout_writes() {
     let mut violations = Vec::new();
 
     // Recursively scan all .rs files under src/
-    scan_directory(&src_dir, &stdout_tokens, &mut violations, &src_dir);
+    let scanned = visit_files(&src_dir, "rs", "stdout scan", &mut |path, contents| {
+        check_file(path, contents, &stdout_tokens, &mut violations, &src_dir)
+    });
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
 
     if !violations.is_empty() {
         panic!(
             "Unexpected stdout writes:\n\n{}\n\n\
              stdout is reserved for data output (JSON, tables).\n\
-             Use worktrunk::styling::println for stdout, and its eprintln — not color_print's ceprintln! — for stderr.\n\
+             Use the `println` from `styling` for stdout, and its `eprintln` — not color_print's ceprintln! — for stderr.\n\
+             Spell the path for the crate the file belongs to: {STYLING_PATH_BY_CRATE}.\n\
              Add file path to STDOUT_ALLOWED_PATHS if stdout is intentional.",
             violations.join("\n")
         );
     }
 }
 
-fn scan_directory(dir: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-
-        if path.is_dir() {
-            scan_directory(&path, tokens, violations, scan_root);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_file(&path, tokens, violations, scan_root);
-        }
-    }
-}
-
-fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_root: &Path) {
+fn check_file(
+    path: &Path,
+    contents: &str,
+    tokens: &[&str],
+    violations: &mut Vec<String>,
+    scan_root: &Path,
+) {
     // Get path relative to src/ for matching against STDOUT_ALLOWED_PATHS
     let relative_path = path
         .strip_prefix(scan_root)
@@ -155,11 +164,6 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_r
     if STDOUT_ALLOWED_PATHS.contains(&relative_path.as_ref()) {
         return;
     }
-
-    let contents = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
 
     let relative_path = path
         .strip_prefix(env!("CARGO_MANIFEST_DIR"))
@@ -214,8 +218,9 @@ fn check_file(path: &Path, tokens: &[&str], violations: &mut Vec<String>, scan_r
 /// Paths (relative to `src/`) allowed to reach std's `eprint!`/`eprintln!`.
 ///
 /// Every other file that writes to stderr must have the macro of that name in
-/// scope from `worktrunk::styling`, or qualify the call — see
-/// [`check_stderr_macros_come_from_styling`].
+/// scope from `styling`, or qualify the call — see
+/// [`check_stderr_macros_come_from_styling`], and [`STYLING_PATH_BY_CRATE`] for
+/// which path spells it from where.
 ///
 /// An entry exempts the **whole file**, not the call its comment names, so an
 /// entry added for one narrow site also covers whatever that file grows later.
@@ -227,6 +232,43 @@ const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
     // A `#[cfg(test)]` skip diagnostic, not narration a user ever redirects.
     "remove_dir.rs",
 ];
+
+/// Every allowlist entry names a file that still exists.
+///
+/// Both allowlists are matched by path string, so a rename leaves a dead entry
+/// behind rather than failing. That is worse than clutter: the exemption stays
+/// armed at the old path, so a *new* file arriving there — `src/help.rs` is the
+/// shape, a name a future refactor could plausibly reuse — inherits a
+/// permission nobody granted it, and the guard stays green while it writes to
+/// stdout. Pinning existence turns the rename into a failing test at the moment
+/// it happens, when the reviewer still knows whether the exemption should move
+/// with the file or go.
+#[test]
+fn allowlisted_paths_still_exist() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let stale: Vec<String> = [
+        ("STDOUT_ALLOWED_PATHS", STDOUT_ALLOWED_PATHS),
+        ("STD_STDERR_ALLOWED_PATHS", STD_STDERR_ALLOWED_PATHS),
+    ]
+    .iter()
+    .flat_map(|(list_name, paths)| {
+        paths
+            .iter()
+            .filter(|relative| !src_dir.join(relative).is_file())
+            .map(move |relative| format!("{list_name}: src/{relative}"))
+    })
+    .collect();
+
+    assert!(
+        stale.is_empty(),
+        "allowlist entries naming files that no longer exist:\n\n{}\n\n\
+         The entry exempts whatever file later occupies that path, so a stale one\n\
+         silently pre-approves stdout (or std's stderr macros) for code nobody reviewed.\n\
+         Move the entry to the file's new path, or drop it.",
+        stale.join("\n")
+    );
+}
 
 /// Narration on stderr goes out through anstream, at every site.
 ///
@@ -246,7 +288,20 @@ const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
 fn check_stderr_macros_come_from_styling() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut violations = Vec::new();
-    scan_stderr_macros(&src_dir, &src_dir, &mut violations);
+    let scanned = visit_files(
+        &src_dir,
+        "rs",
+        "stderr-macro scan",
+        &mut |path, contents| {
+            check_stderr_macros_in_file(path, contents, &src_dir, &mut violations)
+        },
+    );
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
     violations.sort();
 
     assert!(
@@ -254,30 +309,20 @@ fn check_stderr_macros_come_from_styling() {
         "stderr writes that resolve to std's macro instead of anstream's:\n\n{}\n\n\
          std's `eprint!`/`eprintln!` keep ANSI escapes when stderr is redirected, so a\n\
          file mixing them with anstream's emits color on some lines of a log and not others.\n\
-         Import the macro from `worktrunk::styling`, qualify the call as\n\
-         `worktrunk::styling::eprintln!(…)`, or add the file to STD_STDERR_ALLOWED_PATHS\n\
-         with a comment explaining why std's macro is the right one there.",
+         Import the macro from `styling`, or qualify the call as `styling::eprintln!(…)`.\n\
+         Spell the path for the crate the file belongs to: {STYLING_PATH_BY_CRATE}.\n\
+         Or add the file to STD_STDERR_ALLOWED_PATHS with a comment explaining why\n\
+         std's macro is the right one there.",
         violations.join("\n")
     );
 }
 
-fn scan_stderr_macros(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_stderr_macros(&path, src_dir, violations);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_stderr_macros_in_file(&path, src_dir, violations);
-        }
-    }
-}
-
-fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec<String>) {
+fn check_stderr_macros_in_file(
+    path: &Path,
+    contents: &str,
+    src_dir: &Path,
+    violations: &mut Vec<String>,
+) {
     let relative_path = path
         .strip_prefix(src_dir)
         .map(|p| p.to_slash_lossy())
@@ -286,11 +331,7 @@ fn check_stderr_macros_in_file(path: &Path, src_dir: &Path, violations: &mut Vec
         return;
     }
 
-    let contents = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let imported = styling_imports(&contents);
+    let imported = styling_imports(contents);
 
     for (line_num, line) in contents.lines().enumerate() {
         // A doc comment quoting `eprintln!` is prose, not a write.
@@ -502,8 +543,8 @@ fn test_color_follows_the_consumer(repo: TestRepo) {
         (
             &["merge", "--help-page"][..],
             None,
-            true,
-            "the web reference block's ANSI is data the docs pipeline turns into HTML spans",
+            false,
+            "web reference pages are portable Markdown; the site renderer owns syntax styling",
         ),
         (
             &["merge", "--help-page", "--plain"][..],

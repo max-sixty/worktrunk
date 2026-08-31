@@ -12,6 +12,9 @@ call the canonical `hooks/wt.sh` below.
 worktrunk/                          ← repo root = marketplace root
 ├── .claude-plugin/marketplace.json ← Claude pointer  (source → ./plugins/worktrunk)
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
+├── .claude/skills/                 ← authored repo-local maintainer skills
+├── .agents/skills → ../.claude/skills
+│                                     Codex repo-skill pointer
 ├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
 ├── hooks/hooks.json                ← Gemini activity hooks (call the wt.sh below)
 ├── skills/                         ← real dir; Gemini reads ${extensionPath}/skills directly
@@ -36,6 +39,13 @@ worktrunk/                          ← repo root = marketplace root
     └── (Codex activity hooks live *inline* in .codex-plugin/plugin.json's
         `hooks` key — see Known Limitations below)
 ```
+
+The repo-local maintainer skills are separate from the distributed plugin
+skills. `.claude/skills/` is their authored home, and the relative
+`.agents/skills` symlink lets Codex discover the same files. On Windows
+checkouts with `core.symlinks=false`, Git materializes the link as a plain file
+and Codex loads none of these repo-local skills. This limitation is accepted;
+installed plugins use the real-file mirror below and are unaffected.
 
 Path resolution differs by tool, all verified end-to-end against the real CLIs:
 
@@ -113,6 +123,10 @@ end-to-end against codex-cli 0.144.1 (scratch marketplaces through
 
 ## Known Limitations
 
+### Status stays on the launch worktree (Claude)
+
+Claude marker hooks resolve through `-C "$CLAUDE_PROJECT_DIR"`. `EnterWorktree` does not change that directory, so the marker stays on the launch worktree for the session. Sessions launched outside a repository have no activity marker.
+
 ### Status persists after user interrupt (Claude)
 
 The Claude hooks track activity via git config (`worktrunk.state.{branch}.marker`):
@@ -139,6 +153,8 @@ The events (Codex's `HookEventsToml` vocabulary, verified against `codex-rs/conf
 - `SessionEnd` → clears the marker
 
 `Stop` fires at turn-end, so 🤖 returns to 💬 when a turn completes. `SessionEnd` clears the marker when the main thread ends.
+
+Codex and Gemini marker commands still resolve from the hook process's cwd. When either harness exposes a stable session project directory, pass that directory to Worktrunk with global `-C`, as Claude does with `$CLAUDE_PROJECT_DIR`.
 
 ### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
 

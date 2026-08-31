@@ -40,7 +40,7 @@
 //!   any real change. The collect handler excludes `is_priming` (a list-cell dim
 //!   hint the pane never draws — see `items::pr_status_pane_eq`) so a
 //!   cache-prime→live flip that only clears it doesn't reset scroll.
-//! - **`comments` tab** — body is the branch-keyed thread (surfaced by
+//! - **`comments` tab** — body is the row-keyed thread (surfaced by
 //!   `notify_filled`), invariant to `PrStatus` fields once a PR exists, so it
 //!   re-runs only on a [`PrPresence`](super::items::PrPresence) change
 //!   (Loading/NoPr/HasPr), not on every field.
@@ -63,7 +63,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use skim::prelude::Event;
 use tokio::sync::mpsc::Sender;
 
-use super::items::PreviewCacheKey;
+use super::items::{PickerRowId, PreviewCacheKey};
 use super::preview::PreviewMode;
 
 /// What about a row's live `pr_status` changed, at the granularity each
@@ -77,7 +77,7 @@ pub(super) struct PrStatusDelta {
     /// never draws. Gates the `pr` tab. See `items::pr_status_pane_eq`.
     pub(super) pane_changed: bool,
     /// The [`PrPresence`](super::items::PrPresence) (Loading/NoPr/HasPr) changed.
-    /// Gates the `comments` tab, whose body is otherwise the branch-keyed thread
+    /// Gates the `comments` tab, whose body is otherwise the row-keyed thread
     /// surfaced by [`PreviewNotifier::notify_filled`]. Implies `pane_changed`.
     pub(super) presence_changed: bool,
 }
@@ -98,9 +98,9 @@ pub(super) struct PreviewNotifier {
     render_tx: Arc<OnceLock<Sender<Event>>>,
     /// The `(row-key, mode)` the selected row's preview is currently showing or
     /// awaiting. Written by `*SkimItem::preview` on every render; read on each
-    /// background fill. The row-key is the branch name for worktree rows and the
-    /// `pr:{N}` / `mr:{N}` token for `--prs` rows — exactly the
-    /// [`PreviewCacheKey`] string, so a fill's key compares directly.
+    /// background fill. The typed row key is a canonical Git item identity for
+    /// local rows and a structured PR/MR reference for `--prs` rows — exactly
+    /// the identity in [`PreviewCacheKey`], so a fill's key compares directly.
     awaiting: Mutex<Option<PreviewCacheKey>>,
 }
 
@@ -115,8 +115,8 @@ impl PreviewNotifier {
     /// Record the `(row-key, mode)` the selected row is rendering, so a matching
     /// background fill knows to surface itself. Called from `*SkimItem::preview`
     /// before it reads the cache (see the module docstring on ordering).
-    pub(super) fn note_awaiting(&self, row_key: &str, mode: PreviewMode) {
-        *self.awaiting.lock().unwrap() = Some((row_key.to_string(), mode));
+    pub(super) fn note_awaiting(&self, row_id: &PickerRowId, mode: PreviewMode) {
+        *self.awaiting.lock().unwrap() = Some((row_id.clone(), mode));
     }
 
     /// Inject an `Event::RunPreview` if `key` is the preview the selected row is
@@ -130,17 +130,17 @@ impl PreviewNotifier {
         }
     }
 
-    /// Inject an `Event::RunPreview` if the selected row is `row_key` *and* the
+    /// Inject an `Event::RunPreview` if the selected row is `row_id` *and* the
     /// part of `pr_status` its visible tab renders actually changed, so the live
     /// `CiStatus` fetch surfaces on its own without resetting the scroll of an
     /// unchanged pane. `delta` carries the two per-tab change signals the collect
     /// handler computed (see [`PrStatusDelta`]); a diff / log / summary tab reads
     /// neither, so it matches nothing and injects nothing.
-    pub(super) fn notify_pr_status_changed(&self, row_key: &str, delta: PrStatusDelta) {
+    pub(super) fn notify_pr_status_changed(&self, row_id: &PickerRowId, delta: PrStatusDelta) {
         let relevant = {
             let awaiting = self.awaiting.lock().unwrap();
             awaiting.as_ref().is_some_and(|(k, mode)| {
-                k == row_key
+                k == row_id
                     && match mode {
                         PreviewMode::Pr => delta.pane_changed,
                         PreviewMode::Comments => delta.presence_changed,
@@ -173,6 +173,7 @@ impl PreviewNotifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::list::model::ListItem;
 
     /// `notify_pr_status_changed` re-runs the selected row's preview only when
     /// the *visible* tab's own change signal fired: the `pr` tab on a pane
@@ -185,6 +186,8 @@ mod tests {
         let render_tx = Arc::new(OnceLock::new());
         render_tx.set(tx).unwrap();
         let notifier = PreviewNotifier::new(render_tx);
+        let feature = PickerRowId::local(&ListItem::new_branch("abc".into(), "feature".into()));
+        let other = PickerRowId::local(&ListItem::new_branch("def".into(), "other".into()));
 
         let pane_only = PrStatusDelta {
             pane_changed: true,
@@ -203,21 +206,21 @@ mod tests {
         };
 
         // `pr` tab: any pane change re-runs it (e.g. "Fetching…" → resolved PR).
-        notifier.note_awaiting("feature", PreviewMode::Pr);
-        notifier.notify_pr_status_changed("feature", pane_only);
+        notifier.note_awaiting(&feature, PreviewMode::Pr);
+        notifier.notify_pr_status_changed(&feature, pane_only);
         assert_eq!(drain(&mut rx), 1, "a pr-pane change re-runs the pr tab");
 
         // `comments` tab: a pane-only change (no presence flip) does NOT re-run —
-        // its body is the unchanged branch-keyed thread, so re-running would only
+        // its body is the unchanged row-keyed thread, so re-running would only
         // reset the scroll. A presence change (e.g. NoPr → HasPr) does re-run.
-        notifier.note_awaiting("feature", PreviewMode::Comments);
-        notifier.notify_pr_status_changed("feature", pane_only);
+        notifier.note_awaiting(&feature, PreviewMode::Comments);
+        notifier.notify_pr_status_changed(&feature, pane_only);
         assert_eq!(
             drain(&mut rx),
             0,
             "a pane-only change must not reset a scrolled comments thread"
         );
-        notifier.notify_pr_status_changed("feature", presence_too);
+        notifier.notify_pr_status_changed(&feature, presence_too);
         assert_eq!(
             drain(&mut rx),
             1,
@@ -225,8 +228,8 @@ mod tests {
         );
 
         // A diff tab reads neither signal → never re-runs (preserves diff scroll).
-        notifier.note_awaiting("feature", PreviewMode::WorkingTree);
-        notifier.notify_pr_status_changed("feature", presence_too);
+        notifier.note_awaiting(&feature, PreviewMode::WorkingTree);
+        notifier.notify_pr_status_changed(&feature, presence_too);
         assert_eq!(
             drain(&mut rx),
             0,
@@ -234,8 +237,8 @@ mod tests {
         );
 
         // A different row's update injects nothing.
-        notifier.note_awaiting("feature", PreviewMode::Pr);
-        notifier.notify_pr_status_changed("other", presence_too);
+        notifier.note_awaiting(&feature, PreviewMode::Pr);
+        notifier.notify_pr_status_changed(&other, presence_too);
         assert_eq!(
             drain(&mut rx),
             0,

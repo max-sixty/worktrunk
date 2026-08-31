@@ -29,9 +29,9 @@
 //! `.args[]` redaction in `add_repo_and_worktree_path_filters` (both in
 //! `tests/common/mod.rs`); see tests/CLAUDE.md "Snapshot env drift".
 
+use crate::common::source_scan::visit_files;
 use ansi_str::AnsiStr;
 use regex::Regex;
-use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -178,33 +178,17 @@ fn test_no_host_specific_paths_in_snapshots() {
 /// Visit every committed `.snap` file. Snapshot dirs live under `src`
 /// (unit tests), `tests` (integration tests), and `docs` (demo fixtures).
 fn for_each_snapshot(project_root: &Path, mut f: impl FnMut(&Path, &str)) {
-    let mut seen = 0usize;
+    // Per root rather than in aggregate: `tests` alone holds the large majority
+    // of the corpus, so a total count survives that root moving away. Each root
+    // is load-bearing as a result — one that legitimately stops holding
+    // snapshots belongs out of this list, not exempted from it.
     for root in ["src", "tests", "docs"] {
-        visit_snap_files(&project_root.join(root), &mut |path, content| {
-            seen += 1;
-            f(path, content);
-        });
-    }
-    // Every caller asserts absence over the corpus (~1200 files); an empty
-    // walk — say, after a directory-layout change — would pass vacuously.
-    assert!(
-        seen > 500,
-        "expected the full snapshot corpus, saw {seen} files"
-    );
-}
-
-fn visit_snap_files(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            visit_snap_files(&path, f);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("snap") {
-            let content = fs::read_to_string(&path).unwrap();
-            f(&path, &content);
-        }
+        let seen = visit_files(&project_root.join(root), "snap", "snapshot scan", &mut f);
+        assert!(
+            seen > 0,
+            "{root}/ holds no .snap files — the corpus has moved, so these \
+             assertions are now passing over whatever is left of it"
+        );
     }
 }
 

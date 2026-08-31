@@ -126,18 +126,6 @@ impl<'a> Branch<'a> {
             .and_then(|b| b.upstream_short.clone()))
     }
 
-    /// Unset the upstream tracking branch for this branch.
-    ///
-    /// This removes the tracking relationship, preventing accidental pushes
-    /// to the wrong branch (e.g., when a feature branch was created from origin/main).
-    pub fn unset_upstream(&self) -> anyhow::Result<()> {
-        // `--` separates the option from the positional branch name so a
-        // hyphen-prefixed branch cannot be misread as a flag.
-        self.repo
-            .run_command(&["branch", "--unset-upstream", "--", &self.name])?;
-        Ok(())
-    }
-
     /// Get the URL of the remote where this branch would be pushed.
     ///
     /// Uses `%(push:remotename)` which returns either a remote name or URL directly

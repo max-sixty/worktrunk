@@ -7,6 +7,8 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
+use worktrunk::testing::configure_git_cmd;
+
 fn wt_perf_bin() -> &'static str {
     env!("CARGO_BIN_EXE_wt-perf")
 }
@@ -136,7 +138,12 @@ fn setup_layers_prune_state_onto_a_canonical_base() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let branches = Command::new("git")
+    // Fixture inspection is still a `git` the suite runs, so it gets the same
+    // isolation as every other one — the crate's own `git_command()` helper is
+    // private to the lib, so apply the floor directly here.
+    let mut git = Command::new("git");
+    configure_git_cmd(&mut git);
+    let branches = git
         .args([
             "-C",
             repo.to_str().unwrap(),

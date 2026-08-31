@@ -124,8 +124,8 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ base_worktree_path }}`    | Base worktree path |
 |           | `{{ target }}`                | Target branch name |
 |           | `{{ target_worktree_path }}`  | Target worktree path (when target has a worktree) |
-|           | `{{ pr_number }}`             | PR/MR number (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
-|           | `{{ pr_url }}`                | PR/MR web URL (post-switch, pre-start, post-start; when creating via `pr:N` / `mr:N`) |
+|           | `{{ pr_number }}`             | PR/MR number (switch and create hooks; when switching via `pr:N` / `mr:N`) |
+|           | `{{ pr_url }}`                | PR/MR web URL (switch and create hooks; when switching via `pr:N` / `mr:N`) |
 | repo      | `{{ repo }}`                  | Repository directory name |
 |           | `{{ repo_path }}`             | Absolute path to repository root |
 |           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |
@@ -155,7 +155,7 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 
 `cwd` is the worktree root where the hook command runs. It equals `worktree_path` except in three cases:
 
-- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination
+- `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination when that worktree already exists — a switch that creates one has no destination directory yet, so `worktree_path` stays on the source (use `pre-start` to work in the new worktree)
 - `post-remove`: the active worktree is gone, so the hook runs in the primary worktree
 - `post-merge` with removal: the active worktree is gone, so the hook runs in the target worktree
 
@@ -163,7 +163,7 @@ Undefined variables error — use conditionals or defaults for optional behavior
 
 ```toml
 [pre-start]
-# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
+# Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature --base origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
@@ -290,7 +290,7 @@ copy = "wt step copy-ignored"
 
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
-```bash
+```console
 $ wt hook pre-merge              # Run all pre-merge hooks
 $ wt hook pre-merge test         # Run hooks named "test" from both sources
 $ wt hook pre-merge test build   # Run hooks named "test" and "build"
@@ -304,7 +304,7 @@ $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-```
+```console
 $ wt hook pre-merge
 ◎ Running pre-merge project:test
   cargo test
@@ -324,7 +324,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
 ```
 
-```bash
+```console
 $ wt hook post-start
 ◎ Running post-start: project @ ~/acme
 ```

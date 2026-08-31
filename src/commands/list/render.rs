@@ -307,7 +307,7 @@ impl LayoutConfig {
                     // Branch scope is known at construction, so its sigil
                     // (`/`/`|`) renders immediately, dimmed to match the final
                     // render (and its Status-column twin) — no flash or flicker.
-                    match &item.kind {
+                    match item.kind() {
                         ItemKind::Worktree(_) => cell.push_styled(format!("{spinner} "), dim),
                         ItemKind::Branch(scope) => {
                             cell.push_styled(format!("{} ", scope.gutter_glyph()), dim)
@@ -320,7 +320,7 @@ impl LayoutConfig {
                     // row's `DETACHED` style, so the cell doesn't restyle as
                     // the row fills in. Empty text goes unstyled for the reason
                     // [`Self::render_text_cell`] gives.
-                    if item.branch.is_none() && !branch.is_empty() {
+                    if item.branch().is_none() && !branch.is_empty() {
                         cell.push_styled(branch.to_string(), DETACHED);
                     } else {
                         cell.push_raw(branch.to_string());
@@ -462,8 +462,8 @@ impl ColumnLayout {
                 let mut cell = StyledLine::new();
                 // `glyph` + trailing space = the two-cell sigil; the bare glyph
                 // also feeds the picker's fuzzy-search text (`gutter_glyph`).
-                let sigil = format!("{} ", item.kind.gutter_glyph());
-                match &item.kind {
+                let sigil = format!("{} ", item.kind().gutter_glyph());
+                match item.kind() {
                     // Worktree rows are materialized on disk — render bright.
                     ItemKind::Worktree(_) => cell.push_raw(sigil),
                     // Branch rows are refs with no working copy — render dim.
@@ -479,7 +479,7 @@ impl ColumnLayout {
                 // the removable dim still reaches this row's Path and Message
                 // cells, while yellow keeps the SHA from reading as a branch
                 // that happens to be named like one.
-                let style = if item.branch.is_none() {
+                let style = if item.branch().is_none() {
                     Some(DETACHED)
                 } else {
                     text_style
@@ -531,10 +531,10 @@ impl ColumnLayout {
                 }
             }
             ColumnKind::Path => {
-                let Some(data) = worktree_data else {
+                let Some(path) = item.worktree_path() else {
                     return StyledLine::new();
                 };
-                let path_str = shorten_path(&data.path, main_worktree_path);
+                let path_str = shorten_path(path, main_worktree_path);
                 self.render_text_cell(&path_str, text_style)
             }
             ColumnKind::Upstream => {
@@ -1542,7 +1542,7 @@ mod tests {
     #[test]
     fn test_working_diff_placeholder_when_not_loaded() {
         use super::super::layout::ColumnLayout;
-        use super::super::model::{ItemKind, ListItem};
+        use super::super::model::ListItem;
         use worktrunk::styling::{ADDITION, DELETION};
 
         let col = ColumnLayout {
@@ -1568,8 +1568,10 @@ mod tests {
         assert!(cell.render().is_empty(), "branch item should be blank");
 
         // Worktree item with working_tree_diff: None → placeholder
-        let mut wt_item = ListItem::new_branch("abc123".into(), "feat".into());
-        wt_item.kind = ItemKind::Worktree(Box::default());
+        let wt_item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(".", Some("feat"), "abc123"),
+            Default::default(),
+        );
         let cell = col.render_cell(&wt_item, &cell_layout(col.clone()), PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
 

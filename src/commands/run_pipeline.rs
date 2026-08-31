@@ -39,7 +39,7 @@
 //!
 //! ## Template freshness
 //!
-//! The spec carries two kinds of template input:
+//! Each prepared command carries two kinds of template input:
 //!
 //! - **Base context** (`branch`, `commit`, `worktree_path`, …) — snapshotted
 //!   once when the parent builds the spec. A step that creates a new commit
@@ -56,22 +56,39 @@
 //! Template values are shell-escaped at expansion time (`shell_escape=true`)
 //! since the expanded string is passed to a shell for interpretation.
 
-use std::borrow::Cow;
 use std::fs;
 use std::io::Read as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 
-use worktrunk::config::TemplateContext;
+use worktrunk::HookType;
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
 use worktrunk::trace::CommandTrace;
 
-use super::command_executor::{expand_shell_template, wait_first_error};
-use super::pipeline_spec::{PipelineSpec, PipelineStepSpec};
+use super::command_executor::{
+    PreparedCommand, PreparedStep, expand_shell_template, wait_first_error,
+};
+use super::hook_filter::HookSource;
 use super::process::HookLog;
+
+/// Serialized specification for a background hook pipeline.
+///
+/// The envelope carries pipeline-wide execution metadata. Its steps use the
+/// same prepared command model as foreground execution, so selection and
+/// context preparation have one representation on both sides of the process
+/// boundary.
+#[derive(Serialize, Deserialize)]
+pub(super) struct PipelineSpec {
+    pub worktree_path: PathBuf,
+    pub branch: String,
+    pub hook_type: HookType,
+    pub source: HookSource,
+    pub steps: Vec<PreparedStep>,
+}
 
 /// Run a serialized pipeline from stdin.
 ///
@@ -79,7 +96,7 @@ use super::process::HookLog;
 /// The orchestrator is a long-lived background process spawned by
 /// `spawn_detached_exec`; stdout/stderr are already redirected to a log file.
 ///
-/// Each command's output is written to its own log file in `spec.log_dir`,
+/// Each command's output is written to its own repository log file,
 /// named `{branch}-{source}-{hook_type}-{name}.log`. The runner process's
 /// own stdout/stderr captures only runner-level errors.
 pub fn run_pipeline() -> anyhow::Result<()> {
@@ -94,52 +111,37 @@ pub fn run_pipeline() -> anyhow::Result<()> {
     let repo =
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
-    fs::create_dir_all(&spec.log_dir)
-        .with_context(|| format!("failed to create log directory: {}", spec.log_dir.display()))?;
+    let log_dir = repo.wt_logs_dir();
+    fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create log directory: {}", log_dir.display()))?;
 
     let mut cmd_index = 0usize;
 
     for step in &spec.steps {
         match step {
-            PipelineStepSpec::Single {
-                template,
-                template_name,
-                name,
-            } => {
-                let log_name = command_log_name(name.as_deref(), cmd_index);
-                let log_file = create_command_log(&spec, &log_name)?;
-                let step_ctx = step_context(&spec.context, name.as_deref());
-                let expanded = expand_shell_template(template, &step_ctx, &repo, template_name)?;
+            PreparedStep::Single(cmd) => {
+                let log_name = command_log_name(cmd.name.as_deref(), cmd_index);
+                let log_file = create_command_log(&spec, &log_dir, &log_name)?;
+                let expanded =
+                    expand_shell_template(&cmd.template, &cmd.context, &repo, &cmd.template_name)?;
                 let (mut child, mut trace) =
                     spawn_shell_command(&expanded, &spec.worktree_path, log_file)?;
                 let status = wait_resolving(&mut child, &mut trace, &expanded)?;
                 if !status.success() {
-                    return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
+                    return Err(failure_error(
+                        &status,
+                        cmd.name.as_deref().unwrap_or(&expanded),
+                    ));
                 }
                 cmd_index += 1;
             }
-            PipelineStepSpec::Concurrent { commands } => {
-                run_concurrent_group(commands, &spec, &repo, &mut cmd_index)?;
+            PreparedStep::Concurrent(commands) => {
+                run_concurrent_group(commands, &spec, &repo, &log_dir, &mut cmd_index)?;
             }
         }
     }
 
     Ok(())
-}
-
-/// Build a per-step context, injecting `hook_name` when the step has a name.
-///
-/// The shared pipeline context has `hook_name` stripped (it varies per step).
-/// Returns a `Cow` so unnamed steps borrow the base context without cloning.
-fn step_context<'a>(base: &'a TemplateContext, name: Option<&str>) -> Cow<'a, TemplateContext> {
-    match name {
-        Some(n) => {
-            let mut ctx = base.clone();
-            ctx.insert("hook_name", n);
-            Cow::Owned(ctx)
-        }
-        None => Cow::Borrowed(base),
-    }
 }
 
 /// Spawn a shell command with its output redirected to a log file.
@@ -216,9 +218,10 @@ fn wait_resolving(
 /// running every child to completion (the test hatch is for ordering, not
 /// error semantics).
 fn run_concurrent_group(
-    commands: &[super::pipeline_spec::PipelineCommandSpec],
+    commands: &[PreparedCommand],
     spec: &PipelineSpec,
     repo: &Repository,
+    log_dir: &Path,
     cmd_index: &mut usize,
 ) -> anyhow::Result<()> {
     let serial = super::force_serial_concurrent();
@@ -232,10 +235,9 @@ fn run_concurrent_group(
     let spawn_result = (|| -> anyhow::Result<()> {
         for cmd in commands {
             let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-            let log_file = create_command_log(spec, &log_name)?;
-            let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
+            let log_file = create_command_log(spec, log_dir, &log_name)?;
             let expanded =
-                expand_shell_template(&cmd.template, &cmd_ctx, repo, &cmd.template_name)?;
+                expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
             let (mut child, mut trace) =
                 spawn_shell_command(&expanded, &spec.worktree_path, log_file)?;
             *cmd_index += 1;
@@ -285,12 +287,12 @@ fn command_log_name(name: Option<&str>, index: usize) -> String {
     }
 }
 
-/// Create a per-command log file in the spec's log directory.
+/// Create a per-command log file in the repository's log directory.
 ///
-/// Caller must ensure `spec.log_dir` exists (created once at pipeline startup).
-fn create_command_log(spec: &PipelineSpec, name: &str) -> anyhow::Result<fs::File> {
+/// Caller must ensure `log_dir` exists (created once at pipeline startup).
+fn create_command_log(spec: &PipelineSpec, log_dir: &Path, name: &str) -> anyhow::Result<fs::File> {
     let hook_log = HookLog::hook(spec.source, spec.hook_type, name);
-    let path = hook_log.path(&spec.log_dir, &spec.branch);
+    let path = hook_log.path(log_dir, &spec.branch);
     fs::File::create(&path)
         .with_context(|| format!("failed to create log file: {}", path.display()))
 }

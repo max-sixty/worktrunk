@@ -59,8 +59,7 @@ pub struct ProjectCiConfig {
     pub platform: Option<String>,
 }
 
-/// Project-level commit message configuration. *(Experimental — fields may
-/// change in future releases.)*
+/// Project-level commit message configuration.
 ///
 /// Only fields appropriate as shared, checked-in settings live here. The LLM
 /// command and full prompt template stay in user/system config — they
@@ -133,19 +132,12 @@ impl ProjectListConfig {
 }
 
 impl ProjectConfig {
-    /// The CI platform set in `[ci]`, if any.
-    ///
-    /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
-    pub fn ci_platform(&self) -> Option<&str> {
-        self.ci.platform.as_deref()
-    }
-
     /// The configured forge platform, checking `[forge]` first then `[ci]`.
     pub fn forge_platform(&self) -> Option<&str> {
         self.forge
             .platform
             .as_deref()
-            .or_else(|| self.ci_platform())
+            .or(self.ci.platform.as_deref())
     }
 
     /// Get the forge API hostname if configured.
@@ -488,8 +480,7 @@ platform = "github"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         // forge.platform takes precedence
         assert_eq!(config.forge_platform(), Some("github"));
-        // ci.platform still accessible directly
-        assert_eq!(config.ci_platform(), Some("gitlab"));
+        assert_eq!(config.ci.platform.as_deref(), Some("gitlab"));
     }
 
     #[test]

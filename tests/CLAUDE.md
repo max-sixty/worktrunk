@@ -48,8 +48,10 @@ When `codecov/patch` fails, investigate before declaring ready (the merge gate i
 
 ```bash
 task coverage
-cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; matches codecov line-for-line
+cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; same lines codecov counts
 ```
+
+Since cargo-llvm-cov 0.9.0 that column collapses consecutive misses into ranges (`12-18`, not `12, 13, …`), so expand a range before comparing it against a codecov line list.
 
 For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested.
 
@@ -558,6 +560,40 @@ Assert semantics through state, structured values, and exit status; snapshot
 the pragmatic user experience when the complete rendering is the contract. A
 custom verifier must fail for every violation it claims to check—diagnostic
 `println!` output is not an oracle.
+
+### Guards that scan source text
+
+Several guards read `src/`, or the snapshot corpus, as text rather than
+compiling it: no stray `println!` outside the allowlist, no `eprintln!` that
+resolves to std's macro instead of anstream's, no bare `env!("VERGEN_…")`, no
+`include_str!` of a path the package won't ship, no host path in a `.snap`, and
+nothing but `src/testing/mod.rs` spawning `wt` through `CARGO_BIN_EXE_wt`.
+Each one asserts *absence* over what its walk handed it.
+
+That polarity is what makes the failure mode silent. A file that drops out of
+the walk is indistinguishable from a file with nothing wrong in it: the
+violation it carried is never looked for, `violations` stays empty, and the
+test passes green over less than it claims.
+
+So that walk lives once, in `tests/common/source_scan.rs`, and panics on every
+read rather than skipping; its module docstring carries the rest. Other tests
+recurse through directories for their own reasons, and this is about the ones
+whose assertion is absence. A read that returns early is the shape to look
+for. `Err(_) => return` and `let Ok(..) else { return }` are the obvious two,
+and `entries.flatten()` is the one that hides, because it drops a per-entry
+`io::Error` without looking like a `return` at all.
+
+Each guard also proves its walk reached something, since a walk that reads
+cleanly and yields nothing passes just as green. `visit_files` returns the
+number of files it visited and is `#[must_use]`, so forgetting to answer for
+coverage is a compile error rather than a rule someone has to remember — which
+is what the swallowed reads it replaced had going for them. A guard that
+already asserts something an empty walk cannot satisfy discards the count with
+`let _ =`, and that discard is the claim: its proof is the assertion below it,
+and a count beside it would be a second mechanism for one guarantee.
+
+A guard walking several roots counts per root. A layout change moves one root
+and leaves the others, and an aggregate count survives that.
 
 ### Snapshot env drift: cosmetic vs. a leak
 

@@ -429,6 +429,52 @@ fn test_diagnostic_leads_with_profile(repo: TestRepo) {
     );
 }
 
+/// The subprocesses that assemble a `-vv` report stay visible in the raw trace
+/// but do not change any aggregate in the profile read back from that trace.
+#[rstest]
+fn test_profile_excludes_diagnostic_collector(repo: TestRepo) {
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list -vv should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let logs_dir = repo.root_path().join(".git/wt/logs");
+    let trace_jsonl = fs::read_to_string(logs_dir.join("trace.jsonl")).unwrap();
+    let entries = worktrunk::trace::parse_lines(&trace_jsonl);
+    let diagnostic_context = worktrunk::trace::emit::DIAGNOSTIC_CONTEXT;
+    let profiled_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.context.as_deref() != Some(diagnostic_context))
+        .cloned()
+        .collect();
+
+    assert!(
+        entries.iter().any(|entry| {
+            entry.context.as_deref() == Some(diagnostic_context)
+                && matches!(
+                    &entry.kind,
+                    worktrunk::trace::TraceEntryKind::Command { command, .. }
+                        if command == "git worktree list --porcelain"
+                )
+        }),
+        "the diagnostic collector should mark its worktree-list record:\n{trace_jsonl}"
+    );
+    assert_eq!(
+        worktrunk::trace::Profile::from_entries(&entries),
+        worktrunk::trace::Profile::from_entries(&profiled_entries)
+    );
+
+    let trace_log = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+    assert!(
+        trace_log
+            .lines()
+            .any(|line| line.contains("$ git worktree list --porcelain [(diagnostic)]")),
+        "the collector's command start and completion should share a context:\n{trace_log}"
+    );
+}
+
 /// At `-vv`, the full (uncapped) subprocess stdout/stderr should land in
 /// `subprocess.log` via `shell_exec::SUBPROCESS_FULL_TARGET` — not in `trace.log`.
 /// `trace.log` gets the bounded preview alongside trace records.

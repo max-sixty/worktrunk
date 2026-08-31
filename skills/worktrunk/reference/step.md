@@ -6,7 +6,7 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 
 Commit with LLM-generated message:
 
-```
+```console
 $ wt step commit
 ◎ Generating commit message and committing changes... (2 files, +26)
   feat(validation): add input validation utilities
@@ -15,7 +15,7 @@ $ wt step commit
 
 Manual merge workflow with review between steps:
 
-```bash
+```console
 $ wt step commit
 $ wt step squash
 $ wt step rebase
@@ -30,8 +30,8 @@ $ wt step push
 - [`push`](#wt-step-push) — Fast-forward target to current branch
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
-- [`eval`](#wt-step-eval) — [experimental] Evaluate a template expression
-- [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
+- [`eval`](#wt-step-eval) — Evaluate a template expression
+- [`for-each`](#wt-step-for-each) — Run a command in every worktree
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
@@ -54,10 +54,10 @@ Commands:
   push          Fast-forward target to current branch
   diff          Show all changes since branching
   copy-ignored  Copy gitignored files to another worktree
-  eval          [experimental] Evaluate a template expression
-  for-each      [experimental] Run command in each worktree
+  eval          Evaluate a template expression
+  for-each      Run command in each worktree
   promote       [experimental] Swap a branch into the main worktree
-  prune         [experimental] Remove worktrees merged into the default branch
+  prune         Remove worktrees merged into the default branch
   relocate      [experimental] Move worktrees to expected paths
   tether        [experimental] Run a command; kill its whole process tree when its worktree is
                 removed
@@ -105,7 +105,7 @@ Controls what to stage before committing:
 | `tracked` | Stage only modified tracked files |
 | `none` | Don't stage anything, commit only what's already staged |
 
-```bash
+```console
 $ wt step commit --stage=tracked
 ```
 
@@ -120,7 +120,7 @@ stage = "tracked"
 
 Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
-```bash
+```console
 $ wt step commit --dry-run
 ```
 
@@ -200,7 +200,7 @@ Controls what to stage before squashing:
 | `tracked` | Stage only modified tracked files |
 | `none` | Don't stage anything, squash only committed changes |
 
-```bash
+```console
 $ wt step squash --stage=none
 ```
 
@@ -215,7 +215,7 @@ stage = "tracked"
 
 Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
-```bash
+```console
 $ wt step squash --dry-run
 ```
 
@@ -292,7 +292,7 @@ The target is any commit: a branch, a tag, a SHA.
 
 ### Examples
 
-```bash
+```console
 $ wt step rebase            # Rebase onto default branch
 $ wt step rebase develop    # Rebase onto develop
 $ wt step rebase v1.2.0     # Rebase onto a tag
@@ -371,7 +371,7 @@ The target is a branch, and must already be an ancestor of the current branch. O
 
 ### Examples
 
-```bash
+```console
 $ wt step push             # Fast-forward main to current branch
 $ wt step push develop     # Fast-forward develop instead
 $ wt step push --no-ff     # Merge commit instead of a fast-forward
@@ -441,7 +441,7 @@ This is what `wt merge` would include — a single diff against the merge base.
 
 `--branch` diffs another worktree's branch without leaving the current one:
 
-```bash
+```console
 $ wt step diff --branch feature
 ```
 
@@ -451,7 +451,7 @@ The branch must have a checked-out worktree.
 
 Arguments after `--` are forwarded to `git diff`:
 
-```bash
+```console
 $ wt step diff -- --stat
 $ wt step diff -- --name-only
 $ wt step diff -- -- '*.rs'
@@ -459,7 +459,7 @@ $ wt step diff -- -- '*.rs'
 
 The diff is pipeable to tools like `delta`:
 
-```bash
+```console
 $ wt step diff | delta
 ```
 
@@ -467,7 +467,7 @@ $ wt step diff | delta
 
 Equivalent to:
 
-```bash
+```console
 $ cp "$(git rev-parse --git-dir)/index" /tmp/idx
 $ GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
 $ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
@@ -555,7 +555,7 @@ exclude = [".cache/", ".turbo/"]
 
 To copy nothing unless `.worktreeinclude` exists — matching Claude Code desktop, where the file is required — pass `--require-include`:
 
-```bash
+```console
 $ wt step copy-ignored --require-include
 ```
 
@@ -678,8 +678,6 @@ Global Options:
 
 ## wt step eval
 
-[experimental]
-
 Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
 
 All [hook template variables and filters](https://worktrunk.dev/hook/#template-variables) are available.
@@ -688,34 +686,34 @@ All [hook template variables and filters](https://worktrunk.dev/hook/#template-v
 
 Get the port for the current branch:
 
-```bash
+```console
 $ wt step eval '{{ branch | hash_port }}'
 16066
 ```
 
 Use in shell substitution:
 
-```bash
+```console
 $ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
 ```
 
 Combine multiple values:
 
-```bash
+```console
 $ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
 16066,16739
 ```
 
 Use conditionals and filters:
 
-```bash
+```console
 $ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
 List the available template variables with `-v` (alongside the expansion, on stderr):
 
-```bash
+```console
 $ wt step eval -v '{{ branch }}'
 ○ eval template variables:
   branch        = feature/auth-oauth2
@@ -731,7 +729,7 @@ feature/auth-oauth2
 ### Command reference
 
 ```
-wt step eval - [experimental] Evaluate a template expression
+wt step eval - Evaluate a template expression
 
 Prints the result to stdout for use in scripts and shell substitutions.
 
@@ -775,8 +773,6 @@ Global Options:
 
 ## wt step for-each
 
-[experimental]
-
 Run command in each worktree. Executes sequentially with real-time output; continues past command failures.
 
 A summary of successes and failures is shown at the end. A template-expansion error (a malformed `{{ … }}` argument) aborts the whole run; only command failures are tolerated and reported. Context JSON — a flat object of every template variable — is piped to stdin for scripts that need structured data.
@@ -785,14 +781,14 @@ A summary of successes and failures is shown at the end. A template-expansion er
 
 Arguments after `--` are the program and its arguments — run directly, no shell.
 
-```bash
+```console
 $ wt step for-each -- git status --short
 $ wt step for-each -- npm install
 ```
 
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
-```bash
+```console
 $ wt step for-each -- sh -c 'git status | wc -l'
 $ wt step for-each -- sh -c 'echo $HOME && git pull'
 ```
@@ -801,7 +797,7 @@ $ wt step for-each -- sh -c 'echo $HOME && git pull'
 
 Variables substitute into each argv element before exec. See [`wt hook` template variables](https://worktrunk.dev/hook/#template-variables) for the complete list and filters.
 
-```bash
+```console
 $ wt step for-each -- echo 'Branch: {{ branch }}'
 ```
 
@@ -811,14 +807,14 @@ Each element is expanded fresh in every worktree, so `{{ branch }}` is that work
 
 Pull updates in worktrees with upstreams (skips others):
 
-```bash
+```console
 $ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 ### Command reference
 
 ```
-wt step for-each - [experimental] Run command in each worktree
+wt step for-each - Run command in each worktree
 
 Executes sequentially with real-time output; continues past command failures.
 
@@ -867,7 +863,7 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 
 ### Example
 
-```bash
+```console
 # from ~/project (main worktree)
 $ wt step promote feature
 ```
@@ -953,8 +949,6 @@ Global Options:
 
 ## wt step prune
 
-[experimental]
-
 Remove worktrees merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
@@ -967,7 +961,7 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
-```bash
+```console
 $ wt step prune --min-age=0s     # no age guard
 $ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 ```
@@ -980,20 +974,20 @@ $ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 
 Preview what would be removed:
 
-```bash
+```console
 $ wt step prune --dry-run
 ```
 
 Remove all merged worktrees:
 
-```bash
+```console
 $ wt step prune
 ```
 
 ### Command reference
 
 ```
-wt step prune - [experimental] Remove worktrees merged into the default branch
+wt step prune - Remove worktrees merged into the default branch
 
 Usage: wt step prune [OPTIONS]
 
@@ -1047,25 +1041,25 @@ Move worktrees to expected paths. Relocates worktrees whose path doesn't match t
 
 Preview what would be moved:
 
-```bash
+```console
 $ wt step relocate --dry-run
 ```
 
 Move all mismatched worktrees:
 
-```bash
+```console
 $ wt step relocate
 ```
 
 Auto-commit and clobber blockers (never fails):
 
-```bash
+```console
 $ wt step relocate --commit --clobber
 ```
 
 Move specific worktrees:
 
-```bash
+```console
 $ wt step relocate feature bugfix
 ```
 
@@ -1091,7 +1085,7 @@ expected path. Untracked and gitignored files remain at the original location.
 ### Dirty worktrees
 
 Linked worktrees relocate as-is — `git worktree move` carries uncommitted
-changes along. Only the main worktree skips when dirty (its `git checkout`
+changes along. Only the main worktree skips when dirty (its `git switch`
 refuses), unless `--commit` is passed.
 
 ### Skipped worktrees
@@ -1179,13 +1173,13 @@ worktree is gone.
 
 Arguments after `--` are the program and its arguments, run directly, no shell.
 
-```bash
+```console
 $ wt step tether -- npm run dev
 ```
 
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
-```bash
+```console
 $ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
 ```
 
@@ -1193,7 +1187,7 @@ To run the command from a subdirectory, pass the global `-C` flag (teardown
 still watches the worktree root, so a server launched with a relative `-C` is
 torn down with the worktree):
 
-```bash
+```console
 $ wt step tether -C frontend -- npm run dev
 ```
 

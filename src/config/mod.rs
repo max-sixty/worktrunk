@@ -577,9 +577,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let config = CommitGenerationConfig {
             command: Some("llm -m model".to_string()),
             template: Some("template content".to_string()),
-            template_file: None,
             squash_template: None,
-            squash_template_file: None,
             template_append: None,
         };
 

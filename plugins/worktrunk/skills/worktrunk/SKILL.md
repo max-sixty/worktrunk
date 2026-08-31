@@ -1,6 +1,6 @@
 ---
 name: worktrunk
-description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
+description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when working out which worktree a `wt` command will act on, or reaching for the global `-C <path>` to target one; editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
 license: MIT OR Apache-2.0
 compatibility: Requires the `wt` CLI (https://worktrunk.dev)
 ---
@@ -23,6 +23,23 @@ Reference files are synced from [worktrunk.dev](https://worktrunk.dev) documenta
 - **reference/troubleshooting.md**: Troubleshooting for LLM and hooks (Claude-specific)
 
 For command-specific options, run `wt <command> --help`. For configuration, follow the workflows below.
+
+## Which worktree a command acts on
+
+`wt` finds the *repository* from the working directory, and the *worktree* from the command's own arguments. Two rules cover every case:
+
+1. **A command that names a branch already names its worktree.** Worktrees are addressed by branch name, so `wt switch <branch>`, `wt remove <branch>`, `wt step diff --branch <branch>`, and `wt config state marker set --branch <branch>` act on that branch's worktree no matter which worktree you run them from. Every such argument also accepts the worktree's own path, for the cases a branch cannot name — a second checkout of the same branch, or a detached worktree (which `marker` still rejects, since it keys state by branch name).
+2. **`-C <path>` moves the working directory, not the worktree selection.** Reach for it when the repository lookup is what's wrong: a *different* repository; a command that acts on the current worktree and takes no branch argument (`wt merge`, `wt step rebase|squash|push` — their `[TARGET]` is the merge target, not a worktree); or a caller whose working directory isn't inside a repository at all, such as an agent hook the host pins elsewhere.
+
+Layering `-C` on top of a branch argument names the same worktree twice. From inside the `alpha` worktree of a repo that also has `beta`:
+
+```bash
+wt step diff --branch beta                    # ✓ the branch argument selects the worktree
+wt -C ../repo.beta step diff --branch beta    # ✗ says beta twice
+
+wt switch --create beta                       # ✓ --base already defaults to the default branch
+wt -C ../repo switch --create beta            # ✗ -C adds nothing; you are already in that repo
+```
 
 ## Two types of configuration
 

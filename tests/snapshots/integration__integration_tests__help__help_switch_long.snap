@@ -9,6 +9,13 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -28,6 +35,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -65,7 +73,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           
           Without a branch argument, the interactive picker opens and the command runs against the selected worktree — so [1mwt switch -x claude[0m picks a worktree, then launches Claude Code there.[0m
           
-          Supports ]8;;@/hook.md#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m describe the source: the selected base with [1m--create[0m, or the invoking worktree when switching to an existing worktree.[0m
+          Supports ]8;;https://worktrunk.dev/hook/#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m describe the source: the selected base with [1m--create[0m, or the invoking worktree when switching to an existing worktree.[0m
           
           Especially useful with shell aliases:[0m
           
@@ -140,6 +148,9 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 The [2m--create[0m flag creates a new branch from [2m--base[0m — the default branch unless specified. Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
 
+One rule decides the upstream, whatever [2mbranch.autoSetupMerge[0m is set to: a new branch tracks the remote branch it starts from only when the two share a name. Switching to [2morigin/feature[0m shares it, so that branch tracks. [2m--create[0m need not: [2m--create release --base origin/release[0m tracks [2morigin/release[0m, while [2m--create feature --base origin/release[0m — and the bare [2m--base release[0m that resolves to it — gets no upstream. Git's default would have [2mfeature[0m track [2morigin/release[0m, so under [2mpush.default = 
+[2mupstream[0m a bare [2mgit push[0m would push the new work to [2mrelease[0m. Publishing such a branch takes [2mgit push --set-upstream origin <branch>[0m, or git's [2mpush.autoSetupRemote = true[0m set once, after which a bare [2mgit push[0m from the new worktree publishes it and configures its tracking.
+
 [1m[32mCreating worktrees[0m
 
 If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one:
@@ -197,8 +208,8 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
  [2mAlt-o[0m         Open the selected row's PR/MR URL in the browser       
  [2mAlt-r[0m         Refresh the list (pick up worktrees created elsewhere) 
  [2mEsc[0m           Cancel                                                 
- [2mAlt-1[0m–[2mAlt-7[0m   Jump to a preview tab                                  
- [2mTab[0m/[2mShift-Tab[0m Cycle preview tabs forward/backward                    
+ [2mAlt-1[0m–[2mAlt-8[0m   Jump to a preview tab                                  
+ [2mTab[0m/[2mShift-Tab[0m Cycle available preview tabs forward/backward          
  [2mAlt-p[0m         Toggle preview panel                                   
  [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                 
 
@@ -212,13 +223,16 @@ Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktree
 
 [1mPreview tabs:[0m
 
-1. [1mHEAD±[0m — Diff of uncommitted changes
-2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
-3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
-4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
-5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
-6. [1mpr[0m — The selected row's PR/MR, for any row whose branch has one
-7. [1mcomments[0m — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
+1. [1mdiff[0m — One net diff from the comparison base through the current worktree: committed, staged, unstaged, and untracked changes
+2. [1mworking[0m — Staged, unstaged, and untracked changes against [2mHEAD[0m
+3. [1mcommitted[0m — Committed changes since the comparison base
+4. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
+5. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
+6. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2mcommit.generation[0m
+7. [1mpr[0m — The selected row's PR/MR, for any row whose branch has one
+8. [1mcomments[0m — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
+
+The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on [1mdiff[0m for local rows and [1mpr[0m for a PR/MR listed by [2m--prs[0m but not available locally. [2mTab[0m and [2mShift-Tab[0m skip tabs without content; [2mAlt-1[0m through [2mAlt-8[0m open any tab directly. After you choose a tab, that choice stays active while you navigate.
 
 On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every [2mAlt-N[0m accelerator stays visible.
 

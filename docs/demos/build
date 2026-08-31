@@ -7,7 +7,7 @@ Usage:
     ./build docs --only wt-merge    # Build specific demo for docs
     ./build social --only wt-zellij-omnibus --shell  # Debug shell for social demo
 
-Output is written to docs/static/assets/{mode}/{theme}/, ensuring docs and social
+Output is written to docs/public/assets/{mode}/{theme}/, ensuring docs and social
 builds don't overwrite each other. The assets repo mirrors this structure.
 """
 
@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
@@ -35,14 +36,16 @@ from shared import (  # noqa: E402
     DemoSize,
     git,
     prepare_demo_repo,
+    claude_auth_available,
     setup_claude_code_config,
     setup_zellij_config,
     setup_fish_config,
     check_dependencies,
     check_ffmpeg_libass,
     setup_demo_output,
-    record_all_themes,
+    record_theme,
     SIZE_DOCS,
+    SIZE_DOCS_MOBILE,
     SIZE_SOCIAL,
     record_text,
     record_snapshot,
@@ -55,17 +58,35 @@ from shared.validation import (  # noqa: E402
 )
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
-OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
+OUT_DIR = SCRIPT_DIR.parent / "public" / "assets"
 TAPES_DIR = SCRIPT_DIR / "tapes"
 SNAPSHOTS_DIR = SCRIPT_DIR / "snapshots"
 
 # Demos that use TUI or interactive input - not suitable for command snapshots
 TUI_DEMOS = {"wt-switch-picker", "wt-switch", "wt-statusline", "wt-zellij-omnibus"}
+CLAUDE_DEMOS = {"wt-switch", "wt-statusline", "wt-zellij-omnibus"}
 
 
 # =============================================================================
 # Setup Helpers
 # =============================================================================
+
+
+@contextmanager
+def prepared_demo_env(output_name: str, setup_func):
+    """Create a prepared demo environment and remove it after use."""
+    with tempfile.TemporaryDirectory(
+        prefix="wt-demo-", ignore_cleanup_errors=True
+    ) as demo_env_dir:
+        yield _prepare_demo_env(Path(demo_env_dir), output_name, setup_func)
+
+
+def _prepare_demo_env(out_dir: Path, output_name: str, setup_func) -> DemoEnv:
+    """Prepare a demo environment at an existing directory."""
+    setup_demo_output(out_dir)
+    env = DemoEnv(name=output_name, out_dir=out_dir, repo_name="acme")
+    setup_func(env)
+    return env
 
 
 def _add_billing_branch(env: DemoEnv):
@@ -288,11 +309,12 @@ url = "http://localhost:{{ branch | hash_port }}"
 # =============================================================================
 
 # Format: (tape_file, output_name, setup_func)
-# All demos in a mode use that mode's default size.
+# Demos use their mode's default size unless TARGETS provides a named override.
 # Note: setup_func must be a named function (not lambda) for multiprocessing.
 
 DOCS_DEMOS = [
     ("wt-core.tape", "wt-core", prepare_with_hooks),
+    ("wt-core-mobile.tape", "wt-core-mobile", prepare_with_hooks),
     ("wt-switch.tape", "wt-switch", prepare_switch),
     ("wt-list.tape", "wt-list", prepare_with_hooks),
     ("wt-commit.tape", "wt-commit", prepare_merge_demo),
@@ -324,6 +346,7 @@ TARGETS = {
     "docs": {
         "demos": DOCS_DEMOS,
         "size": SIZE_DOCS,
+        "sizes": {"wt-core-mobile": SIZE_DOCS_MOBILE},
         "themes": ["light", "dark"],
     },
     "social": {
@@ -356,24 +379,19 @@ def record_demo(
     if not tape_path.exists():
         raise FileNotFoundError(f"{tape_file} not found")
 
-    # Create fresh environment in temp directory
-    demo_env_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
-    setup_demo_output(demo_env_dir)
-    env = DemoEnv(name=output_name, out_dir=demo_env_dir, repo_name="acme")
-    setup_func(env)
-
-    replacements = build_tape_replacements(env, REPO_ROOT)
-
     if snapshot_mode:
-        output_snap = SNAPSHOTS_DIR / f"{output_name}.snap"
-        record_snapshot(env, tape_path, output_snap, REPO_ROOT)
+        with prepared_demo_env(output_name, setup_func) as env:
+            output_snap = SNAPSHOTS_DIR / f"{output_name}.snap"
+            record_snapshot(env, tape_path, output_snap, REPO_ROOT)
         elapsed = time.monotonic() - t0
         print(f"✓ {output_name}: Snapshot saved ({elapsed:.0f}s)")
         return elapsed
 
     if text_mode:
-        output_txt = mode_out_dir / f"{output_name}.txt"
-        record_text(env, tape_path, output_txt, replacements, REPO_ROOT)
+        with prepared_demo_env(output_name, setup_func) as env:
+            replacements = build_tape_replacements(env, REPO_ROOT)
+            output_txt = mode_out_dir / f"{output_name}.txt"
+            record_text(env, tape_path, output_txt, replacements, REPO_ROOT)
         elapsed = time.monotonic() - t0
         print(f"✓ {output_name}: Text saved ({elapsed:.0f}s)")
         return elapsed
@@ -384,30 +402,42 @@ def record_demo(
         theme_dir.mkdir(parents=True, exist_ok=True)
         output_gifs[theme] = theme_dir / f"{output_name}.gif"
 
-    record_all_themes(
-        env,
-        tape_path,
-        output_gifs,
-        REPO_ROOT,
-        vhs_binary=vhs_binary,
-        size=demo_size,
-    )
+    for theme, output_gif in output_gifs.items():
+        # Every tape mutates its repository. A fresh environment keeps one
+        # theme's commands from changing the starting state of the next theme.
+        with prepared_demo_env(output_name, setup_func) as env:
+            record_theme(
+                env,
+                tape_path,
+                theme,
+                output_gif,
+                REPO_ROOT,
+                vhs_binary=vhs_binary,
+                size=demo_size,
+            )
 
     elapsed = time.monotonic() - t0
 
     # Validate TUI demos with OCR after recording
     if output_name in TUI_CHECKPOINTS:
-        gif_path = output_gifs.get("light", list(output_gifs.values())[0])
-        success, output = validate_tui_demo_verbose(output_name, gif_path)
-        if success:
-            print(f"✓ {output_name}: GIFs saved + validation passed ({elapsed:.0f}s)")
-        else:
+        validation_failures = {}
+        for theme, gif_path in output_gifs.items():
+            success, output = validate_tui_demo_verbose(output_name, gif_path)
+            if not success:
+                validation_failures[theme] = output
+
+        if validation_failures:
             print(f"✓ {output_name}: GIFs saved ({elapsed:.0f}s)")
-            print(f"✗ {output_name}: Validation failed")
-            for line in output.split("\n"):
-                if line.startswith("  "):
-                    print(line)
+            for theme, output in validation_failures.items():
+                print(f"✗ {output_name} ({theme}): Validation failed")
+                for line in output.split("\n"):
+                    if line.startswith("  "):
+                        print(line)
             raise RuntimeError(f"TUI validation failed for {output_name}")
+        print(
+            f"✓ {output_name}: GIFs saved + validation passed: "
+            f"{', '.join(themes)} ({elapsed:.0f}s)"
+        )
     else:
         print(f"✓ {output_name}: GIFs saved: {', '.join(themes)} ({elapsed:.0f}s)")
 
@@ -422,6 +452,7 @@ def record_demo(
 def spawn_debug_shell(env: DemoEnv, starship_config: Path):
     """Spawn an interactive fish shell with the demo environment set up."""
     shell_env = os.environ.copy()
+    shell_env.pop("CLAUDE_CONFIG_DIR", None)
     shell_env.update(
         {
             "HOME": str(env.home),
@@ -503,6 +534,38 @@ Examples:
         print("--only cannot be used with multiple targets")
         return
 
+    selected_claude_demos = sorted(
+        {
+            name
+            for target in args.target
+            for _, name, _ in TARGETS[target]["demos"]
+            if name in CLAUDE_DEMOS and (args.only is None or name == args.only)
+        }
+    )
+    if (
+        selected_claude_demos
+        and not args.shell
+        and not args.snapshot
+        and not claude_auth_available()
+    ):
+        print(
+            "✗ Claude Code authentication is required to record: "
+            f"{', '.join(selected_claude_demos)}",
+            file=sys.stderr,
+        )
+        if sys.platform == "darwin":
+            print(
+                "↳ Run claude auth login, or set CLAUDE_CODE_OAUTH_TOKEN "
+                "or ANTHROPIC_API_KEY",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "↳ Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
     # Check dependencies (VHS is built from source, not required in PATH)
     deps = ["wt", "starship", "zellij"]
     check_dependencies(deps)
@@ -552,6 +615,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
     target_config = TARGETS[target]
     demos = target_config["demos"]
     demo_size = target_config["size"]
+    demo_sizes = target_config.get("sizes", {})
     themes = target_config["themes"]
 
     # Filter demos if --only specified
@@ -577,10 +641,8 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
     # Handle --shell mode (interactive, must be sequential)
     if args.shell:
         tape_file, output_name, setup_func = demos[0]
-        demo_env_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
-        setup_demo_output(demo_env_dir)
-        env = DemoEnv(name=output_name, out_dir=demo_env_dir, repo_name="acme")
-        setup_func(env)
+        debug_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
+        env = _prepare_demo_env(debug_dir, output_name, setup_func)
         print(f"Demo repo: {env.repo}")
         spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
         return []
@@ -600,7 +662,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                 setup_func,
                 mode_out_dir,
                 themes,
-                demo_size,
+                demo_sizes.get(output_name, demo_size),
                 vhs_binary,
                 args.text,
                 args.snapshot,
@@ -629,7 +691,7 @@ def build_target(target: str, args, vhs_binary: str) -> list[str]:
                         setup_func,
                         mode_out_dir,
                         themes,
-                        demo_size,
+                        demo_sizes.get(output_name, demo_size),
                         vhs_binary,
                         args.text,
                         args.snapshot,

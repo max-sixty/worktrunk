@@ -1,0 +1,7 @@
+# Codex desktop environment. Codex Cloud uses .codex/cloud.sh.
+# Project hooks require prior Worktrunk approval and continue in the background.
+version = 1
+name = "Worktrunk"
+
+[setup]
+script = "wt hook post-start"

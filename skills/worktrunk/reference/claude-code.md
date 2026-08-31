@@ -71,15 +71,15 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 The Claude Code, Codex, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
 
-```bash
+```console
 $ wt list
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>Path</b>                 <b>Commit</b>   <b>Age</b>   <b>Message</b>
-@ main             <span class=d>^</span><span class=d>⇡</span>                                    <span class=g>⇡1</span>      .                    <span class=d>33323bc</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
-+ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>        <span class=g>+1</span>                ../repo.feature-api  <span class=d>70343f0</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
-+ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>        <span class=g>+1</span>                ../repo.review-ui    <span class=d>a585d6e</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
-+ wip-docs       <span class=c>?</span> <span class=d>–</span>                                             ../repo.wip-docs     <span class=d>33323bc</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Path                 Commit   Age   Message
+@ main             ^⇡                                    ⇡1      .                    33323bc  1d    Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0  1d    Add REST API endpoints
++ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e  1d    Add dashboard component
++ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc  1d    Initial commit
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead</span>
+○ Showing 4 worktrees, 2 with changes, 2 ahead
 ```
 
 - 🤖 — agent is working
@@ -91,7 +91,7 @@ All four plugins clear the marker when a session ends. A stale marker can remain
 
 Set status markers manually for any workflow:
 
-```bash
+```console
 $ wt config state marker set "🚧"                   # Current branch
 $ wt config state marker set "✅" --branch feature  # Specific branch
 $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
@@ -109,7 +109,7 @@ Activity tracking is not plugin-specific. The plugins above only call `wt` on th
 
 Three things to get right:
 
-- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository fails. Where the host pins the working directory elsewhere, pass the global `-C <worktree>`, which moves both the repository lookup and the branch resolution; `--branch <branch>` names the branch but still needs the working directory to be inside the repository.
+- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository fails. Where the host pins the working directory elsewhere, pass the global `-C <worktree>`, which moves both the repository lookup and the branch resolution. `--branch <branch>` names the branch on its own, but the repository lookup still comes from the working directory — that, not a missing worktree argument, is why a caller pinned outside the repository needs `-C`. Elsewhere, a command that names a branch ([`wt switch`](https://worktrunk.dev/switch/), [`wt remove`](https://worktrunk.dev/remove/), `wt step diff --branch`) already names the worktree it acts on, and `-C` is for reaching a different repository rather than a different worktree.
 - **Don't let a failed marker call fail the session.** Both `set` and `clear` exit non-zero outside a repository, and hosts differ on what a non-zero hook does. Append `|| true` (or the host's equivalent) to every call unless you want that surfaced.
 - **Clear on exit.** A marker set on session start persists until something clears it, so pair every set with a clear on the host's session-end event — and expect the same stale marker as above if the process is killed first.
 

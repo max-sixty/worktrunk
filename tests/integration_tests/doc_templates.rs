@@ -1,6 +1,6 @@
 //! Tests for template examples shown in documentation.
 //!
-//! These tests verify that template expressions documented in docs/content/ behave
+//! These tests verify that template expressions documented in docs/src/content/docs/ behave
 //! as described. This catches operator precedence issues like the one fixed in PR #373
 //! where `{{ 'db-' ~ branch | hash_port }}` was incorrectly documented without parentheses.
 //!
@@ -26,7 +26,7 @@ fn hash_port(s: &str) -> u16 {
 }
 
 // =============================================================================
-// Basic Variables (docs/content/hook.md: Template variables table)
+// Basic Variables (docs/src/content/docs/hook.md: Template variables table)
 // =============================================================================
 
 #[rstest]
@@ -86,7 +86,7 @@ fn test_doc_basic_variables(repo: TestRepo) {
 }
 
 // =============================================================================
-// Sanitize Filter (docs/content/hook.md: Filters table)
+// Sanitize Filter (docs/src/content/docs/hook.md: Filters table)
 // "Replace `/` and `\` with `-`"
 // =============================================================================
 
@@ -141,7 +141,7 @@ fn test_doc_sanitize_filter(repo: TestRepo) {
 }
 
 // =============================================================================
-// Sanitize DB Filter (docs/content/hook.md: Filters table)
+// Sanitize DB Filter (docs/src/content/docs/hook.md: Filters table)
 // "Transform to database-safe identifier ([a-z0-9_], max 48 chars)"
 // =============================================================================
 
@@ -260,7 +260,7 @@ fn test_doc_sanitize_db_truncation(repo: TestRepo) {
 }
 
 // =============================================================================
-// Hash Port Filter (docs/content/hook.md: Filters table)
+// Hash Port Filter (docs/src/content/docs/hook.md: Filters table)
 // "Hash to port 10000-19999"
 // =============================================================================
 
@@ -298,13 +298,13 @@ fn test_doc_hash_port_filter(repo: TestRepo) {
 }
 
 // =============================================================================
-// Concatenation with hash_port (docs/content/tips-patterns.md)
+// Concatenation with hash_port (docs/src/content/docs/tips-patterns.md)
 // CRITICAL: These test the operator precedence issue from PR #373
 // =============================================================================
 
 #[rstest]
 fn test_doc_hash_port_concatenation_precedence(repo: TestRepo) {
-    // From docs/content/tips-patterns.md:
+    // From docs/src/content/docs/tips-patterns.md:
     // "The `'db-' ~ branch` concatenation hashes differently than plain `branch`"
     //
     // The docs show: {{ ('db-' ~ branch) | hash_port }}
@@ -360,7 +360,7 @@ fn test_doc_hash_port_concatenation_precedence(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
-    // From docs/content/hook.md line 176:
+    // From docs/src/content/docs/hook.md line 176:
     // dev = "npm run dev --port {{ (repo ~ '-' ~ branch) | hash_port }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();
@@ -393,7 +393,7 @@ fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_example_docker_postgres(repo: TestRepo) {
-    // From docs/content/tips-patterns.md lines 75-84:
+    // From docs/src/content/docs/tips-patterns.md lines 75-84:
     // docker run ... -p {{ ('db-' ~ branch) | hash_port }}:5432
 
     let repository = Repository::at(repo.root_path()).unwrap();
@@ -431,7 +431,7 @@ fn test_doc_example_docker_postgres(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_example_database_url(repo: TestRepo) {
-    // From docs/content/tips-patterns.md lines 96-101:
+    // From docs/src/content/docs/tips-patterns.md lines 96-101:
     // DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
 
     let repository = Repository::at(repo.root_path()).unwrap();
@@ -459,7 +459,7 @@ fn test_doc_example_database_url(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_example_dev_server(repo: TestRepo) {
-    // From docs/content/hook.md lines 168-170:
+    // From docs/src/content/docs/hook.md lines 168-170:
     // dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();
@@ -486,7 +486,7 @@ fn test_doc_example_dev_server(repo: TestRepo) {
 
 #[rstest]
 fn test_doc_example_worktree_path_sanitize(repo: TestRepo) {
-    // From docs/content/tips-patterns.md line 217:
+    // From docs/src/content/docs/tips-patterns.md line 217:
     // worktree-path = "{{ branch | sanitize }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();

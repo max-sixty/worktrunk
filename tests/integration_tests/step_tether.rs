@@ -134,7 +134,7 @@ fn test_tether_kills_process_group_when_command_exits(repo: TestRepo) {
 }
 
 /// The global `-C <dir>` flag runs the tethered command in that directory —
-/// the canonical way to start a server from a subdirectory (zola in `docs/`,
+/// the canonical way to start a server from a subdirectory (Astro in `docs/`,
 /// a dev server in `frontend/`) given the command runs directly with no shell
 /// to `cd`. The reaper still watches the launch cwd, not `-C`.
 #[rstest]

@@ -170,7 +170,21 @@ pub fn expand_tilde(path: &Path) -> Cow<'_, Path> {
 /// and `WorkingTree::ensure_holds_this_worktree` compares a worktree
 /// registration's recorded path against the directory sitting at it to decide
 /// whether removal may delete that directory.
-pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
+///
+/// On Windows a drive path's result never carries a `\\?\` prefix — a
+/// `VerbatimUNC` share keeps its own — because every caller compares it against
+/// another result of this function. `dunce` strips that
+/// prefix only from paths of 260 characters or fewer, so a deep path and the
+/// short root containing it come back spelled `\\?\C:\…` and `C:\…` — one
+/// `Prefix::VerbatimDisk` component and one `Prefix::Disk`, which
+/// [`Path::starts_with`] reads as unrelated drives. That split made
+/// `wt step copy-ignored` refuse to copy a deep `node_modules` tree into a
+/// worktree it was squarely inside (#3898).
+pub fn canonicalize_with_parents(path: &Path) -> PathBuf {
+    strip_verbatim_disk_prefix(resolve_with_parents(path))
+}
+
+fn resolve_with_parents(path: &Path) -> PathBuf {
     if let Ok(canonical) = canonicalize(path) {
         return canonical;
     }
@@ -194,6 +208,46 @@ pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
         result.push(component);
     }
     result
+}
+
+/// Drop the `\\?\` prefix from a canonicalized drive path. A no-op off Windows.
+///
+/// Only a `VerbatimDisk` prefix is stripped: `\\?\UNC\server\share` names a
+/// share, and cutting the same four characters off it would leave the relative
+/// `UNC\server\share`. Unlike `dunce`, nothing about the path's contents keeps
+/// the prefix — not its length, and not the reserved DOS names (`con`, `aux`,
+/// `com1`) or trailing dots and spaces that `dunce`'s `is_safe_to_strip_unc`
+/// also declines to strip. [`canonicalize_with_parents`] feeds comparisons and
+/// messages, not the legacy APIs those rules protect, and `std::fs` re-applies
+/// a verbatim prefix itself for any path it opens. What that trades is confined
+/// to the message case: `registration_worktree_path` shows its result in
+/// `GitError::WorktreePathNotOurs`, and for a path a reserved component makes
+/// unreachable under the legacy spelling, the reported spelling is one the user
+/// can't `cd` into.
+#[cfg(windows)]
+fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Component, Prefix};
+
+    let verbatim_disk = matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_))
+    );
+    if !verbatim_disk {
+        return path;
+    }
+    // Cut the prefix in UTF-16 rather than slicing a `&str`, so a path `to_str`
+    // can't render is spelled like every other result instead of keeping the
+    // split this function exists to close. `\\?\` is four ASCII characters, so
+    // four UTF-16 units.
+    let stripped: Vec<u16> = path.as_os_str().encode_wide().skip(4).collect();
+    PathBuf::from(OsString::from_wide(&stripped))
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
@@ -597,6 +651,52 @@ mod tests {
         assert_eq!(
             canonical.file_name().unwrap().to_str().unwrap(),
             "nonexistent-test-dir-12345"
+        );
+    }
+
+    /// A path long enough that `dunce` keeps its `\\?\` prefix must still
+    /// compare as a descendant of the short root it sits under — the split that
+    /// made `wt step copy-ignored` refuse a deep `node_modules` tree (#3898).
+    #[test]
+    #[cfg(windows)]
+    fn canonicalize_with_parents_agrees_across_the_verbatim_threshold() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = tmp.path();
+
+        // 260 characters is `dunce`'s cutoff for stripping the prefix; overshoot
+        // it so the deep end is unambiguously on the other side.
+        let mut deep = root.to_path_buf();
+        while deep.as_os_str().len() < 320 {
+            deep.push("nested-dependency-directory");
+        }
+        std::fs::create_dir_all(&deep).expect("create deep tree");
+
+        // Pin the mechanism, so a `dunce` that stopped splitting the two
+        // spellings shows up here rather than leaving the assertion below
+        // passing for a reason it was not written for.
+        let verbatim = |p: &Path| {
+            dunce::canonicalize(p)
+                .expect("canonicalize")
+                .to_string_lossy()
+                .starts_with(r"\\?\")
+        };
+        assert!(verbatim(&deep), "expected dunce to keep the prefix here");
+        assert!(!verbatim(root), "expected dunce to strip the prefix here");
+
+        // The path `ensure_path_within_root` actually checks is a destination
+        // directory that has not been created yet, so ask about a child.
+        let canonical_root = canonicalize_with_parents(root);
+        let canonical_deep = canonicalize_with_parents(&deep.join("not-yet-created"));
+        assert!(
+            !canonical_deep.to_string_lossy().starts_with(r"\\?\"),
+            "expected the deep result to drop the verbatim prefix, got {}",
+            canonical_deep.display()
+        );
+        assert!(
+            canonical_deep.starts_with(&canonical_root),
+            "{} should sit under {}",
+            canonical_deep.display(),
+            canonical_root.display()
         );
     }
 

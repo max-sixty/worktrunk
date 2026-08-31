@@ -18,7 +18,6 @@ pub(crate) mod init;
 pub(crate) mod list;
 pub(crate) mod merge;
 pub(crate) mod picker;
-pub(crate) mod pipeline_spec;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;

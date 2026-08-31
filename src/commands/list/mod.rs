@@ -3,7 +3,9 @@
 //! # Performance
 //!
 //! `wt list` runs multiple git commands per worktree in parallel using Rayon. Performance
-//! depends heavily on git's internal caches, not worktrunk-specific caching.
+//! depends heavily on git's internal caches, and — for the commit-graph-derived commands —
+//! on worktrunk's own on-disk caches, which elide those commands entirely on a warm cache
+//! (see "Worktrunk's Own Caches" below).
 //!
 //! ## Time to First Information
 //!
@@ -55,9 +57,16 @@
 //! For each worktree, we execute:
 //! - `git status --porcelain` - Working tree state (uses index cache)
 //! - `git rev-list --count <base>..<head>` - Ahead/behind counts (uses commit graph)
-//! - `git diff --shortstat HEAD` - Working tree line diffs (uses index + tree objects)
+//! - Working tree line diffs:
+//!   - Without untracked files: `git diff --shortstat --find-renames HEAD`
+//!   - With untracked files: `git ls-files --others`, a temporary index copy plus
+//!     `git add --intent-to-add`, and two `git diff --numstat -z --find-renames HEAD` calls
 //! - `git diff --shortstat <base>...<head>` - Branch line diffs (uses tree objects)
 //! - `git rev-parse <ref>` - Ref resolution (uses ref cache)
+//!
+//! `HEAD±` always enables rename detection because pairing a tracked deletion with an
+//! untracked destination makes a move line-neutral. `main…±` compares committed trees
+//! and continues to use the user's configured rename policy.
 //!
 //! Plus one global command:
 //! - `git worktree list --porcelain` - List all worktrees (uses ref cache)
@@ -91,14 +100,19 @@
 //!    - `git gc` consolidates loose objects into packs
 //!    - More efficient for tree/blob access in diffs
 //!
-//! ## Worktrunk's Only Cache: Default Branch
+//! ## Worktrunk's Own Caches
 //!
-//! Worktrunk caches only the default branch name (main/master) in
+//! The default branch name (main/master) is cached in
 //! `git config worktrunk.default-branch`. The remote HEAD ref (e.g., `origin/HEAD`)
-//! is git's cache; worktrunk reads it but does not set it. All other data is fetched
-//! fresh on each `wt list` invocation.
+//! is git's cache; worktrunk reads it but does not set it. Clear it with
+//! `wt config state default-branch clear`.
 //!
-//! Clear cache with: `wt config state default-branch clear`
+//! A collect also reads and writes the on-disk caches under `.git/wt/cache/`, so some of the
+//! per-worktree git commands above — the ahead/behind counts and the branch line diff — are
+//! what a *cold* cache costs, while `git status` and the working-tree diff run on every
+//! invocation regardless. The authoritative inventory — every directory, its key scheme, and
+//! when an entry goes stale — is the `## Caching` table in [`collect`]; don't restate it
+//! here. Clear those with `wt config state cache clear`.
 //!
 //! ## Performance Characteristics
 //!
@@ -111,7 +125,8 @@
 //! Bottlenecks:
 //! 1. `git status --porcelain` - Slowest when index is cold or many files changed
 //! 2. `git rev-list --count` - Slow without commit graph in repos with deep history
-//! 3. `git diff --shortstat` - Slow for large diffs or when pack files aren't cached
+//! 3. Working tree diff - Slow for large tracked diffs or cold pack files; untracked
+//!    paths also require enumeration, a temporary index write, and two numstat diffs
 //!
 //! Optimization tips:
 //! - Run `git commit-graph write --reachable --changed-paths` to speed up commit counting
@@ -308,7 +323,7 @@ impl SummaryMetrics {
             // may legitimately be named `origin/foo`, so a name-prefix
             // heuristic would misclassify it. See `BranchScope` in
             // `model/item.rs`.
-            match item.kind {
+            match item.kind() {
                 ItemKind::Branch(BranchScope::Remote) => self.remote_branches += 1,
                 _ => self.local_branches += 1,
             }

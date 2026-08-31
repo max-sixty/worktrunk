@@ -52,7 +52,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-▲ repo needs approval to execute 1 command:
+Review 1 command for repo:
 ○ pre-start:
   echo 'hello'
 ✗ Cannot prompt for approval in non-interactive environment

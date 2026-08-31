@@ -19,7 +19,7 @@ use worktrunk::styling::{
 };
 
 use crate::cli::SwitchFormat;
-use crate::commands::command_approval::{announce_batch_approval, prompt_for_batch_approval};
+use crate::commands::command_approval::{announce_batch_approval, prompt_for_batch_review};
 use crate::commands::project_config::{
     ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
 };
@@ -236,7 +236,7 @@ pub fn add_approvals(show_all: bool, yes: bool) -> anyhow::Result<()> {
         announce_batch_approval(&batch, &project_id);
         true
     } else {
-        prompt_for_batch_approval(&batch, &project_id)?
+        prompt_for_batch_review(&batch, &project_id)?
     };
 
     if !approved {

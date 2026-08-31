@@ -59,11 +59,10 @@
 use std::path::PathBuf;
 
 use ansi_str::AnsiStr;
-use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
 use worktrunk::config::ConfigFileKind;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, git_version};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
@@ -331,6 +330,15 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
         return;
     }
 
+    // The collector runs after the command and writes to the same trace. Mark
+    // all of its subprocesses at the source so aggregate profiles can exclude
+    // them without recognizing individual commands or relying on their order.
+    worktrunk::trace::emit::with_diagnostic_context(|| {
+        write_diagnostic(command_line, error_msg);
+    });
+}
+
+fn write_diagnostic(command_line: &str, error_msg: Option<&str>) {
     // Use Repository::current() which honors the -C flag
     let Ok(repo) = Repository::current() else {
         return;
@@ -423,32 +431,6 @@ fn truncate_log(content: &str) -> String {
         .unwrap_or(start);
 
     format!("(log truncated to last ~50KB)\n{}", &content[start..])
-}
-
-/// Get the version reported by `git --version`.
-pub(crate) fn git_version() -> anyhow::Result<String> {
-    let output = Cmd::new("git")
-        .arg("--version")
-        .run()
-        .context("Failed to run git --version")?;
-
-    anyhow::ensure!(output.status.success(), "git --version failed");
-    parse_git_version(&output.stdout)
-}
-
-fn parse_git_version(stdout: &[u8]) -> anyhow::Result<String> {
-    let stdout = std::str::from_utf8(stdout)
-        .context("git --version returned invalid UTF-8")?
-        .trim();
-    let version = stdout
-        .strip_prefix("git version ")
-        .context("git --version returned an unexpected response")?;
-    anyhow::ensure!(
-        !version.is_empty() && !version.contains(['\r', '\n']),
-        "git --version returned an unexpected response"
-    );
-
-    Ok(version.to_string())
 }
 
 /// Render the curated environment variables ([`DIAGNOSTIC_ENV_VARS`]) plus git's
@@ -631,27 +613,6 @@ mod tests {
     #[test]
     fn test_render_trace_profile_none_without_records() {
         assert!(render_trace_profile("not a trace line\nanother line\n").is_none());
-    }
-
-    #[test]
-    fn test_parse_git_version_requires_standard_single_line_output() {
-        assert_eq!(
-            parse_git_version(b"git version 2.47.1\n").unwrap(),
-            "2.47.1"
-        );
-        assert_eq!(
-            parse_git_version(b"git version 2.39.5 (Apple Git-154)\n").unwrap(),
-            "2.39.5 (Apple Git-154)"
-        );
-
-        for malformed in [
-            b"2.47.1".as_slice(),
-            b"git version \n",
-            b"git version 2.47.1\nextra",
-            b"git version 2.\xff",
-        ] {
-            assert!(parse_git_version(malformed).is_err());
-        }
     }
 
     #[test]

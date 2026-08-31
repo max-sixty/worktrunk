@@ -129,7 +129,7 @@ use crate::output::print_json;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
-use super::list::model::{BranchScope, ItemKind, ListItem};
+use super::list::model::{BranchScope, ListItem};
 use super::list::progressive::RenderTarget;
 use super::list::render::PLACEHOLDER;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -595,8 +595,12 @@ impl AltXRemover {
                 layout.as_ref(),
             ) {
                 (Some(handle), Some(layout)) => {
-                    let (branch_line, branch_local) =
-                        build_morph_branch_row(layout, &handle.item, default_branch.as_deref());
+                    let (branch_line, branch_local) = build_morph_branch_row(
+                        layout,
+                        &handle.item,
+                        &branch,
+                        default_branch.as_deref(),
+                    );
                     Some(MorphSlots {
                         rendered: Arc::clone(&handle.rendered),
                         morphed: Arc::clone(&handle.morphed),
@@ -816,10 +820,11 @@ struct MorphRevert {
 fn build_morph_branch_row(
     layout: &crate::commands::list::layout::LayoutConfig,
     worktree_item: &ListItem,
+    branch: &str,
     default_branch: Option<&str>,
 ) -> (String, LocalContent) {
     let mut branch_item = worktree_item.clone();
-    branch_item.kind = ItemKind::Branch(BranchScope::Local);
+    branch_item.reclassify_as_branch(BranchScope::Local, branch.to_string());
     branch_item.status_symbols = Default::default();
     branch_item.refresh_status_symbols(default_branch);
     let line = layout
@@ -1418,8 +1423,9 @@ impl PipelineFactory {
         // the skeleton handler's inventory reads all share this one snapshot.
         let spawn_repo = if rebuild_repo {
             // A refresh recomputes previews too, not just the row inventory.
-            // The in-memory preview cache is keyed by `(branch, mode)` with no
-            // SHA — the working-tree diff has no stable hash to key on — so a
+            // The in-memory preview cache is keyed by `(row identity, mode)`
+            // with no content signature — the working-tree diff has no stable
+            // hash to key on — so a
             // warm entry outlives the branch's commits or working tree moving
             // and would re-serve a stale diff / log / summary. `refresh`
             // supersedes the prior spawn's still-in-flight producers, rebinds
@@ -1670,7 +1676,7 @@ pub fn handle_picker(
         _ => (80, 24),
     };
 
-    // Reset the preview tab to working-tree and select the layout from the
+    // Reset the preview tab to the complete diff and select the layout from the
     // terminal size.
     let state = PreviewState::new(PreviewLayout::for_dimensions(
         term_width as f64,
@@ -1684,7 +1690,8 @@ pub fn handle_picker(
     // and `root()`, and is also short-circuited when `collect::collect` calls
     // `repo.url_template()` → `load_project_config()` → `project_config_path()`
     // (which runs `prewarm_info` again — now a cache hit).
-    let _ = repo.current_worktree().prewarm_info();
+    let current_worktree = repo.current_worktree();
+    let _ = current_worktree.prewarm_info();
 
     // Preview cache is created up-front so the speculative first-item
     // preview can run in parallel with `collect::collect` below. Tasks
@@ -1714,20 +1721,25 @@ pub fn handle_picker(
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
     // Speculative warm-up: the picker sorts the current worktree first, and
-    // the default tab (WorkingTree = `git diff HEAD` in that worktree) is
-    // what skim will render first. Kicking this off before `collect::collect`
-    // overlaps preview compute with list collection.
+    // the default tab (UnifiedDiff = comparison base through the worktree,
+    // including untracked files) is what skim will render first. Kicking this
+    // off before `collect::collect` overlaps preview compute with list
+    // collection.
     // The real spawn later skips this key via `contains_key`.
-    if let (Ok(Some(branch)), Ok(path)) = (
-        repo.current_worktree().branch(),
-        repo.current_worktree().root(),
+    if let (Ok(Some(branch)), Ok(path), Ok(Some(head))) = (
+        current_worktree.branch(),
+        current_worktree.root(),
+        current_worktree.head_sha(),
     ) {
-        use super::list::model::{ItemKind, ListItem, WorktreeData};
-        let mut item = ListItem::new_branch(String::new(), branch);
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path,
-            ..Default::default()
-        }));
+        use super::list::model::{ListItem, WorktreeData};
+        // UnifiedDiff resolves its comparison base from the row's HEAD. An
+        // empty placeholder would let this speculative producer cache an
+        // error before collection's real row gets a chance to fill the same
+        // key, so the warm-up only runs with a resolved commit.
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(&path, Some(&branch), &head),
+            WorktreeData::default(),
+        );
         // num_items doesn't matter for Right (dims independent of it); for
         // Down it only affects height, which doesn't alter pager wrapping.
         let dims = state
@@ -1736,7 +1748,7 @@ pub fn handle_picker(
         orchestrator.spawn_preview(
             &orchestrator.generation(),
             Arc::new(item),
-            PreviewMode::WorkingTree,
+            PreviewMode::UnifiedDiff,
             dims,
         );
     }
@@ -1984,10 +1996,10 @@ pub fn handle_picker(
         .color("fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108")
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
-            // Preview-tab switching (alt-1..alt-7 jump to a tab; tab / shift-tab
+            // Preview-tab switching (alt-1..alt-8 jump to a tab; tab / shift-tab
             // cycle) is installed natively below via `install_preview_tab_keybindings`
             // rather than here — those keys run Rust callbacks, not shell commands.
-            // Bare digits 1-7 stay unbound so they flow to the query input (a PR
+            // Bare digits 1-8 stay unbound so they flow to the query input (a PR
             // number, or digits within a branch name).
             //
             // Create new worktree with query as branch name (alt-c for "create")
@@ -2197,12 +2209,12 @@ pub fn handle_picker(
     Ok(())
 }
 
-/// Install the preview-tab switches into skim's keymap: alt-1…alt-7 jump to a
+/// Install the preview-tab switches into skim's keymap: alt-1…alt-8 jump to a
 /// tab, tab / shift-tab cycle forward / backward.
 ///
 /// skim's string bind API only maps keys to its built-in actions, so these go
-/// in as `Action::Custom` callbacks that set the process-wide
-/// [`PreviewStateData`] mode and return `Event::RunPreview` to repaint. They're
+/// in as `Action::Custom` callbacks that update [`PreviewStateData`] and return
+/// `Event::RunPreview` to repaint. They're
 /// native rather than `execute-silent` shell commands, so they behave
 /// identically everywhere — the previous `echo`/`tr`/`mv` keybind bodies ran
 /// through skim's shell, which on Windows is cmd.exe and has neither `tr` nor
@@ -2219,19 +2231,21 @@ fn install_preview_tab_keybindings(keymap: &mut skim::binds::KeyMap) {
     // alt-N jumps to tab N (1-indexed, matching PreviewMode's discriminant).
     let switch_to = |mode: PreviewMode| {
         Action::Custom(ActionCallback::new_sync(move |_app| {
-            PreviewStateData::set_mode(mode);
+            PreviewStateData::select_mode(mode);
             Ok(vec![Event::RunPreview])
         }))
     };
-    for digit in 1..=7u8 {
+    for digit in 1..=8u8 {
         if let Ok(key) = parse_key(&format!("alt-{digit}")) {
             keymap.insert(key, vec![switch_to(PreviewMode::from_u8(digit))]);
         }
     }
 
     let cycle = |forward: bool| {
-        Action::Custom(ActionCallback::new_sync(move |_app| {
-            PreviewStateData::rotate(forward);
+        Action::Custom(ActionCallback::new_sync(move |app| {
+            if app.item_list.selected().is_some() {
+                PreviewStateData::request_cycle(forward);
+            }
             Ok(vec![Event::RunPreview])
         }))
     };
@@ -2517,7 +2531,10 @@ fn switch_pipeline_repo(repo: &Repository, is_recovered: bool) -> anyhow::Result
 
 #[cfg(test)]
 pub mod tests {
-    use super::items::{LocalCheckout, LocalContent, PickerRow, worktree_output_token};
+    use super::items::{
+        LocalCheckout, LocalContent, PickerRow, PickerRowId, PickerRowSubject,
+        worktree_output_token,
+    };
     use super::{
         AltXRemover, PickerAction, RemovalEffect, RemoveTarget, drain_stashed_warnings,
         install_preview_tab_keybindings, install_shortcut_keybindings, parse_removal_target,
@@ -2525,7 +2542,7 @@ pub mod tests {
         resolve_shortcut_branch, resolve_shortcut_url, summary_command_and_hint,
         switch_pipeline_repo,
     };
-    use crate::commands::list::model::{BranchScope, ItemKind, ListItem, WorktreeData};
+    use crate::commands::list::model::{BranchScope, ListItem, WorktreeData};
     use crate::commands::worktree::RemovalPlan;
     use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
@@ -2620,7 +2637,7 @@ pub mod tests {
         let mut keymap = KeyMap::default();
         install_preview_tab_keybindings(&mut keymap);
 
-        let mut specs: Vec<String> = (1..=7).map(|d| format!("alt-{d}")).collect();
+        let mut specs: Vec<String> = (1..=8).map(|d| format!("alt-{d}")).collect();
         specs.extend(["tab", "btab", "shift-btab", "shift-tab"].map(String::from));
         for spec in specs {
             let key = parse_key(&spec).expect("known key spec parses");
@@ -3119,10 +3136,7 @@ pub mod tests {
             rendered: Arc::new(Mutex::new(String::new())),
             branch_name: branch_name.to_string(),
             output_token,
-            preview_cache: Arc::new(dashmap::DashMap::new()),
-            pr_status,
-            notifier: super::preview_notify::PreviewNotifier::detached(),
-            local: Some(LocalCheckout {
+            subject: PickerRowSubject::Local(LocalCheckout {
                 item,
                 demand: super::preview_orchestrator::PreviewDemand::new(),
                 spawn_gen: super::preview_orchestrator::SpawnGeneration::default(),
@@ -3131,28 +3145,30 @@ pub mod tests {
                 local_content: Arc::new(Mutex::new(LocalContent::default())),
                 morphed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             }),
+            preview_cache: Arc::new(dashmap::DashMap::new()),
+            pr_status,
+            notifier: super::preview_notify::PreviewNotifier::detached(),
         }) as Arc<dyn SkimItem>
     }
 
     /// Build a `PickerRow` standing in for a detached-worktree row.
     fn detached_picker_item(path: &Path) -> Arc<dyn SkimItem> {
-        let mut item = ListItem::new_branch("abc123".to_string(), "(detached)".to_string());
-        item.branch = None;
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: path.to_path_buf(),
-            detached: true,
-            ..Default::default()
-        }));
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, None, "abc123"),
+            WorktreeData {
+                detached: true,
+                ..Default::default()
+            },
+        );
         picker_item("(detached)", item)
     }
 
     /// Build a `PickerRow` standing in for a branched-worktree row.
     fn branched_picker_item(branch: &str, path: &Path) -> Arc<dyn SkimItem> {
-        let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: path.to_path_buf(),
-            ..Default::default()
-        }));
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some(branch), "abc123"),
+            WorktreeData::default(),
+        );
         picker_item(branch, item)
     }
 
@@ -3180,11 +3196,10 @@ pub mod tests {
         Arc<Mutex<String>>,
         Arc<std::sync::atomic::AtomicBool>,
     ) {
-        let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: path.to_path_buf(),
-            ..Default::default()
-        }));
+        let item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new(path, Some(branch), "abc123"),
+            WorktreeData::default(),
+        );
         let item_arc = Arc::new(item);
         let rendered = Arc::new(Mutex::new(format!("+ {branch}")));
         let local_content = Arc::new(Mutex::new(LocalContent::default()));
@@ -3195,10 +3210,7 @@ pub mod tests {
             rendered: Arc::clone(&rendered),
             branch_name: branch.to_string(),
             output_token: worktree_output_token(&item_arc, branch),
-            preview_cache: Arc::new(dashmap::DashMap::new()),
-            pr_status: Arc::new(Mutex::new(None)),
-            notifier: super::preview_notify::PreviewNotifier::detached(),
-            local: Some(LocalCheckout {
+            subject: PickerRowSubject::Local(LocalCheckout {
                 item: Arc::clone(&item_arc),
                 demand: super::preview_orchestrator::PreviewDemand::new(),
                 spawn_gen: super::preview_orchestrator::SpawnGeneration::default(),
@@ -3207,6 +3219,9 @@ pub mod tests {
                 local_content: Arc::clone(&local_content),
                 morphed: Arc::clone(&morphed),
             }),
+            preview_cache: Arc::new(dashmap::DashMap::new()),
+            pr_status: Arc::new(Mutex::new(None)),
+            notifier: super::preview_notify::PreviewNotifier::detached(),
         });
         let token = row.output().to_string();
 
@@ -3488,7 +3503,7 @@ pub mod tests {
 
     /// A refresh (`alt-r`, `spawn(true)`) drops the warm in-memory preview cache
     /// so each rebuilt row recomputes against the fresh repo; the initial spawn
-    /// (`spawn(false)`) keeps it warm. The probe entry is keyed under a branch
+    /// (`spawn(false)`) keeps it warm. The probe entry uses a branch-ref identity
     /// with no row, so the background precompute never re-fills it — the entry's
     /// fate is the clear alone, not a race with recompute.
     #[test]
@@ -3498,7 +3513,13 @@ pub mod tests {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let factory = test_factory(repo);
-        let ghost = ("ghost-branch".to_string(), PreviewMode::WorkingTree);
+        let ghost = (
+            PickerRowId::local(&ListItem::new_branch(
+                "0000000".to_string(),
+                "ghost-branch".to_string(),
+            )),
+            PreviewMode::WorkingTree,
+        );
 
         // Initial spawn (`false`) preserves warm previews.
         factory
@@ -4194,11 +4215,10 @@ pub mod tests {
     fn test_build_morph_branch_row() {
         use ansi_str::AnsiStr;
 
-        let mut worktree_item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        worktree_item.kind = ItemKind::Worktree(Box::new(WorktreeData {
-            path: Path::new("/tmp/wt.feature").to_path_buf(),
-            ..Default::default()
-        }));
+        let worktree_item = ListItem::new_worktree(
+            worktrunk::git::WorktreeRef::new("/tmp/wt.feature", Some("feature"), "abc123"),
+            WorktreeData::default(),
+        );
         let layout = crate::commands::list::layout::calculate_layout_with_width(
             std::slice::from_ref(&worktree_item),
             &crate::commands::list::columns::all_tasks(),
@@ -4215,7 +4235,8 @@ pub mod tests {
             },
         );
 
-        let (line, local) = super::build_morph_branch_row(&layout, &worktree_item, Some("main"));
+        let (line, local) =
+            super::build_morph_branch_row(&layout, &worktree_item, "feature", Some("main"));
         let plain = line.ansi_strip();
         assert!(
             plain.trim_start().starts_with('/'),
@@ -4233,7 +4254,7 @@ pub mod tests {
             local,
             LocalContent::from_item(&{
                 let mut b = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-                b.kind = ItemKind::Branch(BranchScope::Local);
+                b.reclassify_as_branch(BranchScope::Local, "feature".into());
                 b
             }),
             "the morphed row's diff signals are the branch's (working_tree empty)"

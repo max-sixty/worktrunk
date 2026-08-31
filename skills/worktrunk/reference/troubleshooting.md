@@ -35,13 +35,11 @@ Common issues:
 3. Check TOML syntax: `cat ~/.config/worktrunk/config.toml`
 4. Look for validation errors (path must be relative, not absolute)
 
-### Template conflicts
+### Template config errors
 
-Check for mutually exclusive options:
-- `template` and `template-file` cannot both be set
-- `squash-template` and `squash-template-file` cannot both be set
-
-If a template file is used, verify it exists at the specified path.
+Only inline `template` and `squash-template` values are supported. If the
+config still uses the retired `template-file` or `squash-template-file` keys,
+paste each file's contents into the corresponding inline setting.
 
 ## Hooks
 

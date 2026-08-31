@@ -10,7 +10,7 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
-```bash
+```console
 # Plain git worktree workflow
 $ git worktree add -b feature-branch ../myapp-feature main
 $ cd ../myapp-feature
@@ -23,7 +23,7 @@ $ git branch -d feature-branch
 
 Worktrunk automates the full lifecycle:
 
-```bash
+```console
 $ wt switch --create feature-branch  # Creates worktree, runs setup hooks
 # ...work...
 $ wt merge                            # Merges into default branch, cleans up
@@ -59,7 +59,7 @@ Not natively — stacked-branch workflows are a large design space, so Worktrunk
 
 Stash the changes, create the worktree, then pop:
 
-```bash
+```console
 $ git stash push -u           # -u also stashes untracked files
 $ wt switch --create feature  # new branch off the default branch
 $ git stash pop               # changes reappear in the new worktree
@@ -138,7 +138,7 @@ Fish and Nushell wrappers live at a path named after the command, so install wri
 
 ### 4. Metadata in `.git/` (automatic)
 
-Worktrunk stores small amounts of cache and log data in the repository's `.git/` directory:
+Worktrunk stores repository state, caches, and logs under `.git/`:
 
 | Location | Purpose | Created by |
 |----------|---------|------------|
@@ -155,11 +155,15 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all worktrunk data — config keys, caches, markers, hints, variables, logs, and stale trash.
+**To remove:** `wt config state clear` removes all repository data: config keys, caches, markers, hints, variables, logs, and stale trash.
+
+### 5. Temporary files (automatic)
+
+Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index-*`. `wt list`, `wt list statusline`, `wt step diff`, `wt step commit --dry-run`, and `wt switch` use them to inspect staged or working-tree state without changing the real index. `wt list` also creates a `$TMPDIR/worktrunk-list-objects-*` directory so its merge probes do not add unreachable objects to the repository. When the system temp directory is unavailable, both fall back to Git's metadata: `worktrunk-list-objects-*` under the Git common directory and `worktrunk-temp-index-*` under the worktree's Git directory. A normal exit removes these files and directories; an interrupted process can leave one behind for manual cleanup.
 
 ### What Worktrunk does NOT create
 
-- No files outside `.git/`, config directories, or worktree directories
+- No files outside `.git/`, config directories, worktree directories, or the system temporary directory
 - No global git hooks
 - No modifications to `~/.gitconfig`
 - No long-running background processes or daemons
@@ -215,6 +219,7 @@ User hooks and user aliases don't require approval (you defined them). Commands 
 
 ### Example approval prompt
 
+```console
 ▲ repo needs approval to execute 3 commands:
 
 ○ pre-start install:
@@ -225,6 +230,7 @@ User hooks and user aliases don't require approval (you defined them). Commands 
   echo 'PORT={{ branch | hash_port }}' > .env.local
 
 ❯ Allow and remember? [y/N]
+```
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -234,7 +240,7 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
-```bash
+```console
 # Recent commands
 $ tail -5 .git/wt/logs/commands.jsonl | jq .
 
@@ -268,9 +274,11 @@ Confirm it with `wt config alias dry-run <name>`: if the value is already substi
 
 To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](https://worktrunk.dev/extending/#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.
 
-## Installation fails with C compilation errors
+## What system dependencies are required?
 
-Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
+Worktrunk requires Git 2.43 or newer.
+
+Installing with Cargo and the default features also requires a C99 compiler for bash syntax highlighting. If tree-sitter or C compilation fails (C99 mode, `le16toh` undefined), install without syntax highlighting:
 
 ```bash
 cargo install worktrunk --no-default-features --features cli

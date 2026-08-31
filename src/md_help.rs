@@ -85,7 +85,10 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
         // HTML comments are expansion markers for web docs (see readme_sync.rs) and
         // don't render. A `<!-- wt list … -->` marker tags the captured `wt list`
         // output that immediately follows, so the next code block is chopped (below).
-        if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+        // Only outside a fence: inside one the same text is content the block is
+        // showing, and the picker's `pr`/comments panes render arbitrary forge
+        // markdown, where a fenced HTML sample would otherwise lose the line.
+        if !in_code_block && trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
             let inner = trimmed
                 .trim_start_matches("<!--")
                 .trim_end_matches("-->")
@@ -554,7 +557,7 @@ mod tests {
     fn test_render_inline_formatting_strips_links() {
         assert_eq!(render_inline_formatting("[text](url)"), "text");
         assert_eq!(
-            render_inline_formatting("See [wt hook](@/hook.md) for details"),
+            render_inline_formatting("See [wt hook](/hook/) for details"),
             "See wt hook for details"
         );
     }
@@ -624,7 +627,7 @@ mod tests {
         assert_snapshot!(mixed, @"text [2mcode[0m more [1mbold[0m end");
 
         // Backticks inside link text
-        let link_code = render_inline_formatting("See [`wt hook`](@/hook.md) for details");
+        let link_code = render_inline_formatting("See [`wt hook`](/hook/) for details");
         assert_snapshot!(link_code, @"See [2mwt hook[0m for details");
 
         // Unclosed backtick
@@ -660,7 +663,7 @@ mod tests {
         // header's own style covers the whole line (no literal backticks, no
         // mid-line ANSI reset). Real case: `### Command log (`commands.jsonl`)`
         // on the `wt config state logs` page.
-        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](@/x.md)";
+        let md = "### `--stage`\n#### Run `wt merge`\n## See [the docs](/x/)";
         let result = render_markdown_in_help(md);
         assert_snapshot!(result, @"
         [32m--stage[0m
@@ -717,6 +720,17 @@ mod tests {
     fn test_render_markdown_in_help_html_comment() {
         let result = render_markdown_in_help("<!-- comment -->\nvisible");
         assert_snapshot!(result, @"visible");
+    }
+
+    #[test]
+    fn test_html_comment_inside_a_code_block_is_content() {
+        // Forge markdown can contain fenced HTML samples. A comment inside the
+        // fence is content even when it matches a docs expansion marker.
+        let result = render_markdown_flush("```html\n<!-- wt list -->\n<p>body</p>\n```", None);
+        assert_snapshot!(result, @"
+        [2m<!-- wt list -->[0m
+        [2m<p>body</p>[0m
+        ");
     }
 
     #[test]

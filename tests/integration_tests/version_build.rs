@@ -19,10 +19,10 @@
 //! mechanism directly: forbid `env!` on any build-script-provided `VERGEN_*`
 //! variable, since none are guaranteed to exist on the crates.io archive.
 
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use crate::common::source_scan::visit_files;
 use path_slash::PathExt as _;
 
 #[test]
@@ -30,7 +30,15 @@ fn vergen_env_vars_are_read_optionally() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
     let mut violations = Vec::new();
-    scan_directory(&src_dir, &src_dir, &mut violations);
+    let scanned = visit_files(&src_dir, "rs", "vergen scan", &mut |path, contents| {
+        check_file(path, contents, &src_dir, &mut violations)
+    });
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
 
     assert!(
         violations.is_empty(),
@@ -42,24 +50,7 @@ fn vergen_env_vars_are_read_optionally() {
     );
 }
 
-fn scan_directory(dir: &Path, src_dir: &Path, violations: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_directory(&path, src_dir, violations);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            check_file(&path, src_dir, violations);
-        }
-    }
-}
-
-fn check_file(path: &Path, src_dir: &Path, violations: &mut Vec<String>) {
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
+fn check_file(path: &Path, contents: &str, src_dir: &Path, violations: &mut Vec<String>) {
     let relative = path.strip_prefix(src_dir).unwrap_or(path).to_slash_lossy();
 
     for (i, line) in contents.lines().enumerate() {

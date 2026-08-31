@@ -1,7 +1,8 @@
 //! Unified PR/MR reference resolution.
 //!
-//! This module provides a trait-based architecture for resolving GitHub PRs, Gitea PRs,
-//! GitLab MRs, and Azure DevOps PRs to local branches. All platforms follow the same workflow:
+//! This module resolves GitHub PRs, Gitea PRs, GitLab MRs, and Azure DevOps PRs
+//! to local branches. [`ForgeKind`] is the forge identity throughout; all
+//! platforms follow the same workflow:
 //!
 //! 1. Parse `pr:<number>` or `mr:<number>` syntax
 //! 2. Fetch metadata from the platform API
@@ -12,11 +13,10 @@
 //!
 //! ```no_run
 //! use worktrunk::git::Repository;
-//! use worktrunk::git::remote_ref::{GitHubProvider, RemoteRefProvider};
+//! use worktrunk::git::{ForgeKind, remote_ref};
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let repo = Repository::at(".")?;
-//! let provider = GitHubProvider;
-//! let info = provider.fetch_info(123, &repo)?;
+//! let info = remote_ref::fetch_info(ForgeKind::GitHub, 123, &repo)?;
 //! println!("PR #{}: {}", info.number, info.title);
 //! # Ok(())
 //! # }
@@ -32,7 +32,7 @@
 //! way that line stays accurate across locale, CLI version, and API rewording in
 //! a way our paraphrase of it would not.
 //!
-//! A provider writes a message of its own only where the CLI structurally cannot
+//! A backend writes a message of its own only where the CLI structurally cannot
 //! report the condition:
 //!
 //! - **GitHub's 404** answers about an owner/repo that is *our* choice — from
@@ -48,10 +48,10 @@
 //! with the status dropped, and cost a `starts_with("401")` test against prose
 //! to select it.
 //!
-//! Where a provider still classifies, it keys on structure and falls through to
+//! Where a backend still classifies, it keys on structure and falls through to
 //! forwarding when the structure isn't there: `gh` puts a `status` field in its
 //! error body, while `glab` puts the status only inside the message text, so
-//! there is nothing there to key on. Gitea is the one provider whose response
+//! there is nothing there to key on. Gitea is the one backend whose response
 //! *shape* is the error channel at all, because `tea api` copies the body to
 //! stdout and exits 0 whatever the status — see [`gitea`].
 //!
@@ -71,7 +71,7 @@
 //!
 //! Uses `tea api repos/{owner}/{repo}/pulls/<number>`. Unlike `gh`, `tea`'s
 //! `{owner}`/`{repo}` template expansion depends on local repo context, so the
-//! provider resolves owner/repo from a matching Gitea remote and passes a
+//! backend resolves owner/repo from a matching Gitea remote and passes a
 //! pre-expanded path.
 //!
 //! ## Azure DevOps
@@ -86,10 +86,6 @@ pub mod github;
 pub mod gitlab;
 mod info;
 
-pub use azure::AzureDevOpsProvider;
-pub use gitea::GiteaProvider;
-pub use github::GitHubProvider;
-pub use gitlab::GitLabProvider;
 pub use info::{PlatformData, RemoteRefInfo};
 
 use std::io::ErrorKind;
@@ -104,36 +100,33 @@ use crate::git::url::authority_host;
 use crate::git::{ForgeKind, GitRepoInfo, GitRepoProvider, RefType, Repository};
 use crate::shell_exec::Cmd;
 
-/// Provider trait for platform-specific PR/MR operations.
-///
-/// Each platform (GitHub, Gitea, GitLab, Azure DevOps) implements this trait to
-/// provide unified access to PR/MR metadata and ref paths.
-pub trait RemoteRefProvider {
-    /// The forge whose API and ref namespace this provider implements.
-    fn forge_kind(&self) -> ForgeKind;
-
-    /// The reference type this provider handles.
-    fn ref_type(&self) -> RefType {
-        self.forge_kind().ref_type()
+/// Fetch PR/MR metadata through the forge's CLI.
+pub fn fetch_info(
+    forge: ForgeKind,
+    number: u32,
+    repo: &Repository,
+) -> anyhow::Result<RemoteRefInfo> {
+    match forge {
+        ForgeKind::GitHub => github::fetch_pr_info(number, repo),
+        ForgeKind::GitLab => gitlab::fetch_mr_info(number, repo),
+        ForgeKind::Gitea => gitea::fetch_pr_info(number, repo),
+        ForgeKind::AzureDevOps => azure::fetch_pr_info(number, repo),
     }
+}
 
-    /// Fetch ref information from the platform API.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The CLI tool is not installed or not authenticated
-    /// - The ref doesn't exist
-    /// - The JSON response is malformed
-    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo>;
-
-    /// Get the git ref path for this ref (e.g., "pull/123/head" or "merge-requests/42/head").
-    fn ref_path(&self, number: u32) -> String;
-
-    /// Get the full tracking ref (e.g., "refs/pull/123/head").
-    fn tracking_ref(&self, number: u32) -> String {
-        format!("refs/{}", self.ref_path(number))
+/// Get the fetch ref path for a forge PR/MR.
+pub fn ref_path(forge: ForgeKind, number: u32) -> String {
+    match forge {
+        ForgeKind::GitLab => format!("merge-requests/{number}/head"),
+        ForgeKind::GitHub | ForgeKind::Gitea | ForgeKind::AzureDevOps => {
+            format!("pull/{number}/head")
+        }
     }
+}
+
+/// Get the full tracking ref for a forge PR/MR.
+pub fn tracking_ref(forge: ForgeKind, number: u32) -> String {
+    format!("refs/{}", ref_path(forge, number))
 }
 
 pub(super) struct CliApiRequest<'a> {
@@ -179,9 +172,9 @@ pub(super) fn cli_api_error_details(output: &Output) -> String {
 /// Wrap a failed forge-CLI invocation, rendering `message` above the CLI's own
 /// output in a gutter.
 ///
-/// Every provider's failure path ends here, and forwarding is the default:
+/// Every backend's failure path ends here, and forwarding is the default:
 /// `message` names the request we made ("gh api failed for PR #123") and the
-/// gutter carries the CLI's verdict on it. A provider with something of its own
+/// gutter carries the CLI's verdict on it. A backend with something of its own
 /// to say — the cases in the module docs — passes it as `message` rather than
 /// bailing, so its words are added to the CLI's rather than substituted for
 /// them.
@@ -291,22 +284,6 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
             suggested_url,
         }
     })
-}
-
-/// Check if a local branch is tracking a specific remote ref.
-///
-/// Returns `Some(true)` if the branch is configured to track the given ref.
-/// Returns `Some(false)` if the branch exists but tracks something else (or nothing).
-/// Returns `None` if the branch doesn't exist.
-pub fn branch_tracks_ref(
-    repo_root: &Path,
-    branch: &str,
-    provider: &dyn RemoteRefProvider,
-    number: u32,
-    expected_remote: Option<&str>,
-) -> Option<bool> {
-    let expected_ref = provider.tracking_ref(number);
-    crate::git::branch_tracks_ref(repo_root, branch, &expected_ref, expected_remote)
 }
 
 /// A forge PR/MR web URL decomposed into its parts.
@@ -554,18 +531,17 @@ mod tests {
     }
 
     #[test]
-    fn test_ref_paths() {
-        let gh = GitHubProvider;
-        assert_eq!(gh.ref_path(123), "pull/123/head");
-        assert_eq!(gh.tracking_ref(123), "refs/pull/123/head");
-
-        let ge = GiteaProvider;
-        assert_eq!(ge.ref_path(7), "pull/7/head");
-        assert_eq!(ge.tracking_ref(7), "refs/pull/7/head");
-
-        let gl = GitLabProvider;
-        assert_eq!(gl.ref_path(42), "merge-requests/42/head");
-        assert_eq!(gl.tracking_ref(42), "refs/merge-requests/42/head");
+    fn tracking_refs_follow_forge_namespaces() {
+        assert_eq!(tracking_ref(ForgeKind::GitHub, 123), "refs/pull/123/head");
+        assert_eq!(tracking_ref(ForgeKind::Gitea, 7), "refs/pull/7/head");
+        assert_eq!(
+            tracking_ref(ForgeKind::AzureDevOps, 550),
+            "refs/pull/550/head"
+        );
+        assert_eq!(
+            tracking_ref(ForgeKind::GitLab, 42),
+            "refs/merge-requests/42/head"
+        );
     }
 
     #[test]

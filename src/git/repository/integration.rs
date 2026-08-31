@@ -76,6 +76,12 @@ pub struct BranchDiffSpec {
     /// options: a single three-dot range `["{base}...{head}"]` normally, or
     /// `["{empty-tree}", "{head}"]` for an orphan.
     pub revs: Vec<String>,
+    /// Single tree-ish to compare with the worktree when rendering a unified
+    /// committed + uncommitted diff: the merge-base SHA normally, or the empty
+    /// tree for an orphan. `None` only when merge-base resolution failed; unlike
+    /// the committed-only three-dot diff, a worktree diff has no correct range
+    /// fallback in that case.
+    pub working_base: Option<String>,
     /// Display name of the comparison base, for "no file changes vs X".
     pub base_name: String,
     /// Stable SHA identifying the base for disk-cache keying: the base's commit
@@ -646,17 +652,27 @@ impl Repository {
         // merge-base *error* (invalid/unreachable object) is NOT an orphan —
         // fall through to the normal three-dot range and let the diff surface
         // the failure rather than dumping the whole tree as "the branch".
-        let (revs, cache_sha) = if matches!(self.merge_base_by_sha(base_sha, head), Ok(None)) {
-            (
+        let (revs, working_base, cache_sha) = match self.merge_base_by_sha(base_sha, head) {
+            Ok(None) => (
                 vec![EMPTY_TREE_SHA.to_string(), head.to_string()],
+                Some(EMPTY_TREE_SHA.to_string()),
                 EMPTY_TREE_SHA.to_string(),
-            )
-        } else {
-            (vec![format!("{base_sha}...{head}")], base_sha.to_string())
+            ),
+            Ok(Some(merge_base)) => (
+                vec![format!("{base_sha}...{head}")],
+                Some(merge_base),
+                base_sha.to_string(),
+            ),
+            Err(_) => (
+                vec![format!("{base_sha}...{head}")],
+                None,
+                base_sha.to_string(),
+            ),
         };
 
         Some(BranchDiffSpec {
             revs,
+            working_base,
             base_name: base.name.clone(),
             cache_sha,
         })
@@ -1279,16 +1295,64 @@ mod read_only_object_store_tests {
         (test, main_sha, feature_sha)
     }
 
-    /// A writable object database must never redirect — the normal path is
-    /// left byte-for-byte unchanged.
+    #[cfg(unix)]
     #[test]
-    fn writable_object_database_is_not_redirected() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
+    fn redirected_objects_resolve_a_repo_path_containing_a_colon() {
+        let parent = crate::testing::test_tempdir();
+        let test = TestRepo::at(&parent.path().join("repo:with-colon"));
+        test.commit("Initial commit");
+
+        let redirected = test.repo.redirect_objects_for_observation().unwrap();
         assert!(
-            repo.redirect_objects_if_read_only().is_none(),
-            "a writable object database must not trigger a redirect"
+            redirected
+                .run_command_check(&["cat-file", "-e", "HEAD"])
+                .unwrap(),
+            "the real object database must remain readable through the redirect"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn redirected_objects_resolve_a_repo_path_containing_a_newline() {
+        let parent = crate::testing::test_tempdir();
+        let test = TestRepo::at(&parent.path().join("repo\nwith-newline"));
+        test.commit("Initial commit");
+
+        let redirected = test.repo.redirect_objects_for_observation().unwrap();
+        assert!(
+            redirected
+                .run_command_check(&["cat-file", "-e", "HEAD"])
+                .unwrap(),
+            "the real object database must remain readable through the redirect"
+        );
+    }
+
+    #[test]
+    fn redirected_object_directory_unregisters_on_drop() {
+        let test = TestRepo::with_initial_commit();
+        let redirected = test.repo.redirect_objects_for_observation().unwrap();
+        let directory = redirected
+            .object_store_environment()
+            .unwrap()
+            .0
+            .to_path_buf();
+        assert!(
+            test.repo
+                .cache
+                .observation_object_directories
+                .contains_key(&directory)
+        );
+
+        drop(redirected);
+
+        assert!(
+            !test
+                .repo
+                .cache
+                .observation_object_directories
+                .contains_key(&directory)
+        );
+        assert!(!directory.exists());
     }
 
     /// The safety property behind scoping the redirect to observational
@@ -1313,7 +1377,7 @@ mod read_only_object_store_tests {
         // Redirected clone: the merge tree lands in the temporary store only.
         let redirected = Repository::at(test.root_path())
             .unwrap()
-            .with_temporary_object_directory()
+            .redirect_objects_for_observation()
             .unwrap();
         let ephemeral_tree = merge_tree(&redirected);
 

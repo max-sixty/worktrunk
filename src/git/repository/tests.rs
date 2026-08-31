@@ -2,6 +2,27 @@ use std::path::PathBuf;
 
 use super::super::{DefaultBranchName, WorktreeInfo, finalize_worktree};
 
+#[cfg(unix)]
+#[test]
+fn alternate_object_directory_uses_git_c_style_quoting() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let path = OsStr::from_bytes(b"a:b\n\r\t\x08\x0c\\\"\x01\xff");
+    let quoted = super::quote_alternate_object_directory(path);
+    assert_eq!(
+        quoted.into_vec(),
+        b"\"a:b\\n\\r\\t\\b\\f\\\\\\\"\\001\\377\""
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn alternate_object_directory_uses_git_c_style_quoting() {
+    let quoted = super::quote_alternate_object_directory(std::ffi::OsStr::new("a;b\n\r\t\\\""));
+    assert_eq!(quoted, "\"a;b\\n\\r\\t\\\\\\\"\"");
+}
+
 #[test]
 fn test_parse_worktree_list() {
     let output = "worktree /path/to/main
@@ -272,12 +293,12 @@ use super::ResolvedWorktree;
 
 #[test]
 fn test_resolved_worktree_clone() {
-    let wt = ResolvedWorktree::Worktree {
-        path: PathBuf::from("/path/to/worktree"),
-        branch: Some("feature".to_string()),
-    };
+    let wt = ResolvedWorktree::worktree(
+        PathBuf::from("/path/to/worktree"),
+        Some("feature".to_string()),
+    );
     let cloned = wt.clone();
-    if let ResolvedWorktree::Worktree { path, branch } = cloned {
+    if let ResolvedWorktree::Worktree { path, branch, .. } = cloned {
         assert_eq!(path, PathBuf::from("/path/to/worktree"));
         assert_eq!(branch, Some("feature".to_string()));
     } else {
@@ -288,11 +309,8 @@ fn test_resolved_worktree_clone() {
 #[test]
 fn test_resolved_worktree_none_branch() {
     // Worktree with detached HEAD (no branch)
-    let wt = ResolvedWorktree::Worktree {
-        path: PathBuf::from("/path/to/worktree"),
-        branch: None,
-    };
-    if let ResolvedWorktree::Worktree { path, branch } = wt {
+    let wt = ResolvedWorktree::worktree(PathBuf::from("/path/to/worktree"), None);
+    if let ResolvedWorktree::Worktree { path, branch, .. } = wt {
         assert_eq!(path, PathBuf::from("/path/to/worktree"));
         assert!(branch.is_none());
     } else {
@@ -389,7 +407,8 @@ fn repo_path_error_when_is_bare_fails() {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
         cache: Arc::new(RepoCache::default()),
-        temporary_object_directory: None,
+        worktree_registry_lock: Arc::new(std::sync::RwLock::new(())),
+        temporary_object_store: None,
     };
 
     let err = repo.repo_path().unwrap_err();
@@ -432,7 +451,8 @@ fn repo_path_ignores_non_local_core_worktree() {
         discovery_path: tmp.path().to_path_buf(),
         git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
-        temporary_object_directory: None,
+        worktree_registry_lock: Arc::new(std::sync::RwLock::new(())),
+        temporary_object_store: None,
     };
 
     // Should fall through to parent(git_common_dir), ignoring the bulk value.
@@ -655,7 +675,8 @@ fn is_builtin_fsmonitor_enabled_variants() {
             discovery_path: PathBuf::from("/nonexistent/repo"),
             git_common_dir: PathBuf::from("/nonexistent/.git"),
             cache: Arc::new(cache),
-            temporary_object_directory: None,
+            worktree_registry_lock: Arc::new(std::sync::RwLock::new(())),
+            temporary_object_store: None,
         }
     }
 
@@ -1336,6 +1357,23 @@ fn prewarm_after_early_repository_still_preloads_config() {
     );
 }
 
+#[test]
+fn repository_instances_share_worktree_registry_coordination() {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let linked = test.add_worktree("registry-lock-linked");
+    let first = Repository::at(test.root_path()).unwrap();
+    let second = Repository::at(linked).unwrap();
+
+    let _write = first.worktree_registry_write();
+    assert!(
+        second.worktree_registry_lock.try_read().is_err(),
+        "fresh repository handles for one common directory must share the registry lock"
+    );
+}
+
 /// A worktree answers to its branch and to its own path, and the branch wins.
 ///
 /// Both spellings reaching the same worktree is the point of routing every
@@ -1352,14 +1390,22 @@ fn resolve_worktree_accepts_branch_and_path() {
 
     // A relative path resolves against `-C`, which only a spawned `wt` has —
     // `switch::switch_by_relative_worktree_path` covers that spelling.
+    let mut ids = Vec::new();
     for selector in ["feature", worktree_path.to_str().unwrap()] {
         let resolved = test.repo.resolve_worktree(selector).unwrap();
-        let ResolvedWorktree::Worktree { path, branch } = resolved else {
+        ids.push(
+            resolved
+                .id()
+                .expect("resolved Git item has an identity")
+                .clone(),
+        );
+        let ResolvedWorktree::Worktree { path, branch, .. } = resolved else {
             panic!("{selector} should resolve to a worktree");
         };
         assert_eq!(canonicalize(&path).unwrap(), worktree_path);
         assert_eq!(branch.as_deref(), Some("feature"));
     }
+    assert_eq!(ids[0], ids[1]);
 }
 
 /// A directory whose name matches a branch does not shadow it: `wt switch docs`
@@ -1376,7 +1422,8 @@ fn resolve_worktree_prefers_branch_over_same_named_directory() {
     let nested = test.root_path().join("docs");
     test.add_worktree_at_path("docs-nested", &nested);
 
-    let ResolvedWorktree::Worktree { path, branch } = test.repo.resolve_worktree("docs").unwrap()
+    let ResolvedWorktree::Worktree { path, branch, .. } =
+        test.repo.resolve_worktree("docs").unwrap()
     else {
         panic!("docs should resolve to a worktree");
     };
@@ -1396,7 +1443,7 @@ fn resolve_worktree_reaches_detached_worktree_by_path() {
     let worktree_path = test.add_worktree("feature");
     test.detach_head_in_worktree("feature");
 
-    let ResolvedWorktree::Worktree { path, branch } = test
+    let ResolvedWorktree::Worktree { path, branch, .. } = test
         .repo
         .resolve_worktree(worktree_path.to_str().unwrap())
         .unwrap()
@@ -1433,7 +1480,7 @@ fn resolve_worktree_does_not_treat_shortcuts_as_paths() {
     let resolved = test.repo.resolve_worktree("^").unwrap();
     let branch = match resolved {
         ResolvedWorktree::Worktree { branch, .. } => branch,
-        ResolvedWorktree::BranchOnly { branch } => Some(branch),
+        ResolvedWorktree::BranchOnly { branch, .. } => Some(branch),
         ResolvedWorktree::NoWorktreeAtPath { path } => {
             panic!("`^` resolved to a directory: {}", path.display())
         }
@@ -1451,7 +1498,7 @@ fn resolve_worktree_falls_through_to_branch_only() {
     let test = TestRepo::with_initial_commit();
 
     let resolved = test.repo.resolve_worktree("nowhere").unwrap();
-    let ResolvedWorktree::BranchOnly { branch } = resolved else {
+    let ResolvedWorktree::BranchOnly { branch, .. } = resolved else {
         panic!("an unmatched selector should resolve to branch-only");
     };
     assert_eq!(branch, "nowhere");

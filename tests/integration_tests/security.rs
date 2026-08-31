@@ -370,7 +370,15 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
 fn test_git_rejects_ansi_escape_in_branch_names(repo: TestRepo) {
     let shell_cmd = r#"git branch $'feature-\x1b[31mRED\x1b[0m-test'"#;
 
-    let output = Command::new("bash")
+    // The `git` this bash child spawns inherits its environment, so the
+    // isolation goes on the shell (as it does for the `sh` child above).
+    // `LC_ALL`/`LANG=C` from `git_test_env` is what the stderr assertion below
+    // rests on — git ships translated messages, so on a contributor's machine
+    // with a non-English locale the check for "not a valid branch name" reads a
+    // German or French rendering of it and fails.
+    let mut cmd = Command::new("bash");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
         .args(["-c", shell_cmd])
         .current_dir(repo.root_path())
         .output()

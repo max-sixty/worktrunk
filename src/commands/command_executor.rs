@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use color_print::cformat;
+use serde::{Deserialize, Serialize};
 use worktrunk::HookType;
 use worktrunk::config::{
     Command, CommandConfig, HookStep, TemplateContext, UserConfig, VarScope, VarsMode,
@@ -22,7 +23,7 @@ use super::hook_filter::HookSource;
 use crate::output::concurrent::{ConcurrentCommand, run_concurrent_commands};
 use crate::output::{DirectivePassthrough, execute_shell_command};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PreparedCommand {
     pub name: Option<String>,
     /// Raw template, rendered against `context` when the command runs.
@@ -43,7 +44,7 @@ pub struct PreparedCommand {
 }
 
 /// A step in a prepared pipeline, mirroring `HookStep`.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum PreparedStep {
     Single(PreparedCommand),
     Concurrent(Vec<PreparedCommand>),
@@ -142,24 +143,16 @@ pub struct ForegroundStep {
 }
 
 /// Controls how foreground execution responds to command failures.
+///
+/// Only [`execute_pipeline_foreground`] reads this. `post-*` hooks default to
+/// the background pipeline in [`mod@super::run_pipeline`], which takes no
+/// failure strategy. A step that exits non-zero there stops the steps after it.
 #[derive(Clone, Copy)]
 pub enum FailureStrategy {
     /// Stop on first failure and surface the error to the caller.
     FailFast,
     /// Log warnings and continue executing remaining commands.
     Warn,
-}
-
-impl FailureStrategy {
-    /// Default strategy for a hook type: `pre-*` block (fail-fast),
-    /// `post-*` warn-and-continue.
-    pub fn default_for(hook_type: HookType) -> Self {
-        if hook_type.is_pre() {
-            Self::FailFast
-        } else {
-            Self::Warn
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

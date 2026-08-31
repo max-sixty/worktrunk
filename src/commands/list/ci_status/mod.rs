@@ -18,7 +18,7 @@ use super::layout::LinkStyle;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use worktrunk::git::{BranchRef, Repository, parse_owner_repo};
+use worktrunk::git::{BranchRef, RefType, Repository, parse_owner_repo};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::epoch_now;
 
@@ -307,25 +307,43 @@ pub enum CiSource {
     Branch,
 }
 
-/// A PR/MR reference: number plus the forge's display sigil.
+/// A PR/MR reference: number plus its resolved reference type.
 ///
 /// Displays as `#3035` (GitHub, Gitea, Azure DevOps) or `!3035` (GitLab).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PrRef {
     pub number: u64,
-    /// Display sigil: `#` (GitHub, Gitea, Azure DevOps) or `!` (GitLab)
-    pub sigil: char,
+    /// The CI cache represents the type under the `sigil` key.
+    #[serde(rename = "sigil", with = "ref_type_sigil")]
+    ref_type: RefType,
 }
 
 impl PrRef {
     /// A pull-request reference: `#3035` (GitHub, Gitea, Azure DevOps).
     pub fn pr(number: u64) -> Self {
-        Self { number, sigil: '#' }
+        Self {
+            number,
+            ref_type: RefType::Pr,
+        }
     }
 
     /// A merge-request reference: `!3035` (GitLab).
     pub fn mr(number: u64) -> Self {
-        Self { number, sigil: '!' }
+        Self {
+            number,
+            ref_type: RefType::Mr,
+        }
+    }
+
+    pub fn ref_type(self) -> RefType {
+        self.ref_type
+    }
+
+    pub fn sigil(self) -> char {
+        match self.ref_type {
+            RefType::Pr => '#',
+            RefType::Mr => '!',
+        }
     }
 
     /// Rendered width in terminal columns (sigil + digits).
@@ -336,7 +354,35 @@ impl PrRef {
 
 impl std::fmt::Display for PrRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{}", self.sigil, self.number)
+        write!(f, "{}{}", self.sigil(), self.number)
+    }
+}
+
+mod ref_type_sigil {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use worktrunk::git::RefType;
+
+    pub fn serialize<S>(ref_type: &RefType, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_char(match ref_type {
+            RefType::Pr => '#',
+            RefType::Mr => '!',
+        })
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<RefType, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match char::deserialize(deserializer)? {
+            '#' => Ok(RefType::Pr),
+            '!' => Ok(RefType::Mr),
+            sigil => Err(serde::de::Error::custom(format_args!(
+                "unknown PR/MR sigil {sigil:?}"
+            ))),
+        }
     }
 }
 
@@ -681,7 +727,7 @@ impl PrStatus {
 /// Rows with no usable cache entry are left `None` (pending): the live task
 /// fills them, so they must not be resolved to "no PR" here.
 ///
-/// `item.branch` is the cache key for every row shape: local worktrees and
+/// `ListItem::branch()` is the cache key for every row shape: local worktrees and
 /// branches cache under the bare name, remote rows under `origin/...` —
 /// the same `full_name` the `CiStatus` task writes.
 pub(crate) fn populate_from_cache(repo: &Repository, items: &mut [super::model::ListItem]) {
@@ -695,13 +741,13 @@ pub(crate) fn populate_from_cache(repo: &Repository, items: &mut [super::model::
     };
     let now_secs = epoch_now();
     for item in items.iter_mut() {
-        let Some(branch) = item.branch.as_deref() else {
+        let Some(branch) = item.branch() else {
             continue;
         };
         let Some(cached) = CachedCiStatus::read(repo, branch) else {
             continue;
         };
-        if cached.is_valid(&item.head, now_secs, &repo_path) {
+        if cached.is_valid(item.head(), now_secs, &repo_path) {
             item.pr_status = Some(cached.status);
         } else if let Some(stale) = cached.status.filter(|s| s.number.is_some()) {
             // Show the number now, but render it neutral-dim: the cached color
@@ -891,8 +937,14 @@ mod tests {
         assert_eq!(pr_ref_width(10), 3);
         assert_eq!(pr_ref_width(3035), 5);
         assert_eq!(pr_ref_width(99999), 6);
-        assert_eq!(PrRef::mr(3035).to_string(), "!3035");
-        assert_eq!(PrRef::mr(3035).width(), 5);
+        let mr = PrRef::mr(3035);
+        assert_eq!(mr.ref_type(), RefType::Mr);
+        assert_eq!(mr.to_string(), "!3035");
+        assert_eq!(mr.width(), 5);
+
+        let cached = serde_json::to_value(mr).unwrap();
+        assert_eq!(cached, serde_json::json!({ "number": 3035, "sigil": "!" }));
+        assert_eq!(serde_json::from_value::<PrRef>(cached).unwrap(), mr);
     }
 
     #[test]
@@ -927,11 +979,8 @@ mod tests {
 
     #[test]
     fn test_ci_branch_name_from_detached_head() {
-        let detached = BranchRef {
-            full_ref: None,
-            commit_sha: "abc123".to_string(),
-            worktree_path: None,
-        };
+        let detached =
+            worktrunk::git::WorktreeRef::new("/tmp/detached", None, "abc123").into_branch_ref();
         assert!(CiBranchName::from_branch_ref(&detached).is_none());
     }
 

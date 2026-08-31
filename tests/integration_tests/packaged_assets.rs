@@ -37,6 +37,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use crate::common::source_scan::visit_files;
 use path_slash::PathExt as _;
 
 /// askama resolves `#[template(path = "…")]` relative to `templates/` at the
@@ -51,7 +52,19 @@ fn embedded_assets_ship_in_package() {
     // 1. Discover every compile-time-embedded path under `src/`, as a
     //    repo-root-relative forward-slash string.
     let mut assets = BTreeSet::new();
-    scan_directory(&src_dir, manifest_dir, &mut assets);
+    // The count is discarded: `assets` being non-empty below already fails over
+    // an empty walk, so asserting the count too would be a second mechanism.
+    let _ = visit_files(
+        &src_dir,
+        "rs",
+        "embedded-asset scan",
+        &mut |path, contents| scan_file(path, contents, manifest_dir, &mut assets),
+    );
+    // `visit_files` panics when the tree or one of its files can't be read.
+    // This catches the remaining way discovery comes back empty:
+    // every file read, and the `include_str!` / `include_bytes!` / `#[template]`
+    // matching recognizing none of them. The comparison below iterates `assets`,
+    // so an empty set checks nothing and passes.
     assert!(
         !assets.is_empty(),
         "scanned src/ but found no embedded assets — the scanner is likely broken"
@@ -92,24 +105,7 @@ fn embedded_assets_ship_in_package() {
     );
 }
 
-fn scan_directory(dir: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_directory(&path, manifest_dir, assets);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            scan_file(&path, manifest_dir, assets);
-        }
-    }
-}
-
-fn scan_file(path: &Path, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
+fn scan_file(path: &Path, contents: &str, manifest_dir: &Path, assets: &mut BTreeSet<String>) {
     let source_dir = path.parent().unwrap_or(manifest_dir);
 
     for line in contents.lines() {

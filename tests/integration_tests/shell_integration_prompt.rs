@@ -723,8 +723,10 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
-        // Use minimal PATH to ensure claude/codex aren't found
-        env_vars.push(("PATH".to_string(), "/usr/bin:/bin".to_string()));
+        // Use minimal PATH to ensure claude/codex aren't found while retaining
+        // the supported Git selected by the test runner.
+        let path = crate::common::setup_minimal_path_with_git(&temp_home.path().join("bin"));
+        env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
             wt_bin().to_str().unwrap(),
@@ -759,7 +761,7 @@ mod commit_generation_prompt_tests {
 
         let mut env_vars = repo.test_env_vars();
         // Add our fake claude to PATH
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
@@ -799,7 +801,7 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
@@ -840,7 +842,7 @@ mod commit_generation_prompt_tests {
         repo.run_git(&["add", "test.txt"]);
 
         let mut env_vars = repo.test_env_vars();
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
 
         let cmd = build_pty_command(
@@ -884,7 +886,7 @@ mod commit_generation_prompt_tests {
         let unwritable_config = blocker.join("config.toml");
 
         let mut env_vars = repo.test_env_vars();
-        let path = format!("{}:/usr/bin:/bin", bin_dir.display());
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
         env_vars.push(("PATH".to_string(), path));
         // Overrides the WORKTRUNK_CONFIG_PATH from test_env_vars (last wins).
         env_vars.push((

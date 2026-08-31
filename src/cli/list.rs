@@ -31,7 +31,7 @@ The CI reference links to its PR/MR, and a dev server URL carrying a port shows 
 
 The pace segment appears only when usage is likely to hit a rate limit before its window resets, and shows the higher-risk window: `2.9×(Tue–Tue 5pm)` reads as 2.9× the pace that would exactly fill that window. Above 90% used it shows usage instead of pace — `93%(Tue–Tue 5pm)` — near the cap, how much is left matters more than how fast it's going. "Likely" is a Bayesian forecast; early-window bursts don't trigger it. Its colour deepens with severity — dim, then dim-yellow, then yellow — as the forecast lockout (how much of the window would be spent capped) grows, so a fast pace that would only tip over near the reset stays dim rather than alarming. With `-vv`, each window's inputs and projection are logged to `.git/wt/logs/trace.log`.
 
-[Claude Code statusline setup](@/claude-code.md#statusline-claude-code-only) has the `~/.claude/settings.json` entry that feeds this mode.
+[Claude Code statusline setup](/claude-code/#statusline-claude-code-only) has the `~/.claude/settings.json` entry that feeds this mode.
 "#
     )]
     Statusline {

@@ -12,6 +12,7 @@ use super::{
     GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
     normalize_selector, resolve_input_path,
 };
+use crate::git::WorktreeId;
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
@@ -35,7 +36,10 @@ impl Repository {
         self.cache
             .worktrees
             .get_or_try_init(|| {
-                let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
+                let stdout = {
+                    let _registry = self.worktree_registry_read();
+                    self.run_command(&["worktree", "list", "--porcelain"])?
+                };
                 let raw_worktrees = WorktreeInfo::parse_porcelain_list(&stdout)?;
                 let mut worktrees: Vec<_> =
                     raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
@@ -220,18 +224,17 @@ impl Repository {
     ///
     /// # Concurrent calls
     ///
-    /// `wt step prune` removes several entries at once, but **serializes the
-    /// teardowns** — this and every other `git worktree remove` — behind
-    /// `RemovalContext::registry_lock` (see the `prune` module). It has to:
-    /// naming one entry bounds what a call *deletes*, not what it *reads*.
+    /// This method and [`Repository::remove_worktree`] serialize their `git
+    /// worktree remove` commands with each other for the same repository.
+    /// Naming one entry bounds what a call *deletes*, not what it *reads*.
     /// `git worktree remove` enumerates *every* sibling under `.git/worktrees/`
     /// and reads each one's `commondir` while resolving its target, so a
     /// teardown overlapping another worker's teardown — or a branch delete's
     /// `list_worktrees` probe — can read an entry mid-deletion and fail
     /// (`failed to read …/commondir` / `Invalid path …/.git/worktrees/<id>`).
-    /// That is git's own TOCTOU between the enumerator's `readdir` and its
-    /// `open`; it holds however wt schedules its removals, so wt closes the
-    /// window by not letting two registry mutations overlap (issue #3661).
+    /// That is Git's own TOCTOU between the enumerator's `readdir` and its
+    /// `open`. The repository-scoped write lock closes the in-process window;
+    /// [`Repository::list_worktrees`] takes the matching read side.
     ///
     /// Git also `rmdir`s the containing `.git/worktrees` once the last entry
     /// goes, but that only succeeds on an already-empty directory, and every
@@ -246,6 +249,7 @@ impl Repository {
         // porcelain as UTF-8, so this only fires if that edge ever stops
         // guaranteeing it — a bare `?` rather than a rendered path.
         let path_str = path.to_str().context("worktree path is not valid UTF-8")?;
+        let _registry = self.worktree_registry_write();
         self.run_command(&["worktree", "remove", path_str])?;
         Ok(())
     }
@@ -293,6 +297,17 @@ impl Repository {
         } else {
             self.worktree_at(path).has_initialized_submodules()?
         };
+        let mut args = vec!["worktree", "remove"];
+        if use_force {
+            args.push("--force");
+        }
+        args.push(path_str);
+
+        // The synthesized-force cleanliness check and destructive command are
+        // one critical section. If this waited for another registry teardown
+        // after the check, a concurrent writer could dirty the worktree before
+        // `--force` bypassed Git's own dirty gate.
+        let _registry = self.worktree_registry_write();
         if use_force && !force {
             // Synthesized force (submodule worktree, not user-requested).
             // `--force` will suppress git's dirty check, so re-validate
@@ -306,11 +321,6 @@ impl Repository {
             )?;
             tracing::debug!("Using --force for worktree removal due to initialized submodules");
         }
-        let mut args = vec!["worktree", "remove"];
-        if use_force {
-            args.push("--force");
-        }
-        args.push(path_str);
 
         self.run_command(&args)?;
         Ok(())
@@ -418,14 +428,16 @@ impl Repository {
                 .map_err(|_| GitError::NotInWorktree {
                     action: Some("resolve @".into()),
                 })?;
-            // root() returns canonicalized path, so canonicalize worktree paths
-            // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
+            // Compare canonical identities so alternate path spellings (for
+            // example macOS `/var` and `/private/var`) select one inventory
+            // entry without changing Git's registered path.
+            let current_id = WorktreeId::new(&path);
             let branch = self
                 .list_worktrees()?
                 .iter()
-                .find(|wt| canonicalize(&wt.path).map(|p| p == path).unwrap_or(false))
+                .find(|wt| wt.id() == current_id)
                 .and_then(|wt| wt.branch.clone());
-            return Ok(ResolvedWorktree::Worktree { path, branch });
+            return Ok(ResolvedWorktree::worktree(path, branch));
         }
 
         self.resolve_selector(&self.expand_selector(name)?)
@@ -443,10 +455,7 @@ impl Repository {
         let token = selector.token();
 
         if let Some(path) = self.worktree_for_branch(token)? {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: Some(token.to_string()),
-            });
+            return Ok(ResolvedWorktree::worktree(path, Some(token.to_string())));
         }
 
         // Both remaining steps are about the token as a path, so
@@ -456,16 +465,11 @@ impl Repository {
         // to create, and a directory sitting at that spelling is the clobber
         // check's business.
         if !selector.names_a_path() {
-            return Ok(ResolvedWorktree::BranchOnly {
-                branch: token.to_string(),
-            });
+            return Ok(ResolvedWorktree::branch_only(token.to_string()));
         }
 
         if let Some((path, wt_branch)) = self.worktree_at_input_path(token)? {
-            return Ok(ResolvedWorktree::Worktree {
-                path,
-                branch: wt_branch,
-            });
+            return Ok(ResolvedWorktree::worktree(path, wt_branch));
         }
 
         // Nothing matched, so say which of the two the selector was reaching
@@ -473,9 +477,7 @@ impl Repository {
         // returns on `is_valid_branch_name` before touching the filesystem.
         Ok(match self.path_selector_directory(token) {
             Some(path) => ResolvedWorktree::NoWorktreeAtPath { path },
-            None => ResolvedWorktree::BranchOnly {
-                branch: token.to_string(),
-            },
+            None => ResolvedWorktree::branch_only(token.to_string()),
         })
     }
 
@@ -493,13 +495,15 @@ impl Repository {
                 branch: Some(branch),
                 ..
             } => Ok(branch),
-            ResolvedWorktree::BranchOnly { branch } => Ok(branch),
+            ResolvedWorktree::BranchOnly { branch, .. } => Ok(branch),
             // A path spelling can't be the branch the caller is about to key
             // state by.
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }
-            ResolvedWorktree::Worktree { path, branch: None } => Err(GitError::DetachedHead {
+            ResolvedWorktree::Worktree {
+                path, branch: None, ..
+            } => Err(GitError::DetachedHead {
                 action: Some(cformat!(
                     "{action} — <bold>{}</> is detached",
                     format_path_for_display(&path)
@@ -523,7 +527,7 @@ impl Repository {
     pub fn require_worktree(&self, name: &str) -> anyhow::Result<PathBuf> {
         match self.resolve_worktree(name)? {
             ResolvedWorktree::Worktree { path, .. } => Ok(path),
-            ResolvedWorktree::BranchOnly { branch } => Err(self.no_worktree_error(branch)),
+            ResolvedWorktree::BranchOnly { branch, .. } => Err(self.no_worktree_error(branch)),
             ResolvedWorktree::NoWorktreeAtPath { path } => {
                 Err(GitError::WorktreeNotFoundAtPath { path }.into())
             }

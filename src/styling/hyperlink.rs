@@ -30,8 +30,8 @@ pub fn hyperlink(url: &str, text: &str) -> String {
 ///
 /// OSC 8 terminal hyperlinks are great for terminal output (clickable links!), but can cause
 /// issues in other contexts:
-/// - **Web docs**: `ansi_to_html` only handles SGR codes (colors), not OSC sequences—hyperlinks
-///   leak through as garbage text
+/// - **Markdown output**: terminal control bytes are not portable source and can render as
+///   garbage text
 /// - **Test output**: PTY tests using vt100 parser may show hyperlinks as garbage characters
 ///   (like `^D`) in rendered terminal output
 ///

@@ -5,19 +5,16 @@ Output "{{OUTPUT_GIF}}"
 Source docs/demos/tapes/shared-commands.tape
 
 Env ANTHROPIC_API_KEY "{{ANTHROPIC_API_KEY}}"
+Env CLAUDE_CODE_OAUTH_TOKEN "{{CLAUDE_CODE_OAUTH_TOKEN}}"
 
-# Pre-install marketplace plugin before recording
-Type "claude plugin marketplace add anthropics/claude-plugins-official"
-Enter
-Sleep 5s
 Type "clear"
 Enter
 Sleep 1s
-Show
-Sleep 500ms
 
 # Switch to existing worktree
 Type "wt switch alpha"
+Show
+Sleep 300ms
 Enter
 Sleep 1.5s
 
@@ -31,3 +28,5 @@ Type "wt switch --execute claude --create dashboard -- 'Add settings page'"
 Sleep 500ms
 Enter
 Sleep 6s
+
+Hide

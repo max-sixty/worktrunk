@@ -82,7 +82,7 @@ wt --source -C /path/to/repo switch
 
 1. Add the subcommand to the `Cli` enum in `src/cli/mod.rs`.
 2. Implement it in `src/commands/` (e.g. `src/commands/mycommand.rs`).
-3. Add an `after_long_help` attribute — it is the source of truth for `docs/content/{command}.md`.
+3. Add an `after_long_help` attribute — it is the source of truth for `docs/src/content/docs/{command}.md`.
 4. Run `cargo test --test integration test_docs_are_in_sync`. Editing help text also changes the rendered `--help` snapshots, which that test leaves untouched — regenerate them with `cargo insta test --accept --test integration -- test_help` (or run the pre-merge hook, which does both).
 
 All stdout goes through anstream: `worktrunk::styling::println` for anything a person reads, and `crate::output::print_json` for a `--format=json` answer — every surface but `wt switch --format=json`, which emits its single result as one compact line. anstream's macros drop a `BrokenPipe` write error where std's panic, so `wt … | head -3` never exits 101.
@@ -190,7 +190,7 @@ No `long_about` or `after_long_help` needed when the short description is self-e
 
 ## Command Documentation Guidelines
 
-When writing or updating command docs in `docs/content/`, follow this structure and these principles. Load the `documentation` skill for additional guidance.
+When writing or updating command docs in `docs/src/content/docs/`, follow this structure and these principles. Load the `documentation` skill for additional guidance.
 
 ### Structure
 

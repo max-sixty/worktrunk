@@ -6,10 +6,10 @@ multiplexers. Instead, we extract frames from the GIF and use OCR to verify
 expected content appears.
 
 Checkpoints specify a frame range rather than a single frame. The validator
-scans frames within the range (sampling every N frames) and passes the
-checkpoint if ANY frame in the range matches all expected patterns while
-containing none of the forbidden patterns. This makes validation resilient
-to timing shifts from UI changes.
+scans frames within the range (sampling every N frames). Expected patterns must
+share at least one sampled frame, while forbidden patterns must be absent from
+every sampled frame. This makes validation resilient to timing shifts from UI
+changes without allowing transient errors.
 
 Usage:
     from shared.validation import validate_tui_demo, TUI_CHECKPOINTS
@@ -42,9 +42,36 @@ class Checkpoint:
 # Checkpoint definitions per TUI demo.
 # Ranges are calibrated from actual GIF content at 30fps.
 # Expected patterns must ALL be present (case-insensitive) in at least one
-# frame within the range. Forbidden patterns must ALL be absent.
+# frame within the range. Every forbidden pattern must be absent from every
+# sampled frame.
 
 TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
+    "wt-switch": [
+        Checkpoint(
+            start=360,
+            end=455,
+            expected=["Claude Code", "Opus", "acme.dashboard"],
+            forbidden=[
+                "Not logged in",
+                "Unknown command",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+    ],
+    "wt-statusline": [
+        Checkpoint(
+            start=280,
+            end=410,
+            expected=["Claude Code", "Opus", "acme.alpha"],
+            forbidden=[
+                "Not logged in",
+                "Unknown command",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+    ],
     "wt-zellij-omnibus": [
         # Claude UI visible on TAB 1 (api) — shows model name and task.
         # Range covers the window where Claude's UI is rendered and stable.
@@ -52,9 +79,43 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
         # layout shifts across versions — task text may wrap or truncate.
         Checkpoint(
             start=150,
-            end=350,
+            end=450,
             expected=["Opus", "acme"],
-            forbidden=["command not found", "Unknown command"],
+            forbidden=[
+                "command not found",
+                "Unknown command",
+                "Not logged in",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+        # Claude UI visible on TAB 2 (billing), without referral or model ads.
+        Checkpoint(
+            start=550,
+            end=700,
+            expected=["Opus", "billing"],
+            forbidden=[
+                "Not logged in",
+                "Share Claude Code",
+                "Fable 5 is now",
+                "Tackle your toughest",
+            ],
+        ),
+        # The API agent adds a test. Commit generation should describe that
+        # diff rather than replaying the feature-tab fixture's message.
+        Checkpoint(
+            start=1400,
+            end=1750,
+            expected=["expand", "coverage"],
+            forbidden=["user settings module", "script -q"],
+        ),
+        # The feature push uses a local demo remote internally, but its
+        # disposable filesystem path must never appear in the recording.
+        Checkpoint(
+            start=1000,
+            end=1350,
+            expected=["Removing feature"],
+            forbidden=["/var/folders/", "wt-demo-"],
         ),
         # Near end — wt list --full showing all worktrees.
         # "billing" omitted: depends on timing of when the branch appears
@@ -63,7 +124,14 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
             start=1650,
             end=1850,
             expected=["Branch", "main"],
-            forbidden=["CONFLICT", "error:", "failed"],
+            forbidden=[
+                "CONFLICT",
+                "error:",
+                "failed",
+                "cargo test 2>&1",
+                "cargo test -- --list",
+                "script -q",
+            ],
         ),
     ],
 }
@@ -101,7 +169,7 @@ def extract_frames(
             "-loglevel", "error",
             "-i", str(gif_path),
             "-vf", f"select='{select_expr}'",
-            "-vsync", "vfr",
+            "-fps_mode", "vfr",
             str(pattern),
         ],
         capture_output=True,
@@ -135,6 +203,65 @@ def ocr_image(image_path: Path) -> str:
     return ""
 
 
+def ocr_low_contrast_text(image_path: Path) -> str:
+    """Run OCR after lifting dim terminal text to full contrast.
+
+    Claude renders its model name using a dim ANSI color. The normal OCR pass
+    preserves the frame for reliable error detection; this fallback makes dim
+    expected text readable without changing the recorded GIF. Frame luminance
+    selects whether dim text is lifted from a dark or light background.
+    """
+    luma_result = subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-i",
+            str(image_path),
+            "-vf",
+            "format=gray,scale=40:30:flags=area,scale=1:1:flags=area",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ],
+        capture_output=True,
+    )
+    if luma_result.returncode != 0 or len(luma_result.stdout) != 1:
+        return ""
+
+    frame_luma = luma_result.stdout[0]
+    # Terminal background dominates the one-pixel average. Move the cutoff
+    # slightly toward the foreground so antialiased dim text becomes solid.
+    if frame_luma >= 128:
+        threshold = max(0, frame_luma - 24)
+        contrast_filter = f"if(lte(val,{threshold}),0,255)"
+    else:
+        threshold = min(255, frame_luma + 8)
+        contrast_filter = f"if(gte(val,{threshold}),255,0)"
+
+    with tempfile.TemporaryDirectory(prefix="wt-ocr-contrast-") as work_dir:
+        enhanced_path = Path(work_dir) / "high-contrast.png"
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-i",
+                str(image_path),
+                "-vf",
+                f"format=gray,lut=y='{contrast_filter}',"
+                "scale=iw*3:ih*3:flags=neighbor",
+                str(enhanced_path),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return ""
+        return ocr_image(enhanced_path)
+
+
 def _check_patterns(
     text: str,
     expected: list[str],
@@ -165,8 +292,9 @@ def validate_checkpoint(
 ) -> tuple[bool, str]:
     """Validate a checkpoint by scanning its frame range.
 
-    Extracts all sampled frames in one ffmpeg call, then OCRs each
-    sequentially until one matches (early return on success).
+    Extracts all sampled frames in one ffmpeg call, then OCRs each. Expected
+    patterns must share a frame; forbidden patterns must be absent throughout
+    the range.
 
     Returns (passed, detail_message).
     """
@@ -179,6 +307,7 @@ def validate_checkpoint(
 
     best_errors: list[str] = []
     frames_checked = 0
+    matched_frame: int | None = None
 
     for frame in frame_numbers:
         frame_path = frame_paths.get(frame)
@@ -190,15 +319,30 @@ def validate_checkpoint(
         if not text:
             continue
 
-        passed, errors = _check_patterns(text, checkpoint.expected, checkpoint.forbidden)
-        if passed:
-            return True, f"matched at frame {frame} ({frames_checked} checked)"
+        passed, errors = _check_patterns(text, checkpoint.expected, [])
+        if not passed and matched_frame is None:
+            low_contrast_text = ocr_low_contrast_text(frame_path)
+            if low_contrast_text:
+                text = f"{text}\n{low_contrast_text}"
+                passed, errors = _check_patterns(
+                    text, checkpoint.expected, []
+                )
+
+        text_lower = text.lower()
+        for pattern in checkpoint.forbidden:
+            if pattern.lower() in text_lower:
+                return False, f"forbidden '{pattern}' present at frame {frame}"
+
+        if passed and matched_frame is None:
+            matched_frame = frame
         if not best_errors or len(errors) < len(best_errors):
             best_errors = errors
 
     label = f"frames {checkpoint.start}-{checkpoint.end}"
     if not frames_checked:
         return False, f"no readable frames in {label}"
+    if matched_frame is not None:
+        return True, f"matched at frame {matched_frame} ({frames_checked} checked)"
     return False, f"no match in {label} ({frames_checked} checked): {'; '.join(best_errors)}"
 
 
