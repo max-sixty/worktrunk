@@ -92,7 +92,7 @@ runs:
       if: inputs.install-shells == 'true'
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.115.0'
+        version: '0.115.1'
 
     # Nix, for the weekly toolchain bump's `flake.lock` refresh. The sandboxed
     # agent can't install it: that user has no sudo, so it can't create /nix.
