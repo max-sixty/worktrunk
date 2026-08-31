@@ -1,0 +1,8 @@
+# `concurrency.queue` is valid GitHub Actions syntax that
+# actionlint's schema rejects. tend writes this ignore so the
+# generated workflows lint clean; the glob keeps a real schema
+# error in your own workflows failing.
+paths:
+  '**/.github/workflows/tend-*.yaml':
+    ignore:
+      - unexpected key "queue" for "concurrency" section
