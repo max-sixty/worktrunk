@@ -315,12 +315,9 @@ mod tests {
             .lines()
             .filter(|line| *line != view.join(" ") && *line != list.join(" "))
             .collect();
-        assert!(
-            malformed.is_empty(),
-            "interleaved appends produced {} corrupt line(s), first: {:?}",
-            malformed.len(),
-            malformed.first()
-        );
+        // Count and one example, not the whole list: an interleaving run
+        // corrupts thousands of lines, and the shapes repeat.
+        assert_eq!((malformed.len(), malformed.first().copied()), (0, None));
         assert_eq!(logged.lines().count(), WRITERS * CALLS_PER_WRITER);
     }
 }
