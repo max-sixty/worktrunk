@@ -4,7 +4,7 @@ name: ci
 # The tend-weekly workflow checks for updates and opens bump PRs (see
 # .claude/skills/running-tend/SKILL.md → "Weekly Maintenance: CI Pin Bumps").
 # - windows-2022: Pinned because windows-2025 lacks D: drive (actions/runner-images#12677)
-# - ubuntu-24.04, macos-15: Pinned to current -latest equivalents
+# - ubuntu-24.04, macos-26: Pinned to current -latest equivalents
 
 on:
   push:
@@ -77,7 +77,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
-          - os: macos-15
+          - os: macos-26
             name: macos
           - os: windows-2022
             name: windows

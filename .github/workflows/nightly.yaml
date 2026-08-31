@@ -171,7 +171,7 @@ jobs:
           - os: ubuntu-24.04
             name: git-2.43.0
             git: '2.43.0'
-          - os: macos-15
+          - os: macos-26
             name: macos
           - os: windows-2022
             name: windows
@@ -253,7 +253,7 @@ jobs:
             runner: ubuntu-24.04-arm
             install: musl-tools
           - target: x86_64-apple-darwin
-            runner: macos-15-intel
+            runner: macos-26-intel
     name: release-target (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     steps:
