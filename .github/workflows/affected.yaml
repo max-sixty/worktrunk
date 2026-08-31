@@ -105,7 +105,7 @@ jobs:
             name: linux
           - os: macos-15
             name: macos
-          - os: windows-2022
+          - os: windows-2025
             name: windows
     runs-on: ${{ matrix.os }}
     steps:
@@ -182,7 +182,7 @@ jobs:
             name: linux
           - os: macos-15
             name: macos
-          - os: windows-2022
+          - os: windows-2025
             name: windows
     runs-on: ${{ matrix.os }}
     # Advisory while we calibrate selection accuracy against the full suite.
