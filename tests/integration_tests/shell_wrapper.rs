@@ -1036,18 +1036,45 @@ mod unix_tests {
     }
 
     #[rstest]
+    fn test_nu_wrapper_ignores_execute_flags_after_argument_boundary(repo: TestRepo) {
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "nu", &repo);
+        script.push_str(
+            "let out = (wt step for-each --format=json -- printf -- -x)\n\
+             print $\"PIPELINE_CAPTURED:(not ($out | is-empty))\"\n",
+        );
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Output:\n{combined}");
+        assert!(
+            combined.contains("PIPELINE_CAPTURED:true"),
+            "-x after -- should not disable Nushell pipeline capture.\nOutput:\n{combined}"
+        );
+    }
+
+    #[rstest]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
     #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
-        // The child must inherit a real terminal, including through Nushell's
-        // normally-buffered wrapper path.
-        let output = exec_through_wrapper(
-            shell,
-            &repo,
-            "switch",
-            &[
+        let args = if shell == "nu" {
+            vec![
+                "-cx",
+                "sh",
+                "test-exec",
+                "--yes",
+                "--",
+                "-c",
+                "test -t 1 && printf 'EXEC_STDOUT_TTY:true\\n'",
+            ]
+        } else {
+            vec![
                 "--create",
                 "test-exec",
                 "--yes",
@@ -1056,8 +1083,13 @@ mod unix_tests {
                 "--",
                 "-c",
                 "test -t 1 && printf 'EXEC_STDOUT_TTY:true\\n'",
-            ],
-        );
+            ]
+        };
+
+        // The child must inherit a real terminal, including through Nushell's
+        // normally-buffered wrapper path. Its case uses the valid `-cx`
+        // cluster so execute detection follows clap's short-option parsing.
+        let output = exec_through_wrapper(shell, &repo, "switch", &args);
 
         // Shell-agnostic assertions
         assert_eq!(

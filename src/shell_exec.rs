@@ -526,8 +526,10 @@ pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 
 /// Retired shell-command directive variable.
 ///
-/// Current wrappers no longer set it, but subprocesses must not inherit it: an
-/// older parent wrapper would source anything written there after wt exits.
+/// Current wrappers no longer set it. Its presence tells `--execute` that the
+/// live shell still has an old wrapper loaded, and subprocesses must not
+/// inherit it: an older parent wrapper would source anything written there
+/// after wt exits.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
 /// Retired single-file directive env var.

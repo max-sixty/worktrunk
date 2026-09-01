@@ -94,7 +94,8 @@ export def --env --wrapped wt [...args] {
     } else {
         let cd_file = (mktemp --tmpdir)
         let stdout_file = (mktemp --tmpdir)
-        let has_execute = ($args | any {|arg| ($arg | str starts-with "-x") or $arg == "--execute" or ($arg | str starts-with "--execute=") })
+        let wt_args = ($args | take until {|arg| $arg == "--" })
+        let has_execute = ($wt_args | any {|arg| $arg == "--execute" or ($arg | str starts-with "--execute=") or ($arg =~ '^-[cvy]*x') })
 
         # Capture stdout for pipeline passthrough unless wt will launch an
         # interactive child, which must inherit the terminal.

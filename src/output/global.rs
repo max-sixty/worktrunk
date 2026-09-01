@@ -8,7 +8,9 @@
 //!
 //! `WORKTRUNK_DIRECTIVE_CD_FILE` holds one raw path. The wrapper changes to it
 //! after wt exits. `--execute` needs no directive: wt starts the external
-//! program directly with its working directory set to the switch target.
+//! program directly with its working directory set to the switch target. The
+//! retired exec-file variable is recognized only to warn that the live shell
+//! still has an old wrapper loaded.
 //!
 //! The retired single-file protocol is never written. If an old wrapper still
 //! sets only `WORKTRUNK_DIRECTIVE_FILE`, switch output diagnoses the outdated
@@ -25,9 +27,10 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::{
-    DIRECTIVE_CD_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR, ShellEscapeMode, shell_escape_for,
+    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
+    ShellEscapeMode, shell_escape_for,
 };
-use worktrunk::styling::{eprintln, hint_message, stderr};
+use worktrunk::styling::{eprintln, hint_message, stderr, warning_message};
 
 // Re-export set_verbosity from the library's styling module.
 // This ensures the binary and library share the same global state.
@@ -240,6 +243,19 @@ pub(crate) fn print_outdated_shell_wrapper_hint_once() {
                 "To update the shell wrapper, run <underline>wt config shell install</>"
             ))
         );
+    }
+}
+
+/// Warn when the live shell still has the retired exec-file wrapper loaded.
+pub(crate) fn print_outdated_execute_wrapper_warning() {
+    if read_env_path(DIRECTIVE_EXEC_FILE_ENV_VAR).is_some() {
+        eprintln!(
+            "{}",
+            warning_message(
+                "Shell wrapper is out of date — --execute output may be buffered instead of using the terminal"
+            )
+        );
+        print_outdated_shell_wrapper_hint_once();
     }
 }
 

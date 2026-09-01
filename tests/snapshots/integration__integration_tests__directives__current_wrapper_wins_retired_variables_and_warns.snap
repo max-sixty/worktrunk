@@ -1,0 +1,77 @@
+---
+source: tests/integration_tests/directives.rs
+info:
+  program: wt
+  args:
+    - switch
+    - feature
+    - "--execute"
+    - git
+    - "--"
+    - rev-parse
+    - "--abbrev-ref"
+    - HEAD
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_ALLOW_PROTOCOL: file
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_AUTHOR_EMAIL: test@example.com
+    GIT_AUTHOR_NAME: Test User
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_EMAIL: test@example.com
+    GIT_COMMITTER_NAME: Test User
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
+    PATH: "[PATH]"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
+    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
+    WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
+    WORKTRUNK_TEST_MOCK_CONFIG_DIR: "[TEST_MOCK_CONFIG]"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_PARENT_SHELL: ""
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+feature
+
+----- stderr -----
+[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m
+[33m▲[39m [33mShell wrapper is out of date — --execute output may be buffered instead of using the terminal[39m
+[2m↳[22m [2mTo update the shell wrapper, run [4mwt config shell install[24m[22m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mgit[0m[2m rev-parse [0m[2m[36m--abbrev-ref[0m[2m HEAD[0m
+[0m

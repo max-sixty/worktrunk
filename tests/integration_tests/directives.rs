@@ -49,54 +49,59 @@ fn test_switch_retired_directive_file_does_not_block_execute(
     });
 }
 
-/// A current wrapper may inherit the retired variable from an older parent
-/// shell. The current CD file takes precedence and the retired file remains
-/// untouched.
+/// A current wrapper may inherit retired variables from an older parent shell.
+/// The current CD file stays active, execution stays direct, and the stale
+/// execute wrapper gets a migration warning.
 #[rstest]
-fn test_cd_directive_file_wins_over_retired_variable(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_current_wrapper_wins_retired_variables_and_warns(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
     let _feature_wt = repo.add_worktree("feature");
     let (cd_path, _guard) = directive_file();
     let retired_dir = tempfile::TempDir::new().unwrap();
     let retired_path = retired_dir.path().join("directive");
+    let retired_exec_path = retired_dir.path().join("execute");
     fs::write(&retired_path, "").unwrap();
+    fs::write(&retired_exec_path, "").unwrap();
 
-    let mut cmd = repo.wt_command();
-    configure_directive_file(&mut cmd, &cd_path);
-    let output = cmd
-        .env("WORKTRUNK_DIRECTIVE_FILE", &retired_path)
-        .args([
-            "switch",
-            "feature",
-            "--execute",
-            "echo",
-            "--",
-            "through-current-wrapper",
-        ])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        configure_directive_file(&mut cmd, &cd_path);
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &retired_path)
+            .env("WORKTRUNK_DIRECTIVE_EXEC_FILE", &retired_exec_path)
+            .args([
+                "switch",
+                "feature",
+                "--execute",
+                "git",
+                "--",
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
+            ])
+            .current_dir(repo.root_path());
 
-    assert!(
-        output.status.success(),
-        "the current CD directive must remain active when the retired variable is also set.\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        !fs::read_to_string(&cd_path)
-            .unwrap_or_default()
-            .trim()
-            .is_empty(),
-        "the CD file must receive the target path"
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("through-current-wrapper"),
-        "--execute did not run directly"
-    );
-    assert_eq!(
-        fs::read_to_string(&retired_path).unwrap(),
-        "",
-        "wt must never write to the retired directive file"
-    );
+        assert_cmd_snapshot!(cmd);
+
+        assert!(
+            !fs::read_to_string(&cd_path)
+                .unwrap_or_default()
+                .trim()
+                .is_empty(),
+            "the current wrapper's CD directive should remain active"
+        );
+        assert_eq!(
+            fs::read_to_string(&retired_path).unwrap(),
+            "",
+            "wt must never write to the retired directive file"
+        );
+        assert_eq!(
+            fs::read_to_string(&retired_exec_path).unwrap(),
+            "",
+            "wt must never write to the retired execute directive file"
+        );
+    });
 }
 
 // ============================================================================

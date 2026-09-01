@@ -55,7 +55,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [36m[EXECUTE_ARGS]...[0m
           Additional arguments for --execute command (after --)[0m
           
-          Each argument is expanded for templates and passed verbatim.[0m
+          Each argument is expanded for templates and passed directly to the program.[0m
 
 [1m[32mOptions:[0m
   [1m[36m-c[0m, [1m[36m--create[0m
@@ -69,7 +69,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
           Program to run after switch[0m
           
-          Runs one external program after switching, with full terminal control. Arguments after [1m--[0m are passed verbatim. Shell syntax is not evaluated; an explicit shell can run a command line, for example [1m-x sh -- -c 'npm install && npm test'[0m.[0m
+          Runs one external program after switching, with full terminal control. Arguments after [1m--[0m go directly to that program without Worktrunk shell parsing. Program lookup and argument decoding follow the operating system. Shell syntax requires an explicit shell, for example [1m-x sh -- -c 'npm install && npm test'[0m. On Windows, shell shims need their extension ([1m-x code.cmd[0m) or an explicit shell such as [1m-x cmd.exe -- /C code[0m.[0m
           
           Without a branch argument, the interactive picker opens and the command runs against the selected worktree — so [1mwt switch -x claude[0m picks a worktree, then launches Claude Code there. With [1m--no-cd[0m, the program starts in the invoking directory instead.[0m
           

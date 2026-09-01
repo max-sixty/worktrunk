@@ -162,7 +162,7 @@ Arguments:
   [EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
 
-          Each argument is expanded for templates and passed verbatim.
+          Each argument is expanded for templates and passed directly to the program.
 
 Options:
   -c, --create
@@ -178,8 +178,10 @@ Options:
           Program to run after switch
 
           Runs one external program after switching, with full terminal control. Arguments after --
-          are passed verbatim. Shell syntax is not evaluated; an explicit shell can run a command
-          line, for example -x sh -- -c 'npm install && npm test'.
+          go directly to that program without Worktrunk shell parsing. Program lookup and argument
+          decoding follow the operating system. Shell syntax requires an explicit shell, for example
+          -x sh -- -c 'npm install && npm test'. On Windows, shell shims need their extension (-x
+          code.cmd) or an explicit shell such as -x cmd.exe -- /C code.
 
           Without a branch argument, the interactive picker opens and the command runs against the
           selected worktree — so wt switch -x claude picks a worktree, then launches Claude Code

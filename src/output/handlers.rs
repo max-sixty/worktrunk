@@ -1097,6 +1097,7 @@ pub fn handle_switch_output(
 /// the command runs.
 ///
 pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> anyhow::Result<()> {
+    super::global::print_outdated_execute_wrapper_warning();
     let command = super::global::format_exec_argv(argv);
 
     // Show what command is being executed (section header + gutter content)
