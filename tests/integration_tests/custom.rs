@@ -2,9 +2,14 @@
 
 use crate::common::{
     mock_commands::{MockConfig, MockResponse},
-    wt_command,
+    setup_home_snapshot_settings, wt_command,
 };
+// Used only by the `#[cfg(unix)]` non-UTF-8 test below; gate the import to
+// match, or it reads as unused on Windows under `-D warnings`.
+#[cfg(unix)]
+use crate::common::TestRepo;
 use ansi_str::AnsiStr;
+use insta_cmd::assert_cmd_snapshot;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
@@ -35,11 +40,21 @@ fn mock_bin_dir(name: &str, response: MockResponse) -> TempDir {
 }
 
 /// Limit PATH to a supported Git executable, excluding every `wt-*` custom
-/// subcommand without bypassing wt's startup requirements.
+/// subcommand without bypassing wt's startup requirements. `rev-parse`
+/// answers the way real git does outside a repository — exit 128 with the
+/// fatal message — so repo-discovery tests exercise "no repository" rather
+/// than "git failed" (mock_stub's fallback for an unmatched command is
+/// exit 1 with no output).
 fn set_git_only_path(cmd: &mut Command) -> TempDir {
     let dir = TempDir::new().unwrap();
     MockConfig::new("git")
         .version("git version 2.43.0")
+        .command(
+            "rev-parse",
+            MockResponse::exit(128).with_stderr(
+                "fatal: not a git repository (or any of the parent directories): .git\n",
+            ),
+        )
         .write(dir.path());
     cmd.env("PATH", dir.path())
         .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", dir.path());
@@ -194,6 +209,118 @@ fn custom_subcommand_typo_suggests_closest_builtin() {
     assert!(
         stderr.contains("'switch'"),
         "stderr should suggest 'switch': {stderr}"
+    );
+}
+
+#[test]
+fn custom_subcommand_alias_outside_repo_names_the_alias() {
+    // `wt co` outside a git repository, with `co` a user-config alias: alias
+    // dispatch ends inside try_alias with the alias-needs-repository error —
+    // a configured alias isn't "unrecognized", and the clap-style fallback
+    // would suggest the typed name itself.
+    let config_dir = tempfile::tempdir().unwrap();
+    let config_path = config_dir.path().join("config.toml");
+    std::fs::write(&config_path, "[aliases]\nco = \"echo hi\"\n").unwrap();
+
+    let mut cmd = wt_command();
+    let _git_only_path = set_git_only_path(&mut cmd);
+    cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+    cmd.arg("co");
+
+    let settings = setup_home_snapshot_settings(&config_dir);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(cmd);
+}
+
+#[test]
+fn custom_subcommand_alias_outside_repo_wins_over_path_binary() {
+    // Outside a repository the user-config alias still owns its name: dispatch
+    // ends in try_alias with the needs-repository error instead of falling
+    // through to a colliding `wt-<name>` PATH binary — the same "user config
+    // wins over wt-<name> PATH binaries" precedence as in-repo dispatch.
+    let config_dir = tempfile::tempdir().unwrap();
+    let config_path = config_dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "[aliases]\nwt-test-extcmd-alias-shadow = \"echo hi\"\n",
+    )
+    .unwrap();
+    let bin_dir = mock_bin_dir(
+        "wt-wt-test-extcmd-alias-shadow",
+        MockResponse::output("path binary ran\n"),
+    );
+
+    let mut cmd = wt_command();
+    // No `set_git_only_path` here: `prepend_path` rebuilds PATH from this
+    // process's environment, so a git-only PATH set above it would be
+    // discarded. The unique alias name is what keeps host `wt-*` binaries
+    // out of the way.
+    prepend_path(&mut cmd, bin_dir.path());
+    cmd.env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", bin_dir.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+    cmd.arg("wt-test-extcmd-alias-shadow");
+
+    let output = cmd.output().expect("failed to run wt");
+    assert!(!output.status.success(), "expected failure");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("wt-test-extcmd-alias-shadow is an alias"),
+        "error should name the configured alias: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("path binary ran"),
+        "the colliding PATH binary must not run: {stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn custom_subcommand_alias_with_non_utf8_arg_never_self_suggests() {
+    // Non-UTF-8 args skip alias dispatch wholesale (the alias arg parser
+    // requires UTF-8), so inside a repo `wt co <raw byte>` with `co`
+    // configured still falls through to the clap-style error. The
+    // self-suggestion filter in similar_subcommands keeps that error's tip
+    // from suggesting 'co' — the name the user typed.
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let repo = TestRepo::new();
+    repo.write_project_config(
+        r#"[aliases]
+co = "echo hi"
+"#,
+    );
+
+    let mut cmd = repo.wt_command();
+    cmd.arg("co").arg(OsString::from_vec(vec![0xff]));
+
+    let output = cmd.output().expect("failed to run wt");
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("unrecognized subcommand 'co'"),
+        "dispatch falls through to the clap-style error: {stderr}"
+    );
+    // The error line legitimately quotes 'co'; only the tip must not.
+    let tip = stderr
+        .lines()
+        .find(|line| line.contains("tip:"))
+        .unwrap_or_default();
+    assert!(
+        tip.contains("'config'"),
+        "tip should suggest the built-in it is similar to: {stderr}"
+    );
+    assert!(
+        !tip.contains("'co'"),
+        "the tip must not suggest the typed name itself: {tip}"
     );
 }
 
