@@ -307,6 +307,14 @@ pub struct LayoutMetadata {
 
 const EMPTY_PENALTY: u8 = 10;
 
+/// Widest the Branch column grows to fit its longest name.
+///
+/// Without a cap one 58-character branch sizes the column for every row, and
+/// at a narrow width the table degenerates into a branch list with everything
+/// else dropped. Past this the name is elided with `…`, the way Message
+/// already is; `--format=json` keeps the full name either way.
+const MAX_BRANCH: usize = 32;
+
 #[derive(Clone, Copy, Debug)]
 pub struct DiffDisplayConfig {
     pub variant: DiffVariant,
@@ -1217,7 +1225,8 @@ pub fn calculate_layout_with_width(
         .into_iter()
         .chain(detached_width)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(MAX_BRANCH);
     let max_branch = fit_header(ColumnKind::Branch.header(), max_branch);
 
     let path_data_width = items

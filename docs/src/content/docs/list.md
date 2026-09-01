@@ -76,7 +76,7 @@ $ wt list --format=json
 
 | Column | Shows |
 |--------|-------|
-| Branch | Branch name; a detached worktree has none, so it shows its short hash in dim yellow |
+| Branch | Branch name, elided with `…` past 32 characters so one long name can't size the column for every row (`--format=json` keeps it whole); a detached worktree has none, so it shows its short hash in dim yellow |
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes, including untracked files: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |

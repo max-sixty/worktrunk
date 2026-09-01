@@ -141,22 +141,22 @@ Output as JSON for scripting:
 
 [1m[32mColumns[0m
 
-  Column                                         Shows                                         
- ──────── ──────────────────────────────────────────────────────────────────────────────────── 
- Branch   Branch name; a detached worktree has none, so it shows its short hash in dim yellow  
- Status   Compact symbols (see below)                                                          
- HEAD±    Uncommitted changes, including untracked files: +added -deleted lines                
- main↕    Commits ahead/behind default branch                                                  
- main…±   Line diffs since the merge-base (three-dot) with the default branch                  
- Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m 
- Remote⇅  Commits ahead/behind tracking branch                                                 
- CI       PR/MR number colored by pipeline status; [2m--full[0m only                                 
- Path     Worktree directory                                                                   
- URL      Dev server URL from project config; dimmed if port is not listening                  
- (custom) User-defined custom columns from [2m[list.custom-columns][0m user config [experimental]    
- Commit   Short hash, abbreviated per [2mcore.abbrev[0m                                              
- Age      Time since last commit                                                               
- Message  Last commit message (truncated)                                                      
+  Column                                                                                                    Shows                                                                                                   
+ ──────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ Branch   Branch name, elided with … past 32 characters so one long name can't size the column for every row ([2m--format=json[0m keeps it whole); a detached worktree has none, so it shows its short hash in dim yellow 
+ Status   Compact symbols (see below)                                                                                                                                                                               
+ HEAD±    Uncommitted changes, including untracked files: +added -deleted lines                                                                                                                                     
+ main↕    Commits ahead/behind default branch                                                                                                                                                                       
+ main…±   Line diffs since the merge-base (three-dot) with the default branch                                                                                                                                       
+ Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m                                                                                                                      
+ Remote⇅  Commits ahead/behind tracking branch                                                                                                                                                                      
+ CI       PR/MR number colored by pipeline status; [2m--full[0m only                                                                                                                                                      
+ Path     Worktree directory                                                                                                                                                                                        
+ URL      Dev server URL from project config; dimmed if port is not listening                                                                                                                                       
+ (custom) User-defined custom columns from [2m[list.custom-columns][0m user config [experimental]                                                                                                                         
+ Commit   Short hash, abbreviated per [2mcore.abbrev[0m                                                                                                                                                                   
+ Age      Time since last commit                                                                                                                                                                                    
+ Message  Last commit message (truncated)                                                                                                                                                                           
 
 The [2mmain[0m header label is used regardless of the default branch's actual name.
 

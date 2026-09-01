@@ -41,3 +41,16 @@ fn representative_widths_render_useful_tables(mut repo: TestRepo) {
         snapshot_list(&repo, &format!("width_{width}"), width);
     }
 }
+
+/// One very long branch must not size the Branch column for every row: past
+/// the cap the name is elided, so the columns that answer "what is going on
+/// here" still fit. Without it, 60 columns degenerates into a branch list and
+/// 200 still loses Message.
+#[rstest]
+fn one_long_branch_does_not_size_the_table(mut repo: TestRepo) {
+    repo.add_worktree("a-very-long-branch-name-that-is-fifty-eight-chars-long-ok");
+
+    for width in [60, 100, 200] {
+        snapshot_list(&repo, &format!("long_branch_width_{width}"), width);
+    }
+}

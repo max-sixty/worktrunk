@@ -58,11 +58,11 @@ exit_code: 0
 ----- stdout -----
   [1mBranch[0m                            [1mStatus[0m        [1mHEAD±[0m
 @ main                                  [2m^[22m[2m|[22m             
++ [2ma-very-long-branch-name-that-is[22m…[0m      [2m_[22m              
 + feature-a                             [2m↑[22m              
 + feature-b                             [2m↑[22m              
 + feature-c                             [2m↑[22m              
-+ feature/implement-oauth2-social…    [36m?[39m [2m–[22m       [32m+1[0m     
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead, hidden: main↕, main…±, Remote⇅, Path, Commit, Age, Message[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: main↕, main…±, Remote⇅, Path, Commit, Age, Message[0m

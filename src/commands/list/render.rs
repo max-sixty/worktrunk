@@ -325,7 +325,12 @@ impl LayoutConfig {
                     } else {
                         cell.push_raw(branch.to_string());
                     }
+                    // Elide past the column's cap, matching the settled row —
+                    // `render_text_cell` truncates there, and a skeleton that
+                    // didn't would overflow into the next column.
+                    let mut cell = cell.truncate_to_width(col.width);
                     cell.pad_to(col.width);
+                    return cell;
                 }
                 ColumnKind::Path => {
                     // Show actual path (no dim - start normal, gray out later if removable)
