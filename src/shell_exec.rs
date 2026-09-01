@@ -90,6 +90,7 @@ use anyhow::Context;
 use shared_child::SharedChild;
 
 use crate::git::{GitError, WorktrunkError};
+use crate::styling::eprintln;
 use crate::sync::Semaphore;
 use crate::trace::CommandTrace;
 
@@ -1200,8 +1201,7 @@ fn spawn_delayed_reader<R: Read + Send + 'static>(
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
             if streaming.load(Ordering::Relaxed) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-                let _ = std::io::stderr().flush();
+                eprintln!("{}", line);
             } else {
                 buffer.lock().unwrap().push(line);
             }
@@ -2059,7 +2059,12 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts.
+    /// starts. It arrives pre-rendered with its ANSI already in it, so — like
+    /// every relayed line — it goes out through [`crate::styling`]'s
+    /// `eprintln!` rather than a raw handle: anstream is the only thing that
+    /// strips those escapes when stderr is redirected and honors `NO_COLOR`,
+    /// and a single raw write here is enough to make one line of a log
+    /// disagree with the rest.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2160,12 +2165,11 @@ impl Cmd {
             // Delay threshold exceeded — switch to streaming.
             streaming.store(true, Ordering::Relaxed);
             if let Some(ref msg) = progress_message {
-                let _ = writeln!(std::io::stderr(), "{}", msg);
+                eprintln!("{}", msg);
             }
             for line in buffer.lock().unwrap().drain(..) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
+                eprintln!("{}", line);
             }
-            let _ = std::io::stderr().flush();
         }
 
         // Phase 2: Block until the child exits (no polling).
