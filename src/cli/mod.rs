@@ -393,11 +393,13 @@ pub(crate) struct SwitchArgs {
     /// selected base with `--create`, or the invoking worktree when switching
     /// to an existing worktree.
     ///
-    /// Each position is substituted verbatim, so a path containing spaces
-    /// stays a single argument. A shell re-parses whatever body it is handed,
-    /// so a variable spliced into `-c` text splits on its spaces instead. Pass
-    /// it as a separate argument and reference it positionally:
-    /// `-x sh -- -c 'rm -rf "$1"/build' wt-exec '{{ worktree_path }}'`.
+    /// A variable inside a shell body is substituted before that shell parses
+    /// it, so a path with spaces splits into several arguments. Pass it as a
+    /// separate argument instead:
+    ///
+    /// ```sh
+    /// wt switch feature -x sh -- -c 'rm -rf "$1"/build' wt-exec '{{ worktree_path }}'
+    /// ```
     ///
     /// Especially useful with shell aliases:
     ///
