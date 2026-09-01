@@ -85,8 +85,9 @@ pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> any
 ///
 /// Supplied at conversion time (`sourced_steps_to_foreground`) so a single
 /// `SourcedStep` shape can be produced by both alias and hook resolution.
-/// Drives announce policy, stdout redirection, and error wrapping. Hook-only
-/// metadata
+/// Drives announce policy, stdout redirection, and error wrapping at
+/// conversion time, plus the `commands.jsonl` trace label (`log_label`) and
+/// git-discovery scrubbing (`is_hook`) at execution. Hook-only metadata
 /// (`hook_type`, `display_path`) lives on the `Hook` variant — it's
 /// per-pipeline, not per-step, so the per-step shape stays neutral.
 #[derive(Clone)]

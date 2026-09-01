@@ -66,7 +66,8 @@ pub struct ConcurrentCommand<'a> {
     /// Optional label for `commands.jsonl` tracing.
     pub log_label: Option<&'a str>,
     /// Directive file env vars to pass through to the child. See
-    /// `DirectivePassthrough` for the trust model (CD passthrough, EXEC scrub).
+    /// `DirectivePassthrough`: the CD directive file is the only one passed
+    /// through — every child scrubs the rest.
     pub directives: &'a DirectivePassthrough,
     /// Scrub inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`/…) from the
     /// child. `true` for hooks (they operate on the worktree wt targets), `false`

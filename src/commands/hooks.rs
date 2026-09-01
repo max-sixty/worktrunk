@@ -536,9 +536,6 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
 /// interactive get a closed stdin rather than a substitute payload: concurrent
 /// children (they'd race for the terminal) and detached (`post-*`) hooks (there
 /// is none). Template variables carry the context in every form.
-///
-/// Every foreground step inherits the CD directive so a nested switch can
-/// still move the parent shell.
 pub(crate) fn sourced_steps_to_foreground(
     sourced_steps: Vec<SourcedStep>,
     kind: &PipelineKind,
