@@ -15,6 +15,7 @@ Unlike `git merge`, this merges the current branch into the target branch — no
   <source srcset="/assets/docs/dark/wt-merge.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-merge.gif" alt="wt merge demo" width="1600" height="900">
 </picture>
+<figcaption>Creating a worktree, committing in it, and merging it away</figcaption>
 </figure>
 
 ## Examples

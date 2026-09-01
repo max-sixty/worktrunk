@@ -832,7 +832,10 @@ fn format_subcommand_section(
 /// The placeholder should be on its own line without surrounding blank lines in the source.
 /// This function adds blank lines around the figure for proper markdown paragraph separation.
 ///
-/// Supports optional dimensions: `<!-- demo: filename.gif 1600x900 -->`
+/// Supports optional dimensions and a caption, in that order:
+/// `<!-- demo: filename.gif 1600x900 | What the recording shows -->`. The
+/// caption becomes the figure's `<figcaption>`, the same treatment the
+/// hand-written homepage figures get; without one the figure has no caption.
 fn expand_demo_placeholders(text: &str) -> String {
     const SUFFIX: &str = " -->";
 
@@ -841,8 +844,12 @@ fn expand_demo_placeholders(text: &str) -> String {
         let after_prefix = start + DEMO_MARKER_PREFIX.len();
         if let Some(end_offset) = result[after_prefix..].find(SUFFIX) {
             let content = &result[after_prefix..after_prefix + end_offset];
-            // Parse "filename.gif" or "filename.gif 1600x900"
-            let mut parts = content.split_whitespace();
+            // Split "filename.gif 1600x900" from an optional "| caption"
+            let (spec, caption) = match content.split_once('|') {
+                Some((spec, caption)) => (spec, caption.trim()),
+                None => (content, ""),
+            };
+            let mut parts = spec.split_whitespace();
             let filename = parts.next().unwrap_or("");
             let dimensions = parts.next(); // Optional "WIDTHxHEIGHT"
 
@@ -855,12 +862,18 @@ fn expand_demo_placeholders(text: &str) -> String {
                 .map(|(w, h)| format!(" width=\"{w}\" height=\"{h}\""))
                 .unwrap_or_default();
 
+            let figcaption = if caption.is_empty() {
+                String::new()
+            } else {
+                format!("\n<figcaption>{caption}</figcaption>")
+            };
+
             // Use figure.demo class for proper mobile styling (no shrink, horizontal scroll)
             // Generate <picture> element for light/dark theme switching
             // Assets are organized as: /assets/docs/{light,dark}/filename.gif
             // Add trailing newline for markdown paragraph separation after the figure
             let replacement = format!(
-                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>\n"
+                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>{figcaption}\n</figure>\n"
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);

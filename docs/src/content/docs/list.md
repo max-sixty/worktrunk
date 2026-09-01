@@ -15,6 +15,7 @@ Shows uncommitted changes, divergence from the default branch and remote, and op
   <source srcset="/assets/docs/dark/wt-list.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-list.gif" alt="wt list demo" width="1600" height="900">
 </picture>
+<figcaption>Progressive rendering, then --full and --branches</figcaption>
 </figure>
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.

@@ -625,7 +625,7 @@ pub(crate) enum Commands {
     #[command(
         after_long_help = r#"Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
-<!-- demo: wt-switch.gif 1600x900 -->
+<!-- demo: wt-switch.gif 1600x900 | Switching to a worktree, creating one, and creating one that launches an agent -->
 ## Examples
 
 ```console
@@ -691,7 +691,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 
 The CI column shows each row's PR/MR CI and review status, the same as [`wt list --full`](/list/).
 
-<!-- demo: wt-switch-picker.gif 1600x800 -->
+<!-- demo: wt-switch-picker.gif 1600x800 | Browsing the picker, scrolling a preview, filtering, and selecting -->
 **Keybindings:**
 
 | Key | Action |
@@ -781,7 +781,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
     #[command(
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
-<!-- demo: wt-list.gif 1600x900 -->
+<!-- demo: wt-list.gif 1600x900 | Progressive rendering, then --full and --branches -->
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
 
 ## Full mode
@@ -1385,7 +1385,7 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
     #[command(
         after_long_help = r#"Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
 
-<!-- demo: wt-merge.gif 1600x900 -->
+<!-- demo: wt-merge.gif 1600x900 | Creating a worktree, committing in it, and merging it away -->
 ## Examples
 
 Merge to the default branch:

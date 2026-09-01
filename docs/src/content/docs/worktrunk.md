@@ -112,7 +112,7 @@ Multiple parallel agents, same simple commands:
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-zellij-omnibus.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
+  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900" loading="lazy">
 </picture>
 <figcaption>Multiple Claude agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
 </figure>

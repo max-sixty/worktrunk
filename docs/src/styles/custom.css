@@ -625,7 +625,7 @@ figure.demo {
   margin-block-start: 0.75rem;
 }
 
-.wt-home figure.demo figcaption {
+figure.demo figcaption {
   margin-block-start: 0.65rem;
   color: var(--wt-ink-muted);
   font-family: var(--wt-font-display);
@@ -717,5 +717,24 @@ figure.demo img {
 @media (max-width: 49.99rem) {
   .sl-markdown-content h2 {
     font-size: 1.8rem;
+  }
+}
+
+/* Terminal output is the site's widest material — `wt list --full` renders far
+   past the prose column and disappears behind a horizontal scrollbar while the
+   pane beside the column sits empty. On viewports with that slack, let a
+   terminal frame take the whole pane. `.content-panel` becomes the query
+   container so the room available is measured rather than recomputed from
+   Starlight's main-pane formula: `100cqi` is the pane's content box, and the
+   frame's own `100%` is the content column it would otherwise be trapped in. */
+@media (min-width: 72rem) {
+  .content-panel {
+    container-type: inline-size;
+  }
+
+  .sl-markdown-content .expressive-code:has(.frame.is-terminal),
+  .sl-markdown-content .expressive-code:has(.frame.wt-command-reference) {
+    width: 100cqi;
+    margin-inline-start: min(0px, calc(100% - 100cqi));
   }
 }
