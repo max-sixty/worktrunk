@@ -10,6 +10,13 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -29,6 +36,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -45,7 +53,7 @@ Usage: [1m[36mwt step copy-ignored[0m [36m[OPTIONS][0m
       [1m[36m--from[0m[36m [0m[36m<FROM>[0m
           Source worktree branch[0m
           
-          Defaults to main worktree.[0m
+          Defaults to primary worktree.[0m
 
       [1m[36m--to[0m[36m [0m[36m<TO>[0m
           Destination worktree branch[0m
@@ -96,6 +104,15 @@ Add to the project config:
 [107m [0m [2m# .config/wt.toml[0m
 [107m [0m [2m[36m[post-start][0m
 [107m [0m [2mcopy = [0m[2m[32m"wt step copy-ignored"[0m
+
+[1m[32mChoosing source and destination[0m
+
+By default the copy runs from the primary worktree into the current one — what a [2mpost-start[0m hook needs, since the new worktree is where the hook runs. [2m--from[0m and [2m--to[0m name either end by branch, so a copy can run between two worktrees from anywhere:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--from[0m[2m main [0m[2m[36m--to[0m[2m feature   # between two named worktrees[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--from[0m[2m feature             # from feature into the current worktree[0m
+
+A branch named by [2m--from[0m or [2m--to[0m must have a worktree.
 
 [1m[32mWhat gets copied[0m
 
