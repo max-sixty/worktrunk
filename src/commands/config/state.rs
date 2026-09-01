@@ -76,7 +76,7 @@ use crate::commands::picker::preview_cache;
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
-use worktrunk::git::{BranchRef, Repository, resolve_input_path, sha_cache};
+use worktrunk::git::{BranchRef, CommandError, Repository, resolve_input_path, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, hint_message, info_message, println,
@@ -834,9 +834,36 @@ pub fn handle_state_get(
     Ok(())
 }
 
+/// True when `err` is `Repository::current()` failing because the discovery
+/// path isn't inside a git repository at all — as opposed to a permission
+/// error, a corrupt repo, or any other `git rev-parse --git-common-dir`
+/// failure. Distinguishing this narrows the marker hooks' no-op fallback
+/// (#3921) to the one case it's meant for, rather than swallowing every
+/// repository-resolution failure a session might hit.
+fn is_missing_repository_error(err: &anyhow::Error) -> bool {
+    CommandError::find_in(err).is_some_and(|cmd_err| {
+        cmd_err.exit_code == Some(128) && cmd_err.stderr.contains("not a git repository")
+    })
+}
+
 /// Handle the state set command
 pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let repo = match Repository::current() {
+        Ok(repo) => repo,
+        Err(err) if key == "marker" && is_missing_repository_error(&err) => {
+            // The Claude Code / Codex / Gemini marker hooks call `marker set`
+            // unconditionally on every turn (`UserPromptSubmit`, `Stop`, …),
+            // regardless of whether the session's directory is inside a git
+            // repository. Before this, a session started outside a repo made
+            // every one of those calls print `git rev-parse --git-common-dir
+            // failed (exit 128)` to stderr and exit 1 — silently discarded by
+            // the hook's own `|| true`, but still a spurious failure on every
+            // turn. Treat "no repository here" as the no-op it already
+            // behaves like from the hook's perspective (#3921).
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
 
     match key {
         "default-branch" => {
@@ -893,7 +920,15 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
 
 /// Handle the state clear command
 pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
-    let repo = Repository::current()?;
+    let repo = match Repository::current() {
+        Ok(repo) => repo,
+        Err(err) if key == "marker" && is_missing_repository_error(&err) => {
+            // `SessionEnd` fires the same unconditional `marker clear` call —
+            // see the matching comment in `handle_state_set`.
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
 
     match key {
         "default-branch" => {
