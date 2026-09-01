@@ -65,6 +65,16 @@
 //! wakeup costs at worst a wait that runs to its deadline, which is what a
 //! deadline is for. It also probes the wake fd and falls back to `write()` on a
 //! pipe, so the syscall that sandbox denies is not even on the path.
+//!
+//! **When the timed wait itself fails.** Setting a deadline is fallible — each
+//! call allocates a pipe and registers a handler — so each site decides what a
+//! failed `wait_timeout` means instead of propagating it. Where the deadline
+//! bounds wall-clock (`run_with_timeout_impl`, the pager) the site tears the
+//! child down, because a wait it cannot observe bounds nothing. Where it only
+//! decides when output starts streaming ([`Cmd::delayed_stream`]) the site
+//! streams. No site fails the command: a denied syscall in wt's own machinery
+//! is not the child's fault, and erroring over one repeats #3856 in a quieter
+//! form.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -2047,7 +2057,7 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts (the delay threshold is crossed).
+    /// starts.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2130,13 +2140,17 @@ impl Cmd {
                         trace.complete(status.success());
                         return stream_exit_result(status, &buffer, &cmd_str);
                     }
-                    // Threshold exceeded — fall through to streaming.
-                    Ok(None) => {}
-                    Err(e) => {
-                        let _ = stdout_handle.join();
-                        let _ = stderr_handle.join();
-                        trace.fail(&e);
-                        return Err(e).context("Failed to wait for command");
+                    // No status yet: the threshold passed, or the timed wait
+                    // itself failed. Both fall through to streaming. A failed
+                    // wait means the deadline machinery broke — `sigchld`
+                    // allocates a pipe and registers a handler per call, which
+                    // a sandbox or an fd limit can deny — not that the child
+                    // misbehaved, and Phase 2's `wait()` is a bare `waitid`
+                    // with neither, so it still returns the real status.
+                    // Failing here would turn a denied syscall into a failed
+                    // command, which is the shape of #3856.
+                    outcome => {
+                        tracing::debug!(?outcome, "No exit status yet; switching to streaming");
                     }
                 }
             }
@@ -2842,6 +2856,40 @@ mod tests {
         // A fast command under a generous threshold exits during phase 1
         // (wait_timeout returns Some) and stays buffered/quiet.
         Cmd::new("true").delayed_stream(5_000, None).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_crosses_the_threshold() {
+        // A command that outlives the threshold leaves phase 1 with no status
+        // (`wait_timeout` returns `Ok(None)`), which switches the readers to
+        // streaming, and phase 2 then reports the real exit.
+        //
+        // What pins the switch is where the late output goes: a streamed line
+        // is written to stderr instead of the buffer, so the error carries
+        // none of it. Had phase 1 returned a status instead, `late` would
+        // still be buffered and would show up here. The other thresholds never
+        // reach this arm — `0` streams without waiting, `-1` skips phase 1.
+        //
+        // The child writes 450 ms after the threshold passes. Only the switch
+        // has to land in that window, and it follows the wait immediately, so
+        // the margin covers a deschedule far longer than anything the suite
+        // produces. The threshold stays well above zero for the opposite
+        // reason: were `remaining` to reach it already spent, phase 1 would
+        // skip the wait entirely and the test would pass without reaching the
+        // arm it exists to cover.
+        let err = Cmd::new("sh")
+            .args(["-c", "sleep 0.5; echo late 1>&2; exit 3"])
+            .delayed_stream(50, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output written after the switch must stream, not buffer"
+        );
     }
 
     #[test]

@@ -3962,6 +3962,25 @@ fn test_plugin_layout_is_consolidated() {
         );
     }
 
+    let marker_commands = all_commands
+        .iter()
+        .filter(|command| command.contains("config state marker"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        marker_commands.len(),
+        6,
+        "expected all 6 Claude marker hooks (UserPromptSubmit, Notification, \
+         PreToolUse, PermissionRequest, Stop, SessionEnd); a newly added one \
+         must be pinned too. hooks.json:\n{hooks}"
+    );
+    for command in marker_commands {
+        assert!(
+            command.contains(r#"-C "$CLAUDE_PROJECT_DIR""#),
+            "marker hook must pin the directory it resolves against, or a shell \
+             `cd` during a turn retargets it to another repository (#3921). \
+             command:\n{command}"
+        );
+    }
     let worktree_remove_cmd = hooks_json["hooks"]["WorktreeRemove"][0]["hooks"][0]["command"]
         .as_str()
         .expect("WorktreeRemove hook must define a command");

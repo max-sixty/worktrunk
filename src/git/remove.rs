@@ -703,6 +703,39 @@ mod tests {
     use super::*;
     use crate::testing::TestRepo;
 
+    /// Registry serialization starts after the fast-path rename, so worktree
+    /// staging can overlap while metadata teardown remains exclusive.
+    #[test]
+    fn stages_worktree_before_waiting_for_registry_lock() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worker_repo = repo.clone();
+        let worker_path = worktree_path.clone();
+
+        let registry_guard = repo.worktree_registry_write();
+        let worker = std::thread::spawn(move || {
+            stage_worktree_removal(&worker_repo, &worker_path, Some("feature"), false)
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while worktree_path.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let renamed_before_unlock = !worktree_path.exists();
+
+        drop(registry_guard);
+        let result = worker.join().expect("staging thread should not panic");
+        assert!(
+            renamed_before_unlock,
+            "worktree should be renamed before registry teardown acquires the lock; result: {result:?}"
+        );
+        assert!(
+            result.unwrap().is_some(),
+            "worktree should use the rename fast path"
+        );
+    }
+
     /// When the branch tip moves between snapshot capture and the deletion
     /// attempt, the atomic compare-and-swap rejects the delete and surfaces
     /// `RetainedRaced` rather than dropping the new commits silently.

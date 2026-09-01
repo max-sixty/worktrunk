@@ -61,7 +61,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mApproving [1m2[22m commands for [1mrepo[22m (--yes):[39m
+[36mApproving [1m2[22m commands for [1mrepo[22m (--yes):[39m
 [2m○[22m pre-merge:
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test[0m
 [2m○[22m alias [1mdeploy[22m:

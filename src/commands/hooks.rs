@@ -425,7 +425,7 @@ fn run_hooks_background(
     };
     eprintln!("{}", progress_message(message));
 
-    for pipeline in &pipelines {
+    for pipeline in pipelines {
         spawn_hook_pipeline_quiet(repo, pipeline)?;
     }
 
@@ -477,54 +477,22 @@ fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: Hoo
 /// Spawn a hook pipeline without displaying a summary line.
 ///
 /// Used by `run_hooks_background` after the combined announcement is printed.
-fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> anyhow::Result<()> {
-    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
+fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> anyhow::Result<()> {
+    use super::run_pipeline::PipelineSpec;
 
-    // Extract base context from the first command. Registration never adds an
-    // empty step group (asserted in `add_groups`), so `steps[0]` is safe;
-    // every step's first command carries the same base context (only
-    // `hook_name` differs per step — strip it so the runner re-injects per
-    // step).
-    let steps = &pipeline.steps;
-    let source = steps[0].source;
-    let first_cmd = &steps[0].step.commands()[0];
-    let mut context = first_cmd.context.clone();
-    context.remove("hook_name");
-
-    // Build pipeline spec from prepared steps. The runner renders each raw
-    // template when its step runs (see `run_pipeline`'s "Template freshness").
-    let spec_steps: Vec<PipelineStepSpec> = steps
-        .iter()
-        .map(|s| match &s.step {
-            PreparedStep::Single(cmd) => PipelineStepSpec::Single {
-                name: cmd.name.clone(),
-                template_name: cmd.template_name.clone(),
-                template: cmd.template.clone(),
-            },
-            PreparedStep::Concurrent(cmds) => PipelineStepSpec::Concurrent {
-                commands: cmds
-                    .iter()
-                    .map(|c| PipelineCommandSpec {
-                        name: c.name.clone(),
-                        template_name: c.template_name.clone(),
-                        template: c.template.clone(),
-                    })
-                    .collect(),
-            },
-        })
-        .collect();
+    // Registration never adds an empty step group (asserted in `add_groups`),
+    // so `steps[0]` is safe.
+    let source = pipeline.steps[0].source;
 
     // "HEAD" fallback matches `CommandContext::branch_or_head` for detached HEAD.
-    let branch = pipeline.branch.as_deref().unwrap_or("HEAD");
+    let branch = pipeline.branch.unwrap_or_else(|| "HEAD".to_string());
     let hook_type = pipeline.hook_type;
     let spec = PipelineSpec {
-        worktree_path: pipeline.worktree_path.clone(),
-        branch: branch.to_string(),
+        worktree_path: pipeline.worktree_path,
+        branch,
         hook_type,
         source,
-        context,
-        steps: spec_steps,
-        log_dir: repo.wt_logs_dir(),
+        steps: pipeline.steps.into_iter().map(|step| step.step).collect(),
     };
 
     let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
@@ -536,10 +504,10 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
 
     if let Err(err) = spawn_detached_exec(
         repo,
-        &pipeline.worktree_path,
+        &spec.worktree_path,
         &wt_bin,
         &["hook", "run-pipeline"],
-        branch,
+        &spec.branch,
         &hook_log,
         &spec_json,
     ) {

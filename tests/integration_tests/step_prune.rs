@@ -1711,8 +1711,8 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
     }
 }
 
-/// The removals that unregister stale worktree metadata serialize behind
-/// `registry_lock` — one `git worktree remove` teardown at a time.
+/// The removals that unregister stale worktree metadata serialize through the
+/// repository registry lock — one `git worktree remove` teardown at a time.
 ///
 /// Four stale entries: two carrying a branch (`BranchOnly` plans whose
 /// `prune_entry` executes the prune) and two detached (`StaleDetached`, which
@@ -1730,7 +1730,7 @@ fn test_prune_removals_run_concurrently(repo: TestRepo) {
 /// `--foreground` runs both ways. It reserves `check_lock`'s write side for the
 /// TTY trash-cleanup spinner, which only a worktree removal paints; every
 /// candidate here plans a branch deletion or a bare prune, so the flag changes
-/// nothing — the registry teardowns serialize on `registry_lock` regardless.
+/// nothing — the registry teardowns serialize inside `Repository` regardless.
 #[cfg(unix)]
 #[rstest]
 fn test_prune_metadata_removals_serialize(
@@ -1762,7 +1762,7 @@ fn test_prune_metadata_removals_serialize(
 
     let mut cmd = repo.wt_command();
     // The removal pool is sized from the rayon thread count; pin it to four so
-    // all four teardowns would run at once if `registry_lock` regressed (the
+    // all four teardowns would run at once if the registry lock regressed (the
     // workers block in subprocess waits, so four threads don't need four CPUs).
     cmd.env("RAYON_NUM_THREADS", "4");
     let git_wrapper_dir = repo.home_path().join("git-wrapper");
@@ -1801,8 +1801,8 @@ fn test_prune_metadata_removals_serialize(
         .collect();
     assert!(
         overlaps.is_empty(),
-        "two `git worktree remove` teardowns overlapped — `registry_lock` did \
-         not serialize them (issue #3661): {overlaps:?}"
+        "two `git worktree remove` teardowns overlapped — the repository registry \
+         lock did not serialize them (issue #3661): {overlaps:?}"
     );
     let list = repo.git_output(&["worktree", "list", "--porcelain"]);
     assert!(
@@ -1985,7 +1985,7 @@ exit 1
     std::fs::set_permissions(&path, permissions).unwrap();
 }
 
-/// A `git` shim whose `worktree remove` arms probe for overlap (see
+/// A `git` shim whose `worktree remove` arms a probe for overlap (see
 /// `test_prune_metadata_removals_serialize`): each records that it started,
 /// then takes an atomic `mkdir` lock for a fixed window. Under the registry
 /// serialization this is testing, no two teardowns ever hold it at once, so a

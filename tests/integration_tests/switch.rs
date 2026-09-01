@@ -4425,6 +4425,79 @@ fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRep
     );
 }
 
+/// Regression: `wt switch --create X --base pr:N` against a same-repo PR whose
+/// source branch exists only on the remote — the shape a fresh clone has for
+/// someone else's PR. The fetch writes just `refs/remotes/<remote>/<branch>`,
+/// and git's rev-parse never expands a bare name to a remote-tracking ref, so
+/// resolving the base to the bare name failed validation with "No branch, tag,
+/// or commit named <branch>".
+#[rstest]
+fn test_switch_base_pr_source_branch_remote_only(#[from(repo_with_remote)] repo: TestRepo) {
+    // Publish the PR's source branch, then drop the local branch.
+    repo.run_git(&["checkout", "-b", "feature-auth"]);
+    fs::write(repo.root_path().join("auth.txt"), "auth").unwrap();
+    repo.run_git(&["add", "auth.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let pr_head = repo.head_sha();
+    repo.run_git(&["push", "origin", "feature-auth"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "feature-auth"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args([
+        "switch",
+        "--create",
+        "feat/review-101",
+        "--base",
+        "pr:101",
+        "--no-cd",
+    ]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch should run");
+    assert!(
+        output.status.success(),
+        "wt switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let created_head = repo.git_output(&["rev-parse", "feat/review-101"]);
+    assert_eq!(
+        created_head, pr_head,
+        "new branch should start at the PR's source branch"
+    );
+
+    // Tracking still points at the PR's source branch (#2497).
+    let remote = repo.git_output(&["config", "--get", "branch.feat/review-101.remote"]);
+    let merge = repo.git_output(&["config", "--get", "branch.feat/review-101.merge"]);
+    assert_eq!(
+        remote, "origin",
+        "branch.feat/review-101.remote should be set so `git push` knows where to push"
+    );
+    assert_eq!(
+        merge, "refs/heads/feature-auth",
+        "branch.feat/review-101.merge should target the PR's source branch on the remote"
+    );
+}
+
 /// `wt switch --create X --base pr:N` resolves a fork PR to its head commit
 /// SHA via refs/pull/N/head without creating a tracking branch.
 #[rstest]
@@ -5221,8 +5294,8 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 // ============================================================================
 // PR Syntax Tests on Gitea remotes
 //
-// These exercise `pr:<N>` against a Gitea remote (host detection picks the
-// `tea` provider; provider selection is in choose_pr_provider). The remote
+// These exercise `pr:<N>` against a Gitea remote (`choose_pr_forge` selects
+// Gitea, whose backend calls `tea`). The remote
 // URLs use `gitea.example.com` so `GitRemoteUrl::is_gitea()` matches and the
 // ambiguous fallback is skipped — the runtime calls only the mock `tea`,
 // not real `gh`.
@@ -5232,7 +5305,7 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 /// stderr and `body` on stdout — the two streams a real `tea` writes for one
 /// HTTP response.
 ///
-/// The status is what the Gitea provider classifies on, so every test states
+/// The status is what the Gitea backend classifies on, so every test states
 /// the one it stands for rather than leaving it implied. Returns the mock bin
 /// directory; pass it to `configure_mock_cli_env`.
 fn setup_mock_tea(repo: &TestRepo, status: &str, body: &str) -> std::path::PathBuf {
@@ -5487,8 +5560,8 @@ fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRe
     });
 }
 
-/// `forge.platform = "gitea"` selects the Gitea provider directly, even when
-/// the remote URL doesn't look like Gitea (no ambiguous two-provider fallback).
+/// `forge.platform = "gitea"` selects Gitea directly, even when the remote URL
+/// doesn't look like Gitea.
 #[rstest]
 fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {
     // Non-Gitea-looking URL — without `forge.platform` set we'd hit the ambiguous path.
@@ -5568,11 +5641,11 @@ fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: T
     });
 }
 
-/// Malformed project config must fail closed before `pr:` provider fallback.
+/// Malformed project config must fail closed before `pr:` forge fallback.
 /// Otherwise an intended `forge.platform` override on an opaque/self-hosted
 /// remote can be ignored and route to the wrong CLI.
 #[rstest]
-fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
+fn test_switch_pr_malformed_project_config_bails_before_forge_selection(
     #[from(repo_with_remote)] repo: TestRepo,
 ) {
     repo.run_git(&[
@@ -5596,7 +5669,7 @@ fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
         )
         .command(
             "api",
-            MockResponse::stderr("GH provider fallback was invoked\n").with_exit_code(42),
+            MockResponse::stderr("GH fallback was invoked\n").with_exit_code(42),
         )
         .command("_default", MockResponse::exit(42))
         .write(&mock_bin);
@@ -5622,14 +5695,13 @@ fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
         "expected TOML parse diagnostic, got:\n{stderr}"
     );
     assert!(
-        !stderr.contains("GH provider fallback was invoked"),
-        "provider fallback should not run after malformed project config:\n{stderr}"
+        !stderr.contains("GH fallback was invoked"),
+        "forge fallback should not run after malformed project config:\n{stderr}"
     );
 }
 
 /// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
-/// installed the GitHub provider bails with the install hint — a single,
-/// readable error rather than a wrapped two-provider message.
+/// installed, the GitHub backend returns its install hint.
 #[rstest]
 fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
     let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
@@ -6059,8 +6131,8 @@ fn test_switch_pr_gitea_proxy_error_page(#[from(repo_with_remote)] repo: TestRep
 // ============================================================================
 // PR Syntax Tests on Azure DevOps remotes
 //
-// These exercise `pr:<N>` against an Azure DevOps remote. Host detection picks
-// the `az` provider (provider selection is in choose_pr_provider). The remote
+// These exercise `pr:<N>` against an Azure DevOps remote. `choose_pr_forge`
+// selects Azure DevOps, whose backend calls `az`. The remote
 // URLs use `dev.azure.com` / `*.visualstudio.com` so `GitRemoteUrl::is_azure_devops()`
 // matches and the ambiguous fallback is skipped — the runtime calls only the
 // mock `az`, not real `gh`.
@@ -6230,7 +6302,7 @@ fn test_switch_pr_azure_project_name_with_spaces(#[from(repo_with_remote)] mut r
 
 /// A full Azure DevOps PR web URL passed to `wt switch` resolves the same as the
 /// `pr:N` shortcut: the URL normalises to `pr:101` (shape-based `parse_ref_url`),
-/// dispatch selects `AzureDevOpsProvider`, and the worktree is created. The
+/// dispatch selects Azure DevOps, and the worktree is created. The
 /// snapshot should match `switch_pr_azure_same_repo`, since both forms converge
 /// on the same shortcut.
 #[rstest]
@@ -6273,7 +6345,7 @@ fn test_switch_pr_azure_web_url(#[from(repo_with_remote)] mut repo: TestRepo) {
 }
 
 /// Regression: an Azure PR whose `sourceRefName` is just `refs/heads/`
-/// (empty branch after stripping) must fail at the provider boundary with a
+/// (empty branch after stripping) must fail at the forge boundary with a
 /// clear message — matching GitHub/GitLab/Gitea — not produce a confusing
 /// downstream git/path error.
 #[rstest]
@@ -6452,7 +6524,7 @@ fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 /// `az` not installed: with an Azure remote, dispatch routes to the Azure
-/// provider, which bails with the install hint when `az` isn't on PATH.
+/// backend, which returns the install hint when `az` isn't on PATH.
 #[rstest]
 fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
@@ -6475,7 +6547,7 @@ fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRep
     });
 }
 
-/// `forge.platform = "azure-devops"` selects the Azure provider directly, even
+/// `forge.platform = "azure-devops"` selects Azure DevOps directly, even
 /// when the remote URL doesn't look like Azure DevOps.
 #[rstest]
 fn test_switch_pr_azure_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {

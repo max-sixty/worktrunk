@@ -1,6 +1,4 @@
-//! GitHub PR provider.
-//!
-//! Implements `RemoteRefProvider` for GitHub Pull Requests using the `gh` CLI.
+//! GitHub PR backend using the `gh` CLI.
 
 use std::path::Path;
 
@@ -8,29 +6,11 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{
-    CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
+    CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, cli_config_value,
     extract_host_from_html_url, run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
 use crate::shell_exec::Cmd;
-
-/// GitHub Pull Request provider.
-#[derive(Debug, Clone, Copy)]
-pub struct GitHubProvider;
-
-impl RemoteRefProvider for GitHubProvider {
-    fn forge_kind(&self) -> ForgeKind {
-        ForgeKind::GitHub
-    }
-
-    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
-        fetch_pr_info(number, repo)
-    }
-
-    fn ref_path(&self, number: u32) -> String {
-        format!("pull/{}/head", number)
-    }
-}
 
 /// Raw JSON response from `gh api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
@@ -100,7 +80,7 @@ fn gh_default_repo(repo_root: &Path) -> Option<(String, String)> {
 }
 
 /// Fetch PR information from GitHub using the `gh` CLI.
-fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
     // Determine which owner/repo to query. Prefer gh's default repo
@@ -239,7 +219,7 @@ fn use_ssh_protocol() -> bool {
 
 /// Whether `gh` has an authentication token configured for `host`.
 ///
-/// Used by the switch dispatcher to decide which provider to try when the
+/// Used by the switch dispatcher to decide which forge CLI to try when the
 /// remote URL doesn't unambiguously identify the forge (e.g. self-hosted on
 /// `git.example.com`). `gh auth token --hostname <host>` reads from
 /// `~/.config/gh/hosts.yml` and the OS keyring — no network. Returns `false`
@@ -265,19 +245,6 @@ pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_ref_path() {
-        let provider = GitHubProvider;
-        assert_eq!(provider.ref_path(123), "pull/123/head");
-        assert_eq!(provider.tracking_ref(123), "refs/pull/123/head");
-    }
-
-    #[test]
-    fn test_ref_type() {
-        let provider = GitHubProvider;
-        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
-    }
 
     #[test]
     fn test_fork_remote_url_formats() {

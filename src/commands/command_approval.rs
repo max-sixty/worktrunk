@@ -25,8 +25,8 @@ use color_print::cformat;
 use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, hint_message, prompt_message, stderr,
-    warning_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_heading, hint_message, prompt_message,
+    stderr, warning_message,
 };
 
 use super::hook_filter::{HookSource, ParsedFilter};
@@ -113,7 +113,7 @@ fn display_project_name(project_id: &str) -> &str {
 
 /// The batch as the user sees it: a header, then each command's label and its
 /// template. Shared by the prompt and by `--yes` on `wt config approvals add`.
-fn print_command_batch(header: &str, commands: &[&ApprovableCommand]) {
+fn print_command_batch(header: impl std::fmt::Display, commands: &[&ApprovableCommand]) {
     eprintln!("{header}");
     for cmd in commands {
         // Uses INFO_SYMBOL (○) since this is a preview, not active execution
@@ -124,21 +124,24 @@ fn print_command_batch(header: &str, commands: &[&ApprovableCommand]) {
 
 /// The batch `wt config approvals add --yes` is about to trust. Nothing is
 /// being asked, but the batch still prints: it is the record of what an
-/// unattended run just approved. Lives beside [`prompt_for_batch_approval`]
+/// unattended run just approved. Lives beside [`prompt_for_batch_review`]
 /// so the two headers stay parallel.
 pub fn announce_batch_approval(commands: &[&ApprovableCommand], project_id: &str) {
     let project_name = display_project_name(project_id);
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
     print_command_batch(
-        &cformat!(
-            "{WARNING_SYMBOL} <yellow>Approving <bold>{count}</> command{plural} for <bold>{project_name}</> (--yes):</>"
+        format_heading(
+            &cformat!(
+                "Approving <bold>{count}</> command{plural} for <bold>{project_name}</> (--yes):"
+            ),
+            None,
         ),
         commands,
     );
 }
 
-pub fn prompt_for_batch_approval(
+fn prompt_for_batch_approval(
     commands: &[&ApprovableCommand],
     project_id: &str,
 ) -> anyhow::Result<bool> {
@@ -146,12 +149,34 @@ pub fn prompt_for_batch_approval(
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
-    print_command_batch(
-        &cformat!(
-            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
-        ),
-        commands,
+    let header = cformat!(
+        "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
     );
+    prompt_for_batch_approval_with_header(commands, header)
+}
+
+/// Prompt used by `wt config approvals add`, where reviewing approvals is the
+/// command's expected workflow rather than an interruption to another action.
+pub fn prompt_for_batch_review(
+    commands: &[&ApprovableCommand],
+    project_id: &str,
+) -> anyhow::Result<bool> {
+    let project_name = display_project_name(project_id);
+    let count = commands.len();
+    let plural = if count == 1 { "" } else { "s" };
+
+    let header = format_heading(
+        &cformat!("Review <bold>{count}</> command{plural} for <bold>{project_name}</>:"),
+        None,
+    );
+    prompt_for_batch_approval_with_header(commands, header)
+}
+
+fn prompt_for_batch_approval_with_header(
+    commands: &[&ApprovableCommand],
+    header: impl std::fmt::Display,
+) -> anyhow::Result<bool> {
+    print_command_batch(header, commands);
 
     // Check if stdin is a TTY before attempting to prompt
     // This happens AFTER showing the commands so they appear in CI/CD logs

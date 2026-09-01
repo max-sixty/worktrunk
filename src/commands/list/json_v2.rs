@@ -764,7 +764,7 @@ fn json_default_branch(item: &ListItem, worktree_data: Option<&WorktreeData>) ->
     //   integrated: the probes run on the committed HEAD regardless)
     // - no match with every signal loaded → absent (determined not-integrated)
     // - any signal unloaded, or seeded on skip → null (undetermined)
-    // Orphans get sentinel counts `{0, 0}` from `AheadBehindTask` (there is
+    // Orphans get sentinel counts `{0, 0}` from the ahead/behind task (there is
     // no merge-base to count against — the table short-circuits them at its
     // orphan tier for the same reason). Guard both readings of the counts:
     // the sentinel is not a same-commit match, and 0/0 is not a real
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_orphan_sentinel_counts_do_not_fabricate_integration() {
-        // AheadBehindTask reports orphans with sentinel counts {0, 0}; the
+        // The ahead/behind task reports orphans with sentinel counts {0, 0}; the
         // sentinel must not read as a same-commit match nor as real counts.
         let mut item = item_with("orphan");
         item.is_orphan = Some(true);

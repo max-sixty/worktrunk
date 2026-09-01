@@ -1,7 +1,5 @@
-//! Gitea PR provider.
-//!
-//! Implements `RemoteRefProvider` for Gitea Pull Requests using the `tea` CLI,
-//! and hosts the `tea`-facing helpers other modules share: [`api_status`] (how
+//! Gitea PR backend using the `tea` CLI. It also hosts the `tea`-facing helpers
+//! other modules share: [`api_status`] (how
 //! every caller separates a failed request from a resource, and decides whether
 //! a retry could help), [`is_authed_for`], and [`has_any_login`] — read by the
 //! switch dispatcher and the CI-status backend, so a change to one of them is
@@ -37,28 +35,10 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{
-    CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error,
-    extract_host_from_html_url, run_cli_api,
+    CliApiRequest, PlatformData, RemoteRefInfo, cli_api_error, extract_host_from_html_url,
+    run_cli_api,
 };
 use crate::git::{ForgeKind, Repository};
-
-/// Gitea Pull Request provider.
-#[derive(Debug, Clone, Copy)]
-pub struct GiteaProvider;
-
-impl RemoteRefProvider for GiteaProvider {
-    fn forge_kind(&self) -> ForgeKind {
-        ForgeKind::Gitea
-    }
-
-    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
-        fetch_pr_info(number, repo)
-    }
-
-    fn ref_path(&self, number: u32) -> String {
-        format!("pull/{}/head", number)
-    }
-}
 
 /// Raw JSON response from `tea api repos/{owner}/{repo}/pulls/{number}`.
 #[derive(Debug, Deserialize)]
@@ -150,7 +130,7 @@ struct TeaOwner {
 }
 
 /// Fetch PR information from Gitea using the `tea` CLI.
-fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+pub(super) fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
     // Resolve owner/repo from the Gitea remote — which may be non-primary in
@@ -334,7 +314,7 @@ pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
 
 /// Whether `tea` has a login configured for `host`.
 ///
-/// Used by the switch dispatcher to decide which provider to try when the
+/// Used by the switch dispatcher to decide which forge CLI to try when the
 /// remote URL doesn't unambiguously identify the forge. Reads tea's config
 /// file directly — `$XDG_CONFIG_HOME/tea/config.yml` (default
 /// `~/.config/tea/config.yml`) with legacy fallback `~/.tea/tea.yml` — and
@@ -415,19 +395,6 @@ fn read_tea_config() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_ref_path() {
-        let provider = GiteaProvider;
-        assert_eq!(provider.ref_path(7), "pull/7/head");
-        assert_eq!(provider.tracking_ref(7), "refs/pull/7/head");
-    }
-
-    #[test]
-    fn test_ref_type() {
-        let provider = GiteaProvider;
-        assert_eq!(provider.ref_type(), crate::git::RefType::Pr);
-    }
 
     /// The status line is the discriminator, and it is the second token of the
     /// first `HTTP/` line — reachable past whatever `tea` wrote before it, and

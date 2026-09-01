@@ -103,7 +103,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
-          - os: macos-15
+          - os: macos-26
             name: macos
           - os: windows-2022
             name: windows
@@ -180,7 +180,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
-          - os: macos-15
+          - os: macos-26
             name: macos
           - os: windows-2022
             name: windows
