@@ -803,17 +803,21 @@ fn validate_worktree_creation(
     .into())
 }
 
-/// Set up a local branch for a fork PR or MR.
+/// Set up a local branch and its worktree for a fork PR or MR.
 ///
-/// Creates the branch from FETCH_HEAD, configures tracking (remote, merge ref,
-/// pushRemote), and creates the worktree. Returns an error if any step fails -
-/// caller is responsible for cleanup.
+/// One `git worktree add -b <branch> -- <path> FETCH_HEAD` creates the branch
+/// and the worktree together, exactly as the [`CreationMethod::Regular`] arm
+/// does, so git owns the atomicity: a name already taken fails before anything
+/// is written, and there is nothing for a caller to roll back. Tracking
+/// (`remote`, `merge`, `pushRemote`) is configured afterwards; a failure there
+/// leaves a branch and worktree that exist but aren't wired to the PR/MR — an
+/// ordinary state the user can re-run into, since the next `wt switch pr:N`
+/// takes the existing-branch path.
 ///
 /// # Arguments
 ///
 /// * `remote_ref` - The ref to track (e.g., "pull/123/head" or "merge-requests/101/head")
 /// * `fork_push_url` - URL to push to, or `None` if push isn't supported (prefixed branch)
-/// * `label` - Human-readable label for error messages (e.g., "PR #123" or "MR !101")
 fn setup_fork_branch(
     repo: &Repository,
     branch: &str,
@@ -821,18 +825,34 @@ fn setup_fork_branch(
     remote_ref: &str,
     fork_push_url: Option<&str>,
     worktree_path: &Path,
-    label: &str,
 ) -> anyhow::Result<()> {
-    // Create local branch from FETCH_HEAD
-    // Use -- to prevent branch names starting with - from being interpreted as flags
-    repo.run_command(&["branch", "--", branch, "FETCH_HEAD"])
-        .with_context(|| {
-            cformat!(
-                "Failed to create local branch <bold>{}</> from {}",
-                branch,
-                label
-            )
-        })?;
+    // Create branch and worktree in one command (delayed streaming: silent if
+    // fast, shows progress if slow). `-b <branch>` keeps the branch name as the
+    // value of a flag, and `--` separates the path and start point, so neither
+    // can be read as an option when it begins with `-`.
+    //
+    // No `-c branch.autoSetupMerge=…` here, unlike the `Regular` arm: the
+    // setting only fires when the start point is a remote-tracking branch, and
+    // `FETCH_HEAD` isn't one — under every value of it git writes no tracking
+    // config, leaving the `set_config` calls below as the only writers.
+    let worktree_path_str = worktree_path.to_string_lossy();
+    let git_args = [
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        "--",
+        worktree_path_str.as_ref(),
+        "FETCH_HEAD",
+    ];
+    repo.run_command_delayed_stream(
+        &git_args,
+        Repository::SLOW_OPERATION_DELAY_MS,
+        Some(
+            progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
+        ),
+    )
+    .map_err(|e| worktree_creation_error(&e, branch.to_string(), None))?;
 
     // Configure branch tracking for pull and push
     let branch_remote_key = format!("branch.{}.remote", branch);
@@ -850,19 +870,6 @@ fn setup_fork_branch(
         repo.set_config(&branch_push_remote_key, url)
             .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
     }
-
-    // Create worktree (delayed streaming: silent if fast, shows progress if slow)
-    // Use -- to prevent branch names starting with - from being interpreted as flags
-    let worktree_path_str = worktree_path.to_string_lossy();
-    let git_args = ["worktree", "add", "--", worktree_path_str.as_ref(), branch];
-    repo.run_command_delayed_stream(
-        &git_args,
-        Repository::SLOW_OPERATION_DELAY_MS,
-        Some(
-            progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
-        ),
-    )
-    .map_err(|e| worktree_creation_error(&e, branch.to_string(), None))?;
 
     Ok(())
 }
@@ -1186,22 +1193,19 @@ fn execute_switch(
                     repo.run_command(&["fetch", "--", remote, ref_path])
                         .with_context(|| format!("Failed to fetch {} from {}", label, remote))?;
 
-                    // Execute branch creation and configuration with cleanup on failure.
-                    let setup_result = setup_fork_branch(
+                    // No rollback on failure — `setup_fork_branch` leaves
+                    // nothing half-written. A rollback here once deleted the
+                    // branch on any error, so the "a branch named 'X' already
+                    // exists" case force-deleted a branch `wt` had not created,
+                    // taking any commits only it held.
+                    setup_fork_branch(
                         repo,
                         &branch,
                         remote,
                         ref_path,
                         fork_push_url.as_deref(),
                         &worktree_path,
-                        &label,
-                    );
-
-                    if let Err(e) = setup_result {
-                        // Cleanup: try to delete the branch if it was created
-                        let _ = repo.run_command(&["branch", "-D", "--", &branch]);
-                        return Err(e);
-                    }
+                    )?;
 
                     // Show push configuration or warning about prefixed branch
                     if let Some(url) = fork_push_url {
