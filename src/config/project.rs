@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::ConfigError;
 use super::commands::CommandConfig;
 use super::is_default;
+use super::{ConfigError, LoadError};
 use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
@@ -243,10 +243,13 @@ impl ProjectConfig {
     ///
     /// Set `write_hints` to true for normal usage. Set to false during completion
     /// to avoid side effects (writing git config hints).
-    pub fn load(
-        repo: &crate::git::Repository,
-        write_hints: bool,
-    ) -> Result<Option<Self>, ConfigError> {
+    ///
+    /// A parse failure surfaces as `LoadError::File` — the same typed error
+    /// the user-config layer collects — so both configs render through one
+    /// diagnostic path, and a caller that tolerates a broken file (`wt list`,
+    /// via [`crate::git::Repository::warn_if_project_config_unloadable`]) can
+    /// split the file it names from the parser's complaint.
+    pub fn load(repo: &crate::git::Repository, write_hints: bool) -> anyhow::Result<Option<Self>> {
         let (contents, config_path) = match repo
             .project_config_path()
             .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
@@ -254,8 +257,12 @@ impl ProjectConfig {
             Some(path) if path.exists() => {
                 // Load directly with toml crate to preserve insertion order
                 // (with preserve_order feature).
-                let contents = std::fs::read_to_string(&path)
-                    .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
+                let contents = std::fs::read_to_string(&path).map_err(|e| {
+                    ConfigError(format!(
+                        "Failed to read {}: {e}",
+                        crate::path::format_path_for_display(&path)
+                    ))
+                })?;
                 (contents, path)
             }
             // No config resolved on disk. In a bare layout with the default
@@ -299,12 +306,10 @@ impl ProjectConfig {
 
         // Deserialize the structurally migrated content so deprecated keys
         // (e.g. `pre-start`/`post-start`) still load into their canonical fields.
-        let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| {
-            ConfigError(format!(
-                "{} at {} failed to parse:\n{e}",
-                super::ConfigFileKind::Project.label(),
-                crate::path::format_path_for_display(&config_path),
-            ))
+        let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| LoadError::File {
+            path: config_path,
+            kind: super::ConfigFileKind::Project,
+            err: Box::new(e),
         })?;
 
         Ok(Some(config))

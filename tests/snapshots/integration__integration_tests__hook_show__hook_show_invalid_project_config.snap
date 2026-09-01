@@ -1,11 +1,10 @@
 ---
-source: tests/integration_tests/post_start_commands.rs
+source: tests/integration_tests/hook_show.rs
 info:
   program: wt
   args:
-    - switch
-    - "--create"
-    - feature
+    - hook
+    - show
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -62,8 +61,8 @@ exit_code: 1
 ----- stderr -----
 [31m✗[39m [31mFailed to load project config[39m
 [107m [0m Project config @ _REPO_/.config/wt.toml failed to parse:
-[107m [0m TOML parse error at line 1, column 28
+[107m [0m TOML parse error at line 1, column 11
 [107m [0m   |
-[107m [0m 1 | pre-start = [invalid syntax
-[107m [0m   |                            ^
-[107m [0m unclosed array, expected `]`
+[107m [0m 1 | [pre-merge
+[107m [0m   |           ^
+[107m [0m unclosed table, expected `]`

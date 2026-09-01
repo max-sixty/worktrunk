@@ -2164,57 +2164,62 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
 /// stderr output is byte-identical regardless of which path runs.
 fn emit_user_config_warnings(warnings: &[LoadError]) {
     for warning in warnings {
-        match warning {
-            LoadError::File { path, kind, err } => {
-                let label = kind.label();
-                let path_display = crate::path::format_path_for_display(path);
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(cformat!(
-                        "{label} @ <bold>{path_display}</> failed to parse, skipping"
-                    ))
-                );
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::format_with_gutter(&err.to_string(), None)
-                );
-            }
-            LoadError::Env { err, vars } => {
-                let var_list: Vec<_> = vars
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}"))
-                    .collect();
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(format!(
-                        "Ignoring env var overrides: {}",
-                        var_list.join(", ")
-                    ))
-                );
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::format_with_gutter(err.trim(), None)
-                );
-            }
-            LoadError::CliOverride { err, overrides } => {
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(format!(
-                        "Ignoring --config-set overrides: {}",
-                        overrides.join(", ")
-                    ))
-                );
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::format_with_gutter(err.trim(), None)
-                );
-            }
-            LoadError::Validation(err) => {
-                crate::styling::eprintln!(
-                    "{}",
-                    crate::styling::warning_message(format!("Config validation warning: {err}"))
-                );
-            }
+        emit_config_load_warning(warning);
+    }
+}
+
+/// Render one [`LoadError`] as a `▲` warning (plus a gutter for the parser's
+/// own output, where there is one).
+///
+/// Also the project-config path: [`Repository::warn_if_project_config_unloadable`]
+/// feeds the `LoadError::File` that `ProjectConfig::load` returns through
+/// here, so `▲ Project config @ … failed to parse, skipping` and its user
+/// counterpart are one line of code rather than two that can drift.
+fn emit_config_load_warning(warning: &LoadError) {
+    match warning {
+        LoadError::File { path, kind, err } => {
+            let label = kind.label();
+            let path_display = crate::path::format_path_for_display(path);
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(cformat!(
+                    "{label} @ <bold>{path_display}</> failed to parse, skipping"
+                ))
+            );
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::format_with_gutter(&err.to_string(), None)
+            );
+        }
+        LoadError::Env { err, vars } => {
+            let var_list: Vec<_> = vars
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect();
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "Ignoring env var overrides: {}",
+                    var_list.join(", ")
+                ))
+            );
+            crate::styling::eprintln!("{}", crate::styling::format_with_gutter(err.trim(), None));
+        }
+        LoadError::CliOverride { err, overrides } => {
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "Ignoring --config-set overrides: {}",
+                    overrides.join(", ")
+                ))
+            );
+            crate::styling::eprintln!("{}", crate::styling::format_with_gutter(err.trim(), None));
+        }
+        LoadError::Validation(err) => {
+            crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!("Config validation warning: {err}"))
+            );
         }
     }
 }
