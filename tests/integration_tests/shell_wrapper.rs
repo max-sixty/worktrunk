@@ -1089,7 +1089,15 @@ mod unix_tests {
         // The child must inherit a real terminal, including through Nushell's
         // normally-buffered wrapper path. Its case uses the valid `-cx`
         // cluster so execute detection follows clap's short-option parsing.
-        let output = exec_through_wrapper(shell, &repo, "switch", &args);
+        let output = exec_through_wrapper_with_env(
+            shell,
+            &repo,
+            "switch",
+            &args,
+            repo.root_path(),
+            &[],
+            &[("WORKTRUNK_DIRECTIVE_EXEC_FILE", "retired")],
+        );
 
         // Shell-agnostic assertions
         assert_eq!(
@@ -1103,6 +1111,10 @@ mod unix_tests {
             output.combined.contains("EXEC_STDOUT_TTY:true"),
             "{}: execute child did not inherit terminal stdout",
             shell
+        );
+        assert!(
+            !output.combined.contains("Shell wrapper is out of date"),
+            "{shell}: a stale wrapper with terminal stdout should not warn"
         );
 
         // Keep one snapshot per wrapper implementation: all consume the same

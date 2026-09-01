@@ -17,7 +17,7 @@
 //! wrapper and tells the user to reinstall shell integration.
 
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -246,9 +246,9 @@ pub(crate) fn print_outdated_shell_wrapper_hint_once() {
     }
 }
 
-/// Warn when the live shell still has the retired exec-file wrapper loaded.
+/// Warn when a retired exec-file wrapper has redirected stdout from the terminal.
 pub(crate) fn print_outdated_execute_wrapper_warning() {
-    if read_env_path(DIRECTIVE_EXEC_FILE_ENV_VAR).is_some() {
+    if read_env_path(DIRECTIVE_EXEC_FILE_ENV_VAR).is_some() && !io::stdout().is_terminal() {
         eprintln!(
             "{}",
             warning_message(
