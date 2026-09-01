@@ -3154,7 +3154,8 @@ json-schema = 1
 }
 
 /// `wt config update --print` emits the migrated TOML to stdout without
-/// touching the config file. Stderr stays empty so the output is pipeable.
+/// touching the config file. With nothing dropped, stderr stays empty so the
+/// output is pipeable.
 #[rstest]
 fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     let config_path = repo.test_config_path();
@@ -3191,6 +3192,47 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     assert!(
         !config_path.with_extension("toml.new").exists(),
         "--print must not write a .new file"
+    );
+}
+
+/// `wt config update --print` names the `approved-commands` arrays it drops.
+///
+/// The write path copies them to `approvals.toml` first; `--print` writes no
+/// file, so `--print > config.toml` would lose them without a word. The
+/// warning goes to stderr, leaving stdout pipeable.
+#[rstest]
+fn test_config_update_print_warns_about_dropped_approvals(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+json-schema = 1
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm ci", "npm test"]
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("approved-commands") && stderr.contains("github.com/user/repo"),
+        "stderr should name the dropped approvals, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("wt config update"),
+        "stderr should say how to keep them, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("approved-commands"),
+        "the printed config drops them, got: {stdout}"
     );
 }
 

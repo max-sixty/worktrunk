@@ -545,6 +545,11 @@ confirmation.
 Migrations are computed in memory on demand; nothing is written outside this
 command. Use `--print` to see the migrated TOML without touching any file.
 
+`--print` writes no `approvals.toml` either, so the `[projects]`
+`approved-commands` arrays the migration moves there are dropped from the
+printed config. It names them on stderr first, leaving stdout pipeable —
+redirecting it over the config file would lose those approvals.
+
 ## Examples
 
 Preview and apply updates:
