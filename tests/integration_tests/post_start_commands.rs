@@ -1090,6 +1090,9 @@ approved-commands = ["echo 'Background task' > background.txt"]
             "--create",
             "feature",
             "--execute",
+            "sh",
+            "--",
+            "-c",
             "echo 'Execute flag' > execute.txt",
         ],
     );

@@ -1124,20 +1124,14 @@ pub trait TestRepoBase {
     }
 }
 
-/// Create a pair of temporary files for directive output (cd + exec), in a
-/// directory of their own.
+/// Create a temporary CD directive file for a shell-integration test.
 ///
-/// The shell wrapper creates temp files and sets `WORKTRUNK_DIRECTIVE_CD_FILE`
-/// and `WORKTRUNK_DIRECTIVE_EXEC_FILE` before running wt. Use
-/// `configure_directive_files()` to set these on a Command for testing.
-///
-/// Returns `(cd_path, exec_path, guard)`. The guard must be kept alive for the
-/// duration of the test — dropping it removes the directory and both files.
-pub fn directive_files() -> (PathBuf, PathBuf, TempDir) {
+/// The guard must be kept alive for the duration of the test — dropping it
+/// removes the directory and file.
+pub fn directive_file() -> (PathBuf, TempDir) {
     let dir = directive_temp_dir();
     let cd_path = create_empty(dir.path().join("cd"));
-    let exec_path = create_empty(dir.path().join("exec"));
-    (cd_path, exec_path, dir)
+    (cd_path, dir)
 }
 
 /// A private directory for a test's directive files.
@@ -1157,28 +1151,14 @@ fn directive_temp_dir() -> TempDir {
     TempDir::new().expect("failed to create directive temp dir")
 }
 
-/// Create `path` as an empty file, as the shell wrapper's `mktemp` would, and
-/// return it. wt appends to the exec file rather than creating it, so it has to
-/// exist before wt runs.
+/// Create `path` as an empty file and return it.
 fn create_empty(path: PathBuf) -> PathBuf {
     std::fs::File::create(&path).expect("failed to create a directive file in its own temp dir");
     path
 }
 
-/// Configure a Command to use the new split directive-file protocol.
-///
-/// Sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE` env
-/// vars so the wt binary writes a raw path to the cd file and arbitrary shell
-/// to the exec file.
-pub fn configure_directive_files(cmd: &mut Command, cd_path: &Path, exec_path: &Path) {
-    cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
-    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", exec_path);
-}
-
-/// Configure a Command to use the split directive-file protocol with only the
-/// CD file (EXEC scrubbed). This simulates running inside an alias/hook body
-/// where the EXEC env var was stripped.
-pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
+/// Configure a Command with the shell wrapper's CD directive file.
+pub fn configure_directive_file(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 

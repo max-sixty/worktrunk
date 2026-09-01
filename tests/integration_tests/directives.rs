@@ -1,7 +1,6 @@
 use crate::common::{
-    TestRepo, configure_directive_cd_only, configure_directive_files, directive_files, repo,
-    repo_with_feature_worktree, repo_with_remote, repo_with_remote_and_feature,
-    setup_snapshot_settings, wt_command,
+    TestRepo, configure_directive_file, directive_file, repo, repo_with_feature_worktree,
+    repo_with_remote, repo_with_remote_and_feature, setup_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -11,16 +10,14 @@ use std::os::unix::fs as unix_fs;
 use std::path::Path;
 
 // ============================================================================
-// Directive File Tests (split protocol)
+// CD Directive File Tests
 // ============================================================================
-// These tests verify the split directive-file protocol:
+// These tests verify the directive-file protocol:
 // - WORKTRUNK_DIRECTIVE_CD_FILE: wt writes a raw path (no `cd ` prefix, no quotes).
 //   The shell wrapper runs `cd -- "$(< file)"`.
-// - WORKTRUNK_DIRECTIVE_EXEC_FILE: wt writes arbitrary shell (e.g. from --execute).
-//   The shell wrapper sources the file.
 
 #[rstest]
-fn test_switch_retired_directive_file_refuses_execute_after_switch(
+fn test_switch_retired_directive_file_does_not_block_execute(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
@@ -37,15 +34,13 @@ fn test_switch_retired_directive_file_refuses_execute_after_switch(
         cmd.arg("switch")
             .arg("feature")
             .arg("--execute")
-            .arg("echo spawned > retired-execute-ran")
+            .arg("sh")
+            .args(["--", "-c", "echo spawned > retired-execute-ran"])
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        assert!(
-            !execute_marker.exists(),
-            "wt must never spawn an --execute payload from the retired wrapper"
-        );
+        assert!(execute_marker.exists(), "--execute should run directly");
         assert_eq!(
             fs::read_to_string(&directive_path).unwrap(),
             "",
@@ -54,66 +49,36 @@ fn test_switch_retired_directive_file_refuses_execute_after_switch(
     });
 }
 
+/// A current wrapper may inherit the retired variable from an older parent
+/// shell. The current CD file takes precedence and the retired file remains
+/// untouched.
 #[rstest]
-fn test_switch_retired_directive_file_refuses_execute_when_already_at(
-    #[from(repo_with_remote)] mut repo: TestRepo,
-) {
-    let feature_wt = repo.add_worktree("feature");
-    let directive_dir = tempfile::TempDir::new().unwrap();
-    let directive_path = directive_dir.path().join("directive");
-    let execute_marker = feature_wt.join("retired-execute-ran");
-    fs::write(&directive_path, "").unwrap();
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_path);
-        cmd.arg("switch")
-            .arg("feature")
-            .arg("--execute")
-            .arg("echo spawned > retired-execute-ran")
-            .current_dir(&feature_wt);
-
-        assert_cmd_snapshot!(cmd);
-
-        assert!(
-            !execute_marker.exists(),
-            "wt must never spawn an --execute payload from the retired wrapper"
-        );
-        assert_eq!(
-            fs::read_to_string(&directive_path).unwrap(),
-            "",
-            "wt must never write to the retired directive file"
-        );
-    });
-}
-
-/// A current split wrapper may inherit the retired variable from an older
-/// parent shell. The split files still take precedence: both directives land
-/// in their dedicated files, and the retired file remains untouched.
-#[rstest]
-fn test_split_directive_files_win_over_retired_variable(
-    #[from(repo_with_remote)] mut repo: TestRepo,
-) {
+fn test_cd_directive_file_wins_over_retired_variable(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
     let retired_dir = tempfile::TempDir::new().unwrap();
     let retired_path = retired_dir.path().join("directive");
     fs::write(&retired_path, "").unwrap();
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     let output = cmd
         .env("WORKTRUNK_DIRECTIVE_FILE", &retired_path)
-        .args(["switch", "feature", "--execute", "echo through-split"])
+        .args([
+            "switch",
+            "feature",
+            "--execute",
+            "echo",
+            "--",
+            "through-current-wrapper",
+        ])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     assert!(
         output.status.success(),
-        "split directives must remain active when the retired variable is also set.\nstderr:\n{}",
+        "the current CD directive must remain active when the retired variable is also set.\nstderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
@@ -121,12 +86,11 @@ fn test_split_directive_files_win_over_retired_variable(
             .unwrap_or_default()
             .trim()
             .is_empty(),
-        "the split CD file must receive the target path"
+        "the CD file must receive the target path"
     );
-    assert_eq!(
-        fs::read_to_string(&exec_path).unwrap(),
-        "echo through-split\n",
-        "the split EXEC file must receive the command"
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("through-current-wrapper"),
+        "--execute did not run directly"
     );
     assert_eq!(
         fs::read_to_string(&retired_path).unwrap(),
@@ -135,47 +99,21 @@ fn test_split_directive_files_win_over_retired_variable(
     );
 }
 
-/// When only the CD file is set (EXEC scrubbed — running inside an alias/hook),
-/// --execute commands are refused with a warning.
-#[rstest]
-fn test_switch_exec_scrubbed_warns(#[from(repo_with_remote)] repo: TestRepo) {
-    let (cd_path, _exec_path, _guard) = directive_files();
-
-    let settings = setup_snapshot_settings(&repo);
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        // Only set CD file, not EXEC — simulates running inside alias/hook body
-        configure_directive_cd_only(&mut cmd, &cd_path);
-        cmd.args([
-            "switch",
-            "--create",
-            "scrub-test",
-            "--execute",
-            "echo should-not-run",
-        ])
-        .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
 // ============================================================================
-// Split Protocol Tests
+// Directive Protocol Tests
 // ============================================================================
 
 #[rstest]
 fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("switch")
             .arg("feature")
             .current_dir(repo.root_path());
@@ -197,49 +135,15 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     });
 }
 
-/// A failed EXEC-directive write names the file and the write.
-///
-/// This write is the last thing a `--switch --execute` does, after the switch
-/// has already landed and after `◎ Executing (--execute):`, so the bare
-/// `io::Error` it used to propagate (`✗ No such file or directory (os error 2)`)
-/// read as if the *command* were missing. The paths come from the shell wrapper,
-/// so the message has to point there.
-#[rstest]
-fn test_exec_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
-    let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
-    // A path under a directory that doesn't exist: the open fails, and nothing
-    // about it depends on platform or timing.
-    let unwritable_exec = exec_path.parent().unwrap().join("no-such-dir").join("exec");
-
-    let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &unwritable_exec);
-    let output = cmd
-        .args(["switch", "feature", "--execute", "echo hi"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "an unwritable exec directive file must fail the command.\nstderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("Failed to write the command to the directive file"),
-        "the error must name the write and the file.\nstderr:\n{stderr}"
-    );
-}
-
 /// A failed CD-directive write names the file too, for the same reason.
 #[rstest]
 fn test_cd_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
     let unwritable_cd = cd_path.parent().unwrap().join("no-such-dir").join("cd");
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &unwritable_cd, &exec_path);
+    configure_directive_file(&mut cmd, &unwritable_cd);
     let output = cmd
         .args(["switch", "feature"])
         .current_dir(repo.root_path())
@@ -261,14 +165,14 @@ fn test_cd_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut 
 fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
     let repo = &mut repo_with_remote_and_feature;
     let feature_wt = &repo.worktrees["feature"];
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("merge").arg("main").current_dir(feature_wt);
 
         assert_cmd_snapshot!(cmd);
@@ -291,14 +195,14 @@ fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
 #[rstest]
 fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("remove").current_dir(&feature_wt);
 
         assert_cmd_snapshot!(cmd);
@@ -326,7 +230,7 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 #[rstest]
 fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create the same subdirectory in both worktrees
     let subdir = "apps/gateway";
@@ -335,7 +239,7 @@ fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.arg("switch")
         .arg("feature")
         .current_dir(repo.root_path().join(subdir));
@@ -361,7 +265,7 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create subdirectory only in the source worktree, not in the target
     let subdir = "apps/gateway";
@@ -370,7 +274,7 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.arg("switch")
         .arg("feature")
         .current_dir(repo.root_path().join(subdir));
@@ -401,7 +305,7 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
 
 #[rstest]
 fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create a subdirectory in the source worktree and commit it so it appears in the new branch
     let subdir = "apps/gateway";
@@ -412,7 +316,7 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.args(["switch", "--create", "new-feature"])
         .current_dir(repo.root_path().join(subdir));
 
@@ -434,7 +338,7 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
 #[rstest]
 fn test_remove_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create the same subdirectory in both the feature worktree (where the
     // user is) and the main worktree (where removal lands).
@@ -444,7 +348,7 @@ fn test_remove_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.arg("remove").current_dir(feature_wt.join(subdir));
 
     let output = cmd.output().unwrap();
@@ -468,7 +372,7 @@ fn test_remove_falls_back_to_root_when_subdir_missing(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create the subdirectory only in the feature worktree (where the user
     // is), not in the main worktree where removal lands.
@@ -478,7 +382,7 @@ fn test_remove_falls_back_to_root_when_subdir_missing(
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.arg("remove").current_dir(feature_wt.join(subdir));
 
     let output = cmd.output().unwrap();
@@ -512,14 +416,14 @@ fn test_remove_falls_back_to_root_when_subdir_missing(
 #[rstest]
 fn test_switch_no_cd_suppresses_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.args(["switch", "feature", "--no-cd"])
             .current_dir(repo.root_path());
 
@@ -537,14 +441,14 @@ fn test_switch_no_cd_suppresses_directive(#[from(repo_with_remote)] mut repo: Te
 
 #[rstest]
 fn test_switch_no_cd_create_suppresses_directive(#[from(repo_with_remote)] repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.args(["switch", "--create", "new-feature", "--no-cd"])
             .current_dir(repo.root_path());
 
@@ -562,7 +466,7 @@ fn test_switch_no_cd_create_suppresses_directive(#[from(repo_with_remote)] repo:
 
 #[rstest]
 fn test_switch_no_cd_hooks_show_path_annotation(#[from(repo_with_remote)] repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create project config with a post-switch hook
     let config_dir = repo.root_path().join(".config");
@@ -580,7 +484,7 @@ fn test_switch_no_cd_hooks_show_path_annotation(#[from(repo_with_remote)] repo: 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         // Use --yes to auto-approve the hook command
         cmd.args(["switch", "--create", "hook-test", "--no-cd", "--yes"])
             .current_dir(repo.root_path());
@@ -598,16 +502,17 @@ fn test_switch_no_cd_hooks_show_path_annotation(#[from(repo_with_remote)] repo: 
 }
 
 #[rstest]
-fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
+fn test_switch_no_cd_execute_does_not_emit_cd(#[from(repo_with_remote)] repo: TestRepo) {
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        // pwd should print the target worktree path, even with --no-cd
+        configure_directive_file(&mut cmd, &cd_path);
+        // The wrapper will launch pwd from the invoking directory because
+        // --no-cd deliberately leaves its shell there.
         cmd.args([
             "switch",
             "--create",
@@ -634,7 +539,7 @@ fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] r
 #[rstest]
 fn test_switch_no_cd_config_suppresses_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Set up config with cd = false
     repo.write_test_config(
@@ -650,7 +555,7 @@ cd = false
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.args(["switch", "feature"])
             .current_dir(repo.root_path());
 
@@ -667,7 +572,7 @@ cd = false
 }
 
 // ============================================================================
-// Non-Directive Mode Tests (no split directive env vars)
+// Non-Directive Mode Tests (no CD directive env var)
 // ============================================================================
 
 #[rstest]
@@ -689,14 +594,14 @@ fn test_switch_without_directive_file(repo: TestRepo) {
 fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("merge")
             .arg("main")
             .arg("--no-remove")
@@ -710,14 +615,14 @@ fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
 fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("merge").arg("main").current_dir(feature_wt);
 
         assert_cmd_snapshot!(cmd);
@@ -747,7 +652,7 @@ fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
 #[rstest]
 fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
@@ -761,7 +666,7 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     // Set PWD to the logical (symlink) path — this is what the shell sets
     cmd.env("PWD", &logical_cwd);
     cmd.arg("switch").arg("feature").current_dir(&logical_cwd);
@@ -813,7 +718,7 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
 #[cfg(unix)]
 #[rstest]
 fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
@@ -826,7 +731,7 @@ fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: Tes
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.env("PWD", &logical_cwd);
     cmd.args(["switch", "--create", "new-feature"])
         .current_dir(&logical_cwd);
@@ -870,7 +775,7 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create subdirectory in both worktrees
     let subdir = "apps/gateway";
@@ -888,7 +793,7 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.env("PWD", &logical_cwd);
     cmd.arg("switch").arg("feature").current_dir(&logical_cwd);
 
@@ -925,13 +830,13 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
 fn test_switch_no_symlink_uses_canonical(#[from(repo_with_remote)] mut repo: TestRepo) {
     // When PWD matches current_dir (no symlink), canonical path is used as before
     let _feature_wt = repo.add_worktree("feature");
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     let canonical_cwd = dunce::canonicalize(repo.root_path()).unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     // Set PWD to canonical (same as current_dir — no symlink)
     cmd.env("PWD", &canonical_cwd);
     cmd.arg("switch").arg("feature").current_dir(&canonical_cwd);

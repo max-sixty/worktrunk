@@ -9,6 +9,13 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_ALLOW_PROTOCOL: file
+    GIT_CONFIG_COUNT: "2"
+    GIT_CONFIG_GLOBAL: /nonexistent/wt/gitconfig
+    GIT_CONFIG_KEY_0: user.useConfigOnly
+    GIT_CONFIG_KEY_1: rerere.enabled
+    GIT_CONFIG_SYSTEM: /nonexistent/wt/gitconfig
+    GIT_CONFIG_VALUE_0: "true"
+    GIT_CONFIG_VALUE_1: "false"
     LANG: C
     LC_ALL: C
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
@@ -28,6 +35,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
@@ -45,7 +53,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 [1m[32mOptions:[0m
   [1m[36m-c[0m, [1m[36m--create[0m             Create a new branch
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m        Base branch
-  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m  Command to run after switch
+  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m  Program to run after switch
       [1m[36m--clobber[0m            Remove stale paths at target
       [1m[36m--no-cd[0m              Skip directory change after switching
   [1m[36m-h[0m, [1m[36m--help[0m               Print help (see more with '--help')

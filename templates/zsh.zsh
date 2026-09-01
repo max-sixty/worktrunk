@@ -6,8 +6,7 @@
 # Only initialize if {{ cmd }} is available (in PATH or via WORKTRUNK_BIN)
 if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 
-    # Override {{ cmd }} command with split directive passing.
-    # Creates two temp files: one for cd (raw path) and one for exec (shell).
+    # Override {{ cmd }} command so it can change the parent shell's directory.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     {{ cmd }}() {
         local use_source=false
@@ -25,16 +24,15 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             return
         fi
 
-        local cd_file exec_file exit_code=0
+        local cd_file exit_code=0
         cd_file="$(mktemp)"
-        exec_file="$(mktemp)"
 
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" WORKTRUNK_DIRECTIVE_EXEC_FILE="$exec_file" \
+            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
                 cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
         else
-            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" WORKTRUNK_DIRECTIVE_EXEC_FILE="$exec_file" \
+            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
                 command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}" || exit_code=$?
         fi
 
@@ -50,16 +48,7 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             fi
         fi
 
-        # exec file holds arbitrary shell (e.g. from --execute)
-        if [[ -s "$exec_file" ]]; then
-            source "$exec_file"
-            local src_exit=$?
-            if [[ $exit_code -eq 0 ]]; then
-                exit_code=$src_exit
-            fi
-        fi
-
-        command rm -f "$cd_file" "$exec_file"
+        command rm -f "$cd_file"
         return "$exit_code"
     }
 

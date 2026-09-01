@@ -1,8 +1,6 @@
 //! Integration tests for `wt step relocate`
 
-use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd, repo,
-};
+use crate::common::{TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -1388,7 +1386,7 @@ worktree-path = "../{{ undefined_var }}.{{ branch }}"
 #[cfg_attr(windows, ignore)]
 fn test_relocate_preserves_subdir(repo: TestRepo) {
     let parent = worktree_parent(&repo);
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Create a worktree at a non-standard location, with a subdirectory the
     // user is working in.
@@ -1404,7 +1402,7 @@ fn test_relocate_preserves_subdir(repo: TestRepo) {
     fs::create_dir_all(wrong_path.join(&subdir)).unwrap();
 
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.args(["step", "relocate"])
         .current_dir(wrong_path.join(&subdir));
 
@@ -1425,7 +1423,7 @@ fn test_relocate_preserves_subdir(repo: TestRepo) {
     );
 }
 
-/// A shell started before the split directive protocol cannot follow a
+/// A shell using the retired single-file protocol cannot follow a
 /// relocated current worktree. The relocation still succeeds, but it must
 /// explain that the wrapper is stale and how to repair it rather than silently
 /// leaving the shell in the renamed-away directory.

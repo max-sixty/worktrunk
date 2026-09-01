@@ -12,7 +12,7 @@ expression: output
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
-    # wt wrapper function - uses split temp files for directives
+    # wt wrapper function - uses a temp file for the parent-shell cd directive
     #
     # IMPORTANT: This function must remain a "simple function" (no [CmdletBinding()] or
     # [Parameter()] attributes). Advanced functions add common parameters like -Debug,
@@ -30,25 +30,18 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         }
 
         $cdFile = [System.IO.Path]::GetTempFileName()
-        $execFile = [System.IO.Path]::GetTempFileName()
 
         try {
-            # Run wt with split directive env vars
-            # WORKTRUNK_SHELL selects PowerShell escaping for the EXEC directive payload
+            # Run wt with the parent-shell cd directive
             $env:WORKTRUNK_DIRECTIVE_CD_FILE = $cdFile
-            $env:WORKTRUNK_DIRECTIVE_EXEC_FILE = $execFile
-            $env:WORKTRUNK_SHELL = "powershell"
             & $wtBin @args
             $exitCode = $LASTEXITCODE
         }
         finally {
             Remove-Item Env:\WORKTRUNK_DIRECTIVE_CD_FILE -ErrorAction SilentlyContinue
-            Remove-Item Env:\WORKTRUNK_DIRECTIVE_EXEC_FILE -ErrorAction SilentlyContinue
-            Remove-Item Env:\WORKTRUNK_SHELL -ErrorAction SilentlyContinue
         }
 
-        # Process directive files and clean up in a single try/finally so both
-        # temp files are removed even if cd or exec throws.
+        # Process the directive and clean it up even if cd throws.
         try {
             # cd file holds a raw path (no shell escaping needed)
             if ((Test-Path $cdFile) -and (Get-Item $cdFile).Length -gt 0) {
@@ -61,20 +54,9 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
                 }
             }
 
-            # exec file holds arbitrary shell (e.g. from --execute)
-            if ((Test-Path $execFile) -and (Get-Item $execFile).Length -gt 0) {
-                $script = Get-Content -Path $execFile -Raw
-                if ($script.Trim()) {
-                    Invoke-Expression $script
-                    if ($exitCode -eq 0) {
-                        $exitCode = $LASTEXITCODE
-                    }
-                }
-            }
         }
         finally {
             Remove-Item $cdFile -ErrorAction SilentlyContinue
-            Remove-Item $execFile -ErrorAction SilentlyContinue
         }
 
         # Propagate the exit code so scripts/CI can read $LASTEXITCODE.

@@ -4,6 +4,8 @@
 
 ### Improved
 
+- **`wt switch --execute` launches argv directly instead of parsing a shell command**: `-x` now names one external program and arguments after `--` are preserved verbatim. Shell syntax remains available explicitly with `-x sh -- -c '…'`. Worktrunk starts the program in the selected worktree, so wrappers need no exec channel and Nushell needs no implicit `sh`. (Breaking: pass a program name to `-x`; existing shell command strings must opt into a shell.) ([#2860](https://github.com/max-sixty/worktrunk/issues/2860), fixes [#3944](https://github.com/max-sixty/worktrunk/issues/3944))
+
 - **Established automation and LLM customization interfaces are now stable**: `wt step eval`, `wt step for-each`, `wt step prune`, LLM branch summaries, `wt config state vars`, and `commit.generation.template-append` are no longer marked experimental. ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
 
 - **Deprecated config compatibility has been removed**: `commit.generation.template-file` and `squash-template-file` are no longer supported; put the file contents in `template` or `squash-template` instead. `switch.picker.timeout-ms` now follows the generic unknown-field path instead of being removed by `wt config update`. (Breaking.) ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
@@ -22,7 +24,7 @@
 
 - **JSON list output ignores display-column gates**: `[list] columns` no longer makes `wt list --format json` contact a forge or generate summaries. CI requires `--full`; summaries also require `[list] summary = true` and a configured generator. (Breaking: schema 1 loses config-driven `ci` and `summary` fields.) ([#3812](https://github.com/max-sixty/worktrunk/pull/3812), thanks @emeren for the request)
 
-- **The nushell wrapper propagates exit codes without a POSIX shell**: `wt config shell install` writes the nushell wrapper on any platform where `nu` is on PATH, but the wrapper reported a failing `wt` by spawning `sh`. On Windows, where `sh` doesn't exist, every failing command printed a nushell ``Command `sh` not found`` trace over the wrapper's own source and reported exit 1 whatever the real code was. It now re-invokes nushell itself. `--execute` bodies still need `sh`, since they are POSIX snippets by construction. ([#3945](https://github.com/max-sixty/worktrunk/pull/3945), fixes [#3944](https://github.com/max-sixty/worktrunk/issues/3944))
+- **The nushell wrapper propagates command failures without a POSIX shell**: `wt config shell install` writes the nushell wrapper on any platform where `nu` is on PATH, but the wrapper reported a failing `wt` by spawning `sh`. On Windows, where `sh` doesn't exist, every failing command printed a nushell ``Command `sh` not found`` trace over the wrapper's own source and reported exit 1 whatever the real code was. It now re-invokes nushell itself. ([#3945](https://github.com/max-sixty/worktrunk/pull/3945))
 
 - **Long Windows paths compare consistently**: paths beyond 260 characters could retain a `\\?\` prefix and appear to be on another drive. `copy-ignored` then refused them, while switch, remove, merge, and relocate landed at the worktree root instead of the original subdirectory. ([#3899](https://github.com/max-sixty/worktrunk/pull/3899), fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting and verifying the fix)
 

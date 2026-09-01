@@ -562,16 +562,8 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: &PendingPipeline) -> a
 /// the `source` field on each step drives the per-step trust model
 /// (`DirectivePassthrough`).
 ///
-/// Trust model:
-/// - User-source alias steps pass EXEC through. The body lives in the user's
-///   own config, so a nested `wt switch --execute …` is no different from the
-///   user typing it at the top level. See issue #2101.
-/// - Project-source alias steps and all hook steps scrub EXEC (they can still
-///   emit CD directives via `inherit_from_env`).
-///
-/// In a merged user+project alias body, the user's steps still get the
-/// relaxation — the decision is per-step, so the project side scrubbing
-/// doesn't bleed back into the user steps.
+/// Every foreground step inherits the CD directive so a nested switch can
+/// still move the parent shell.
 pub(crate) fn sourced_steps_to_foreground(
     sourced_steps: Vec<SourcedStep>,
     kind: &PipelineKind,
@@ -579,12 +571,7 @@ pub(crate) fn sourced_steps_to_foreground(
     sourced_steps
         .into_iter()
         .map(|sourced| {
-            let directives = match (kind, sourced.source) {
-                (PipelineKind::Alias { .. }, HookSource::User) => {
-                    DirectivePassthrough::inherit_from_env_with_exec()
-                }
-                _ => DirectivePassthrough::inherit_from_env(),
-            };
+            let directives = DirectivePassthrough::inherit_from_env();
             let (pipe_stdin, redirect_stdout_to_stderr, error_wrapper) = match kind {
                 PipelineKind::Hook { hook_type, .. } => {
                     (true, true, hook_error_wrapper(*hook_type))

@@ -514,18 +514,13 @@ fn find_git_bash() -> Option<PathBuf> {
 /// injection surface — this is safe to pass through to alias/hook shell bodies.
 pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 
-/// Environment variable naming the directive file for arbitrary exec commands.
+/// Retired shell-command directive variable.
 ///
-/// Shell wrappers set this to a temp file; wt writes shell commands (e.g. the
-/// body of `wt switch --execute`) to it and the wrapper sources the file after
-/// wt exits, so the command runs in the user's interactive shell. Because the
-/// file contents are arbitrary shell, wt scrubs this from project-alias and
-/// hook child environments — a body authored in shared config could inject
-/// shell into the parent shell. User-source aliases re-add it (issue #2101)
-/// since the body is user-authored just like a top-level `wt --execute`.
+/// Current wrappers no longer set it, but subprocesses must not inherit it: an
+/// older parent wrapper would source anything written there after wt exits.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
-/// Retired pre-split directive file env var.
+/// Retired single-file directive env var.
 ///
 /// wt never writes to or passes this file through, but still removes the
 /// variable from child environments so an old wrapper cannot expose a file
@@ -619,10 +614,9 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///
 /// - **`wt` relocated a user command into a worktree it selected** — hooks
 ///   (run in the operation's worktree), `wt step for-each` (run in each
-///   worktree in turn), and the `--execute` no-integration fallback (run in
-///   the switch target when `wt` itself executes the payload) — the cwd
-///   carries `wt`'s intent, so the inherited context is scrubbed and the
-///   command's `git` calls discover the worktree from the cwd. The inherited
+///   worktree in turn), and the `--execute` program (run in the switch target)
+///   — the cwd carries `wt`'s intent, so the inherited context is scrubbed and
+///   the command's `git` calls discover the worktree from the cwd. The inherited
 ///   context is common, not exotic: `git` exports an absolute `GIT_DIR`
 ///   pinned to the invoking worktree's private gitdir when `wt` runs as a
 ///   `!wt` alias from a **linked worktree**, and git itself exports discovery
@@ -635,14 +629,7 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 /// - **The child runs where the user already was** — aliases (the user's own
 ///   top-level command, run from the invoking worktree) and `commit.generation`
 ///   commands (spawned with no `current_dir`) — the inherited context *is* the
-///   user's context, so it is forwarded untouched. Under shell integration the
-///   `--execute` payload also lands here: the wrapper shell evaluates it, so
-///   it sees that shell's own environment (which never contains the vars a
-///   `!wt` git alias exports — git's exports die with `wt`'s process tree).
-///   Scrubbing the fallback therefore *converges* the two `--execute` paths
-///   for the alias case; only a `GIT_DIR` the user globally exported in their
-///   interactive shell still differs, and such an env misdirects every plain
-///   `git` command they run anyway.
+///   user's context, so it is forwarded untouched.
 ///
 /// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
 ///   the inherited context on purpose (relative values absolutized, see issue
@@ -706,81 +693,20 @@ pub fn apply_hermetic_test_env(cmd: &mut std::process::Command) {
 }
 
 // ============================================================================
-// Directive-Payload Shell Escaping
+// Shell Escaping
 // ============================================================================
 
-/// Environment variable a shell wrapper sets to identify itself.
+/// How to expand a value into a command template.
 ///
-/// The PowerShell wrapper sets `WORKTRUNK_SHELL=powershell` and the fish
-/// wrapper sets `WORKTRUNK_SHELL=fish`; bash, zsh, and nushell leave it unset.
-/// Absence therefore means "POSIX", which is correct for those three wrappers
-/// *and* for the non-integration path where wt runs the `--execute` payload
-/// itself through `sh -c`.
-pub const WORKTRUNK_SHELL_ENV_VAR: &str = "WORKTRUNK_SHELL";
-
-/// How to single-quote a value spliced into a directive payload.
-///
-/// `wt switch --execute` builds one command string and hands it to the active
-/// shell — directly (`sh -c`) or, under shell integration, by writing it to the
-/// EXEC directive file the wrapper evaluates. POSIX shells, PowerShell, and
-/// fish all single-quote, but escape the string body differently — POSIX takes
-/// `\` literally inside `'…'` while fish treats it as an escape — so the
-/// escaper must be keyed on which shell will parse the payload.
-///
-/// `Literal` is the no-escaping mode for filesystem-path templates that are
-/// never spliced into a shell command line.
+/// Hooks and aliases are POSIX shell command lines. Filesystem paths and
+/// `--execute` argv elements use literal expansion because no shell parses
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellEscapeMode {
     /// Substitute values verbatim — used for filesystem paths.
     Literal,
-    /// POSIX single-quoting (`'it'\''s'`). The wrapper-independent default for
-    /// bash, zsh, and nushell, plus `Cmd::shell` (hooks, aliases).
+    /// POSIX single-quoting (`'it'\''s'`) for hooks and aliases.
     Posix,
-    /// PowerShell single-quoting (`'it''s'`), for the PowerShell wrapper's
-    /// `Invoke-Expression` of the EXEC directive file.
-    PowerShell,
-    /// fish single-quoting (`'it\'s'`), for the fish wrapper's `eval` of the
-    /// EXEC directive file. fish — unlike POSIX — treats `\` as an escape
-    /// inside `'…'`, so the POSIX escaper corrupts backslashes there.
-    Fish,
-}
-
-/// Escape mode for a payload the *active directive shell* will parse.
-///
-/// Reads [`WORKTRUNK_SHELL_ENV_VAR`] — the single source of truth for the
-/// per-shell escaping decision shared by the `--execute` command template and
-/// its trailing args. `powershell` ⇒
-/// [`ShellEscapeMode::PowerShell`], `fish` ⇒ [`ShellEscapeMode::Fish`], any
-/// other value or absent ⇒ [`ShellEscapeMode::Posix`].
-pub fn directive_shell_escape_mode() -> ShellEscapeMode {
-    match std::env::var(WORKTRUNK_SHELL_ENV_VAR) {
-        Ok(v) if v.eq_ignore_ascii_case("powershell") => ShellEscapeMode::PowerShell,
-        Ok(v) if v.eq_ignore_ascii_case("fish") => ShellEscapeMode::Fish,
-        _ => ShellEscapeMode::Posix,
-    }
-}
-
-/// Single-quote `s` for PowerShell: wrap in `'…'`, doubling every embedded `'`.
-///
-/// PowerShell's literal string is `'…'` with `''` as the escape for one quote
-/// (`'can''t'` is `can't`). The POSIX `'\''` idiom is invalid here — that is
-/// the bug B1 fixes for the PowerShell wrapper's `Invoke-Expression` path.
-/// Empty input yields `''`.
-pub fn powershell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-/// Single-quote `s` for fish: wrap in `'…'`, backslash-escaping `\` and `'`.
-///
-/// fish's single-quoted string — unlike POSIX — treats `\` as an escape
-/// character, with only `\\` and `\'` recognized inside `'…'`. So `\` must be
-/// doubled and `'` backslash-escaped; backslash *before* quote, since escaping
-/// the quote introduces a backslash that must not be doubled again. The POSIX
-/// `'\''` idiom would corrupt backslashes (and leave a trailing-`\` argument
-/// as an unterminated string) under the fish wrapper's `eval`. Empty input
-/// yields `''`.
-pub fn fish_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\\', r"\\").replace('\'', r"\'"))
 }
 
 /// Shell-escape `s` for the given [`ShellEscapeMode`].
@@ -792,8 +718,6 @@ pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
         ShellEscapeMode::Posix => {
             shell_escape::unix::escape(std::borrow::Cow::Borrowed(s)).into_owned()
         }
-        ShellEscapeMode::PowerShell => powershell_escape(s),
-        ShellEscapeMode::Fish => fish_escape(s),
     }
 }
 
@@ -1139,6 +1063,10 @@ pub struct Cmd {
     share_parent_pgroup: bool,
     /// If true, forward signals to child process group (for stream(), Unix only)
     forward_signals: bool,
+    /// If true, treat a SIGPIPE exit as success. This is the default for pager
+    /// producers, where the consumer closing early is expected. Direct user
+    /// programs can opt out with [`Cmd::propagate_sigpipe`].
+    ignore_sigpipe: bool,
     /// When set, log this command to the command log after execution.
     /// The label identifies what triggered the command (e.g., "pre-merge user:lint").
     external_label: Option<String>,
@@ -1147,12 +1075,6 @@ pub struct Cmd {
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
-    /// When set, re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE` after the security
-    /// scrub. Set only by user-source aliases (issue #2101): the body is the
-    /// user's own config, so a nested `wt --execute` is no different from the
-    /// user typing it at the top level. Project aliases and hooks must NEVER
-    /// set this — they could inject arbitrary shell into the parent session.
-    directive_exec_file: Option<std::path::PathBuf>,
 }
 
 struct ExternalCommandLog {
@@ -1291,9 +1213,9 @@ impl Cmd {
             stdin_cfg: None,
             share_parent_pgroup: false,
             forward_signals: false,
+            ignore_sigpipe: true,
             external_label: None,
             directive_cd_file: None,
-            directive_exec_file: None,
         }
     }
 
@@ -1374,8 +1296,7 @@ impl Cmd {
         // Prevent subprocesses from writing shell directives (security).
         // Applied last so it can't be re-added by user-provided envs.
         // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` for
-        // trusted contexts, and `WORKTRUNK_DIRECTIVE_EXEC_FILE` only for
-        // trusted user-source aliases.
+        // trusted contexts.
         scrub_directive_env_vars(cmd);
     }
 
@@ -1549,6 +1470,17 @@ impl Cmd {
         self
     }
 
+    /// Preserve SIGPIPE as exit status 141 instead of treating it as pager
+    /// completion.
+    ///
+    /// `Cmd::stream()` historically ignores SIGPIPE because many callers feed
+    /// a pager that may quit before consuming all output. Use this for a child
+    /// whose status belongs to the user, such as `wt switch --execute`.
+    pub fn propagate_sigpipe(mut self) -> Self {
+        self.ignore_sigpipe = false;
+        self
+    }
+
     /// Mark this command as an external (user-configured) command for logging.
     ///
     /// When set, the command execution is logged to `.git/wt/logs/commands.jsonl`
@@ -1570,20 +1502,6 @@ impl Cmd {
         self
     }
 
-    /// Pass the EXEC directive file through to the child process.
-    ///
-    /// Re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE`, allowing the child to request
-    /// arbitrary shell execution in the parent shell (the wrapper sources the
-    /// file after wt exits). This is only safe when the child's command body
-    /// is itself trusted user-authored input — currently just user-source
-    /// aliases, where the alias body lives in the user's own config and
-    /// nesting `wt --execute` is no different from the user typing it. Project
-    /// aliases and hooks must not call this — see issue #2101.
-    pub fn directive_exec_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.directive_exec_file = Some(path.into());
-        self
-    }
-
     /// Execute the command and return its output.
     ///
     /// Captures stdout/stderr and returns them in `Output`. For interactive
@@ -1600,7 +1518,7 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_cd_file.is_none() && self.directive_exec_file.is_none(),
+            self.directive_cd_file.is_none(),
             "directive_*_file is only applied by .stream(), not .run()"
         );
 
@@ -1737,10 +1655,7 @@ impl Cmd {
             "pipe_into does not support external() logging"
         );
         debug_assert!(
-            self.directive_cd_file.is_none()
-                && self.directive_exec_file.is_none()
-                && next.directive_cd_file.is_none()
-                && next.directive_exec_file.is_none(),
+            self.directive_cd_file.is_none() && next.directive_cd_file.is_none(),
             "directive_*_file is only applied by .stream(), not pipe_into"
         );
 
@@ -1950,15 +1865,9 @@ impl Cmd {
         self.apply_common_settings(&mut cmd);
 
         // Re-add directive files after security scrub for trusted contexts.
-        // CD file is always safe to pass through (raw path, no shell). EXEC
-        // file is only re-added for user-source aliases (issue #2101); project
-        // aliases and hooks leave it scrubbed so their bodies cannot inject
-        // shell into the parent session.
+        // The CD file is safe to pass through because it contains a raw path.
         if let Some(ref path) = self.directive_cd_file {
             apply_cd_directive_env(&mut cmd, path);
-        }
-        if let Some(ref path) = self.directive_exec_file {
-            cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
         }
 
         if let Err(e) = self.check_spawn_preconditions() {
@@ -2096,7 +2005,7 @@ impl Cmd {
         if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
-            if sig == SIGPIPE {
+            if sig == SIGPIPE && self.ignore_sigpipe {
                 trace.complete(true);
                 external_log.record(Some(0));
                 return Ok(());
@@ -2164,8 +2073,7 @@ impl Cmd {
             self.stdin_data.is_none()
                 && self.timeout.is_none()
                 && self.external_label.is_none()
-                && self.directive_cd_file.is_none()
-                && self.directive_exec_file.is_none(),
+                && self.directive_cd_file.is_none(),
             "delayed_stream does not support stdin/timeout/external/directive options"
         );
 
@@ -2374,6 +2282,7 @@ mod tests {
     #[test]
     fn test_scrub_directive_env_vars_covers_every_directive_variable() {
         assert_eq!(RETIRED_DIRECTIVE_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_FILE");
+        assert_eq!(DIRECTIVE_EXEC_FILE_ENV_VAR, "WORKTRUNK_DIRECTIVE_EXEC_FILE");
 
         let mut cmd = std::process::Command::new("child");
         for var in [
@@ -2446,45 +2355,6 @@ mod tests {
     }
 
     #[test]
-    fn test_powershell_escape() {
-        // Plain word: wrapped but unchanged inside the quotes.
-        assert_eq!(powershell_escape("rg"), "'rg'");
-        // Embedded single quote: doubled (PowerShell's only escape).
-        assert_eq!(powershell_escape("can't"), "'can''t'");
-        // `$(...)` is inert inside a PowerShell single-quoted string — no
-        // expansion, no doubling needed.
-        assert_eq!(powershell_escape("$(whoami)"), "'$(whoami)'");
-        // Spaces are covered by the surrounding quotes.
-        assert_eq!(powershell_escape("with space"), "'with space'");
-        // Empty string still produces a valid empty literal.
-        assert_eq!(powershell_escape(""), "''");
-        // Multiple quotes each double independently.
-        assert_eq!(powershell_escape("a'b'c"), "'a''b''c'");
-    }
-
-    #[test]
-    fn test_fish_escape() {
-        // Plain word: wrapped but unchanged inside the quotes.
-        assert_eq!(fish_escape("rg"), "'rg'");
-        // Two consecutive backslashes: each doubled, so fish's `eval`
-        // collapses `\\\\` back to `\\` — POSIX `'…'` would corrupt this.
-        assert_eq!(fish_escape(r"a\\b"), r"'a\\\\b'");
-        // Trailing backslash: doubled, so the closing `'` is not swallowed
-        // (the POSIX form `'end\'` is an unterminated string for fish).
-        assert_eq!(fish_escape(r"end\"), r"'end\\'");
-        // Embedded single quote: backslash-escaped (fish's escape inside `'…'`).
-        assert_eq!(fish_escape("can't"), r"'can\'t'");
-        // `$(...)` and backticks are inert inside a fish single-quoted string.
-        assert_eq!(fish_escape("$(whoami)"), "'$(whoami)'");
-        assert_eq!(fish_escape("`whoami`"), "'`whoami`'");
-        // Empty string still produces a valid empty literal.
-        assert_eq!(fish_escape(""), "''");
-        // Backslash then quote: `\` doubled first, then `'` escaped, so the
-        // escaping backslash of `\'` is not itself doubled.
-        assert_eq!(fish_escape(r"\'"), r"'\\\''");
-    }
-
-    #[test]
     fn test_shell_escape_for_dispatch() {
         // Literal passes the value through untouched.
         assert_eq!(shell_escape_for(ShellEscapeMode::Literal, "can't"), "can't");
@@ -2492,16 +2362,6 @@ mod tests {
         assert_eq!(
             shell_escape_for(ShellEscapeMode::Posix, "can't"),
             r"'can'\''t'"
-        );
-        // PowerShell doubles the embedded quote.
-        assert_eq!(
-            shell_escape_for(ShellEscapeMode::PowerShell, "can't"),
-            "'can''t'"
-        );
-        // Fish backslash-escapes the embedded quote.
-        assert_eq!(
-            shell_escape_for(ShellEscapeMode::Fish, "can't"),
-            r"'can\'t'"
         );
     }
 
@@ -2846,6 +2706,27 @@ mod tests {
             result.is_ok(),
             "SIGPIPE should not be treated as an error: {result:?}"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_stream_can_propagate_sigpipe() {
+        use crate::git::WorktrunkError;
+
+        let err = Cmd::new("sh")
+            .args(["-c", "kill -PIPE $$"])
+            .propagate_sigpipe()
+            .stream()
+            .unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::ChildProcessExited {
+                code: 141,
+                signal: Some(13),
+                ..
+            }
+        ));
     }
 
     #[test]

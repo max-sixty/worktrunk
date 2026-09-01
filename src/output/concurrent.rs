@@ -46,8 +46,7 @@ use anyhow::Context;
 use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::{
-    DIRECTIVE_EXEC_FILE_ENV_VAR, ShellConfig, apply_cd_directive_env, scrub_directive_env_vars,
-    scrub_git_discovery_env_vars,
+    ShellConfig, apply_cd_directive_env, scrub_directive_env_vars, scrub_git_discovery_env_vars,
 };
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
@@ -302,13 +301,10 @@ fn spawn_child(
         scrub_git_discovery_env_vars(&mut command);
     }
 
-    // Scrub all directive env vars, then re-add the passthroughs.
+    // Scrub all directive env vars, then re-add the CD passthrough.
     scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
         apply_cd_directive_env(&mut command, path);
-    }
-    if let Some(path) = &cmd.directives.exec_file {
-        command.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
     }
 
     #[cfg(unix)]
@@ -482,7 +478,7 @@ mod tests {
     //! Unit tests that exercise the executor's option-bearing code paths which
     //! aren't reachable through the alias integration tests today: every child
     //! currently has `log_label=None` (aliases skip per-child logging) and the
-    //! CD/EXEC directive env vars are usually unset. Driving these branches
+    //! CD directive env vars are usually unset. Driving these branches
     //! with a direct call proves they behave correctly when a future caller
     //! (concurrent foreground hooks, once their deprecation completes) uses them.
     use super::*;
@@ -523,9 +519,7 @@ mod tests {
         // passing a log_label doesn't panic and the command still runs.
     }
 
-    /// `DirectivePassthrough` with `cd_file` and `exec_file` set must propagate
-    /// both env vars to the child. The child script writes to each named file;
-    /// we assert both values are delivered.
+    /// `DirectivePassthrough` with `cd_file` set must propagate it to the child.
     ///
     /// Unix-only: the script uses POSIX `sh` redirect syntax and relies on
     /// native temp paths that don't need escaping. Git Bash on Windows would
@@ -535,25 +529,14 @@ mod tests {
     fn test_directive_env_vars_passed_through() {
         use tempfile::NamedTempFile;
         let cd = NamedTempFile::new().unwrap();
-        let exec = NamedTempFile::new().unwrap();
         let directives = DirectivePassthrough {
             cd_file: Some(cd.path().to_path_buf()),
-            exec_file: Some(exec.path().to_path_buf()),
         };
-        // Write each env var's value to its matching temp file. If the child
-        // didn't receive the env var, the redirect would fail or write an
-        // empty file.
-        let script = format!(
-            "printf CD > {} && printf EXEC > {}",
-            cd.path().display(),
-            exec.path().display(),
-        );
-        let outcomes = run_one_with_directives("job", &script, None, &directives);
+        let script = "printf CD > \"$WORKTRUNK_DIRECTIVE_CD_FILE\"";
+        let outcomes = run_one_with_directives("job", script, None, &directives);
         assert!(outcomes[0].is_ok(), "child should exit 0");
         let cd_contents = std::fs::read_to_string(cd.path()).unwrap();
-        let exec_contents = std::fs::read_to_string(exec.path()).unwrap();
         assert_eq!(cd_contents, "CD");
-        assert_eq!(exec_contents, "EXEC");
     }
 
     /// An empty `cmds` slice must return an empty outcomes vec without

@@ -33,12 +33,9 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
     // Now switch with shell integration "active" (CD directive file set)
     // The file must exist (shell wrapper creates it before calling wt)
     let cd_file = repo.root_path().join("directive_cd.txt");
-    let exec_file = repo.root_path().join("directive_exec.txt");
     fs::write(&cd_file, "").unwrap();
-    fs::write(&exec_file, "").unwrap();
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file);
-    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", &exec_file);
 
     let output = cmd.args(["switch", "feature"]).output().unwrap();
 

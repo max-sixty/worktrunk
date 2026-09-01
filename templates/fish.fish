@@ -3,8 +3,7 @@
 # This is the full function definition, output by `{{ cmd }} config shell init fish`.
 # It's sourced at runtime by the wrapper in ~/.config/fish/functions/{{ cmd }}.fish.
 
-# Override {{ cmd }} command with split directive passing.
-# Creates two temp files: one for cd (raw path) and one for exec (shell).
+# Override {{ cmd }} command so it can change the parent shell's directory.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 function {{ cmd }}
     set -l use_source false
@@ -20,18 +19,13 @@ function {{ cmd }}
         return 127
     end
     set -l cd_file (mktemp)
-    set -l exec_file (mktemp)
 
-    # WORKTRUNK_SHELL tells the binary to escape the exec directive for fish's
-    # `eval` below — fish treats `\` as an escape inside '...', unlike POSIX.
     # --source: use cargo run (builds from source)
     if test $use_source = true
-        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
-            WORKTRUNK_SHELL=fish \
+        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
             cargo run --bin {{ cmd }} --quiet -- $args
     else
-        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
-            WORKTRUNK_SHELL=fish \
+        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file \
             $WORKTRUNK_BIN $args
     end
     set -l exit_code $status
@@ -50,17 +44,7 @@ function {{ cmd }}
         end
     end
 
-    # exec file holds arbitrary shell (e.g. from --execute)
-    if test -s "$exec_file"
-        set -l directive (string collect < "$exec_file")
-        eval $directive
-        set -l src_exit $status
-        if test $exit_code -eq 0
-            set exit_code $src_exit
-        end
-    end
-
-    command rm -f "$cd_file" "$exec_file"
+    command rm -f "$cd_file"
     return $exit_code
 end
 

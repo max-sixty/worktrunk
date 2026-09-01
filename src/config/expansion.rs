@@ -4,8 +4,6 @@
 //! [`ShellEscapeMode`] selecting how interpolated values are escaped:
 //! - `Posix` — POSIX single-quoting, for command lines fed to `Cmd::shell`
 //!   (`sh`/Git Bash): hooks, aliases.
-//! - `PowerShell` — PowerShell single-quoting, for the `--execute` payload
-//!   when the active directive shell is the PowerShell wrapper.
 //! - `Literal` — values substituted verbatim, for filesystem paths.
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
@@ -429,7 +427,7 @@ pub fn alias_context_filter(mut referenced: BTreeSet<String>) -> BTreeSet<String
 ///
 /// `args` exists only in alias scope, whose bodies always run through
 /// `Cmd::shell` (POSIX) — so this rendering is unconditionally POSIX,
-/// independent of the active directive shell.
+/// independent of the user's interactive shell.
 #[derive(Debug)]
 struct ShellArgs(Vec<String>);
 
@@ -1068,13 +1066,10 @@ pub fn validate_template(
 /// * `template` - Template string using Jinja2 syntax (e.g., `{{ branch }}`)
 /// * `vars` - Variables to substitute
 /// * `escape_mode` - How to escape interpolated values:
-///   - [`ShellEscapeMode::Posix`] / [`ShellEscapeMode::PowerShell`] — escape
-///     for safe splicing into a command line of that shell. Callers that feed
-///     the result to `Cmd::shell` (hooks, aliases) always pass `Posix`; only
-///     the `--execute` payload, parsed by the active directive shell, may pass
-///     `PowerShell`.
+///   - [`ShellEscapeMode::Posix`] — escape for safe splicing into a command
+///     line passed to `Cmd::shell` (hooks and aliases).
 ///   - [`ShellEscapeMode::Literal`] — substitute values verbatim (filesystem
-///     paths).
+///     paths and `--execute` argv elements).
 /// * `repo` - Repository for looking up worktree paths
 ///
 /// # Filters

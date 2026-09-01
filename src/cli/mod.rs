@@ -372,15 +372,17 @@ pub(crate) struct SwitchArgs {
     #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer(), value_parser = crate::cli::non_empty_branch)]
     pub(crate) base: Option<String>,
 
-    /// Command to run after switch
+    /// Program to run after switch
     ///
-    /// Replaces the wt process with the command after switching, giving
-    /// it full terminal control. Useful for launching editors, AI agents,
-    /// or other interactive tools.
+    /// Runs one external program after switching, with full terminal control.
+    /// Arguments after `--` are passed verbatim. Shell syntax is not evaluated;
+    /// an explicit shell can run a command line, for example
+    /// `-x sh -- -c 'npm install && npm test'`.
     ///
     /// Without a branch argument, the interactive picker opens and the
     /// command runs against the selected worktree — so `wt switch -x claude`
-    /// picks a worktree, then launches Claude Code there.
+    /// picks a worktree, then launches Claude Code there. With `--no-cd`, the
+    /// program starts in the invoking directory instead.
     ///
     /// Supports [hook template variables](https://worktrunk.dev/hook/#template-variables)
     /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
@@ -403,13 +405,12 @@ pub(crate) struct SwitchArgs {
     /// Template example: `-x code -- '{{ worktree_path }}'` opens VS Code
     /// at the worktree, `-x tmux -- new -s '{{ branch | sanitize }}'` starts
     /// a tmux session named after the branch.
-    #[arg(short = 'x', long)]
+    #[arg(short = 'x', long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub(crate) execute: Option<String>,
 
     /// Additional arguments for --execute command (after --)
     ///
-    /// Arguments after `--` are appended to the execute command.
-    /// Each argument is expanded for templates, then POSIX shell-escaped.
+    /// Each argument is expanded for templates and passed verbatim.
     #[arg(last = true, requires = "execute")]
     pub(crate) execute_args: Vec<String>,
 
@@ -420,7 +421,8 @@ pub(crate) struct SwitchArgs {
     /// Skip directory change after switching
     ///
     /// Hooks still run normally. Useful when hooks handle navigation
-    /// (e.g., tmux workflows) or for CI/automation. Use --cd to override.
+    /// (e.g., tmux workflows) or for CI/automation. `--execute` also starts in
+    /// the invoking directory. Use --cd to override.
     #[arg(long, overrides_with = "cd")]
     pub(crate) no_cd: bool,
 
@@ -2591,9 +2593,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`); relative paths resolve from the worktree root |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Internal: set by shell wrappers. wt writes a raw path; the wrapper `cd`s to it |
-| `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file |
 | `WORKTRUNK_SHELL_CWD` | Internal: set by wt on alias and hook bodies, so a nested `wt` preserves the user's subdirectory |
-| `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_COMPLETE_NAME` | Internal: set by shell wrappers to the command name completions register under (defaults to the binary name) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `WORKTRUNK_VERBOSE` | Verbosity level (`0`/`1`/`2`), like `-v`/`-vv` but applied everywhere — including shell completion, which no flag can reach |
