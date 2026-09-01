@@ -375,12 +375,13 @@ test('output-only console blocks do not expose copy controls', async () => {
 
 test('command-bearing console blocks emit command-only copy payloads', async () => {
   let commandBearingBlocks = 0;
+  let perLineBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
     for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       const lines = [...frame.matchAll(
-        /<div class="ec-line wt-(command|copyable|output)"><div class="code">([\s\S]*?)<\/div><\/div>/g,
+        /<div class="ec-line wt-(command|copyable|output)"><div class="code">([\s\S]*?)<\/div>/g,
       )];
       const expected = lines
         .filter((line) => line[1] !== 'output')
@@ -388,12 +389,51 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
       if (expected.length === 0) continue;
 
       commandBearingBlocks += 1;
-      const encodedPayload = frame.match(/<button\b[^>]*\bdata-code="([^"]*)"/)?.[1];
+      // The block control carries the bare `copy` class; per-line controls add
+      // `wt-line-copy`, so this anchors on the block's own payload.
+      const encodedPayload = frame.match(
+        /<div class="copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/,
+      )?.[1];
       assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
       assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
+
+      // A block listing several commands is as often a menu of alternatives as
+      // a recipe, so each command line offers its own payload alongside the
+      // block's.
+      const commands = lines
+        .filter((line) => line[1] === 'command')
+        .map((line) => renderedText(line[2]).replace(/\n$/u, ''));
+      const perLine = [...frame.matchAll(
+        /<div class="copy wt-line-copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/g,
+      )].map((line) => renderedText(line[1]));
+      if (commands.length > 1) {
+        perLineBlocks += 1;
+        assert.deepEqual(perLine, commands, `${page} per-line copy payloads do not match its commands`);
+      } else {
+        assert.deepEqual(perLine, [], `${page} adds per-line copy to a single-command block`);
+      }
     }
   }
   assert.ok(commandBearingBlocks > 0, 'expected command-bearing console blocks');
+  assert.ok(perLineBlocks > 0, 'expected blocks listing several commands');
+});
+
+test('generated command references expose no copy control', async () => {
+  let references = 0;
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    for (const match of html.matchAll(
+      /<figure class="frame[^"]*\bwt-command-reference\b[^"]*">([\s\S]*?)<\/figure>/g,
+    )) {
+      references += 1;
+      assert.doesNotMatch(
+        match[1],
+        /class="copy/,
+        `${page} offers to copy a page of generated help text`,
+      );
+    }
+  }
+  assert.ok(references > 0, 'expected generated command references');
 });
 
 test('titleless code frames do not render decorative headers', async () => {
