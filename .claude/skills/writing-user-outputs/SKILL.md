@@ -9,16 +9,15 @@ metadata:
 
 ## Shell Integration
 
-Worktrunk uses split file-based directive passing for shell integration:
+Worktrunk uses one file-based directive for shell integration:
 
-1. Shell wrapper creates two temp files via `mktemp` (cd and exec)
-2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
-3. wt writes a raw path to the CD file; shell commands to the EXEC file (for `--execute`)
-4. Shell wrapper reads the CD file with `cd -- "$(< file)"` (no shell parsing)
-5. Shell wrapper sources the EXEC file if non-empty
+1. Shell wrapper creates a temp file via `mktemp`
+2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_CD_FILE`
+3. wt writes a raw path to the file
+4. Shell wrapper changes directory to that path after wt exits
 
-When neither directive env var is set (direct binary call), commands execute
-directly and shell integration hints are shown.
+`--execute` always launches its external program directly from wt, with the
+selected worktree as its working directory. It does not use a directive.
 
 ## Output Functions
 
@@ -110,7 +109,7 @@ is what a shell loop reads.
 | Function | Purpose |
 |----------|---------|
 | `change_directory(path)` | Shell cd after wt exits (writes to directive file if set) |
-| `execute(command)` | Shell command after wt exits |
+| `execute(argv)` | Run an external program in the selected worktree |
 | `terminate_output()` | Reset ANSI state on stderr |
 | `is_shell_integration_active()` | Check if directive file set (rarely needed) |
 | `pre_hook_display_path(path)` | Compute display path for pre-hooks |
@@ -147,7 +146,7 @@ format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"))
 
 - **stdout** → the answer, in whatever format the user selected. Data (tables, JSON, shell code, an expanded template) and `--dry-run` previews both qualify: a preview is the whole answer when nothing mutates. Human-formatted output belongs here too. Color strips automatically on a pipe (anstream), so `wt list | grep` stays safe.
 - **stderr** → narration about doing it: progress, success/warning/error messages, hints, interactive prompts, and `-v`/`-vv` diagnostics.
-- **directive file** → shell commands executed after wt exits (cd, exec).
+- **directive file** → the raw cd path consumed after wt exits.
 
 The same line can flip streams between modes. `wt config shell uninstall` deletes the file, so `✓ Removed … @ ~/.zshrc` only narrates a side effect that already happened → stderr (the edited file is the answer; stdout is empty). `wt config shell uninstall --dry-run` mutates nothing, so `○ Will remove … @ ~/.zshrc` is the only answer there is → stdout. What flips isn't the wording, it's whether a side effect exists to be the answer.
 
@@ -179,18 +178,13 @@ pager fails.
 
 ## Security
 
-The split-trust design enforces two trust levels:
-
 - `WORKTRUNK_DIRECTIVE_CD_FILE` holds a raw path (no shell parsing), so it's
   safe to pass through to alias/hook child processes — a body that writes to it
   can at worst redirect `cd`.
-- `WORKTRUNK_DIRECTIVE_EXEC_FILE` holds arbitrary shell that the wrapper
-  sources verbatim, so wt scrubs this env var from alias/hook child processes.
-  A hook body writing to it would inject shell into the parent session.
 
 All directive env vars are removed from spawned subprocesses by default via
 `shell_exec::scrub_directive_env_vars()`. `DirectivePassthrough::inherit_from_env()`
-re-adds only the CD file for trusted contexts.
+re-adds the CD file where a nested command may redirect the parent shell.
 
 ## Windows Compatibility (Git Bash / MSYS2)
 

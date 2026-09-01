@@ -164,7 +164,7 @@ complete --keep-order --exclusive --command wt --arguments "(COMPLETE=fish \$WOR
 
 /// Quote a shell argument if it contains special characters
 fn quote_arg(arg: &str) -> String {
-    if arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
+    if arg.is_empty() || arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
         shell_quote(arg)
     } else {
         arg.to_string()
@@ -175,6 +175,13 @@ fn quote_arg(arg: &str) -> String {
 /// Handles paths like `/path/to/worktrunk.'∅'/target/debug/wt`
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Always quote a Nushell string. Nushell does not support the POSIX `\''`
+/// concatenation idiom, while ordinary double-quoted strings accept `\\` and
+/// `\"` escapes without interpolation (`$"…"` is the interpolation form).
+fn nushell_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', r"\\").replace('"', r#"\""#))
 }
 
 /// Quote a path for PowerShell (escape backticks and single quotes)
@@ -261,6 +268,17 @@ fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&s
                 // Note: -- is special in PowerShell (stop-parsing token), so we must quote it
                 if arg.contains(' ') || arg.contains(';') || arg.contains('\'') || *arg == "--" {
                     script.push_str(&powershell_quote(arg));
+                } else {
+                    script.push_str(arg);
+                }
+            }
+            "nu" | "nushell" => {
+                if arg.is_empty()
+                    || arg
+                        .chars()
+                        .any(|c| c.is_whitespace() || matches!(c, ';' | '\'' | '"' | '$' | '\\'))
+                {
+                    script.push_str(&nushell_quote(arg));
                 } else {
                     script.push_str(arg);
                 }
@@ -614,8 +632,8 @@ fn exec_bash_truly_interactive(
 ///
 /// This simulates what actually happens when users run `wt switch`, etc. in their shell:
 /// 1. The `wt` function is defined (from shell integration)
-/// 2. It calls `wt_exec` which sets WORKTRUNK_DIRECTIVE_CD_FILE + WORKTRUNK_DIRECTIVE_EXEC_FILE
-/// 3. The wrapper reads the cd file and sources the exec file after wt exits
+/// 2. It sets WORKTRUNK_DIRECTIVE_CD_FILE
+/// 3. The wrapper reads the cd path after wt exits
 /// 4. Users see stdout/stderr output in real-time
 ///
 /// Now uses PTY interactive mode for consistent behavior and potential input echoing.
@@ -824,18 +842,18 @@ mod unix_tests {
     /// that this path depends on — no POSIX shell to spawn — so the regression is
     /// covered on the Unix runners where the nushell wrapper is actually tested.
     #[rstest]
-    fn test_nushell_wrapper_failure_needs_no_posix_shell(mut repo: TestRepo) {
+    fn test_nushell_wrapper_needs_no_posix_shell(mut repo: TestRepo) {
         repo.add_worktree("existing");
 
-        // A PATH with no `sh`/`bash`/`dash`: just the shell under test, the git
-        // that `wt switch` shells out to, and the `rm` the wrapper's own Unix
-        // cleanup branch calls externally (`^rm`). Dropping `rm` would leak every
+        // A PATH with no `sh`/`bash`/`dash`: just nushell, git, the command run
+        // by `--execute`, and the `rm` used by the wrapper's Unix cleanup branch.
+        // Dropping `rm` would leak every
         // `mktemp` file, silently — the branch is wrapped in `try` — and would
         // also make the test less faithful to the platform it stands in for:
         // Windows takes the `$nu.os-info.family` branch, where cleanup uses the
         // nushell builtin and does run.
         let bin_dir = tempfile::tempdir().unwrap();
-        for tool in ["nu", "git", "rm"] {
+        for tool in ["nu", "git", "rm", "printf"] {
             let resolved = which::which(tool)
                 .unwrap_or_else(|e| panic!("{tool} must be installed to run tests: {e}"));
             std::os::unix::fs::symlink(resolved, bin_dir.path().join(tool)).unwrap();
@@ -899,6 +917,37 @@ mod unix_tests {
             "wrapper leaked a nushell external-command error.\nOutput:\n{}",
             output.combined
         );
+
+        // `--execute` uses the same shell-free path.
+        let output = exec_through_wrapper_with_env(
+            "nu",
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "nu-exec-no-sh",
+                "--execute",
+                "printf",
+                "--",
+                "NU_EXEC_OK",
+            ],
+            repo.root_path(),
+            &[],
+            &[("PATH", &sanitized_path)],
+        );
+
+        assert_eq!(output.exit_code, 0, "Output:\n{}", output.combined);
+        assert!(
+            output.combined.contains("NU_EXEC_OK"),
+            "directly executed program output is missing.\nOutput:\n{}",
+            output.combined
+        );
+        assert!(
+            !output.combined.contains("Command `sh` not found"),
+            "wrapper tried to introduce an implicit POSIX shell.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
     }
 
     #[rstest]
@@ -987,41 +1036,89 @@ mod unix_tests {
     }
 
     #[rstest]
+    fn test_nu_wrapper_ignores_execute_flags_after_argument_boundary(repo: TestRepo) {
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "nu", &repo);
+        script.push_str(
+            "let out = (wt step for-each --format=json -- printf -- -x)\n\
+             print $\"PIPELINE_CAPTURED:(not ($out | is-empty))\"\n",
+        );
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
+        let env_vars = build_test_env_vars(&config_path, &approvals_path);
+        let (combined, exit_code) =
+            exec_in_pty_interactive("nu", &script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Output:\n{combined}");
+        assert!(
+            combined.contains("PIPELINE_CAPTURED:true"),
+            "-x after -- should not disable Nushell pipeline capture.\nOutput:\n{combined}"
+        );
+    }
+
+    #[rstest]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
     #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
-        // `echo` with `executed` as a trailing arg, run through each wrapper.
-        // `--yes` skips the approval prompt.
-        let output = exec_through_wrapper(
-            shell,
-            &repo,
-            "switch",
-            &[
+        let args = if shell == "nu" {
+            vec![
+                "-cx",
+                "sh",
+                "test-exec",
+                "--yes",
+                "--",
+                "-c",
+                "test -t 1 && printf 'EXEC_STDOUT_TTY:true\\n'",
+            ]
+        } else {
+            vec![
                 "--create",
                 "test-exec",
                 "--yes",
                 "--execute",
-                "echo",
+                "sh",
                 "--",
-                "executed",
-            ],
+                "-c",
+                "test -t 1 && printf 'EXEC_STDOUT_TTY:true\\n'",
+            ]
+        };
+
+        // The child must inherit a real terminal, including through Nushell's
+        // normally-buffered wrapper path. Its case uses the valid `-cx`
+        // cluster so execute detection follows clap's short-option parsing.
+        let output = exec_through_wrapper_with_env(
+            shell,
+            &repo,
+            "switch",
+            &args,
+            repo.root_path(),
+            &[],
+            &[("WORKTRUNK_DIRECTIVE_EXEC_FILE", "retired")],
         );
 
         // Shell-agnostic assertions
-        assert_eq!(output.exit_code, 0, "{}: Command should succeed", shell);
+        assert_eq!(
+            output.exit_code, 0,
+            "{}: Command should succeed\nOutput:\n{}",
+            shell, output.combined
+        );
         output.assert_no_directive_leaks();
 
         assert!(
-            output.combined.contains("executed"),
-            "{}: Execute command output missing",
+            output.combined.contains("EXEC_STDOUT_TTY:true"),
+            "{}: execute child did not inherit terminal stdout",
             shell
         );
+        assert!(
+            !output.combined.contains("Shell wrapper is out of date"),
+            "{shell}: a stale wrapper with terminal stdout should not warn"
+        );
 
-        // Per-shell snapshot: the `Executing (--execute):` line escapes the
-        // trailing arg for the directive shell, so fish differs from the
-        // POSIX wrappers — output is no longer identical across shells.
+        // Keep one snapshot per wrapper implementation: all consume the same
+        // argv protocol, but their PTY echo can still differ.
         shell_wrapper_settings().bind(|| {
             assert_snapshot!(format!("switch_with_execute_{shell}"), &output.combined);
         });
@@ -1045,9 +1142,12 @@ mod unix_tests {
             &[
                 "--create",
                 "test-exit-code",
-                "--execute",
-                "exit 42",
                 "--yes",
+                "--execute",
+                "sh",
+                "--",
+                "-c",
+                "exit 42",
             ],
         );
 
@@ -1070,9 +1170,9 @@ mod unix_tests {
     /// A failing `--execute` body must not abort the nushell wrapper before its
     /// cleanup runs.
     ///
-    /// Nushell 0.98+ raises a `ShellError` on a non-zero external exit, so the
-    /// wrapper's `^sh -c $script` used to unwind the whole `def` — the three
-    /// `mktemp` files leaked and the stdout the function still had to return was
+    /// Nushell 0.98+ raises a `ShellError` on a non-zero external exit, so a
+    /// failing program can unwind the whole `def` unless the wrapper catches
+    /// it before cleanup — the temp files leaked and the stdout the function still had to return was
     /// discarded. `test_wrapper_execute_exit_code_propagation` covers the same
     /// command and passes either way: the unwind *happens* to carry exit 42 out
     /// to the shell, which is all that test asserts. So the leak sat on a path
@@ -1093,7 +1193,7 @@ mod unix_tests {
         let mut script = String::new();
         append_wrapper_setup(&mut script, "nu", &repo);
         script.push_str(
-            "let code = (try { wt switch --create exec-abort --yes --execute \"exit 42\"; 0 } catch { $env.LAST_EXIT_CODE })\n",
+            "let code = (try { wt switch --create exec-abort --yes --execute sh -- -c \"exit 42\"; 0 } catch { $env.LAST_EXIT_CODE })\n",
         );
         script.push_str("print $\"WT_EXIT:($code)\"\n");
 
@@ -1414,9 +1514,11 @@ approved-commands = ["echo 'test command executed'"]
             &[
                 "--create",
                 "test-exec",
-                "--execute",
-                "echo executed",
                 "--yes",
+                "--execute",
+                "echo",
+                "--",
+                "executed",
             ],
         );
 
@@ -1586,9 +1688,7 @@ approved-commands = ["echo 'fish background task'"]
 
     #[rstest]
     fn test_fish_multiline_command_execution(repo: TestRepo) {
-        // Test that Fish wrapper handles multi-line commands correctly
-        // This tests Fish's NUL-byte parsing with embedded newlines
-        // Use actual newlines in the command string
+        // Shell behavior remains available when requested explicitly.
         let multiline_cmd = "echo 'line 1'; echo 'line 2'; echo 'line 3'";
 
         // Use --yes to skip approval prompt in tests
@@ -1599,9 +1699,12 @@ approved-commands = ["echo 'fish background task'"]
             &[
                 "--create",
                 "fish-multiline",
-                "--execute",
-                multiline_cmd,
                 "--yes",
+                "--execute",
+                "fish",
+                "--",
+                "-c",
+                multiline_cmd,
             ],
         );
 
@@ -3748,7 +3851,16 @@ mod windows_tests {
             "powershell",
             &repo,
             "switch",
-            &["--create", "feature", "--execute", "exit 42"],
+            &[
+                "--create",
+                "feature",
+                "--execute",
+                "pwsh",
+                "--",
+                "-NoProfile",
+                "-Command",
+                "exit 42",
+            ],
         );
 
         // The wrapper should propagate the exit code from the executed command
@@ -4006,9 +4118,13 @@ mod windows_tests {
             &[
                 "--create",
                 "test-exec",
-                "--execute",
-                "Write-Host 'executed'",
                 "--yes",
+                "--execute",
+                "pwsh",
+                "--",
+                "-NoProfile",
+                "-Command",
+                "Write-Host 'executed'",
             ],
         );
 

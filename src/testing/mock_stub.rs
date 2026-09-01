@@ -135,9 +135,26 @@ fn log_invocation(cmd_name: &str, args: &[String]) {
     let Some(dir) = env::var_os("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR") else {
         return;
     };
-    let path = PathBuf::from(dir).join(format!("{}.calls", cmd_name));
+    append_call_line(
+        &PathBuf::from(dir).join(format!("{}.calls", cmd_name)),
+        args,
+    );
+}
+
+/// Append one whole line to the call log.
+///
+/// A single `write_all` of the line *including* its newline, never
+/// `writeln!`: the latter issues the newline as a second write, and mocks
+/// log concurrently — the picker overlaps `gh pr list` with `gh pr view`, and
+/// every mock opens the log itself. Two appends can then interleave into one
+/// merged line plus an empty one, so a spawn that a test filters for by
+/// prefix vanishes from the log even though the command ran. An append-mode
+/// write of a whole short line is atomic against other writers, which is why
+/// `command_log` writes its JSONL entries the same way.
+fn append_call_line(path: &Path, args: &[String]) {
+    let line = format!("{}\n", args.join(" "));
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{}", args.join(" "));
+        let _ = f.write_all(line.as_bytes());
     }
 }
 
@@ -257,4 +274,50 @@ fn run(cmd_name: &str, config_dir: &Path) -> ! {
     }
 
     exit(response.exit_code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Concurrent mock spawns share one call log, so every line has to land
+    /// whole. Writers here are threads rather than processes because the
+    /// interleaving is per write syscall, not per process — each call opens
+    /// its own append handle either way — and a thread test needs no built
+    /// binary. Against a `writeln!` implementation this fails on the first
+    /// run: the newline arrives as a separate write, so one entry ends up
+    /// pasted onto the tail of another and a test filtering the log by
+    /// command prefix stops seeing a spawn that happened.
+    #[test]
+    fn concurrent_appends_keep_each_call_on_its_own_line() {
+        const WRITERS: usize = 8;
+        const CALLS_PER_WRITER: usize = 400;
+        let view = ["pr", "view", "42", "--json", "comments"];
+        let list = ["pr", "list", "--head", "flaky"];
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gh.calls");
+        std::thread::scope(|scope| {
+            for writer in 0..WRITERS {
+                let path = &path;
+                scope.spawn(move || {
+                    let argv: &[&str] = if writer % 2 == 0 { &view } else { &list };
+                    let args: Vec<String> = argv.iter().map(|arg| (*arg).to_string()).collect();
+                    for _ in 0..CALLS_PER_WRITER {
+                        append_call_line(path, &args);
+                    }
+                });
+            }
+        });
+
+        let logged = fs::read_to_string(&path).unwrap();
+        let malformed: Vec<_> = logged
+            .lines()
+            .filter(|line| *line != view.join(" ") && *line != list.join(" "))
+            .collect();
+        // Count and one example, not the whole list: an interleaving run
+        // corrupts thousands of lines, and the shapes repeat.
+        assert_eq!((malformed.len(), malformed.first().copied()), (0, None));
+        assert_eq!(logged.lines().count(), WRITERS * CALLS_PER_WRITER);
+    }
 }

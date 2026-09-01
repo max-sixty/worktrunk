@@ -8,11 +8,9 @@ Subprocesses cannot change the parent shell's current directory. When
 `wt switch feature` runs, the `wt` binary runs as a child process and cannot
 `cd` the terminal.
 
-Worktrunk solves this with **split directive file passing**: the shell wrapper
-creates two temp files, `wt` writes a raw path to one (cd) and shell commands
-to the other (`--execute` payloads), and the wrapper applies both after `wt`
-exits. The split design eliminates shell injection from cd directives — the CD
-file holds a raw path that is never parsed as shell. The wrapper's steps and a
+Worktrunk solves this with a file directive: the shell wrapper creates one temp
+file, `wt` writes the target directory to it, and the wrapper changes directory
+after `wt` exits. `--execute` runs directly inside wt. The wrapper's steps and a
 simplified implementation: [How the Shell Wrapper
 Works](#how-the-shell-wrapper-works).
 
@@ -55,12 +53,12 @@ When shell integration isn't working, `wt switch` shows warnings explaining why.
 
 ### "shell wrapper is out of date"
 
-**Meaning**: The active shell still has a pre-split wrapper loaded. Current
-versions no longer write shell commands to that wrapper's single directive
-file, because it mixes trusted directory paths with arbitrary shell.
+**Meaning**: The active shell still has a retired wrapper loaded. Current
+versions no longer write to that wrapper's single directive file, so the
+parent shell cannot follow a directory change.
 
 **Fix**: Run `wt config shell install`, then restart the shell (or reload its
-config) to activate the current split-file wrapper.
+config) to activate the current wrapper.
 
 ### "shell integration not installed"
 
@@ -130,43 +128,28 @@ suggested fix.
 The shell wrapper (installed by `wt config shell install`) defines a shell
 function that:
 
-1. Creates two temp files (cd and exec)
-2. Sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
+1. Creates a temp file
+2. Sets `WORKTRUNK_DIRECTIVE_CD_FILE`
 3. Runs the real `wt` binary
 4. Reads the CD file with `cd -- "$(< file)"` (raw path, no shell parsing)
-5. Sources the EXEC file if non-empty (for `--execute` payloads)
-6. Cleans up both temp files
+5. Cleans up the temp file
 
 Simplified example (actual wrapper handles completions and edge cases):
 ```bash
 wt() {
-    local cd_file exec_file exit_code=0
+    local cd_file exit_code=0
     cd_file="$(mktemp)"
-    exec_file="$(mktemp)"
 
-    WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" WORKTRUNK_DIRECTIVE_EXEC_FILE="$exec_file" \
+    WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" \
         command wt "$@" || exit_code=$?
 
     if [[ -s "$cd_file" ]]; then
         cd -- "$(<"$cd_file")"
     fi
-    if [[ -s "$exec_file" ]]; then
-        source "$exec_file"
-    fi
-
-    rm -f "$cd_file" "$exec_file"
+    rm -f "$cd_file"
     return "$exit_code"
 }
 ```
-
-### Directive trust boundary
-
-The CD file contains only a raw path, so Worktrunk can pass it through to
-alias and hook subprocesses. The EXEC file contains shell code that the parent
-wrapper sources, so Worktrunk removes it from project-defined aliases and
-hooks. User-config aliases are the intentional exception: because their
-commands are authored by the user, they retain the EXEC file and can run a
-nested `wt switch --execute`.
 
 ## Debugging Checklist
 
@@ -218,9 +201,8 @@ Should show the `eval` line with line number.
 ### 3. Check if directive files are set
 
 ```bash
-# After running any wt command, these should be unset (temp files deleted)
+# After running any wt command, this should be unset (temp file deleted)
 echo $WORKTRUNK_DIRECTIVE_CD_FILE
-echo $WORKTRUNK_DIRECTIVE_EXEC_FILE
 
 # During wt execution, these would be set to temp file paths
 ```
@@ -230,11 +212,10 @@ echo $WORKTRUNK_DIRECTIVE_EXEC_FILE
 ```bash
 # Create temp files and test
 export WORKTRUNK_DIRECTIVE_CD_FILE=$(mktemp)
-export WORKTRUNK_DIRECTIVE_EXEC_FILE=$(mktemp)
 command wt switch feature
 cat $WORKTRUNK_DIRECTIVE_CD_FILE     # Should contain: /path/to/worktree (raw path)
 cd -- "$(<$WORKTRUNK_DIRECTIVE_CD_FILE)"  # Should cd you there
-rm -f $WORKTRUNK_DIRECTIVE_CD_FILE $WORKTRUNK_DIRECTIVE_EXEC_FILE
+rm -f $WORKTRUNK_DIRECTIVE_CD_FILE
 ```
 
 ## Common Issues
@@ -270,9 +251,7 @@ If you see path issues, ensure you're using a recent Git for Windows version.
 | Variable | Purpose |
 |----------|---------|
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Set by shell wrapper; wt writes a raw path, wrapper `cd`s to it |
-| `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Set by shell wrapper; wt writes shell commands, wrapper sources the file |
 | `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
-| `WORKTRUNK_SHELL` | Set by the PowerShell (`powershell`) and fish (`fish`) wrappers; selects how wt escapes the EXEC directive payload for that shell |
 | `WORKTRUNK_COMPLETE_NAME` | Set by the bash, zsh, and PowerShell wrappers when they load completions; names the command the registration binds to, so `--cmd` integrations complete |
 
 ## See Also

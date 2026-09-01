@@ -30,7 +30,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
-use worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR;
+use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
 use worktrunk::trace::CommandTrace;
 
 use crate::cli::build_command;
@@ -132,8 +132,9 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
 fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
     let mut cmd = Command::new(path);
     cmd.args(args);
-    // Explicitly invoked extensions remain trusted with split CD/EXEC; only
-    // the retired sourceable single-file capability is forbidden.
+    // Preserve the raw CD directive, but never expose a file that an older
+    // parent wrapper will source as shell code after this process exits.
+    cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
     cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);

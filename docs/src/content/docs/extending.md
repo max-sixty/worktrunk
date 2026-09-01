@@ -130,11 +130,11 @@ show-branches = "wt step for-each -- sh -c 'echo {% raw %}{{ branch }}{% endraw 
 
 `wt show-branches` prints each worktree's own branch.
 
-`wt switch --execute` defers the same way, without the extra wrapper: its `--execute '…'` argument is already a single quoted string, so only `{% raw %}` is needed. Here `{{ worktree_path }}` expands against the worktree being created, not the one the alias ran from:
+`wt switch --execute` defers the same way. `-x` names the program and arguments after `--` stay separate, so quote the deferred template as one alias-body token. Here `{{ worktree_path }}` expands against the worktree being created, not the one the alias ran from:
 
 ```toml
 [aliases]
-echo-target = "wt switch {{ args }} --no-cd --execute 'echo {% raw %}{{ worktree_path }}{% endraw %}'"
+echo-target = "wt switch {{ args }} --no-cd --execute echo -- '{% raw %}{{ worktree_path }}{% endraw %}'"
 ```
 
 A repo-level variable like `{{ default_branch }}` needs no deferral: it is identical in every worktree, so a bare `{{ default_branch }}` is already correct everywhere.
@@ -174,15 +174,17 @@ So the sweep exits non-zero only when it leaves a worktree needing attention —
 [aliases]
 move-changes = '''
 if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then
-  wt switch --create {{ to }} --execute="{{ args }}"
+  wt switch --create {{ to }} --execute sh -- -c \
+    'if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
 else
   git stash push --include-untracked --quiet
-  wt switch --create {{ to }} --execute="git stash pop --index; {{ args }}"
+  wt switch --create {{ to }} --execute sh -- -c \
+    'git stash pop --index; if [ "$#" -gt 0 ]; then exec "$@"; fi' worktrunk-move {{ args }}
 fi
 '''
 ```
 
-Run with `wt move-changes --to=feature-xyz`. The guard skips the stash when nothing is in flight; otherwise `git stash push` captures everything and `--execute` pops it in the new worktree with the staged/unstaged split intact. Anything after `--` runs in the new worktree after pop. For example, `wt move-changes --to=feature-xyz -- claude` opens Claude there.
+Run with `wt move-changes --to=feature-xyz`. The guard skips the stash when nothing is in flight; otherwise `git stash push` captures everything and the explicit `sh -c` step pops it in the new worktree with the staged/unstaged split intact. Anything after `--` is forwarded as argv and runs in the new worktree after pop. For example, `wt move-changes --to=feature-xyz -- claude` opens Claude there.
 
 To copy instead of move, add `git stash apply --index --quiet` right after the push.
 

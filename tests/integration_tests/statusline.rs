@@ -418,12 +418,6 @@ fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
     });
 }
 
-// --- Directive Mode Tests ---
-// Note: With the split directive file architecture, data output (like statusline)
-// still goes to stdout. The directive files are only used for cd paths and exec
-// commands. So this test is no longer needed - statusline behavior is the same
-// regardless of whether directive env vars are set.
-
 // --- Branch Display Tests ---
 
 ///

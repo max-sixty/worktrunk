@@ -3,8 +3,8 @@ name: ci
 # Runner versions are pinned to avoid surprise breaking changes from -latest migrations.
 # The tend-weekly workflow checks for updates and opens bump PRs (see
 # .claude/skills/running-tend/SKILL.md → "Weekly Maintenance: CI Pin Bumps").
-# - windows-2022: Pinned because windows-2025 lacks D: drive (actions/runner-images#12677)
-# - ubuntu-24.04, macos-15: Pinned to current -latest equivalents
+# - windows-2025: Pinned to current -latest equivalent
+# - ubuntu-24.04, macos-26: Pinned to current -latest equivalents
 
 on:
   push:
@@ -77,9 +77,9 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
-          - os: macos-15
+          - os: macos-26
             name: macos
-          - os: windows-2022
+          - os: windows-2025
             name: windows
     name: test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -94,7 +94,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.74.0"
+        version: "=0.75.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -162,7 +162,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.74.0"
+        version: "=0.75.0"
 
     - name: 🧪 Lockfile, doctests, rustdoc
       run: wt hook pre-merge --yes lockfile doctest doc

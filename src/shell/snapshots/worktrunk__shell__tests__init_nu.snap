@@ -32,8 +32,7 @@ export def "nu-complete wt" [spans: list<string>] {
     }
 }
 
-# Override wt command with split directive passing.
-# Creates two temp files: one for cd (raw path) and one for exec (shell).
+# Override wt so it can change the parent shell's directory.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 #
 # Nushell pipeline workaround (nushell/nushell#12643):
@@ -54,11 +53,10 @@ export def "nu-complete wt" [spans: list<string>] {
 #   (`wt list --format json | from json`). No directive processing — `list`
 #   never emits directives. No directive env vars are set.
 #
-# - Everything else: Stdout is redirected to a temp file via `o>`, then
-#   returned as the function's last expression after directive processing.
-#   Stderr flows to the terminal in real-time. The binary sees non-TTY stdout
-#   and uses buffered mode, but commands other than `list` don't benefit from
-#   progressive rendering anyway.
+# - Everything else: Stdout is normally redirected to a temp file via `o>`,
+#   then returned as the function's last expression after directive processing.
+#   `--execute` is the exception: wt's child needs the terminal, so stdout
+#   streams directly and is not available to an outer nushell pipeline.
 #
 # Completer wired via `@complete` attribute on an untyped `[...args]` rest.
 # The parameter-level `string@"completer"` form keeps tokens literal, which
@@ -95,15 +93,22 @@ export def --env --wrapped wt [...args] {
         ^$worktrunk_bin ...$args
     } else {
         let cd_file = (mktemp --tmpdir)
-        let exec_file = (mktemp --tmpdir)
         let stdout_file = (mktemp --tmpdir)
+        let wt_args = ($args | take until {|arg| $arg == "--" })
+        # Before `-x`, `c`, `v`, and `y` are boolean flags clap may cluster with it.
+        let has_execute = ($wt_args | any {|arg| $arg == "--execute" or ($arg | str starts-with "--execute=") or ($arg =~ '^-[cvy]*x') })
 
-        # Capture stdout to file for pipeline passthrough; stderr flows to terminal.
+        # Capture stdout for pipeline passthrough unless wt will launch an
+        # interactive child, which must inherit the terminal.
         # Nushell 0.98+ throws ShellError on non-zero exit (like bash `set -e`).
         # `try` catches it so directive processing and temp file cleanup still run.
         let exit_code = (try {
-            with-env { WORKTRUNK_DIRECTIVE_CD_FILE: $cd_file, WORKTRUNK_DIRECTIVE_EXEC_FILE: $exec_file } {
-                ^$worktrunk_bin ...$args o> $stdout_file
+            with-env { WORKTRUNK_DIRECTIVE_CD_FILE: $cd_file } {
+                if $has_execute {
+                    ^$worktrunk_bin ...$args
+                } else {
+                    ^$worktrunk_bin ...$args o> $stdout_file
+                }
             }
             0
         } catch {
@@ -116,38 +121,9 @@ export def --env --wrapped wt [...args] {
             cd $target_dir
         }
 
-        # exec file holds arbitrary shell (e.g. from --execute).
-        # Execute the whole file as one sh invocation so multi-line payloads
-        # share a single shell session (matching bash/zsh/fish `source` semantics:
-        # variables persist, `cd` affects later commands, etc.).
-        # Env changes (export) won't persist in the nushell session, but no
-        # worktrunk code emits export directives.
-        #
-        # This path still requires `sh`, unlike the exit propagation below: an
-        # exec body is a POSIX snippet by construction (`ShellEscapeMode::Posix`),
-        # so there is no nushell-native command to hand it to. It only fires for
-        # `--execute`, and which shell should run those bodies on Windows is an
-        # open question — see issue #3944.
-        #
-        # `try` for the same reason as the binary call above: a body that exits
-        # non-zero raises a ShellError that would unwind the whole `def`, skipping
-        # cleanup (leaking all three temp files) and discarding the stdout this
-        # function still has to return. Catching it also makes the body's exit code
-        # a value we can fold in, rather than one the unwind happens to carry out.
-        let exec_exit = if ($exec_file | path exists) and (open $exec_file --raw | str trim | is-not-empty) {
-            let script = open $exec_file --raw
-            try { ^sh -c $script; 0 } catch { $env.LAST_EXIT_CODE }
-        } else {
-            0
-        }
+        let output = if $has_execute { "" } else { open $stdout_file --raw }
 
-        # First non-zero wins, wt before the body — the precedence the bash, zsh
-        # and fish wrappers apply to their `src_exit`.
-        let exit_code = if $exit_code != 0 { $exit_code } else { $exec_exit }
-
-        let output = (open $stdout_file --raw)
-
-        # Clean up all three temp files at once, after the last read of any of them.
+        # Clean up the temp files after their final reads.
         #
         # A bare `rm` here is shadowable by the user's own `alias rm = ...`:
         # nushell resolves aliases at parse time, and `config.nu` runs before the
@@ -163,9 +139,9 @@ export def --env --wrapped wt [...args] {
         # option: it's a parse-time keyword that leaks out of this function into
         # the user's session, silently unbinding their alias.
         if $nu.os-info.family == "windows" {
-            try { rm -f $cd_file $exec_file $stdout_file }
+            try { rm -f $cd_file $stdout_file }
         } else {
-            try { ^rm -f $cd_file $exec_file $stdout_file }
+            try { ^rm -f $cd_file $stdout_file }
         }
 
         # Return stdout or propagate failure as the function's last expression.

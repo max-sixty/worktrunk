@@ -75,11 +75,15 @@ impl CommandEnv {
         })
     }
 
-    /// Load the command environment without requiring a branch.
+    /// Load the command environment, taking [`UserConfig`] from the repository's
+    /// own cached load rather than from the caller.
     ///
-    /// Use this for commands that can operate in detached HEAD state,
-    /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
-    pub fn for_action_branchless() -> anyhow::Result<Self> {
+    /// The branch is resolved exactly as [`Self::for_action`] resolves it —
+    /// `None` in detached HEAD, and required only by a later
+    /// [`Self::require_branch`] call. The config source is the whole
+    /// difference: use this where the caller has no `UserConfig` in hand and
+    /// the repository has already loaded one.
+    pub fn for_action_loading_config() -> anyhow::Result<Self> {
         let repo = Repository::current()?;
         let current_wt = repo.current_worktree();
         let worktree_path = current_wt.root()?;

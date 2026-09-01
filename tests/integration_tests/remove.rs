@@ -1,6 +1,6 @@
 use crate::common::{
-    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, configure_directive_files,
-    directive_files, make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
+    BareRepoTest, SLEEP_FOR_ABSENCE_CHECK, TestRepo, TestRepoBase, configure_directive_file,
+    directive_file, make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
     setup_temp_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
@@ -212,10 +212,10 @@ fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");
 
     // Directive file guards must live through command execution
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "remove", &[], Some(&worktree_path));
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd
     });
 }
@@ -2490,13 +2490,13 @@ approved-commands = ["exit 1"]
     let worktree_path = repo.add_worktree("feature-cd-test");
 
     // Set up directive files
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
 
     // Run remove from within the worktree (which would trigger cd to main if it worked)
     let mut cmd = repo.wt_command();
     cmd.args(["remove", "--foreground"]);
     cmd.current_dir(&worktree_path);
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     let output = cmd.output().unwrap();
 
     // Command should have failed (hook failure)

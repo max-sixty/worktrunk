@@ -96,7 +96,7 @@ fn custom_subcommand_accepts_non_utf8_forwarded_arg() {
 
 #[cfg(unix)]
 #[test]
-fn custom_subcommand_scrubs_retired_directive_and_preserves_split_files() {
+fn custom_subcommand_scrubs_shell_exec_directives_and_preserves_cd() {
     use std::os::unix::fs::PermissionsExt;
     use worktrunk::shell_exec::{
         DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR,
@@ -142,10 +142,7 @@ printf 'retired=%s\ncd=%s\nexec=%s\n' "${WORKTRUNK_DIRECTIVE_FILE-unset}" "${WOR
         stdout.contains(&format!("cd={}", cd_file.display())),
         "{stdout}"
     );
-    assert!(
-        stdout.contains(&format!("exec={}", exec_file.display())),
-        "{stdout}"
-    );
+    assert!(stdout.contains("exec=unset"), "{stdout}");
     assert_eq!(
         std::fs::read_to_string(&retired_file).unwrap(),
         "",

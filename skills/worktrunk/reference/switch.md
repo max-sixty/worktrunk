@@ -162,8 +162,7 @@ Arguments:
   [EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
 
-          Arguments after -- are appended to the execute command. Each argument is expanded for
-          templates, then POSIX shell-escaped.
+          Each argument is expanded for templates and passed directly to the program.
 
 Options:
   -c, --create
@@ -176,14 +175,17 @@ Options:
           pr:{N}, mr:{N}.
 
   -x, --execute <EXECUTE>
-          Command to run after switch
+          Program to run after switch
 
-          Replaces the wt process with the command after switching, giving it full terminal control.
-          Useful for launching editors, AI agents, or other interactive tools.
+          Runs one external program after switching, with full terminal control. Arguments after --
+          go directly to that program without Worktrunk shell parsing. Program lookup and argument
+          decoding follow the operating system. Shell syntax requires an explicit shell, for example
+          -x sh -- -c 'npm install && npm test'. On Windows, shell shims need their extension (-x
+          code.cmd) or an explicit shell such as -x cmd.exe -- /C code.
 
           Without a branch argument, the interactive picker opens and the command runs against the
           selected worktree — so wt switch -x claude picks a worktree, then launches Claude Code
-          there.
+          there. With --no-cd, the program starts in the invoking directory instead.
 
           Supports hook template variables ({{ branch }}, {{ worktree_path }}, etc.) and filters. {{
           base }} and {{ base_worktree_path }} describe the source: the selected base with --create,
@@ -208,7 +210,7 @@ Options:
           Skip directory change after switching
 
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
-          for CI/automation. Use --cd to override.
+          for CI/automation. --execute also starts in the invoking directory. Use --cd to override.
 
   -h, --help
           Print help (see a summary with '-h')

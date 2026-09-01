@@ -35,13 +35,8 @@
 //! merging into a single `CommandConfig`, so per-source policy can be applied
 //! step-by-step without un-merging. Steps are tagged with their source
 //! (`HookSource::User` / `Project`), and `sourced_steps_to_foreground`
-//! applies per-step `DirectivePassthrough`: the CD directive file is passed
-//! through to every step so inner `wt` invocations can redirect the parent
-//! shell's cwd; the EXEC directive file passes through user-source steps but
-//! is scrubbed for project-source steps. When the same name is defined in
-//! both configs, the user's own steps still get the EXEC relaxation — the
-//! decision is per-step, so the project side scrubbing doesn't bleed back
-//! into the user steps. See issue #2101.
+//! applies `DirectivePassthrough`: the CD directive file is passed through so
+//! inner `wt` invocations can redirect the parent shell's cwd.
 
 use std::collections::{BTreeMap, BTreeSet};
 

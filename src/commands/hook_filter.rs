@@ -6,9 +6,7 @@
 
 /// Whether a hook or alias body came from user config or project config.
 ///
-/// Drives the per-step trust model: user-source bodies skip approval and
-/// pass EXEC through (the config is the user's own); project-source bodies
-/// require approval at the gate (command entry point) and scrub EXEC.
+/// Drives approval and source-qualified filtering.
 #[derive(
     Clone,
     Copy,
@@ -25,11 +23,9 @@
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookSource {
-    /// User config (~/.config/worktrunk/config.toml). No approval required;
-    /// EXEC directives pass through (alias steps).
+    /// User config (~/.config/worktrunk/config.toml). No approval required.
     User,
-    /// Project config (.config/wt.toml). Approval is handled at the gate;
-    /// EXEC directives are scrubbed.
+    /// Project config (.config/wt.toml). Approval is handled at the gate.
     Project,
 }
 

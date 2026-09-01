@@ -1,8 +1,8 @@
 use crate::common::{
-    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_files, directive_files,
-    make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
-    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
-    wait_for_file_content, wt_command,
+    SLEEP_FOR_ABSENCE_CHECK, TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
+    make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
+    wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -42,14 +42,14 @@ fn snapshot_switch_impl(
     settings.bind(|| {
         // Directive file guards - declared at closure scope to live through command execution
         let maybe_directive = if with_directive_file {
-            Some(directive_files())
+            Some(directive_file())
         } else {
             None
         };
 
         let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
-        if let Some((ref cd_path, ref exec_path, ref _guard)) = maybe_directive {
-            configure_directive_files(&mut cmd, cd_path, exec_path);
+        if let Some((ref cd_path, ref _guard)) = maybe_directive {
+            configure_directive_file(&mut cmd, cd_path);
         }
         if let Some(shell_path) = shell {
             cmd.env("SHELL", shell_path);
@@ -883,24 +883,30 @@ fn test_switch_internal_with_execute(repo: TestRepo) {
     snapshot_switch_with_directive_file(
         "switch_internal_with_execute",
         &repo,
-        &["--create", "exec-internal", "--execute", execute_cmd],
+        &[
+            "--create",
+            "exec-internal",
+            "--execute",
+            "sh",
+            "--",
+            "-c",
+            execute_cmd,
+        ],
     );
 }
 
-/// The `--execute` no-integration fallback relocates the payload into the
-/// switch target, so inherited git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`)
+/// `--execute` starts the program in the switch target, so inherited
+/// git-discovery vars (`GIT_DIR`/`GIT_WORK_TREE`)
 /// must be scrubbed there like at the hook and for-each spawn sites — git
 /// resolves them before the cwd, so a forwarded value would misdirect the
 /// payload's `git` calls to the inherited repo while the "Executing @ …"
 /// header names the target (issue #3373; classification in
 /// `scrub_git_discovery_env_vars`).
 ///
-/// `repo.wt_command()` configures no directive files, so wt executes the
-/// payload itself (unix: exec, non-unix: spawn — each platform's CI drives
-/// its own variant). The relative marker path resolves in the payload's cwd,
-/// pinning the relocation at the same time.
+/// The relative marker path resolves in the payload's cwd, pinning the
+/// relocation at the same time.
 #[rstest]
-fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
+fn test_switch_execute_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     let output = repo
@@ -909,6 +915,9 @@ fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: Te
             "switch",
             "feature",
             "--execute",
+            "sh",
+            "--",
+            "-c",
             r#"printf '[%s][%s]' "$GIT_DIR" "$GIT_WORK_TREE" > git_env_seen.txt"#,
         ])
         .env("GIT_DIR", repo.root_path().join(".git"))
@@ -933,8 +942,8 @@ fn test_switch_execute_fallback_does_not_inherit_git_discovery_vars(mut repo: Te
 /// `--execute` computes only the template variables its command names.
 ///
 /// The context map built at that call site feeds `expand_template` and nothing
-/// else — the payload reaches the child as a shell string, never as JSON on
-/// stdin, and `--execute` renders no `-v` variables table — so a var the
+/// else — the payload reaches the child as argv, never as JSON on stdin, and
+/// `--execute` renders no `-v` variables table — so a var the
 /// templates don't reference is a git subprocess whose result is discarded.
 /// `var_default_branch` is the one with teeth: on a clone with no
 /// `refs/remotes/origin/HEAD` and no cached `worktrunk.default-branch` it falls
@@ -951,15 +960,26 @@ fn test_switch_execute_computes_only_referenced_vars(mut repo: TestRepo) {
     let trace = repo.root_path().join(".git/wt/logs/trace.jsonl");
 
     // Each `-vv` run replaces trace.jsonl, so the two cases don't accumulate.
-    let var_spans = |execute: &str| -> Vec<String> {
+    let var_spans = |arg: &str| -> Vec<String> {
         let output = repo
             .wt_command()
-            .args(["-vv", "switch", "exec-vars", "--execute", execute])
+            .args([
+                "-vv",
+                "switch",
+                "exec-vars",
+                "--execute",
+                "sh",
+                "--",
+                "-c",
+                "true",
+                "worktrunk-test",
+                arg,
+            ])
             .output()
             .unwrap();
         assert!(
             output.status.success(),
-            "switch --execute '{execute}' failed:\nstderr: {}",
+            "switch --execute with {arg:?} failed:\nstderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
         let raw = fs::read_to_string(&trace).expect("-vv should write trace.jsonl");
@@ -974,28 +994,22 @@ fn test_switch_execute_computes_only_referenced_vars(mut repo: TestRepo) {
         spans
     };
 
-    let none_referenced = var_spans("echo hi");
+    let none_referenced = var_spans("hi");
     assert!(
         none_referenced.is_empty(),
         "a --execute command naming no variables should compute none, got {none_referenced:?}"
     );
     assert_eq!(
-        var_spans("echo {{ commit }}"),
+        var_spans("{{ commit }}"),
         ["var_commit"],
         "a --execute command naming commit should compute exactly that"
     );
 }
 
-/// `--execute` with trailing `-- args` containing shell metacharacters: the
-/// constructed command appended to the exec directive file must POSIX-escape
-/// each trailing arg so the user's shell wrapper (`sh -c`, `bash -c`, …)
-/// reads them as literal arguments — no command substitution, no $-expansion,
-/// embedded single quotes via the standard `'\''` idiom. Guards
-/// `run_switch`'s `escaped_args` map at `worktree/switch.rs` from regressing
-/// to platform-sensitive escaping.
+/// `--execute` preserves argv boundaries without shell parsing.
+#[cfg(unix)]
 #[rstest]
-fn test_switch_with_execute_trailing_args_metachars(repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
+fn test_switch_with_execute_uses_literal_argv(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(
@@ -1005,173 +1019,51 @@ fn test_switch_with_execute_trailing_args_metachars(repo: TestRepo) {
                 "--create",
                 "exec-trailing",
                 "--execute",
-                "echo",
+                "sh",
                 "--",
+                "-c",
+                "printf '<%s>\\n' \"$@\"",
+                "_",
                 "$x's hello",
                 "with space",
+                "",
+                "café",
             ],
             None,
         );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        assert_cmd_snapshot!("switch_with_execute_trailing_args_metachars_stderr", cmd);
-
-        // The exec file is what the shell wrapper would source. It must contain
-        // the trailing args POSIX-escaped — exactly the form a POSIX shell
-        // parses back to the original literal values. (No command
-        // substitution, no `$` expansion; embedded single quote uses the
-        // standard `'\''` idiom.)
-        let exec_contents = fs::read_to_string(&exec_path).unwrap();
-        insta::assert_snapshot!(
-            "switch_with_execute_trailing_args_metachars_exec",
-            &exec_contents
-        );
+        assert_cmd_snapshot!("switch_with_execute_literal_argv", cmd);
     });
 }
 
-/// Same scenario as `test_switch_with_execute_trailing_args_metachars`, but
-/// with `WORKTRUNK_SHELL=powershell` — the env var the PowerShell wrapper
-/// sets. The wrapper evaluates the EXEC directive file via `Invoke-Expression`,
-/// where the POSIX `'\''` idiom is invalid; each trailing arg must instead use
-/// PowerShell single-quoting (embedded `'` doubled to `''`). Guards the
-/// `directive_shell_escape_mode()` branch in `run_switch`'s `escaped_args`.
+/// Shell syntax in `-x` is a literal program name after the argv cutover.
 #[rstest]
-fn test_switch_with_execute_trailing_args_metachars_powershell(repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(
-            &repo,
+fn test_switch_execute_does_not_parse_shell_syntax(repo: TestRepo) {
+    let mut cmd = repo.wt_command();
+    let output = cmd
+        .args([
             "switch",
-            &[
-                "--create",
-                "exec-trailing-psh",
-                "--execute",
-                "echo",
-                "--",
-                "$x's hello",
-                "with space",
-            ],
-            None,
-        );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        cmd.env("WORKTRUNK_SHELL", "powershell");
-        assert_cmd_snapshot!(
-            "switch_with_execute_trailing_args_metachars_powershell_stderr",
-            cmd
-        );
-
-        // Under PowerShell, the exec file must contain the trailing args
-        // PowerShell-escaped: wrapped in `'…'` with embedded `'` doubled to
-        // `''`. `$(...)` / `$x` are inert inside a PowerShell single-quoted
-        // string, so they need no further escaping.
-        let exec_contents = fs::read_to_string(&exec_path).unwrap();
-        insta::assert_snapshot!(
-            "switch_with_execute_trailing_args_metachars_powershell_exec",
-            &exec_contents
-        );
-    });
+            "--create",
+            "literal-program",
+            "--execute",
+            "echo hi && ls",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("echo hi && ls"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
-/// Same scenario as `test_switch_with_execute_trailing_args_metachars`, but
-/// with `WORKTRUNK_SHELL=fish` — the env var the fish wrapper sets. The wrapper
-/// evaluates the EXEC directive file via `eval`, where fish treats `\` as an
-/// escape inside `'…'`; the POSIX escaper would collapse a `\\` pair and turn
-/// a trailing `\` into an unterminated string. Each trailing arg must instead
-/// use fish single-quoting (`\` doubled, `'` backslash-escaped). The args
-/// carry a literal backslash — the byte that POSIX and fish escaping diverge
-/// on. Guards the `directive_shell_escape_mode()` branch in `run_switch`.
 #[rstest]
-fn test_switch_with_execute_trailing_args_metachars_fish(repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &[
-                "--create",
-                "exec-trailing-fish",
-                "--execute",
-                "echo",
-                "--",
-                r"a\\b's hello",
-                "with space",
-            ],
-            None,
-        );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        cmd.env("WORKTRUNK_SHELL", "fish");
-        assert_cmd_snapshot!(
-            "switch_with_execute_trailing_args_metachars_fish_stderr",
-            cmd
-        );
-
-        // Under fish, the exec file must contain the trailing args
-        // fish-escaped: wrapped in `'…'` with each `\` doubled and each `'`
-        // backslash-escaped — not the POSIX `'\''` idiom, which fish's `eval`
-        // would mis-parse.
-        let exec_contents = fs::read_to_string(&exec_path).unwrap();
-        insta::assert_snapshot!(
-            "switch_with_execute_trailing_args_metachars_fish_exec",
-            &exec_contents
-        );
-    });
-}
-
-/// A `--execute` value that is a shell command line rather than a single
-/// program name gets a deprecation warning for the upcoming argv input model;
-/// a single program name stays silent.
-#[rstest]
-fn test_switch_execute_argv_deprecation_warning(repo: TestRepo) {
-    let (cd_path, exec_path, _guard) = directive_files();
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        // Shell syntax / multiple words — not a single program name.
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &["--create", "dep-shell", "--execute", "echo hi && ls"],
-            None,
-        );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        assert_cmd_snapshot!("switch_execute_deprecation_shell_syntax", cmd);
-
-        // A single program name — unaffected, no warning.
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &["--create", "dep-ok", "--execute", "git"],
-            None,
-        );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        assert_cmd_snapshot!("switch_execute_deprecation_compatible", cmd);
-
-        // Trailing args are folded into the suggested command line, not dropped.
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &["--create", "dep-args", "--execute", "npm run", "--", "test"],
-            None,
-        );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        assert_cmd_snapshot!("switch_execute_deprecation_trailing_args", cmd);
-
-        // Under a fish wrapper the suggestion wraps in `fish`, not POSIX `sh`.
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &[
-                "--create",
-                "dep-fish",
-                "--execute",
-                "set -lx FOO bar; echo $FOO",
-            ],
-            None,
-        );
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
-        cmd.env("WORKTRUNK_SHELL", "fish");
-        assert_cmd_snapshot!("switch_execute_deprecation_fish_wrapper", cmd);
-    });
+fn test_switch_execute_rejects_empty_program(repo: TestRepo) {
+    snapshot_switch(
+        "switch_execute_rejects_empty_program",
+        &repo,
+        &["--create", "empty-program", "--execute", ""],
+    );
 }
 // Error tests
 #[rstest]
@@ -1241,7 +1133,15 @@ fn test_switch_execute_creates_file(repo: TestRepo) {
     snapshot_switch(
         "switch_execute_creates_file",
         &repo,
-        &["--create", "file-test", "--execute", create_file_cmd],
+        &[
+            "--create",
+            "file-test",
+            "--execute",
+            "sh",
+            "--",
+            "-c",
+            create_file_cmd,
+        ],
     );
 
     // Query Git rather than reconstructing the configured path template: this
@@ -1277,14 +1177,22 @@ fn test_switch_execute_failure(repo: TestRepo) {
     snapshot_switch(
         "switch_execute_failure",
         &repo,
-        &["--create", "fail-test", "--execute", "exit 1"],
+        &[
+            "--create",
+            "fail-test",
+            "--execute",
+            "sh",
+            "--",
+            "-c",
+            "exit 1",
+        ],
     );
 }
 
 // Execute template expansion tests
 #[rstest]
 fn test_switch_execute_template_branch(repo: TestRepo) {
-    // Test that {{ branch }} is expanded in --execute command
+    // Test that {{ branch }} is expanded in an --execute argument.
     snapshot_switch(
         "switch_execute_template_branch",
         &repo,
@@ -1292,7 +1200,9 @@ fn test_switch_execute_template_branch(repo: TestRepo) {
             "--create",
             "template-test",
             "--execute",
-            "echo 'branch={{ branch }}'",
+            "echo",
+            "--",
+            "branch={{ branch }}",
         ],
     );
 }
@@ -1311,7 +1221,9 @@ fn test_switch_execute_template_base(repo: TestRepo) {
             "--base",
             "release-base",
             "--execute",
-            "echo 'base={{ base }}'",
+            "echo",
+            "--",
+            "base={{ base }}",
         ],
     );
 }
@@ -1324,18 +1236,24 @@ fn test_switch_execute_template_base_for_existing_worktree_uses_source(mut repo:
     snapshot_switch(
         "switch_execute_template_base_without_create",
         &repo,
-        &["existing", "--execute", "echo 'base={{ base }}'"],
+        &["existing", "--execute", "echo", "--", "base={{ base }}"],
     );
 }
 
 #[rstest]
-fn test_switch_execute_template_shell_escape(repo: TestRepo) {
-    // Test that shell metacharacters in branch names are escaped
-    // Without escaping, this would execute `id` as a separate command
+fn test_switch_execute_template_metacharacters_stay_literal(repo: TestRepo) {
+    // Template output remains one argv element; `;id` is never parsed as shell.
     snapshot_switch(
         "switch_execute_template_shell_escape",
         &repo,
-        &["--create", "feat;id", "--execute", "echo {{ branch }}"],
+        &[
+            "--create",
+            "feat;id",
+            "--execute",
+            "echo",
+            "--",
+            "{{ branch }}",
+        ],
     );
 }
 
@@ -1363,7 +1281,14 @@ fn test_switch_execute_template_error(repo: TestRepo) {
     snapshot_switch(
         "switch_execute_template_error",
         &repo,
-        &["--create", "error-test", "--execute", "echo {{ unclosed"],
+        &[
+            "--create",
+            "error-test",
+            "--execute",
+            "echo",
+            "--",
+            "{{ unclosed",
+        ],
     );
 }
 
@@ -1389,13 +1314,17 @@ fn test_switch_execute_arg_template_error(repo: TestRepo) {
 #[rstest]
 fn test_switch_execute_verbose_multiline_template(repo: TestRepo) {
     // Test that -v shows multiline template expansion with proper formatting
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new("multiline-target")
+        .command("_default", MockResponse::output("executed\n"))
+        .write(&mock_bin);
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        // Multiline template with conditional
-        let multiline_template = r#"{% if branch %}
-echo 'branch={{ branch }}'
-echo 'repo={{ repo }}'
-{% endif %}"#;
+        // Multiline template in a single argv element.
+        let multiline_template = r#"{% if branch %}branch={{ branch }}
+repo={{ repo }}{% endif %}"#;
 
         let mut cmd = make_snapshot_cmd_with_global_flags(
             &repo,
@@ -1404,11 +1333,14 @@ echo 'repo={{ repo }}'
                 "--create",
                 "multiline-test",
                 "--execute",
+                "multiline-target",
+                "--",
                 multiline_template,
             ],
             None,
             &["-v"],
         );
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_execute_verbose_multiline_template", cmd);
     });
 }
@@ -1422,9 +1354,11 @@ fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
         &[
             "--create",
             "no-hooks-test",
-            "--execute",
-            "echo 'execute command runs'",
             "--no-hooks",
+            "--execute",
+            "echo",
+            "--",
+            "execute command runs",
         ],
     );
 }
@@ -1496,9 +1430,11 @@ fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
         &repo,
         &[
             "existing-no-hooks",
-            "--execute",
-            "echo 'execute still runs'",
             "--no-hooks",
+            "--execute",
+            "echo",
+            "--",
+            "execute still runs",
         ],
     );
 }
@@ -2005,9 +1941,9 @@ fn test_switch_detached_worktree_by_relative_path_honors_directory_flag(mut repo
 
     let outside = repo.root_path().parent().unwrap().to_path_buf();
     let root = repo.root_path().to_string_lossy().to_string();
-    let (cd_path, exec_path, _guard) = directive_files();
+    let (cd_path, _guard) = directive_file();
     let mut cmd = repo.wt_command();
-    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    configure_directive_file(&mut cmd, &cd_path);
     cmd.current_dir(&outside)
         .args(["-C", &root, "switch", "../repo.feature-detached"]);
 
@@ -2063,21 +1999,26 @@ fn test_switch_default_branch_from_feature_worktree(mut repo: TestRepo) {
     );
 }
 
-// Execute tests with directive file
-/// The shell wrapper sources this file and propagates the exit code.
+// Execute tests with a CD directive file
+/// wt launches this argv and propagates the exit code.
 #[rstest]
 fn test_switch_internal_execute_exit_code(repo: TestRepo) {
-    // wt succeeds (exit 0), but shell script contains "exit 42"
-    // Shell wrapper will eval and return 42
     snapshot_switch_with_directive_file(
         "switch_internal_execute_exit_code",
         &repo,
-        &["--create", "exit-code-test", "--execute", "exit 42"],
+        &[
+            "--create",
+            "exit-code-test",
+            "--execute",
+            "sh",
+            "--",
+            "-c",
+            "exit 42",
+        ],
     );
 }
 
-/// When wt succeeds but the execute script would fail, wt still exits 0.
-/// The shell wrapper handles the execute command's exit code.
+/// The execute program's exit code becomes wt's exit code.
 #[rstest]
 fn test_switch_internal_execute_with_output_before_exit(repo: TestRepo) {
     // Execute command outputs then exits with code
@@ -2086,7 +2027,15 @@ fn test_switch_internal_execute_with_output_before_exit(repo: TestRepo) {
     snapshot_switch_with_directive_file(
         "switch_internal_execute_output_then_exit",
         &repo,
-        &["--create", "output-exit-test", "--execute", cmd],
+        &[
+            "--create",
+            "output-exit-test",
+            "--execute",
+            "sh",
+            "--",
+            "-c",
+            cmd,
+        ],
     );
 }
 // History and ping-pong tests

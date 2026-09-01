@@ -1,24 +1,13 @@
 //! Security tests for shell injection vulnerabilities
 //!
-//! # Security Model: Split Directive Protocol
+//! # Security Model
 //!
-//! Worktrunk uses two directive files with different trust levels:
+//! The CD directive (`WORKTRUNK_DIRECTIVE_CD_FILE`) contains a raw path. The shell
+//! wrapper changes to that path without evaluating it. `--execute` starts one
+//! external program directly; no shell parses its argv.
 //!
-//! - **CD file** (`WORKTRUNK_DIRECTIVE_CD_FILE`): Contains a raw path. The shell
-//!   wrapper runs `cd -- "$(< file)"`. Because the file is never sourced as
-//!   shell, there is **no injection surface** — even a malicious path cannot
-//!   inject commands. This file is safe to pass through to alias/hook bodies.
-//!
-//! - **EXEC file** (`WORKTRUNK_DIRECTIVE_EXEC_FILE`): Contains arbitrary shell
-//!   (from `--execute`). The wrapper sources it. Only wt-internal Rust code
-//!   writes to this file — it is scrubbed from alias/hook child environments.
-//!
-//! ## Defense in Depth
-//!
-//! Multiple layers prevent injection even if one layer fails:
-//!
-//! 1. **Protocol separation**: CD file is a raw path (no shell parsing); EXEC
-//!    file is only written by Rust code, never by external content.
+//! 1. **Structured inputs**: CD is a raw path and execute is argv; neither is
+//!    parsed as shell.
 //!
 //! 2. **Channel separation**: User messages go to stderr; directive files are
 //!    separate. Malicious content in stderr cannot reach the directive files.
@@ -36,18 +25,17 @@
 //!
 //! 1. Branch names with shell metacharacters don't corrupt the cd path
 //! 2. Malicious branch names don't create unexpected files
-//! 3. The EXEC file only contains user-provided `--execute` content
-//! 4. Git's ref-name validation rejects the most dangerous characters
+//! 3. Git's ref-name validation rejects the most dangerous characters
 //!
 //! ## Testing Limitations
 //!
 //! These tests run the Rust binary, not the shell wrapper. They verify that
-//! directive file contents are safe, but they don't test that the wrapper
-//! handles the files correctly. Full end-to-end tests with the shell wrapper
+//! the direct execution input is safe, but they don't test the wrapper. Full
+//! end-to-end tests with the shell wrapper
 //! are in `tests/integration_tests/shell_wrapper.rs`.
 
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, repo, setup_snapshot_settings, wt_command,
+    TestRepo, configure_directive_file, directive_file, repo, setup_snapshot_settings, wt_command,
 };
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
@@ -152,10 +140,10 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let (cd_path, exec_path, _guard) = directive_files();
+        let (cd_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
@@ -189,10 +177,10 @@ fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let (cd_path, exec_path, _guard) = directive_files();
+        let (cd_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
@@ -260,10 +248,10 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
-        let (cd_path, exec_path, _guard) = directive_files();
+        let (cd_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
@@ -284,10 +272,10 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
-        let (cd_path, exec_path, _guard) = directive_files();
+        let (cd_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("switch")
             .arg(malicious_branch)
             .current_dir(repo.root_path());
@@ -303,9 +291,8 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
 }
 
 ///
-/// The -x flag is SUPPOSED to execute commands, so this tests that:
-/// 1. Commands from -x are written to the directive file
-/// 2. User content in branch names that looks like old directives doesn't cause injection
+/// User content in branch names that looks like old directives must not become
+/// part of the explicitly requested command.
 #[rstest]
 fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     // Branch name that looks like a directive
@@ -326,24 +313,21 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let (cd_path, exec_path, _guard) = directive_files();
+        let (cd_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        configure_directive_file(&mut cmd, &cd_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
             .arg("-x")
-            .arg("echo legitimate command")
+            .arg("echo")
+            .args(["--", "legitimate command"])
             .current_dir(repo.root_path());
 
-        // The -x command should be written to directive file
-        // The branch name should NOT inject additional commands
         assert_cmd_snapshot!(cmd);
     });
 
-    // The legitimate command would execute (we're not actually running the shell wrapper),
-    // but the injected command should NOT
     assert!(
         !std::path::Path::new("/tmp/hacked7").exists(),
         "Malicious code was executed alongside legitimate -x command!"

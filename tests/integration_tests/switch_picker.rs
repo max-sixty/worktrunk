@@ -1558,16 +1558,12 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     // Create a worktree to switch to
     let target_path = repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
+    let (cd_path, _guard) = worktrunk::testing::directive_file();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
         "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
         cd_path.display().to_string(),
-    ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
     ));
 
     // Run `wt switch` (without --no-cd), select "target-branch" via picker
@@ -1615,16 +1611,12 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
+    let (cd_path, _guard) = worktrunk::testing::directive_file();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
         "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
         cd_path.display().to_string(),
-    ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
     ));
 
     // `wt switch --no-cd` opens the picker and switches identically to
@@ -1679,22 +1671,18 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.add_worktree("target-branch");
 
-    let (cd_path, exec_path, _guard) = worktrunk::testing::directive_files();
+    let (cd_path, _guard) = worktrunk::testing::directive_file();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
         "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
         cd_path.display().to_string(),
     ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
-    ));
 
     // Run from the `main` worktree so the captured source branch is `main`.
     let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["switch", "--execute", "echo {{ base }}"],
+        &["switch", "--execute", "echo", "--", "{{ base }}"],
         repo.root_path(),
         &env_vars,
         &[
@@ -1712,11 +1700,10 @@ fn test_switch_picker_execute_base_resolves_to_source(mut repo: TestRepo) {
         result.screen()
     );
 
-    let exec_contents = std::fs::read_to_string(&exec_path).unwrap_or_default();
     assert!(
-        exec_contents.contains("echo main"),
-        "EXEC file should contain the expanded `{{{{ base }}}}` (the source \
-         branch `main`), got: {exec_contents}"
+        result.screen().contains("main"),
+        "Screen:\n{}",
+        result.screen()
     );
 }
 

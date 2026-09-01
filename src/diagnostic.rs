@@ -174,7 +174,6 @@ const DIAGNOSTIC_ENV_VARS: &[&str] = &[
     // Worktrunk's own runtime knobs and logging.
     "RUST_LOG",
     "WORKTRUNK_VERBOSE",
-    "WORKTRUNK_SHELL",
     "WORKTRUNK_FOREGROUND",
     "WORKTRUNK_MAX_CONCURRENT_COMMANDS",
 ];

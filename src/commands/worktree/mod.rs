@@ -10,17 +10,15 @@
 //! The binary can change *its own* working directory, but when it exits, the parent shell remains
 //! in the original directory.
 //!
-//! # Solution: Split File-Based Directive Passing
+//! # Solution: File-Based Directory Passing
 //!
-//! Shell wrappers create two temp files and set `WORKTRUNK_DIRECTIVE_CD_FILE`
-//! and `WORKTRUNK_DIRECTIVE_EXEC_FILE` to their paths:
+//! Shell wrappers create a temp file and set `WORKTRUNK_DIRECTIVE_CD_FILE` to
+//! its path:
 //!
-//! 1. Shell wrapper creates two temp files via `mktemp` (cd and exec)
-//! 2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
-//! 3. wt binary writes a raw path to the CD file (no shell escaping)
-//! 4. wt writes arbitrary shell to the EXEC file (only for `--execute`)
-//! 5. Shell wrapper reads the CD file with `cd -- "$(< file)"` (no shell parsing)
-//! 6. Shell wrapper sources the EXEC file if non-empty
+//! 1. Shell wrapper creates a temp file via `mktemp`
+//! 2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_CD_FILE`
+//! 3. wt binary writes a raw path to the file
+//! 4. Shell wrapper changes directory to that path
 //!
 //! ## Without Shell Integration (Direct Binary Call)
 //!
@@ -49,7 +47,7 @@
 //!
 //! When shell integration is enabled (`eval "$(wt config shell init bash)"`), the shell wrapper:
 //!
-//! 1. Creates two temp files and sets the CD and EXEC directive env vars
+//! 1. Creates a temp file and sets the CD directive env var
 //! 2. Runs the wt binary (which writes a raw path to the CD file)
 //! 3. Reads the CD file with `cd -- "$(< file)"` after wt exits
 //!

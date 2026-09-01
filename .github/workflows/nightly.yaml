@@ -127,7 +127,7 @@ jobs:
         save-if: false
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.86.7
+      uses: taiki-e/install-action@v2.87.1
       with:
         tool: cargo-hack
 
@@ -140,7 +140,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.115.0'
+        version: '0.115.1'
 
     - run: cargo hack check --feature-powerset --no-dev-deps
 
@@ -171,9 +171,9 @@ jobs:
           - os: ubuntu-24.04
             name: git-2.43.0
             git: '2.43.0'
-          - os: macos-15
+          - os: macos-26
             name: macos
-          - os: windows-2022
+          - os: windows-2025
             name: windows
     runs-on: ${{ matrix.os }}
     steps:
@@ -204,7 +204,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.74.0"
+        version: "=0.75.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -253,7 +253,7 @@ jobs:
             runner: ubuntu-24.04-arm
             install: musl-tools
           - target: x86_64-apple-darwin
-            runner: macos-15-intel
+            runner: macos-26-intel
     name: release-target (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     steps:

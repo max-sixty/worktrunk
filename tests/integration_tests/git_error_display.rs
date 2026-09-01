@@ -500,7 +500,7 @@ fn rejects_git_older_than_the_supported_minimum() {
     cmd.arg("list");
     let output = cmd.output().unwrap();
 
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"\u{1b}[31m✗\u{1b}[39m \u{1b}[31mGit 2.42.4 is unsupported; Worktrunk requires Git 2.43.0 or newer\u{1b}[39m\n");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mGit 2.42.4 is unsupported; Worktrunk requires Git 2.43.0 or newer[39m");
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
 }

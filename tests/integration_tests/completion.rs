@@ -1042,9 +1042,9 @@ fn test_complete_switch_execute_all_formats(repo: TestRepo) {
     // Test all execute flag formats: --execute with space, --execute=, -xvalue
     // All should complete branches after the execute value is provided
     let test_cases: &[&[&str]] = &[
-        &["wt", "switch", "--execute", "code .", ""], // --execute with space
-        &["wt", "switch", "--execute=code .", ""],    // --execute= with equals
-        &["wt", "switch", "-xcode", ""],              // -x fused short form
+        &["wt", "switch", "--execute", "code", ""], // --execute with space
+        &["wt", "switch", "--execute=code", ""],    // --execute= with equals
+        &["wt", "switch", "-xcode", ""],            // -x fused short form
     ];
 
     for args in test_cases {

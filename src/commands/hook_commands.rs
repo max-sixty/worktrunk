@@ -205,8 +205,9 @@ pub fn run_hook(
         shorthand_vars,
         forwarded_args,
     } = cli;
-    // Derive context from current environment (branch-optional for CI compatibility)
-    let env = CommandEnv::for_action_branchless()?;
+    // Derive context from the current environment; `config` isn't in hand here,
+    // so let the repository supply its cached load.
+    let env = CommandEnv::for_action_loading_config()?;
     let repo = &env.repo;
     let ctx = env.context(yes);
 
@@ -364,11 +365,11 @@ pub fn handle_hook_show(
         .map(crate::cli::parse_hook_type)
         .transpose()?;
 
-    // Build context for template expansion (only used if --expanded)
-    // Need to keep CommandEnv alive for the lifetime of ctx
-    // Uses branchless mode - template expansion uses "HEAD" in detached HEAD state
+    // Build context for template expansion (only used if --expanded).
+    // Need to keep CommandEnv alive for the lifetime of ctx. Detached HEAD is
+    // fine: `{{ branch }}` expands to "HEAD" there.
     let env = if expanded {
-        Some(CommandEnv::for_action_branchless()?)
+        Some(CommandEnv::for_action_loading_config()?)
     } else {
         None
     };

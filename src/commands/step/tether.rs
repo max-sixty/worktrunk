@@ -61,8 +61,8 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
         cmd.current_dir(dir);
     }
     // Direct exec, no implicit shell, same as `wt step for-each`; scrub the
-    // directive env vars so a long-lived child can't write to the parent
-    // shell's cd/exec directive files.
+    // directive env vars so a long-lived child can't redirect the parent
+    // shell's directory.
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     set_new_process_group(&mut cmd);
     let mut trace = CommandTrace::new(None, &command.join(" "));

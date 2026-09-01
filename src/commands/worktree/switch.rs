@@ -21,9 +21,7 @@ use worktrunk::git::{
     ForgeKind, GitError, GitRemoteUrl, RefType, Repository, ResolvedWorktree, Selector,
     SwitchSuggestionCtx, WorktreeId, branch_tracks_ref, current_or_recover,
 };
-use worktrunk::shell_exec::{
-    ShellEscapeMode, directive_shell_escape_mode, shell_cwd, shell_escape_for,
-};
+use worktrunk::shell_exec::{ShellEscapeMode, shell_cwd};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, progress_message,
     suggest_command, warning_message,
@@ -1874,10 +1872,10 @@ impl SwitchPipeline<'_> {
             );
             // Compute only the vars the command actually names. The map is
             // consumed by `expand_template` and nothing else — the child
-            // receives a shell string through the EXEC directive file (or
-            // `sh -c`), never the context as JSON on stdin, and `--execute`
-            // renders no `-v` variables table. So a var the templates don't
-            // reference is a git subprocess whose result is thrown away.
+            // receives argv, never the context as JSON on stdin, and
+            // `--execute` renders no `-v` variables table. So a var the
+            // templates don't reference is a git subprocess whose result is
+            // thrown away.
             //
             // The union is complete: `validate_switch_templates` already
             // parsed both positions against `ValidationScope::SwitchExecute`
@@ -1891,41 +1889,18 @@ impl SwitchPipeline<'_> {
             let template_vars =
                 build_hook_context(&ctx, &extra_vars, VarScope::Referenced(&referenced))?;
 
-            // The `--execute` payload is parsed by the active directive shell:
-            // the PowerShell wrapper `Invoke-Expression`s the EXEC directive
-            // file, every other wrapper (and the direct `sh -c` non-integration
-            // path) is POSIX. Escape interpolated values for whichever it is —
-            // the one place the escaping is shell-aware (hooks/aliases stay
-            // POSIX). See `worktrunk::shell_exec::directive_shell_escape_mode`.
-            let escape_mode = directive_shell_escape_mode();
-
-            // Expand template variables in command, escaped for the directive shell.
-            let expanded_cmd = template_vars.expand(cmd, escape_mode, repo, "--execute command")?;
-
-            // Append any trailing args (after --) to the execute command.
-            // Each arg is template-expanded literally, then escaped for the
-            // directive shell so the wrapper parses it as one literal argument.
-            let full_cmd = if execute_args.is_empty() {
-                expanded_cmd
-            } else {
-                let expanded_args: Result<Vec<_>, _> = execute_args
-                    .iter()
-                    .map(|arg| {
-                        template_vars.expand(
-                            arg,
-                            ShellEscapeMode::Literal,
-                            repo,
-                            "--execute argument",
-                        )
-                    })
-                    .collect();
-                let escaped_args: Vec<_> = expanded_args?
-                    .iter()
-                    .map(|arg| shell_escape_for(escape_mode, arg))
-                    .collect();
-                format!("{} {}", expanded_cmd, escaped_args.join(" "))
-            };
-            execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
+            // Every position is one argv element. Literal expansion preserves
+            // spaces, quotes, and shell metacharacters as data.
+            let program =
+                template_vars.expand(cmd, ShellEscapeMode::Literal, repo, "--execute command")?;
+            let args: Result<Vec<_>, _> = execute_args
+                .iter()
+                .map(|arg| {
+                    template_vars.expand(arg, ShellEscapeMode::Literal, repo, "--execute argument")
+                })
+                .collect();
+            let argv: Vec<String> = std::iter::once(program).chain(args?).collect();
+            execute_user_command(&argv, hooks_display_path.as_deref())?;
         }
 
         Ok(())
@@ -2041,86 +2016,6 @@ pub fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> 
         })
 }
 
-/// Whether `value` is a single clean program-name token — the form `--execute`
-/// keeps accepting unchanged once it switches to the argv input model.
-///
-/// First character `[A-Za-z0-9._/@]`, the rest additionally `+`/`-`. On
-/// Windows, `\` and `:` are also allowed so native paths (`C:\dir\tool`) are
-/// not flagged; on POSIX they are shell metacharacters and stay excluded.
-/// This rejects a leading `-`/`+` (an option-like `argv[0]` resolves
-/// differently), whitespace, `{{ }}` template markup, and every shell
-/// metacharacter — any of which means the value is not a bare program name.
-fn is_clean_program_token(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    let first_ok = first.is_ascii_alphanumeric()
-        || matches!(first, '.' | '_' | '/' | '@')
-        || (cfg!(windows) && first == '\\');
-    first_ok
-        && chars.all(|c| {
-            c.is_ascii_alphanumeric()
-                || matches!(c, '.' | '_' | '/' | '@' | '+' | '-')
-                || (cfg!(windows) && matches!(c, '\\' | ':'))
-        })
-}
-
-/// Warn when a `--execute` value will change behavior under the upcoming argv
-/// input model.
-///
-/// A future release runs `-x` as a single program (with arguments after `--`),
-/// not a shell command line. Warn now for any value that is not a single
-/// program token — shell syntax, multiple words, or `{{ }}` markup (flagged
-/// conservatively, even when it would expand to a clean name).
-///
-/// A single program token — including a path — is unaffected and stays silent.
-/// A bare name that is really a shell alias/function/builtin is not detectable
-/// here without the user's shell, so it is left to fail loudly at the cutover
-/// rather than guessed at. Informational only — it never blocks the switch.
-///
-/// The hint reconstructs the command line that runs today — the `-x` value
-/// with its trailing args appended, the way `run_switch` joins them — and
-/// wraps it for whichever shell the active wrapper evaluates the payload
-/// with (`sh` / `fish` / `pwsh`), so the suggestion is behavior-preserving
-/// on fish/PowerShell, not just POSIX sh, and complete when trailing args
-/// are present. It also links the tracking issue (#2860) so anyone whose
-/// workflow the argv model would regress can report the case before the
-/// cutover.
-fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
-    if is_clean_program_token(cmd) {
-        return;
-    }
-    let mode = directive_shell_escape_mode();
-    let (shell, flag) = match mode {
-        ShellEscapeMode::PowerShell => ("pwsh", "-Command"),
-        ShellEscapeMode::Fish => ("fish", "-c"),
-        _ => ("sh", "-c"),
-    };
-    let command_line = if execute_args.is_empty() {
-        cmd.to_string()
-    } else {
-        let escaped: Vec<String> = execute_args
-            .iter()
-            .map(|arg| shell_escape_for(mode, arg))
-            .collect();
-        format!("{} {}", cmd, escaped.join(" "))
-    };
-    let suggested = shell_escape_for(mode, &command_line);
-    eprintln!(
-        "{}",
-        warning_message(cformat!(
-            "<bold>--execute</> will change in a future release: it will run a single program, with arguments after <bold>--</>, not a shell command line"
-        ))
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "Comment at <underline>https://github.com/max-sixty/worktrunk/issues/2860</> if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: <underline>--execute {shell} -- {flag} {suggested}</>"
-        ))
-    );
-}
-
 /// Validate all templates that will be expanded after worktree creation.
 ///
 /// Catches syntax errors and undefined variable references *before* the
@@ -2178,7 +2073,6 @@ fn validate_switch_templates(
                 "--execute argument",
             )?;
         }
-        warn_if_execute_form_deprecated(cmd, execute_args);
     }
 
     // Validate hook templates only when hooks will actually run
@@ -2256,45 +2150,6 @@ mod tests {
         assert!(
             same_worktree_path(&operational, &identity),
             "canonical identity should still recognize one worktree"
-        );
-    }
-
-    #[test]
-    fn is_clean_program_token_matches_only_bare_names() {
-        // Bare program names — unchanged under the argv input model.
-        for ok in [
-            "git",
-            "claude",
-            "node18",
-            "my-tool",
-            "tool.sh",
-            "/usr/bin/env",
-            "./build",
-            "_x",
-            "@scope/pkg",
-        ] {
-            assert!(is_clean_program_token(ok), "expected clean token: {ok:?}");
-        }
-        // Not bare names — empty, whitespace, shell syntax, template markup,
-        // or an option-like leading character.
-        for bad in [
-            "",
-            "npm run dev",
-            "a && b",
-            "echo $HOME",
-            "code {{ worktree_path }}",
-            "a|b",
-            "-flag",
-            "+x",
-        ] {
-            assert!(!is_clean_program_token(bad), "expected non-token: {bad:?}");
-        }
-        // A native Windows path is a clean token only when targeting Windows;
-        // on POSIX, `\` and `:` are shell metacharacters.
-        assert_eq!(
-            is_clean_program_token(r"C:\Tools\foo.exe"),
-            cfg!(windows),
-            "Windows path classification should follow the target OS"
         );
     }
 

@@ -4,8 +4,8 @@
 //!
 //! For regular output, use `eprintln!`/`println!` directly (from `worktrunk::styling`
 //! for color support); [`print_json`] serializes a `--format=json` answer to stdout.
-//! This module handles shell integration directives (cd, exec) that need to be
-//! communicated to the parent shell.
+//! This module handles the cd directive that must be communicated to the
+//! parent shell.
 //!
 //! ## Usage
 //!
@@ -14,18 +14,16 @@
 //!
 //! eprintln!("{}", success_message("Operation complete"));
 //! output::change_directory(&path);
-//! output::execute("git pull");
+//! output::execute(vec!["git".into(), "pull".into()]);
 //! ```
 //!
 //! ## Shell Integration
 //!
-//! Two split directive files, one for each trust level:
+//! Shell integration uses one directive file:
 //! - `WORKTRUNK_DIRECTIVE_CD_FILE` — raw path; the wrapper `cd`s to it.
-//! - `WORKTRUNK_DIRECTIVE_EXEC_FILE` — arbitrary shell; the wrapper sources it.
 //!
-//! When no directive env vars are set (direct binary call):
-//! - Commands execute directly.
-//! - Shell hints are shown for missing integration.
+//! `--execute` programs always run directly. Without the CD directive, shell
+//! hints explain why the parent shell cannot follow the directory change.
 //!
 //! See [`shell_integration`] module for the complete spec of warning messages.
 
@@ -39,10 +37,10 @@ pub(crate) mod shell_integration;
 
 // Re-export the public API
 pub(crate) use global::{
-    change_directory, exec_would_be_refused, execute, is_shell_integration_active,
-    mark_cwd_removed, post_hook_display_path, pre_hook_display_path,
-    print_outdated_shell_wrapper_hint_once, retired_shell_wrapper_active, set_verbosity,
-    terminate_output, to_logical_path, was_cwd_removed,
+    change_directory, execute, is_shell_integration_active, mark_cwd_removed,
+    post_hook_display_path, pre_hook_display_path, print_outdated_shell_wrapper_hint_once,
+    retired_shell_wrapper_active, set_verbosity, terminate_output, to_logical_path,
+    was_cwd_removed,
 };
 // Re-export output handlers
 pub(crate) use handlers::{
