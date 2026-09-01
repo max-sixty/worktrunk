@@ -3698,8 +3698,11 @@ fn test_switch_pr_fork_namespace_conflict(#[from(repo_with_remote)] repo: TestRe
         !output.status.success(),
         "wt switch pr:42 should fail when the branch name is unavailable: stderr={stderr}"
     );
+    // `collides with existing branch` is `BranchNamespaceConflict`'s own
+    // wording. Asserting only on `feature-fix/nested` would pass against the
+    // unmapped error too — git names the conflicting ref in its raw text.
     assert!(
-        stderr.contains("feature-fix/nested"),
+        stderr.contains("collides with existing branch") && stderr.contains("feature-fix/nested"),
         "the failure should name the branch in the way: stderr={stderr}"
     );
     assert!(
