@@ -897,7 +897,7 @@ The two remaining review states have no indicator of their own: `"draft"` only d
 
 Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain pipeline color — `pr.review` is then `"approved"` or absent, respectively. GitLab MR data carries only `"pending"` and `"draft"` — no approved or changes-requested signal.
 
-CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`checks.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`checks.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state cache` to view or clear.
 
 ### LLM summaries
 
@@ -972,6 +972,16 @@ Relation to the tracking branch, derived from the `upstream.ahead` / `upstream.b
 | `⇡` | `ahead` > 0 | Ahead of remote |
 | `⇣` | `behind` > 0 | Behind remote |
 | `⇅` | `ahead` > 0, `behind` > 0 | Diverged from remote |
+
+### Marker
+
+The last subcolumn carries the branch's own marker — whatever
+[`wt config state marker set`](/config/#wt-config-state-marker) stored, usually
+an emoji, which is why the subcolumn is two cells wide. Nothing in `wt` writes
+it; it is there for agents and scripts to say what a branch is for, and it
+reads back as the item's `marker` field. `wt config state marker set 🤖` on a
+branch whose default-branch state is `_` renders `_ 🤖` in the column and
+`"_🤖"` in `display.symbols`.
 
 ### Placeholder symbols
 
@@ -1060,6 +1070,7 @@ Item fields:
 | `checks` | object | CI pipeline (see [checks object](#checks-object)); collected with `--full` |
 | `dev_server` | object | `{url, listening}` from the project's `list.url` template; absent when not configured |
 | `summary` | string | LLM branch summary; needs `--full`, `[list] summary = true`, and a `[commit.generation]` command |
+| `marker` | string | Branch marker from [`wt config state marker`](/config/#wt-config-state-marker); absent when none is set |
 | `vars` | object | Per-branch variables from [`wt config state vars`](/config/#wt-config-state-vars) |
 | `display` | object | Rendered strings (see [display object](#display-object)) |
 
@@ -1263,7 +1274,7 @@ removes schema 1. Its fields all have a schema-2 home:
 | `ci.repo`, `ci.repo_url` | `pr.repo`, `pr.repo.url` |
 | `repo`, `repo_url` | the envelope's `repo.forge`, `repo.forge.url` |
 | `url`, `url_active` | `dev_server.url`, `dev_server.listening` |
-| `summary`, `vars` | `summary`, `vars` |
+| `summary`, `vars`, `marker` | `summary`, `vars`, `marker` |
 | `statusline`, `symbols`, `columns` | `display.statusline`, `display.symbols`, `display.columns` |
 
 The envelope's `repo.default_branch` and `collected` have no schema-1 equivalent, and schema 2 separates "nothing to report" from "not determined" — see [How "no value" reads](#schema-2).

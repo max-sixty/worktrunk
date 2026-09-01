@@ -425,6 +425,10 @@
           ],
           "description": "HEAD commit; null for unborn branches."
         },
+        "marker": {
+          "$ref": "#/$defs/Nullable_string",
+          "description": "Branch marker stored via `wt config state marker`; absent when none\nis set, null while the lookup is unresolved. The same string is the\nlast glyph in `display.symbols`."
+        },
         "pr": {
           "$ref": "#/$defs/Nullable_JsonPr",
           "description": "Open PR/MR; absent when none exists (or CI wasn't collected), null\nwhen the forge fetch failed."

@@ -198,7 +198,7 @@ The two remaining review states have no indicator of their own: [2m"draft"[0m 
 Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain pipeline color — [2mpr.review[0m is then [2m"approved"[0m or absent, respectively. GitLab MR data carries only [2m"pending"[0m and [2m"draft"[0m — no approved 
 or changes-requested signal.
 
-CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR ([2m"draft"[0m) or when unpushed local changes make the status stale ([2mchecks.stale[0m). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR ([2m"draft"[0m) or when unpushed local changes make the status stale ([2mchecks.stale[0m). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state cache[0m to view or clear.
 
 [32mLLM summaries[0m
 
@@ -271,6 +271,16 @@ Relation to the tracking branch, derived from the [2mupstream.ahead[0m / [2mu
  [2m⇡[0m      [2mahead[0m > 0             Ahead of remote      
  [2m⇣[0m      [2mbehind[0m > 0            Behind remote        
  [2m⇅[0m      [2mahead[0m > 0, [2mbehind[0m > 0 Diverged from remote 
+
+[32mMarker[0m
+
+The last subcolumn carries the branch's own marker — whatever
+[2mwt config state marker set[0m stored, usually
+an emoji, which is why the subcolumn is two cells wide. Nothing in [2mwt[0m writes
+it; it is there for agents and scripts to say what a branch is for, and it
+reads back as the item's [2mmarker[0m field. [2mwt config state marker set 🤖[0m on a
+branch whose default-branch state is [2m_[0m renders [2m_ 🤖[0m in the column and
+[2m"_🤖"[0m in [2mdisplay.symbols[0m.
 
 [32mPlaceholder symbols[0m
 
@@ -357,6 +367,7 @@ Item fields:
  [2mchecks[0m         object      CI pipeline (see checks object); collected with [2m--full[0m                                                    
  [2mdev_server[0m     object      [2m{url, listening}[0m from the project's [2mlist.url[0m template; absent when not configured                         
  [2msummary[0m        string      LLM branch summary; needs [2m--full[0m, [2m[list] summary = true[0m, and a [2m[commit.generation][0m command                
+ [2mmarker[0m         string      Branch marker from [2mwt config state marker[0m; absent when none is set                                        
  [2mvars[0m           object      Per-branch variables from [2mwt config state vars[0m                                                            
  [2mdisplay[0m        object      Rendered strings (see display object)                                                                     
 
@@ -558,7 +569,7 @@ removes schema 1. Its fields all have a schema-2 home:
  [2mci.repo[0m, [2mci.repo_url[0m                                                  [2mpr.repo[0m, [2mpr.repo.url[0m                                                                                                
  [2mrepo[0m, [2mrepo_url[0m                                                        the envelope's [2mrepo.forge[0m, [2mrepo.forge.url[0m                                                                           
  [2murl[0m, [2murl_active[0m                                                       [2mdev_server.url[0m, [2mdev_server.listening[0m                                                                                
- [2msummary[0m, [2mvars[0m                                                         [2msummary[0m, [2mvars[0m                                                                                                       
+ [2msummary[0m, [2mvars[0m, [2mmarker[0m                                                 [2msummary[0m, [2mvars[0m, [2mmarker[0m                                                                                               
  [2mstatusline[0m, [2msymbols[0m, [2mcolumns[0m                                          [2mdisplay.statusline[0m, [2mdisplay.symbols[0m, [2mdisplay.columns[0m                                                                
 
 The envelope's [2mrepo.default_branch[0m and [2mcollected[0m have no schema-1 equivalent, and schema 2 separates "nothing to report" from "not determined" — see How "no value" reads.
