@@ -111,7 +111,7 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statusline: Option<String>,
 
-    /// Raw status symbols without ANSI colors (e.g., "+! ✖ ↑")
+    /// Raw status symbols without ANSI colors (e.g., `"+!⚑↑"`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbols: Option<String>,
 
@@ -503,6 +503,13 @@ impl JsonCi {
 
 /// Format status symbols as raw characters (no ANSI codes).
 ///
+/// Gates are appended in the Status column's left-to-right position order —
+/// working tree (0-2), worktree state (3), main state (4), upstream
+/// divergence (5), user marker (6) — the order
+/// [`StatusSymbols::styled_symbols`](super::model::StatusSymbols::styled_symbols)
+/// renders and the list page documents, so a row rendering `⚑_` serializes as
+/// `"⚑_"`, never `"_⚑"`.
+///
 /// Unresolved gates (`None` fields) contribute nothing — their symbols are
 /// simply absent from the output string, not replaced by a placeholder.
 /// This matches the per-symbol atomic model: machine consumers see only the
@@ -515,22 +522,6 @@ pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> Strin
     // Working tree symbols (gate 1)
     if let Some(wt) = symbols.working_tree {
         result.push_str(&wt.to_symbols());
-    }
-
-    // Main state (gate 3) — merged column: ^_⊂✗↕↑↓
-    if let Some(ms) = symbols.main_state {
-        let s = ms.to_string();
-        if !s.is_empty() {
-            result.push_str(&s);
-        }
-    }
-
-    // Upstream divergence (gate 4)
-    if let Some(div) = symbols.upstream_divergence {
-        let s = div.symbol();
-        if !s.is_empty() {
-            result.push_str(s);
-        }
     }
 
     // Worktree state (gate 2) — operations (✘↻) take priority over
@@ -546,6 +537,22 @@ pub(crate) fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> Strin
             if !s.is_empty() {
                 result.push_str(&s);
             }
+        }
+    }
+
+    // Main state (gate 3) — merged column: ^_⊂✗↕↑↓
+    if let Some(ms) = symbols.main_state {
+        let s = ms.to_string();
+        if !s.is_empty() {
+            result.push_str(&s);
+        }
+    }
+
+    // Upstream divergence (gate 4)
+    if let Some(div) = symbols.upstream_divergence {
+        let s = div.symbol();
+        if !s.is_empty() {
+            result.push_str(s);
         }
     }
 
@@ -974,6 +981,32 @@ mod tests {
             ..Default::default()
         });
         assert_snapshot!(result, @"+↓⇡");
+    }
+
+    /// Every gate populated at once: the raw string follows the Status
+    /// column's left-to-right position order (working tree, worktree state,
+    /// main state, upstream divergence, user marker), not the order the
+    /// builder happens to read the fields in. Pinned against
+    /// `format_compact()`, which derives from `styled_symbols()` — the
+    /// renderer's own ordering source — so the JSON field and the rendered
+    /// cell cannot drift apart.
+    #[test]
+    fn test_format_raw_symbols_follow_rendered_order() {
+        let symbols = StatusSymbols {
+            working_tree: Some(WorkingTreeStatus::new(false, true, false, false, false)),
+            operation_state: Some(OperationState::None),
+            worktree_state: Some(WorktreeState::BranchWorktreeMismatch),
+            main_state: Some(MainState::Ahead),
+            upstream_divergence: Some(Divergence::Diverged),
+            user_marker: Some(Some("\u{1f525}".to_string())),
+        };
+        let raw = format_raw_symbols(&symbols);
+        assert_snapshot!(raw, @"!⚑↑⇅🔥");
+        assert_eq!(
+            raw,
+            anstream::adapter::strip_str(&symbols.format_compact()).to_string(),
+            "raw symbols must match the rendered cell with its ANSI stripped"
+        );
     }
 
     // ============================================================================

@@ -1183,6 +1183,98 @@ fn test_list_json_with_user_marker(mut repo: TestRepo) {
     });
 }
 
+/// The Status cell of the row for `branch`, with its padding removed: the
+/// column's populated slots, left to right.
+///
+/// Columns are separated by runs of two or more spaces, so splitting on
+/// `"  "` isolates the cell. Within the Status column an unpopulated slot
+/// between two populated ones is a single space, so the cell survives the
+/// split intact and the whitespace filter drops the gap. The gutter joins the
+/// Branch cell with one space, which makes Status the second field.
+fn status_cell(table: &str, branch: &str) -> String {
+    let fields = table
+        .lines()
+        .map(|line| {
+            line.split("  ")
+                .map(str::trim)
+                .filter(|field| !field.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .find(|fields| fields.first().is_some_and(|f| f.ends_with(branch)))
+        .unwrap_or_else(|| panic!("no row for {branch:?}:\n{table}"));
+    fields[1].chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// The JSON `symbols` string is the Status cell without its colors, so its
+/// gates must appear in the column's left-to-right order — working tree,
+/// worktree, default branch, remote, marker. The builder used to append the
+/// worktree gate after the remote one, so a row rendering `⚑↑` serialized as
+/// `↑⚑`. Both schemas read the same builder, and both are checked here.
+///
+/// The row populates every gate at once: an off-template worktree path (`⚑`),
+/// commits the default branch lacks (`↑`), a commit the upstream lacks (`⇡`),
+/// an uncommitted edit (`!`), and a marker (`*`, kept ASCII so the cell's
+/// display width matches its character count).
+#[rstest]
+fn test_list_json_symbols_follow_status_column(#[from(repo_with_remote)] mut repo: TestRepo) {
+    use ansi_str::AnsiStr;
+
+    let off_template = repo
+        .root_path()
+        .parent()
+        .expect("repo has a parent directory")
+        .join("off-template");
+    let feature = repo.add_worktree_at_path("feature", &off_template);
+    repo.commit_in_worktree(&feature, "feature.txt", "one\n", "Add feature file");
+    repo.run_git_in(&feature, &["push", "-u", "origin", "feature"]);
+    repo.commit_in_worktree(&feature, "second.txt", "two\n", "Add second file");
+    std::fs::write(feature.join("feature.txt"), "edited\n").unwrap();
+    repo.set_marker("feature", "*");
+
+    let run = |args: &[&str]| {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "wt {args:?} should succeed");
+        output.stdout
+    };
+
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    let table = String::from_utf8_lossy(&run(&["list"]))
+        .ansi_strip()
+        .into_owned();
+    let rendered = status_cell(&table, "feature");
+    assert_eq!(rendered, "!⚑↑⇡*", "every gate populated:\n{table}");
+
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&run(&["list", "--format=json"])).unwrap();
+    let schema_2 = envelope["items"]
+        .as_array()
+        .expect("items array")
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row")["display"]["symbols"]
+        .as_str()
+        .expect("symbols")
+        .to_string();
+    assert_eq!(schema_2, rendered, "schema 2 follows the rendered order");
+
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let items: Vec<serde_json::Value> =
+        serde_json::from_slice(&run(&["list", "--format=json"])).unwrap();
+    let schema_1 = items
+        .iter()
+        .find(|item| item["branch"] == "feature")
+        .expect("feature row")["symbols"]
+        .as_str()
+        .expect("symbols")
+        .to_string();
+    assert_eq!(schema_1, rendered, "schema 1 follows the rendered order");
+}
+
 #[rstest]
 fn test_list_json_with_git_operation(mut repo: TestRepo) {
     // Test JSON output includes git_operation field when worktree is in rebase state
