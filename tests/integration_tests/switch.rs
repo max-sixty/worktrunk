@@ -3638,6 +3638,76 @@ fn test_switch_pr_fork_failure_keeps_existing_branch(#[from(repo_with_remote)] r
     );
 }
 
+/// A fork PR whose head ref collides with an existing branch's namespace names
+/// the conflicting branch rather than passing on git's raw "cannot lock ref".
+///
+/// Git stores refs as file paths, so `feature-fix` and `feature-fix/nested`
+/// can't both exist. The fork path creates its branch with the same
+/// `git worktree add -b` as the `Regular` arm, so it maps the failure the same
+/// way; the user can't rename a PR's head ref, so the message has to point at
+/// the local branch that's in the way.
+#[rstest]
+fn test_switch_pr_fork_namespace_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    // Same fork-PR fixture as test_switch_pr_fork: refs/pull/42/head on the
+    // bare remote, origin redirected to a GitHub-style URL, `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Occupy the namespace the PR's branch name needs.
+    repo.run_git(&["branch", "feature-fix/nested"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch pr:42 should fail when the branch name is unavailable: stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("feature-fix/nested"),
+        "the failure should name the branch in the way: stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("cannot lock ref"),
+        "git's raw ref-lock text should not reach the user: stderr={stderr}"
+    );
+}
+
 /// Every hook on a PR/MR-created worktree — `pre-switch`, `pre-start`,
 /// `post-start`, `post-switch` — sees `pr_number` and `pr_url` in its template
 /// context. Both GitHub PRs and GitLab MRs canonicalize to the same `pr_*`

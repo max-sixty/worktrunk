@@ -867,7 +867,19 @@ fn setup_fork_branch(
             progress_message(cformat!("Creating worktree for <bold>{}</>...", branch)).to_string(),
         ),
     )
-    .map_err(|e| worktree_creation_error(&e, branch.to_string(), None))?;
+    .map_err(|e| {
+        // Same mapping as the `Regular` arm: git stores refs as file paths, so
+        // a fork PR whose head ref is `feature` cannot create a branch in a
+        // repo that already has `feature/x`. Name the conflicting branch
+        // instead of passing on git's raw "cannot lock ref" text.
+        match detect_branch_namespace_conflict(repo, branch) {
+            Some(conflicting) => GitError::BranchNamespaceConflict {
+                branch: branch.to_string(),
+                conflicting,
+            },
+            None => worktree_creation_error(&e, branch.to_string(), None),
+        }
+    })?;
 
     // Configure branch tracking for pull and push
     let branch_remote_key = format!("branch.{}.remote", branch);
