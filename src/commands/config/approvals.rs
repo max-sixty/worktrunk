@@ -28,7 +28,9 @@ use crate::output::print_json;
 /// Every approvable command a project config declares: hooks in lifecycle
 /// order, then aliases (alphabetical), then any commit-message guidance.
 /// The shared collection behind `wt config approvals {list,add}`.
-fn collect_approvable_commands(project_config: &ProjectConfig) -> Vec<ApprovableCommand> {
+pub(super) fn collect_approvable_commands(
+    project_config: &ProjectConfig,
+) -> Vec<ApprovableCommand> {
     let all_hooks: Vec<_> = HookType::iter().collect();
     let mut commands = collect_commands_for_hooks(project_config, &all_hooks);
     commands.extend(collect_commands_for_aliases(project_config));

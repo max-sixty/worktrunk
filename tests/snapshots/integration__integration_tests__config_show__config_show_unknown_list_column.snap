@@ -37,7 +37,7 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
-    WORKTRUNK_TEST_CLAUDE_INSTALLED: "1"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -54,27 +54,17 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 [2m[36mSYSTEM CONFIG[39m @ /etc/xdg/worktrunk/config.toml[22m
 [2m↳[22m [2mNot found; optional[22m
 
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
-[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
-[2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex a30ca31..894e11f 100644[m
-[107m [0m [1m--- a/config.toml/current[m
-[107m [0m [1m+++ b/config.toml/migrated[m
-[107m [0m [36m@@ -1 +1,4 @@[m
-[107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m [32m+[m
-[107m [0m [32m+[m[32m[list][m
-[107m [0m [32m+[m[32mjson-schema = 2[m
-
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
+[107m [0m [2m[36m[list][0m
+[107m [0m [2mjson-schema = [0m[2m[33m2[0m
+[107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"nosuchcolumn"[0m[2m][0m
+[31m✗[39m [31mUnknown column "nosuchcolumn" in [list] columns. Valid columns: branch, status, working-diff, ahead-behind, branch-diff, summary, upstream, ci, path, url, commit, age, message[39m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
 [2m○[22m Identifier: [1m../origin[22m
@@ -84,10 +74,6 @@ exit_code: 0
 [33m▲[39m [33mShell integration not configured[39m
 [2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
-
-[36mCLAUDE CODE[39m
-[32m✓[39m [32mPlugin installed[39m
-[32m✓[39m [32mStatusline configured[39m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

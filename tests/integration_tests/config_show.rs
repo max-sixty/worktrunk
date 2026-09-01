@@ -410,9 +410,10 @@ deps = "post-create-tool"
 }
 
 #[rstest]
-fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_home: TempDir) {
-    // When no system config exists but user config does, config show should
-    // display a hint under USER CONFIG with the platform-specific default path
+fn test_config_show_absent_system_config_still_gets_a_section(repo: TestRepo, temp_home: TempDir) {
+    // With no system config file, the SYSTEM CONFIG section still renders,
+    // naming the platform-specific default path — "no organization-wide
+    // defaults are in force" is an answer the diagnostic owes the reader.
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -431,16 +432,13 @@ fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_ho
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should NOT show a full SYSTEM CONFIG heading
     assert!(
-        !stdout.contains("SYSTEM CONFIG"),
-        "Should not show SYSTEM CONFIG section when absent, got:\n{stdout}"
+        stdout.contains("SYSTEM CONFIG") && stdout.contains("worktrunk/config.toml"),
+        "Expected a SYSTEM CONFIG section naming the default path, got:\n{stdout}"
     );
-    // Should show a system config hint under USER CONFIG
     assert!(
-        stdout.contains("Optional system config not found")
-            && stdout.contains("worktrunk/config.toml"),
-        "Expected system config hint in output, got:\n{stdout}"
+        stdout.contains("Not found; optional"),
+        "Expected the absent system config to be marked optional, got:\n{stdout}"
     );
 }
 
@@ -1270,6 +1268,32 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
     fs::write(
         global_config_dir.join("config.toml"),
         "this is not valid toml {{{",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A `[list] columns` name no column answers to is reported here rather than
+/// waiting for `wt list` to abort on it, with the same message and a non-zero
+/// exit.
+#[rstest]
+fn test_config_show_unknown_list_column(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list]\njson-schema = 2\ncolumns = [\"branch\", \"nosuchcolumn\"]\n",
     )
     .unwrap();
 

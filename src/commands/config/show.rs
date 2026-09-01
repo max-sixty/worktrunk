@@ -13,7 +13,7 @@ use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
-use worktrunk::git::{ErrorExt, ForgeKind, Repository};
+use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{
     FileDetectionResult, Shell, ZshStartupScope, probe_zsh_compdef, scan_for_detection_details,
@@ -33,6 +33,14 @@ use crate::output;
 use crate::output::print_json;
 
 /// Handle the config show command
+///
+/// `config show` is the diagnostic surface for a broken config, so its exit
+/// code answers "is this config sound?". A section that finds something `wt`
+/// will reject — unparseable TOML, a schema violation, a `[list] columns`
+/// name no column answers to — reports it and returns `true`; the whole
+/// report still renders, and the non-zero exit comes after it. Warnings
+/// (unknown keys, deprecations) leave the exit code alone: `wt` runs with
+/// them.
 pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()> {
     if format == SwitchFormat::Json {
         return handle_config_show_json();
@@ -40,18 +48,21 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     // Build the complete output as a string
     let mut show_output = String::new();
 
-    // Render system config section (only when a system config file exists)
-    let has_system_config = render_system_config(&mut show_output)?;
-    if has_system_config {
-        show_output.push('\n');
-    }
+    // Resolved once and shared: the project config, column, and approval
+    // sections all ask the same repository.
+    let repo = Repository::current().ok();
+
+    // Render system config section (shown whether or not a file exists — its
+    // absence is part of the diagnostic)
+    let mut invalid = render_system_config(&mut show_output)?;
+    show_output.push('\n');
 
     // Render user config
-    render_user_config(&mut show_output, has_system_config)?;
+    invalid |= render_user_config(&mut show_output, repo.as_ref())?;
     show_output.push('\n');
 
     // Render project config if in a git repository
-    render_project_config(&mut show_output)?;
+    invalid |= render_project_config(&mut show_output, repo.as_ref())?;
     show_output.push('\n');
 
     // Render shell integration status
@@ -93,6 +104,12 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 
     // Display through pager (config show is always long-form output)
     show_help_in_pager(&show_output, true);
+
+    if invalid {
+        // The report above is the message; `AlreadyDisplayed` carries only the
+        // exit code.
+        return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
+    }
 
     Ok(())
 }
@@ -561,9 +578,27 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Render the SYSTEM CONFIG section. Returns true if a system config file was found.
+/// Render the SYSTEM CONFIG section. Returns true if the file is invalid.
+///
+/// The section renders unconditionally: "no organization-wide defaults are in
+/// force" is an answer a diagnostic owes the reader, and reporting it only
+/// when the file happens to exist made the absent case indistinguishable from
+/// a layer `config show` doesn't know about.
 fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
     let Some(system_path) = system_config_path() else {
+        let default_path = default_system_config_path();
+        let source = default_path
+            .as_ref()
+            .map(|p| format!("@ {}", format_path_for_display(p)));
+        writeln!(
+            out,
+            "{}",
+            cformat!(
+                "<dim>{}</>",
+                format_heading("SYSTEM CONFIG", source.as_deref())
+            )
+        )?;
+        writeln!(out, "{}", hint_message("Not found; optional"))?;
         return Ok(false);
     };
 
@@ -582,11 +617,13 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file (no system defaults)"))?;
-        return Ok(true);
+        return Ok(false);
     }
 
     // Validate config (syntax + schema) and warn if invalid
+    let mut invalid = false;
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
+        invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
@@ -596,10 +633,11 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
     // Display TOML with syntax highlighting
     writeln!(out, "{}", format_toml(&contents))?;
 
-    Ok(true)
+    Ok(invalid)
 }
 
-fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Result<()> {
+/// Render the USER CONFIG section. Returns true if the config is invalid.
+fn render_user_config(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
     let config_path = require_config_path()?;
 
     writeln!(
@@ -620,7 +658,9 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
                 "Not found; to create one, run <underline>wt config create</>"
             ))
         )?;
-        return Ok(());
+        // A `[list] columns` selection can still arrive from the system layer,
+        // the environment, or `--config-set`, so the check runs either way.
+        return render_column_selection(out, repo);
     }
 
     // Read and display the file contents
@@ -632,6 +672,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
     // the file); a pending-default pin is additive, so the dump stays. An
     // empty file still gets the pending-pin details — `wt config update`
     // would rewrite it — just no dump.
+    let mut invalid = false;
     let mut details_shown = false;
     let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
@@ -653,6 +694,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
             }
         }
         Err(err) => {
+            invalid = true;
             writeln!(out, "{}", error_message(err.to_string()))?;
             false
         }
@@ -660,12 +702,13 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file (using defaults)"))?;
-        return Ok(());
+        return Ok(invalid | render_column_selection(out, repo)?);
     }
 
     // Validate config (syntax + schema) and warn if invalid
     if let Err(e) = toml::from_str::<UserConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
+        invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
@@ -682,25 +725,46 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
-    if !has_system_config {
-        render_system_config_hint(out)?;
-    }
-
-    Ok(())
+    Ok(invalid | render_column_selection(out, repo)?)
 }
 
-fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
-    if let Some(path) = default_system_config_path() {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Optional system config not found @ <dim>{}</>",
-                format_path_for_display(&path)
-            ))
-        )?;
+/// Report a `[list] columns` selection that `wt list` would reject.
+///
+/// Column names resolve in the command layer, so config load accepts any
+/// string and the typo only surfaces when `wt list` aborts on it. This asks
+/// the same question of the resolved config — the layer `wt list` reads,
+/// `[projects]` entry and `--config-set` included — and reports it with the
+/// same message, so the diagnostic and the command agree.
+///
+/// Outside a repository there is nothing to resolve custom columns against
+/// (their headers are valid names too), and `wt list` doesn't run there
+/// either, so the check is skipped.
+fn render_column_selection(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
+    let Some(repo) = repo else {
+        return Ok(false);
+    };
+    let config = repo.config();
+    if config.list.columns.is_empty() {
+        return Ok(false);
     }
-    Ok(())
+    let custom = match crate::commands::list::custom_columns::resolve_custom_columns(
+        &config.list.custom_columns,
+        repo,
+    ) {
+        Ok(custom) => custom,
+        // A broken `[list.custom-columns]` definition is its own error, which
+        // `wt list` reports first; don't second-guess the selection against a
+        // custom-column set that failed to resolve.
+        Err(_) => return Ok(false),
+    };
+    let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
+    if let Err(e) =
+        crate::commands::list::columns::parse_selected_columns(&config.list.columns, &custom_names)
+    {
+        writeln!(out, "{}", error_message(e.to_string()))?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Format warnings for unknown config keys in `raw_contents`.
@@ -752,11 +816,12 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
     }
 }
 
-fn render_project_config(out: &mut String) -> anyhow::Result<()> {
+/// Render the PROJECT CONFIG section. Returns true if the config is invalid.
+fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
     // Try to get current repository root
-    let repo = match Repository::current() {
-        Ok(repo) => repo,
-        Err(_) => {
+    let repo = match repo {
+        Some(repo) => repo,
+        None => {
             writeln!(
                 out,
                 "{}",
@@ -765,7 +830,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
                     format_heading("PROJECT CONFIG", Some("Not in a git repository"))
                 )
             )?;
-            return Ok(());
+            return Ok(false);
         }
     };
     // Helper: heading + project identifier, shared across the resolved and
@@ -799,7 +864,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         Some(path) if path.exists() => {
             let contents = std::fs::read_to_string(path).context("Failed to read config file")?;
             let source = format!("@ {}", format_path_for_display(path));
-            write_heading_and_identifier(out, &repo, &source)?;
+            write_heading_and_identifier(out, repo, &source)?;
             (path.clone(), contents)
         }
         _ => match repo.default_branch_project_config_content() {
@@ -808,7 +873,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
                 // not a filesystem path — display it verbatim, tagged as the
                 // object-store source so it isn't mistaken for an on-disk file.
                 let source = format!("@ {} (from object store)", spec.to_string_lossy());
-                write_heading_and_identifier(out, &repo, &source)?;
+                write_heading_and_identifier(out, repo, &source)?;
                 (spec, object_store_contents)
             }
             None => {
@@ -816,19 +881,19 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
                 let Some(path) = on_disk else {
                     let heading = format_heading("PROJECT CONFIG", Some("No project config"));
                     writeln!(out, "{}", cformat!("<dim>{}</>", heading))?;
-                    return Ok(());
+                    return Ok(false);
                 };
                 let source = format!("@ {}", format_path_for_display(&path));
-                write_heading_and_identifier(out, &repo, &source)?;
+                write_heading_and_identifier(out, repo, &source)?;
                 writeln!(out, "{}", hint_message("Not found"))?;
-                return Ok(());
+                return Ok(false);
             }
         },
     };
 
     if contents.trim().is_empty() {
         writeln!(out, "{}", hint_message("Empty file"))?;
-        return Ok(());
+        return Ok(false);
     }
 
     // Check for deprecations with emit_inline_warnings=false (silent mode)
@@ -844,7 +909,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         &contents,
         is_main_worktree,
         worktrunk::config::ConfigFileKind::Project,
-        Some(&repo),
+        Some(repo),
         false, // silent mode - we'll format the output ourselves
     ) {
         Ok(result) => {
@@ -865,8 +930,10 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     };
 
     // Validate config (syntax + schema) and warn if invalid
+    let mut invalid = false;
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
+        invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
@@ -883,6 +950,48 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
+    render_pending_approvals(out, repo)?;
+
+    Ok(invalid)
+}
+
+/// Report project commands the approval gate has yet to clear.
+///
+/// The commands above are listed as configuration, which reads as "these
+/// run" — but a freshly cloned repository's hooks stop at the approval prompt
+/// the first time one fires, and until then nothing in `config show` said so.
+/// State, not an action, so `○`; the count alone, since `wt config approvals
+/// list` is the surface that itemizes them.
+fn render_pending_approvals(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let Ok(project_id) = repo.project_identifier() else {
+        return Ok(());
+    };
+    let Ok(approvals) = worktrunk::config::Approvals::load() else {
+        return Ok(());
+    };
+    let Ok(Some(project_config)) = repo.load_project_config() else {
+        return Ok(());
+    };
+    let pending = super::approvals::collect_approvable_commands(&project_config)
+        .into_iter()
+        .filter(|cmd| !approvals.is_command_approved(&project_id, &cmd.command.template))
+        .count();
+    if pending == 0 {
+        return Ok(());
+    }
+    let plural = if pending == 1 { "command" } else { "commands" };
+    writeln!(
+        out,
+        "{}",
+        info_message(format!("{pending} project {plural} awaiting approval"))
+    )?;
+    writeln!(
+        out,
+        "{}",
+        hint_message(cformat!(
+            "To review, run <underline>wt config approvals list</>"
+        ))
+    )?;
     Ok(())
 }
 

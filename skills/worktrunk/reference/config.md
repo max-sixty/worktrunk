@@ -743,10 +743,15 @@ Global Options:
 
 Show configuration files & locations.
 
-Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
-and project config (`.config/wt.toml`). Also shows system config if present.
+Shows the location and contents of system config, user config
+(`~/.config/worktrunk/config.toml`), and project config (`.config/wt.toml`).
+Every section names its path whether or not the file exists.
 
-If a config file doesn't exist, shows defaults that would be used.
+Alongside each file, `config show` reports what `wt` would take issue with:
+unparseable TOML, keys in the wrong file, deprecated settings, a `[list]
+columns` name no column answers to, and project commands still awaiting
+approval. It exits non-zero when a config is invalid, so a health check can
+branch on it; warnings alone leave the exit code at 0.
 
 ### Full diagnostics
 
