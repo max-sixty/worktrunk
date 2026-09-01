@@ -1387,7 +1387,7 @@ $ wt list
 + review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e  1d    Add dashboard com…
 + wip-docs       ? –       +1                                    33323bc  1d    Initial commit
 
-○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
+○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path
 ```
 
 ### Use cases

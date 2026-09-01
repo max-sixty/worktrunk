@@ -48,6 +48,7 @@ info:
     WORKTRUNK_TEST_PARENT_SHELL: ""
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
+    WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -61,4 +62,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden[0m
+[2m○[22m [2mShowing 2 worktrees, 1 with changes, 1 ahead, hidden: Path[0m

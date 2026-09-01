@@ -1954,7 +1954,7 @@ pub fn collect(
         summary: super::format_summary_message(
             &all_items,
             show_branches || show_remotes,
-            layout.hidden_column_count,
+            &layout.hidden_columns,
             timed_out_count,
         ),
     });

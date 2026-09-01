@@ -656,7 +656,7 @@ mod tests {
             main_worktree_path: PathBuf::from("/tmp"),
             max_message_len: 50,
             max_summary_len: 40,
-            hidden_column_count: 0,
+            hidden_columns: Vec::new(),
             status_position_mask: PositionMask::FULL,
             link_style: LinkStyle::Expanded,
         }
@@ -1361,7 +1361,7 @@ mod tests {
             main_worktree_path: PathBuf::from("/tmp"),
             max_message_len: 0,
             max_summary_len: 10,
-            hidden_column_count: 0,
+            hidden_columns: Vec::new(),
             status_position_mask: PositionMask::FULL,
             link_style,
         };
@@ -1430,7 +1430,7 @@ mod tests {
             main_worktree_path: PathBuf::from("/tmp"),
             max_message_len: 0,
             max_summary_len: 10,
-            hidden_column_count: 0,
+            hidden_columns: Vec::new(),
             status_position_mask: PositionMask::FULL,
             link_style: LinkStyle::Expanded,
         };
@@ -1504,7 +1504,7 @@ mod tests {
             main_worktree_path: PathBuf::from("/tmp"),
             max_message_len: 20,
             max_summary_len: 10,
-            hidden_column_count: 0,
+            hidden_columns: Vec::new(),
             status_position_mask: PositionMask::FULL,
             link_style: LinkStyle::Expanded,
         };

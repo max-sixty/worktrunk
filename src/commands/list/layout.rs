@@ -526,7 +526,10 @@ pub struct LayoutConfig {
     pub main_worktree_path: PathBuf,
     pub max_message_len: usize,
     pub max_summary_len: usize,
-    pub hidden_column_count: usize,
+    /// Headers of the columns the terminal was too narrow for, in display
+    /// order. The summary footer names them, so a reader can tell what a wider
+    /// terminal (or `--format json`) would add.
+    pub hidden_columns: Vec<String>,
     pub status_position_mask: super::model::PositionMask,
     /// How every cell in this layout presents a reference with a URL behind it.
     /// Set once for the whole render — see [`LinkStyle`].
@@ -1126,21 +1129,32 @@ fn allocate_columns_with_priority(
         });
     }
 
-    // Count how many columns were hidden (not allocated).
-    // This includes both data columns and empty columns that could show with more width.
+    // Name the columns that were dropped (not allocated), in display order —
+    // the footer reports them, so it says what widening the terminal would add.
+    // This includes both data columns and empty columns that could show with
+    // more width.
     let allocated_kinds: std::collections::HashSet<_> =
         columns.iter().map(|col| col.kind).collect();
-    let hidden_column_count = candidate_kinds
+    let mut hidden_kinds: Vec<_> = candidate_kinds
         .iter()
+        .copied()
         .filter(|kind| !allocated_kinds.contains(kind))
-        .count();
+        .collect();
+    hidden_kinds.sort_by_key(|&kind| column_display_index(kind));
+    let hidden_columns = hidden_kinds
+        .into_iter()
+        .map(|kind| match kind {
+            ColumnKind::Custom(i) => custom_columns[i as usize].name.clone(),
+            kind => kind.header().to_string(),
+        })
+        .collect();
 
     LayoutConfig {
         columns,
         main_worktree_path,
         max_message_len,
         max_summary_len,
-        hidden_column_count,
+        hidden_columns,
         status_position_mask: metadata.status_position_mask,
         link_style,
     }
@@ -1927,7 +1941,7 @@ mod tests {
         // (they were never candidates).
         assert!(find_column(&layout, ColumnKind::Status).is_none());
         assert!(find_column(&layout, ColumnKind::Message).is_none());
-        assert_eq!(layout.hidden_column_count, 0);
+        assert!(layout.hidden_columns.is_empty());
     }
 
     #[test]
@@ -2733,7 +2747,7 @@ mod tests {
         // Values are final before layout, so an all-empty column is excluded
         // entirely — not allocated and not counted as hidden
         assert!(find_column(&layout, ColumnKind::Custom(0)).is_none());
-        assert_eq!(layout.hidden_column_count, 0);
+        assert!(layout.hidden_columns.is_empty());
     }
 
     #[test]
@@ -2763,6 +2777,6 @@ mod tests {
         // unallocated candidate counts toward the hidden-column footer
         assert!(find_column(&narrow, ColumnKind::Custom(0)).is_none());
         assert!(find_column(&narrow, ColumnKind::Branch).is_some());
-        assert!(narrow.hidden_column_count > 0);
+        assert!(!narrow.hidden_columns.is_empty());
     }
 }

@@ -186,7 +186,7 @@ $ wt list
 @ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc  2h    Add authenticati…
 ^ main              ^⇡                                    ⇡1      0e631ad  1d    Initial commit
 
-○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden
+○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path
 ```
 
 <!-- END AUTO-GENERATED -->

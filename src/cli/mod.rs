@@ -801,7 +801,7 @@ $ wt list
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68  5h    Add secure token…
 + fix-typos        _|                                      |     41ee083  4d    Merge fix-auth: h…
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden
+○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
 
 Include CI status and LLM summaries:
@@ -815,7 +815,7 @@ $ wt list --full
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68
 + fix-typos        _|                                                                                              |     #410  41ee083
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
+○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Age, Message
 ```
 
 Include branches that don't have worktrees:
@@ -831,7 +831,7 @@ $ wt list --branches --full
 / exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                   9637922
 / wip             /↕                 ↑1  ↓1   +33       Start API documentation                                                b40716d
 
-○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
+○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Age, Message
 ```
 
 Output as JSON for scripting:
@@ -860,6 +860,8 @@ $ wt list --format=json
 | Message | Last commit message (truncated) |
 
 The `main` header label is used regardless of the default branch's actual name.
+
+The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](/config/#list); `--format=json` carries every field at any width.
 
 `main↕` and `main…±` measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local `main` trails `origin/main`, a branch reads as ahead of the real mainline, not of a stale local checkout. The `↑`/`↓`/`↕` Status symbols derive from these counts, so they track the upstream tip too.
 
