@@ -2,7 +2,7 @@
 title: "LLM Commit Messages"
 description: "Generate commit messages from diffs using any LLM. Integrates with wt merge, wt step commit, and wt step squash."
 sidebar:
-  order: 22
+  order: 23
 ---
 Worktrunk generates commit messages by building a templated prompt and piping it to an external command. This integrates with `wt merge`, `wt step commit`, and `wt step squash`.
 
@@ -124,7 +124,7 @@ With `summary = true` and a `[commit.generation] command` configured, Worktrunk 
 
 Summaries appear in:
 
-- **`wt switch`** [interactive picker](/switch/#interactive-picker) — preview tab 5
+- **`wt switch`** [interactive picker](/switch/#interactive-picker) — the `summary` preview tab
 - **`wt list --full`** — the Summary column (see [`wt list`](/list/#llm-summaries))
 
 Enable in user config:
