@@ -9,8 +9,8 @@
 //! `WORKTRUNK_DIRECTIVE_CD_FILE` holds one raw path. The wrapper changes to it
 //! after wt exits. `--execute` needs no directive: wt starts the external
 //! program directly with its working directory set to the switch target. The
-//! retired exec-file variable is recognized only to warn that the live shell
-//! still has an old wrapper loaded.
+//! retired exec-file variable is recognized only to warn when an old wrapper
+//! redirects `--execute` output away from the terminal.
 //!
 //! The retired single-file protocol is never written. If an old wrapper still
 //! sets only `WORKTRUNK_DIRECTIVE_FILE`, switch output diagnoses the outdated
