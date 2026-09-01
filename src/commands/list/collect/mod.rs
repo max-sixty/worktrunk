@@ -317,8 +317,8 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeId, WorktreeInfo, WorktreeRef};
 use worktrunk::styling::{
-    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, terminal_width, truncate_visible,
-    warning_message,
+    INFO_SYMBOL, eprintln, format_with_gutter, hint_message, info_message, terminal_width,
+    truncate_visible, warning_message,
 };
 
 use crate::commands::is_worktree_at_expected_path;
@@ -878,11 +878,13 @@ pub fn collect(
         });
     });
 
-    // Extract results
+    // Extract results.
+    //
+    // The worktree list is empty for a bare repo with no linked worktrees. That
+    // is not a reason to stop: `--branches` still has rows to list there, and a
+    // listing with no rows at all owes the user a message rather than a silent
+    // exit (see the `all_items.is_empty()` gate below).
     let worktrees: &[WorktreeInfo] = repo.list_worktrees().context("Failed to list worktrees")?;
-    if worktrees.is_empty() {
-        return Ok(None);
-    }
     // Both cells are unconditionally `set()` inside the rayon scope above, so
     // `into_inner()` is always `Some`. Use `.flatten()` rather than `.unwrap()`
     // to honor the no-unwrap rule and match the sibling cells below.
@@ -1036,18 +1038,27 @@ pub fn collect(
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
+    //
+    // `None` when no worktree can be the main one — a bare repo with no linked
+    // worktrees, and the degenerate case where every registration is prunable.
+    // Rows can still exist there (branch-only rows under `--branches`), so this
+    // is a normal answer rather than an error: no row is flagged main, and path
+    // shortening falls back to the repo root, which no row uses because a
+    // branch-only row has no path.
     let primary_id = repo.primary_worktree()?.as_ref().map(WorktreeId::new);
-    let (main_worktree, main_worktree_id) = {
-        let (wt, worktree_ref) = primary_id
+    let (main_worktree_path, main_worktree_id) = {
+        let main = primary_id
             .as_ref()
             .and_then(|id| {
                 worktree_subjects
                     .iter()
                     .find(|(_, worktree_ref)| worktree_ref.id() == id)
             })
-            .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()))
-            .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
-        (*wt, worktree_ref.id().clone())
+            .or_else(|| worktree_subjects.iter().find(|(wt, _)| !wt.is_prunable()));
+        match main {
+            Some((wt, worktree_ref)) => (wt.path.clone(), Some(worktree_ref.id().clone())),
+            None => (repo.repo_path()?.to_path_buf(), None),
+        }
     };
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
@@ -1086,7 +1097,7 @@ pub fn collect(
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
         worktree_subjects,
-        &main_worktree_id,
+        main_worktree_id.as_ref(),
         current_worktree_id.as_ref(),
         &commit_details_map,
     );
@@ -1112,7 +1123,7 @@ pub fn collect(
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
         .map(|(wt, worktree_ref)| {
-            let is_main = worktree_ref.id() == &main_worktree_id;
+            let is_main = main_worktree_id.as_ref() == Some(worktree_ref.id());
             let is_current = current_worktree_id.as_ref() == Some(worktree_ref.id());
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
@@ -1276,6 +1287,45 @@ pub fn collect(
         full_plan()
     };
 
+    // Which gated fact families the plan requested — recorded on `ListData`
+    // so JSON output can distinguish "not requested" from "undetermined".
+    let collected = super::model::Collected {
+        ci: tasks.contains(&TaskKind::CiStatus),
+        summary: tasks.contains(&TaskKind::SummaryGenerate),
+    };
+
+    // Nothing to list. Only a bare repo with no linked worktrees reaches this —
+    // any other shape has at least a main worktree — and then only when no
+    // branch rows were requested or none survived filtering. There is no table
+    // to render (a lone header would be noise, and stdout must stay empty for
+    // `wt list | …`), so the state goes to stderr and the collection phases
+    // below are skipped entirely.
+    //
+    // `--format json` still owes its consumer a payload, so the empty
+    // `ListData` returns either way; the caller prints `[]` or an envelope with
+    // `items: []`. The narration is table-only: JSON says the same thing on
+    // stdout, and the picker owns the terminal while collect runs.
+    if all_items.is_empty() {
+        if render_table {
+            // `<branch>` is an argument placeholder, not markup — interpolated
+            // as a runtime value because `cformat!` reads angle brackets in the
+            // format string as color tags and rejects the unknown one.
+            let branch_placeholder = "<branch>";
+            eprintln!("{}", info_message("No worktrees"));
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "To create one, run <underline>wt switch --create {branch_placeholder}</>"
+                ))
+            );
+        }
+        return Ok(Some(super::model::ListData {
+            items: Vec::new(),
+            custom_columns,
+            collected,
+        }));
+    }
+
     // The picker primes its CI cells from the local cache so the column paints
     // instantly, then the live `CiStatus` task (which the picker keeps — see
     // `handle_picker`) overwrites each cell as results stream in. Uncached rows
@@ -1310,7 +1360,7 @@ pub fn collect(
         &all_items,
         &tasks,
         destination,
-        &main_worktree.path,
+        &main_worktree_path,
         url_template.as_deref(),
         max_pr_number,
         super::layout::ColumnSelection {
@@ -1322,13 +1372,6 @@ pub fn collect(
     // Single-line invariant: with no detectable width, an unlimited width
     // keeps rows untruncated rather than wrapping at a guessed width
     let max_width = terminal_width().unwrap_or(usize::MAX);
-
-    // Which gated fact families the plan requested — recorded on `ListData`
-    // so JSON output can distinguish "not requested" from "undetermined".
-    let collected = super::model::Collected {
-        ci: tasks.contains(&TaskKind::CiStatus),
-        summary: tasks.contains(&TaskKind::SummaryGenerate),
-    };
 
     // Create collection options from the planned task set. `integration_targets`
     // is patched in after the parallel phase below extracts it — at this
@@ -2067,16 +2110,19 @@ where
 
 /// Sort worktrees: current first, main second, then by timestamp descending.
 /// Uses the pre-fetched commit-details map for efficiency.
+///
+/// `main_worktree_id` is `None` when the repo has no main worktree (a bare repo
+/// with no linked worktrees); the middle tier is then simply empty.
 fn sort_worktrees_with_cache<'a>(
     mut worktrees: Vec<(&'a WorktreeInfo, WorktreeRef)>,
-    main_worktree_id: &WorktreeId,
+    main_worktree_id: Option<&WorktreeId>,
     current_worktree_id: Option<&WorktreeId>,
     commit_details: &std::collections::HashMap<String, (String, i64, String)>,
 ) -> Vec<(&'a WorktreeInfo, WorktreeRef)> {
     worktrees.sort_by_key(|(wt, worktree_ref)| {
         let priority = if current_worktree_id == Some(worktree_ref.id()) {
             0 // Current first
-        } else if worktree_ref.id() == main_worktree_id {
+        } else if main_worktree_id == Some(worktree_ref.id()) {
             1 // Main second
         } else {
             2 // Rest by timestamp
