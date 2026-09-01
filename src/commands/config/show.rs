@@ -65,6 +65,12 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     invalid |= render_project_config(&mut show_output, repo.as_ref())?;
     show_output.push('\n');
 
+    // Render the values the layers above resolve to
+    if let Some(repo) = repo.as_ref() {
+        render_effective_config(&mut show_output, repo)?;
+        show_output.push('\n');
+    }
+
     // Render shell integration status
     render_shell_status(&mut show_output)?;
 
@@ -953,6 +959,122 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
     render_pending_approvals(out, repo)?;
 
     Ok(invalid)
+}
+
+/// Render the EFFECTIVE section: the values every scalar setting resolves to.
+///
+/// The file sections above show what each layer *contains*; five of them stack
+/// (`--config-set`, `WORKTRUNK_*`, the matching `[projects]` entries, the
+/// global keys, system config), and reading a value off them means replaying
+/// that merge by hand. This is the answer instead — the same accessors every
+/// command calls, so `--config-set list.full=true` shows up here.
+///
+/// Every scalar is listed, not just the ones that differ from their default.
+/// A diagnostic is read to find out what value is in force, and a
+/// differs-only list answers that only for someone who already knows the
+/// defaults — while in the common case it would render an empty section that
+/// says nothing at all. Arrays and tables (`[list] columns`,
+/// `[list.custom-columns]`, hooks, aliases) are left to the file dumps: they
+/// accumulate across layers rather than replacing, so the dumps already show
+/// every contribution.
+fn render_effective_config(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let config = repo.config();
+    let project = repo.project_identifier().ok();
+    let worktree_path = match &project {
+        Some(id) => repo.user_config().worktree_path_for_project(id),
+        None => repo.user_config().worktree_path(),
+    };
+
+    writeln!(out, "{}", format_heading("EFFECTIVE", None))?;
+    writeln!(
+        out,
+        "{}",
+        info_message("Resolved scalar settings, every layer applied")
+    )?;
+
+    let mut toml = String::new();
+    writeln!(toml, "worktree-path = {}", toml_string(&worktree_path))?;
+    writeln!(toml)?;
+    writeln!(toml, "[commit]")?;
+    writeln!(
+        toml,
+        "stage = {}",
+        toml::Value::try_from(config.commit.stage())?
+    )?;
+    writeln!(toml)?;
+    writeln!(toml, "[commit.generation]")?;
+    writeln!(
+        toml,
+        "{}",
+        optional_row("command", config.commit_generation.command.as_deref())
+    )?;
+    writeln!(toml)?;
+    writeln!(toml, "[list]")?;
+    writeln!(toml, "full = {}", config.list.full())?;
+    writeln!(toml, "branches = {}", config.list.branches())?;
+    writeln!(toml, "remotes = {}", config.list.remotes())?;
+    writeln!(toml, "summary = {}", config.list.summary())?;
+    writeln!(
+        toml,
+        "{}",
+        match config.list.json_schema {
+            Some(v) => format!("json-schema = {v}"),
+            None => "# json-schema unset (emits schema 1)".to_string(),
+        }
+    )?;
+    writeln!(
+        toml,
+        "timeout-ms = {}",
+        config
+            .list
+            .timeout()
+            .map_or_else(|| "0".to_string(), |d| d.as_millis().to_string())
+    )?;
+    writeln!(toml)?;
+    writeln!(toml, "[merge]")?;
+    writeln!(toml, "squash = {}", config.merge.squash())?;
+    writeln!(toml, "commit = {}", config.merge.commit())?;
+    writeln!(toml, "rebase = {}", config.merge.rebase())?;
+    writeln!(toml, "remove = {}", config.merge.remove())?;
+    writeln!(toml, "verify = {}", config.merge.verify())?;
+    writeln!(toml, "ff = {}", config.merge.ff())?;
+    writeln!(toml)?;
+    writeln!(toml, "[remove]")?;
+    writeln!(toml, "delete-branch = {}", config.remove.delete_branch())?;
+    writeln!(toml)?;
+    writeln!(toml, "[switch]")?;
+    writeln!(toml, "cd = {}", config.switch.cd())?;
+    writeln!(toml)?;
+    writeln!(toml, "[switch.picker]")?;
+    writeln!(
+        toml,
+        "{}",
+        optional_row("pager", config.switch_picker.pager())
+    )?;
+
+    writeln!(out, "{}", format_toml(toml.trim_end()))?;
+    Ok(())
+}
+
+/// Quote a resolved value as a TOML basic string.
+///
+/// Templates carry `\` on Windows and quotes appear in commit-generation
+/// commands, so the value is escaped rather than wrapped in bare quotes.
+fn toml_string(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
+}
+
+/// One row for a setting with no default: the assignment, or a comment naming
+/// the key when nothing set it.
+///
+/// The section renders as TOML, so an unset row stays a comment rather than
+/// `key = unset` — the block a reader copies out of the diagnostic has to
+/// parse.
+fn optional_row(key: &str, value: Option<&str>) -> String {
+    match value {
+        Some(value) => format!("{key} = {}", toml_string(value)),
+        None => format!("# {key} unset"),
+    }
 }
 
 /// Report project commands the approval gate has yet to clear.

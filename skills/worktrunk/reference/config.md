@@ -753,6 +753,13 @@ columns` name no column answers to, and project commands still awaiting
 approval. It exits non-zero when a config is invalid, so a health check can
 branch on it; warnings alone leave the exit code at 0.
 
+An `EFFECTIVE` section then gives the value every scalar setting resolves to
+once all the layers apply — `--config-set`, `WORKTRUNK_*`, the matching
+`[projects]` entries, the global keys, system config — including the ones no
+file sets. Arrays and tables (`[list] columns`, hooks, aliases) accumulate
+across layers instead of replacing, so the file dumps above already show every
+contribution and the section leaves them out.
+
 ### Full diagnostics
 
 Use `--full` to run diagnostic checks:

@@ -72,7 +72,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
 [1m[32mUser config[0m
 
-Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
+Creates [2m~/.config/worktrunk/config.toml[0m with the content below, every setting commented out. On top of it the file gets the defaults a future release switches — currently [2m[list] json-schema = 2[0m — written live, the same values [2mwt config update[0m would adopt, so a file just created doesn't warn on its first read.
 
 [107m [0m [2m# # User Configuration[0m
 [107m [0m [2m#[0m

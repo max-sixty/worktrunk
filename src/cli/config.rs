@@ -484,7 +484,10 @@ pub enum ConfigCommand {
     #[command(
         after_long_help = concat!(
             "## User config\n\n",
-            "Creates `~/.config/worktrunk/config.toml` with the following content:\n\n```\n",
+            "Creates `~/.config/worktrunk/config.toml` with the content below, every setting ",
+            "commented out. On top of it the file gets the defaults a future release switches — ",
+            "currently `[list] json-schema = 2` — written live, the same values `wt config update` ",
+            "would adopt, so a file just created doesn't warn on its first read.\n\n```\n",
             include_str!("../../dev/config.example.toml"),
             "```\n\n",
             "## Project config\n\n",
@@ -510,6 +513,13 @@ unparseable TOML, keys in the wrong file, deprecated settings, a `[list]
 columns` name no column answers to, and project commands still awaiting
 approval. It exits non-zero when a config is invalid, so a health check can
 branch on it; warnings alone leave the exit code at 0.
+
+An `EFFECTIVE` section then gives the value every scalar setting resolves to
+once all the layers apply — `--config-set`, `WORKTRUNK_*`, the matching
+`[projects]` entries, the global keys, system config — including the ones no
+file sets. Arrays and tables (`[list] columns`, hooks, aliases) accumulate
+across layers instead of replacing, so the file dumps above already show every
+contribution and the section leaves them out.
 
 ## Full diagnostics
 

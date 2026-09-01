@@ -87,6 +87,13 @@ columns[2m name no column answers to, and project commands still awaiting[0m
 approval. It exits non-zero when a config is invalid, so a health check can
 branch on it; warnings alone leave the exit code at 0.
 
+An [2mEFFECTIVE[0m section then gives the value every scalar setting resolves to
+once all the layers apply — [2m--config-set[0m, [2mWORKTRUNK_*[0m, the matching
+[2m[projects][0m entries, the global keys, system config — including the ones no
+file sets. Arrays and tables ([2m[list] columns[0m, hooks, aliases) accumulate
+across layers instead of replacing, so the file dumps above already show every
+contribution and the section leaves them out.
+
 [1m[32mFull diagnostics[0m
 
 Use [2m--full[0m to run diagnostic checks:

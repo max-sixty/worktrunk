@@ -124,9 +124,21 @@ fn create_config_file(
         std::fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
 
-    // Write the example config with all values commented out
-    let commented_config = comment_out_config(content);
-    worktrunk::utils::write_atomically(&path, &commented_config)
+    // Write the example config with all values commented out, then adopt the
+    // pending defaults. Every example line is a comment, so without this a
+    // file `wt config create` had just written warned about `[list]
+    // json-schema` on its first read. Routing through
+    // `compute_migrated_content` makes `create` emit exactly what `wt config
+    // update` would write, from the one table that owns those defaults.
+    //
+    // The commented template parses as a document with no items, so toml_edit
+    // places an adopted table above the whole comment block; the leading
+    // newline is what separates the two, and is trimmed back off when no rule
+    // fired.
+    let commented_config = format!("\n{}", comment_out_config(content));
+    let commented_config = worktrunk::config::compute_migrated_content(&commented_config, kind);
+    let commented_config = commented_config.trim_start_matches('\n');
+    worktrunk::utils::write_atomically(&path, commented_config)
         .context("Failed to write config file")?;
 
     // Success message
