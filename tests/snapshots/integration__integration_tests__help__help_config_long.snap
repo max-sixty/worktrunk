@@ -344,7 +344,7 @@ Persistent flag values for [2mwt remove[0m. Override on command line as needed
 
 Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
-[32mAliases[0m
+[32mUser aliases[0m
 
 Command templates that run as [2mwt <name>[0m. See the Extending Worktrunk guide for usage and flags.
 
@@ -531,7 +531,7 @@ Default template:
 
 How the fragment renders, and the project-config counterpart: the LLM commits guide.
 
-[1m[32mHooks[0m
+[1m[32mUser hooks[0m
 
 See [2mwt hook[0m for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks apply only to that repository.
 [32mPROJECT CONFIGURATION[0m
@@ -540,7 +540,7 @@ Project configuration lets teams share repository-specific settings — hooks, d
 
 To create a starter file with commented-out examples, run [2mwt config create --project[0m.
 
-[1m[32mHooks[0m
+[1m[32mProject hooks[0m
 
 Project hooks apply to this repository only. See [2mwt hook[0m for hook types, execution order, and examples.
 
@@ -586,7 +586,7 @@ Additional excludes for [2mwt step copy-ignored[0m:
 
 Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
-[1m[32mAliases[0m
+[1m[32mProject aliases[0m
 
 Command templates that run as [2mwt <name>[0m. See the Extending Worktrunk guide for usage and flags.
 

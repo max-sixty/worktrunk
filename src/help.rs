@@ -50,7 +50,7 @@ use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
     SUBDOC_MARKER_PREFIX,
 };
-use worktrunk::styling::{ColorChoice, eprintln, print, println};
+use worktrunk::styling::{ColorChoice, eprintln, print};
 
 use crate::cli;
 
@@ -101,25 +101,71 @@ impl PageMode {
         }
     }
 
-    /// Emit the page header — an auto-generated comment for web (sync test
-    /// uses it as a region marker), or an H1 title for plain skill pages.
-    fn emit_header(self, subcommand: &str) {
+    /// The page header — an auto-generated comment for web (sync test uses it
+    /// as a region marker), or an H1 title for plain skill pages.
+    fn header(self, subcommand: &str) -> String {
         match self {
-            Self::Web => println!(
+            Self::Web => format!(
                 "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
-            Self::Plain => println!("# wt {subcommand}"),
+            Self::Plain => format!("# wt {subcommand}"),
         }
-        println!();
     }
 
-    /// Emit the closing END marker (web only).
-    fn emit_footer(self) {
-        if matches!(self, Self::Web) {
-            println!();
-            println!("{MARKER_CLOSE}");
+    /// The closing END marker (web only).
+    fn footer(self) -> String {
+        match self {
+            Self::Web => format!("\n\n{MARKER_CLOSE}"),
+            Self::Plain => String::new(),
         }
     }
+}
+
+/// Keep only the first global-options section on a generated page.
+///
+/// Clap repeats the same ~20-line `Global Options:` list in every command
+/// reference it renders. A page built from subdocs stacks one copy per
+/// subcommand — 11 on `wt config`, 13 on `wt step` — which pads the page and
+/// gives the site's search that many near-identical hits. The first reference
+/// on the page keeps the section; every later one ends at its own options.
+///
+/// Terminal `--help` is unaffected: it renders through clap directly, so each
+/// command still prints its own global options.
+fn keep_first_global_options(page: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut seen_one = false;
+    let mut dropping = false;
+
+    for line in page.lines() {
+        // Clap renders references with color escapes even under NO_COLOR; the
+        // printer strips them, so match on the stripped text and keep the
+        // original line.
+        let plain = line.ansi_strip();
+        let plain = plain.trim_end();
+        if dropping {
+            // The section runs to the end of the fenced reference block.
+            if plain == "```" {
+                while kept.last().is_some_and(|last| last.trim().is_empty()) {
+                    kept.pop();
+                }
+                kept.push(line);
+                dropping = false;
+            }
+            continue;
+        }
+        if plain == "Global Options:" {
+            if seen_one {
+                dropping = true;
+                continue;
+            }
+            seen_one = true;
+        }
+        kept.push(line);
+    }
+
+    let mut page = kept.join("\n");
+    page.push('\n');
+    page
 }
 
 /// Custom help handling for pager support and markdown rendering.
@@ -487,16 +533,19 @@ Commands with pages: merge, switch, remove, list"
     let main_help = mode.process_body(main_content);
     let reference_block = help_reference(&[subcommand], Some(100));
 
-    mode.emit_header(subcommand);
-    println!("{}", main_help.trim());
-    println!();
+    // Assemble the whole page first: the global-options pass below spans every
+    // command reference on it.
+    let mut page = String::new();
+    page.push_str(&mode.header(subcommand));
+    page.push_str("\n\n");
+    page.push_str(main_help.trim());
 
     // Main command reference immediately after its content
-    println!("## Command reference");
-    println!();
-    println!("{}", mode.command_reference_fence());
-    println!("{}", reference_block.trim());
-    println!("```");
+    page.push_str("\n\n## Command reference\n\n");
+    page.push_str(mode.command_reference_fence());
+    page.push('\n');
+    page.push_str(reference_block.trim());
+    page.push_str("\n```");
 
     // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
@@ -505,13 +554,12 @@ Commands with pages: merge, switch, remove, list"
         // inside format_subcommand_section, so re-running would double-convert.
         let subdocs = mode.process_subdoc_trailing(subdocs);
         let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
-        println!();
-        println!("# Subcommands");
-        println!();
-        println!("{}", subdocs_expanded.trim());
+        page.push_str("\n\n# Subcommands\n\n");
+        page.push_str(subdocs_expanded.trim());
     }
 
-    mode.emit_footer();
+    page.push_str(&mode.footer());
+    print!("{}", keep_first_global_options(&page));
 }
 
 /// Post-process CLI help content for web docs rendering.

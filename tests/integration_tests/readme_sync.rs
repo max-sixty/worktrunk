@@ -123,14 +123,27 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Regex to convert site-root documentation links to full URLs.
-/// Matches: [text](/page/) or [text](/page/#anchor).
+/// Matches: [text](/page/), [text](/page/#anchor), and the homepage forms
+/// [text](/) and [text](/#anchor) — the page segment is optional because the
+/// homepage has none.
 ///
 /// Link text tolerates `]` characters when they appear inside a backticked
 /// code span (e.g. `[[block]]`), alternating "a `...` code span" with "any
 /// non-`]`-non-backtick char". Bare backticks are forbidden so the regex
 /// can't bridge across two unrelated code spans on the same line.
-static SITE_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/([^)/]+)/(#[^)]*)?\)").unwrap());
+static SITE_LINK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/(?:([^)/#]+)/)?(#[^)]*)?\)").unwrap()
+});
+
+/// Expand one `SITE_LINK_PATTERN` capture into an absolute worktrunk.dev link.
+fn expand_site_link(caps: &regex::Captures) -> String {
+    let text = caps.get(1).unwrap().as_str();
+    let page = caps
+        .get(2)
+        .map_or(String::new(), |m| format!("{}/", m.as_str()));
+    let anchor = caps.get(3).map_or("", |m| m.as_str());
+    format!("[{text}](https://worktrunk.dev/{page}{anchor})")
+}
 
 /// Guardrail for root-relative or legacy Zola links on generated non-site surfaces.
 static UNTRANSFORMED_SITE_LINK_PATTERN: LazyLock<Regex> =
@@ -948,12 +961,7 @@ fn heading_to_anchor(heading: &str) -> String {
 fn transform_docs_to_github(content: &str) -> String {
     // Transform internal links
     let content = SITE_LINK_PATTERN
-        .replace_all(content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
+        .replace_all(content, expand_site_link)
         .into_owned();
     let content = AUTO_GENERATED_MARKER_PATTERN
         .replace_all(&content, "")
@@ -1437,11 +1445,13 @@ fn test_project_config_docs_include_all_sections() {
     }
 
     // Hooks section should exist (individual hook keys are documented in user config
-    // and cross-referenced from project config)
+    // and cross-referenced from project config). The heading names its config
+    // kind because both kinds land on /config/ and would otherwise share an
+    // anchor.
     assert!(
-        project_config_content.contains("## Hooks"),
+        project_config_content.contains("## Project hooks"),
         "Hooks section heading missing from project config docs.\n\
-         Expected `## Hooks` between PROJECT_CONFIG_START/END markers."
+         Expected `## Project hooks` between PROJECT_CONFIG_START/END markers."
     );
 }
 
@@ -2094,12 +2104,7 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
 /// Site-root links → full URLs, remove "See also", and collapse blank lines.
 fn finalize_skill_content(content: &str) -> String {
     let content = SITE_LINK_PATTERN
-        .replace_all(content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
+        .replace_all(content, expand_site_link)
         .into_owned();
 
     // Installed skills don't have the site's root URL as a resolution base.

@@ -220,7 +220,7 @@
 #
 # Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 #
-# ### Aliases
+# ### User aliases
 #
 # Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.
 #
@@ -228,7 +228,7 @@
 # greet = "echo Hello from {{ branch }}"
 # url = "echo http://localhost:{{ branch | hash_port }}"
 #
-# Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.
+# Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-aliases) `[aliases]` section instead.
 #
 # ### User project-specific settings
 #
@@ -410,6 +410,6 @@
 #
 # How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).
 #
-# ## Hooks
+# ## User hooks
 #
-# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.
+# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-hooks) apply only to that repository.
