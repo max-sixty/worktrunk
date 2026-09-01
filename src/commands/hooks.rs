@@ -141,6 +141,7 @@ pub(crate) fn prepare_and_check(
     // under a non-empty filter means nothing matched.
     if !name_filters.is_empty() && result.is_empty() {
         return Err(no_matching_commands_error(
+            hook_type,
             name_filters,
             user_config,
             project_config,
@@ -180,9 +181,17 @@ fn filter_step_by_name(
     }
 }
 
-/// Build the error for a name filter that matched no commands, listing the
-/// available command names across the filters' source scopes.
+/// Build the error for a filter that matched no commands.
+///
+/// A bare source filter (`user:` / `project:`) asks for every hook from one
+/// source rather than naming a command, so a miss means that source
+/// configures no hooks of this type — there is no name to have misspelled.
+/// That gets [`GitError::HookSourceNotConfigured`], pointing at the other
+/// source; a filter that did name a command gets
+/// [`GitError::HookCommandNotFound`], listing the available names across the
+/// filters' source scopes.
 fn no_matching_commands_error(
+    hook_type: HookType,
     name_filters: &[String],
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
@@ -194,6 +203,33 @@ fn no_matching_commands_error(
         .iter()
         .map(|f| ParsedFilter::parse(f))
         .collect();
+
+    let configured = |source: HookSource| {
+        let config = match source {
+            HookSource::User => user_config,
+            HookSource::Project => project_config,
+        };
+        config.is_some_and(|c| c.commands().next().is_some())
+    };
+    if let Some(source) = parsed_filters.iter().find_map(|f| match f {
+        ParsedFilter {
+            source: Some(source),
+            name: "",
+        } => (!configured(*source)).then_some(*source),
+        _ => None,
+    }) {
+        let other = match source {
+            HookSource::User => HookSource::Project,
+            HookSource::Project => HookSource::User,
+        };
+        return worktrunk::git::GitError::HookSourceNotConfigured {
+            source: source.to_string(),
+            hook_type,
+            other_source: configured(other).then(|| other.to_string()),
+        }
+        .into();
+    }
+
     let mut available = Vec::new();
 
     let sources = [
