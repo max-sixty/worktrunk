@@ -85,8 +85,8 @@ pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> any
 ///
 /// Supplied at conversion time (`sourced_steps_to_foreground`) so a single
 /// `SourcedStep` shape can be produced by both alias and hook resolution.
-/// Drives the per-step trust model (EXEC passthrough), announce policy,
-/// stdout redirection, and error wrapping. Hook-only metadata
+/// Drives announce policy, stdout redirection, and error wrapping. Hook-only
+/// metadata
 /// (`hook_type`, `display_path`) lives on the `Hook` variant — it's
 /// per-pipeline, not per-step, so the per-step shape stays neutral.
 #[derive(Clone)]
@@ -134,11 +134,11 @@ pub struct ForegroundStep {
     pub redirect_stdout_to_stderr: bool,
     /// Wraps a per-command failure into the final error returned to the caller.
     pub error_wrapper: ErrorWrapper,
-    /// Per-step directive passthrough. Trust differs by source — user-source
-    /// alias steps pass EXEC through (the body is the user's own config),
-    /// while project-source steps and all hook steps scrub it. Per-step rather
-    /// than per-pipeline so a merged user+project alias relaxes the user's
-    /// own steps without leaking the project's body into the parent shell.
+    /// Per-step directive passthrough. Every step carries the same
+    /// `DirectivePassthrough::inherit_from_env()` — the CD file, so a nested
+    /// `wt switch` can still move the parent shell. The source-dependent EXEC
+    /// passthrough this field used to select is gone (#3977); the shape stays
+    /// per-step because that is where the pipeline builds it.
     pub directives: DirectivePassthrough,
 }
 

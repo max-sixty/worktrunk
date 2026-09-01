@@ -526,9 +526,9 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
 /// Convert source-tagged steps into foreground steps with pipeline-kind policy.
 ///
 /// Shared between hook and alias dispatch. The `kind` argument supplies the
-/// per-call-site policy (announce style, stdout redirection, error wrapping)
-/// while the `source` field on each step drives the per-step trust model
-/// (`DirectivePassthrough`).
+/// per-call-site policy (announce style, stdout redirection, error wrapping).
+/// Every step gets the same `DirectivePassthrough::inherit_from_env()`; the
+/// EXEC passthrough the `source` field used to select is gone (#3977).
 ///
 /// Foreground steps — hook and alias alike — inherit the parent's stdin so an
 /// interactive child keeps the controlling terminal (a `pre-*` hook can prompt;

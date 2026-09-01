@@ -27,11 +27,11 @@
 //!   additionally delivers externally-targeted signals (e.g. `kill -TERM
 //!   <wt-pid>`) to the child by PID, single-shot. Used for every `Single`
 //!   foreground step of a hook or alias pipeline, which inherits wt's stdin so
-//!   the step can prompt — since #3129 the only `Cmd` call site with this pair.
-//!   A foreground step's own subtree is therefore not reachable by `killpg`: an
-//!   externally-targeted signal reaches the step's shell by PID and stops
-//!   there, while Ctrl-C still reaches the whole subtree through the kernel's
-//!   broadcast.
+//!   the step can prompt, and for the program `wt switch --execute` launches
+//!   (`execute_command` in `output/global.rs`). Such a child's own subtree is
+//!   therefore not reachable by `killpg`: an externally-targeted signal
+//!   reaches the child by PID and stops there, while Ctrl-C still reaches the
+//!   whole subtree through the kernel's broadcast.
 //!
 //! In both cases the listener still records `seen_signal`, so a signal-derived
 //! exit surfaces as `WorktrunkError::ChildProcessExited { signal: Some(_) }` —
