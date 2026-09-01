@@ -2,7 +2,7 @@
 title: "wt merge"
 description: "Merge current branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree."
 sidebar:
-  order: 13
+  order: 12
 ---
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit src/cli/mod.rs to update -->
 

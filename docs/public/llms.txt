@@ -13,17 +13,18 @@ with many parallel changes, including hooks to automate local workflows.
 
 - [wt switch](https://worktrunk.dev/switch.md): Switch to a worktree; create if needed.
 - [wt list](https://worktrunk.dev/list.md): List worktrees and their status.
-- [wt remove](https://worktrunk.dev/remove.md): Remove worktree; delete branch if merged. Defaults to the current worktree.
 - [wt merge](https://worktrunk.dev/merge.md): Merge current branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree.
+- [wt remove](https://worktrunk.dev/remove.md): Remove worktree; delete branch if merged. Defaults to the current worktree.
 - [wt config](https://worktrunk.dev/config.md): Manage user & project configs. Includes shell integration, hooks, and saved state.
 - [wt step](https://worktrunk.dev/step.md): Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 - [wt hook](https://worktrunk.dev/hook.md): Run configured hooks.
 
 ## Reference
 
+- [Agent Integration](https://worktrunk.dev/claude-code.md): Worktrunk plugins for Claude Code, Codex, OpenCode, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation.
 - [Extending Worktrunk](https://worktrunk.dev/extending.md): Three ways to add custom behavior: hooks for lifecycle automation, aliases for reusable commands, and custom subcommands for standalone tools.
 - [LLM Commit Messages](https://worktrunk.dev/llm-commits.md): Generate commit messages from diffs using any LLM. Integrates with wt merge, wt step commit, and wt step squash.
-- [Agent Integration](https://worktrunk.dev/claude-code.md): Worktrunk plugins for Claude Code, Codex, OpenCode, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation.
 - [Tips & Patterns](https://worktrunk.dev/tips-patterns.md): Practical recipes for Worktrunk workflows: aliases, shell integration, Zellij layouts, and parallel agent patterns.
+- [Shell integration](https://worktrunk.dev/shell-integration.md): How Worktrunk's shell wrapper changes the parent shell's directory, which files each shell gets, and how to debug integration that isn't working.
 - [FAQ](https://worktrunk.dev/faq.md): Common questions about Worktrunk: comparison to git worktree and branch switching, bare repos, TUI support, and more.
 - [Code Signing Policy](https://worktrunk.dev/code-signing.md): How Worktrunk's Windows release binaries are code-signed: certificate provenance, the build and signing pipeline, project roles, and per-release approval.

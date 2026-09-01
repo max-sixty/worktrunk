@@ -2,7 +2,7 @@
 title: "FAQ"
 description: "Common questions about Worktrunk: comparison to git worktree and branch switching, bare repos, TUI support, and more."
 sidebar:
-  order: 25
+  order: 26
 ---
 ## How does Worktrunk compare to alternatives?
 
@@ -16,19 +16,19 @@ Git's built-in worktree commands work but require manual lifecycle management:
 
 ```console
 # Plain git worktree workflow
-$ git worktree add -b feature-branch ../myapp-feature main
-$ cd ../myapp-feature
+$ git worktree add -b feature-auth ../myproject.feature-auth main
+$ cd ../myproject.feature-auth
 # ...work, commit, push...
-$ cd ../myapp
-$ git merge feature-branch
-$ git worktree remove ../myapp-feature
-$ git branch -d feature-branch
+$ cd ../myproject
+$ git merge feature-auth
+$ git worktree remove ../myproject.feature-auth
+$ git branch -d feature-auth
 ```
 
 Worktrunk automates the full lifecycle:
 
 ```console
-$ wt switch --create feature-branch  # Creates worktree, runs setup hooks
+$ wt switch --create feature-auth  # Creates worktree, runs setup hooks
 # ...work...
 $ wt merge                            # Merges into default branch, cleans up
 ```
@@ -75,12 +75,9 @@ The stash lives in the shared `.git` directory, so it's reachable from the new w
 
 ## There's an issue with my shell setup
 
-If shell integration isn't working (auto-cd not happening, completions missing, `wt` not found as a function), the fastest path to a fix is using Claude Code with the Worktrunk plugin:
+If shell integration isn't working (auto-cd not happening, completions missing, `wt` not found as a function), work through the [shell integration](/shell-integration/#debugging-checklist) debugging checklist — it covers each warning `wt switch` prints and what to check for every shell.
 
-1. Install the [Worktrunk plugin](/claude-code/) in Claude Code
-2. Ask Claude to debug the Worktrunk shell integration
-
-Claude will run `wt config show`, inspect the shell config files, and identify the issue.
+Or hand it to an agent: install the [Worktrunk plugin](/claude-code/) in Claude Code and ask it to debug the Worktrunk shell integration. It runs `wt config show`, inspects the shell config files, and identifies the issue.
 
 If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
 
@@ -106,7 +103,7 @@ The flags only reach a command you type; shell completion runs as its own proces
 
 ### 1. Worktree directories
 
-Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
+Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to the main worktree), configurable via `worktree-path` in user config.
 
 **To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch.
 
@@ -124,19 +121,7 @@ User config location: `$XDG_CONFIG_HOME/worktrunk/` (or `~/.config/worktrunk/`) 
 
 ### 3. Shell integration
 
-Created by `wt config shell install`:
-
-- **Bash**: adds line to `~/.bashrc`
-- **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
-- **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
-- **Nushell** <span class="badge-experimental"></span>: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
-- **PowerShell** (Windows): creates both profile files if they don't exist:
-  - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
-  - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
-
-Fish and Nushell wrappers live at a path named after the command, so install writes that file whole, replacing an existing `functions/wt.fish`, `completions/wt.fish`, or `wt.nu`. Bash, zsh, and PowerShell rc files hold the rest of a shell's setup, so install only appends a line to those.
-
-**PowerShell detection on Windows:** When running from cmd.exe or PowerShell, both PowerShell profile files are created automatically. When running from Git Bash or MSYS2, PowerShell is skipped (use `wt config shell install powershell` to create the profiles explicitly).
+`wt config shell install` appends a line to the bash, zsh, and PowerShell rc files, and writes worktrunk's own wrapper and completion files whole for fish and Nushell. [Shell integration](/shell-integration/#files-created) names the file each shell gets.
 
 **To remove:** `wt config shell uninstall`.
 
@@ -149,6 +134,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `git config worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
 | `.git/wt/cache/{kind}/*.json` | Cached CI status, the largest PR/MR number seen (sizes the `wt list` CI column), and git command results (merge-tree, integration probes, diff stats, ancestry checks, ahead/behind counts, merge bases) | `wt list`, `wt merge`, `wt remove` |
 | `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
+| `.git/wt/cache/picker-preview/*.json` | Rendered preview panes for the interactive picker | `wt switch` |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/trace.log` | Human debug trace for issue reporting | Running with `-vv` |
@@ -159,7 +145,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all repository data: config keys, caches, markers, hints, variables, logs, and stale trash.
+**To remove:** `wt config state clear` removes all repository data: config keys, caches, markers, hints, variables, logs, and stale trash. It prompts before removing anything worktrunk can't recompute, unless you pass `--yes`.
 
 ### 5. Temporary files (automatic)
 
@@ -185,14 +171,14 @@ Removal also refuses, `--force` included, when the directory at a registered pat
 To protect a worktree from removal entirely (say it holds a local database), lock it:
 
 ```bash
-git worktree lock ../myproject.feature --reason "Contains local database"
+git worktree lock ../myproject.feature-auth --reason "Contains local database"
 ```
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
 ### Branch deletion
 
-By default, `wt remove` only deletes branches whose content is already in the default branch. Branches showing `_` (same commit) or `⊂` (integrated) in `wt list` are safe to delete.
+By default, `wt remove` only deletes branches whose content is already in the default branch. Branches showing `_` (same commit, clean) or `⊂` (integrated) in `wt list` are safe to delete.
 
 For the full algorithm, see [Branch cleanup](/remove/#branch-cleanup) — it handles squash-merge and rebase workflows where commit history differs but file changes match.
 
@@ -203,7 +189,7 @@ A branch checked out in a second worktree is retained regardless, `-D` included.
 ### Other cleanup
 
 - `wt merge` / `wt step push` — the target branch's checked-out worktree is updated to the merged commits, so a file those commits delete disappears from it, and an ignored file at a path they track is overwritten — the same result a `git merge` run in that worktree would produce. Uncommitted changes at paths the merge doesn't touch stay in place, staged or not; one at a path it does touch refuses the merge upfront, naming the file
-- `wt remove` — besides the target worktree, two cleanup mechanisms run. The removed worktree's own `git fsmonitor--daemon` (git's per-worktree filesystem watcher under `core.fsmonitor=true`, which would leak once its worktree is gone) is sent `git fsmonitor--daemon stop`, then force-terminated (`SIGTERM`, then `SIGKILL`) via the PID resolved from its IPC socket if it didn't exit. A background sweep then deletes `.git/wt/trash/` entries older than 24 hours (directories orphaned when a previous background removal was interrupted) and terminates fsmonitor daemons whose worktree no longer exists (orphans from `git worktree remove`, `rm -rf`, or a crashed `wt`)
+- `wt remove` — besides the worktree being removed, two cleanup mechanisms run. The removed worktree's own `git fsmonitor--daemon` (git's per-worktree filesystem watcher under `core.fsmonitor=true`, which would leak once its worktree is gone) is sent `git fsmonitor--daemon stop`, then force-terminated (`SIGTERM`, then `SIGKILL`) via the PID resolved from its IPC socket if it didn't exit. A background sweep then deletes `.git/wt/trash/` entries older than 24 hours (directories orphaned when a previous background removal was interrupted) and terminates fsmonitor daemons whose worktree no longer exists (orphans from `git worktree remove`, `rm -rf`, or a crashed `wt`)
 - `wt config state clear` — removes all worktrunk data from `.git/` (config keys, caches, markers, hints, variables, logs, stale trash)
 - `wt config shell install` — when migrating an integration to a new location, removes the file left at the old one: fish `conf.d/wt.fish` (now `functions/wt.fish`) and nushell wrappers stranded under `<config-dir>/vendor/autoload` (now `<data-dir>/vendor/autoload`). The old path is where worktrunk's own wrapper lived and is named after the command being installed, so it's taken back whole without reading it — a `conf.d/wt.fish` left in place would be sourced at startup and shadow the new wrapper anyway. Only that exact filename is touched, and each removal is printed
 - `wt config shell uninstall` — removes integration lines from bash/zsh/PowerShell rc files, and deletes worktrunk's wrapper and completion files (fish `functions/`, `conf.d/`, and `completions/`; nushell `vendor/autoload`). Uninstall takes no command name, so it lists those directories and recognizes files by worktrunk's own content markers, whatever binary name they were installed under; files without the markers are left alone. An rc file belongs to the user, so a line qualifies only where it runs the init command: one that merely mentions it, inside a comment, an `echo`, or an alias body, stays. Every line uninstall does take is printed, before removal and again after
@@ -256,7 +242,7 @@ Clear with `wt config state logs clear`.
 
 ## Does Worktrunk work on Windows?
 
-Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](/worktrunk/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
+Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
 
 **Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
@@ -272,11 +258,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 
 ## My `for-each` or `--execute` alias prints the same value in every worktree
 
-An alias body renders once at dispatch, in the invoking worktree's context, so a per-worktree variable like `{{ branch }}` is baked to that one worktree's value before the nested `wt` command iterates. Every worktree then sees the same value.
-
-Confirm it with `wt config alias dry-run <name>`: if the value is already substituted (e.g. `… echo branch=main`), it was baked at dispatch.
-
-To defer a variable to the nested command, wrap it as `{% raw %}{{ branch }}{% endraw %}`; for `wt step for-each`, also keep it inside a quoted `sh -c '…'` so the alias's shell doesn't word-split it. See [deferring expansion in an alias](/extending/#deferring-expansion-to-a-nested-wt-command). A repo-level variable like `{{ default_branch }}` is unaffected — it is identical in every worktree.
+The alias body rendered once at dispatch, baking the variable to the invoking worktree's value before the nested `wt` command iterated. See [deferring expansion to a nested `wt` command](/extending/#deferring-expansion-to-a-nested-wt-command) for how to confirm it and how to defer the variable.
 
 ## What system dependencies are required?
 
@@ -290,26 +272,6 @@ cargo install worktrunk --no-default-features --features cli
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
-## Running tests (for contributors)
-
-### Quick tests
-
-```bash
-cargo test
-```
-
-### Full integration tests
-
-Shell integration tests require bash, zsh, fish, nushell, and pwsh, plus `jq`:
-
-```bash
-cargo test --test integration --features shell-integration-tests
-```
-
 ## How can I contribute?
 
-- Star the repo
-- Try it out and [open an issue](https://github.com/max-sixty/worktrunk/issues) with feedback — even small annoyances
-- What worktree friction does Worktrunk not yet solve? [Tell us](https://github.com/max-sixty/worktrunk/issues)
-- Send to a friend
-- Post about it on [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev), [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management), or [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
+See [Contributing](https://github.com/max-sixty/worktrunk#contributing) in the README — feedback, share links, and how to run the test suite.
