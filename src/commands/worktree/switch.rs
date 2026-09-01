@@ -807,12 +807,25 @@ fn validate_worktree_creation(
 ///
 /// One `git worktree add -b <branch> -- <path> FETCH_HEAD` creates the branch
 /// and the worktree together, exactly as the [`CreationMethod::Regular`] arm
-/// does, so git owns the atomicity: a name already taken fails before anything
-/// is written, and there is nothing for a caller to roll back. Tracking
-/// (`remote`, `merge`, `pushRemote`) is configured afterwards; a failure there
-/// leaves a branch and worktree that exist but aren't wired to the PR/MR — an
-/// ordinary state the user can re-run into, since the next `wt switch pr:N`
-/// takes the existing-branch path.
+/// does. Git rejects a name that is already taken before writing anything, so
+/// the one failure that lands on a branch this function did not create leaves
+/// it untouched, and no caller needs a rollback. (Git is not atomic in
+/// general: a destination path occupied between planning and here leaves the
+/// new branch behind — the leftover the `Regular` arm already accepts, a stray
+/// branch at the PR head rather than someone's work.)
+///
+/// The creating call comes first so nothing is written until the name is won.
+/// Configuring tracking (`remote`, `merge`, `pushRemote`) ahead of it would
+/// rewrite the *existing* branch's upstream on exactly the collision above —
+/// the same class of bug as the rollback this replaced.
+///
+/// A tracking write that fails afterwards leaves a branch and worktree at the
+/// PR/MR head with incomplete config. Nothing is lost and a re-run is
+/// non-destructive, but it isn't a no-op either: `branch_tracks_ref` reads that
+/// branch as tracking something else, so the next `wt switch pr:N` takes the
+/// prefixed-branch path (GitHub/Gitea) or reports `BranchTracksDifferentRef`
+/// (GitLab/Azure DevOps). Only a failed `pushRemote` write — the last one, with
+/// the other two landed — leaves a branch the next run adopts directly.
 ///
 /// # Arguments
 ///
@@ -831,10 +844,12 @@ fn setup_fork_branch(
     // value of a flag, and `--` separates the path and start point, so neither
     // can be read as an option when it begins with `-`.
     //
-    // No `-c branch.autoSetupMerge=…` here, unlike the `Regular` arm: the
-    // setting only fires when the start point is a remote-tracking branch, and
-    // `FETCH_HEAD` isn't one — under every value of it git writes no tracking
-    // config, leaving the `set_config` calls below as the only writers.
+    // No `-c branch.autoSetupMerge=…` here, unlike the `Regular` arm: git sets
+    // up tracking only where the start point resolves under `refs/heads/` or
+    // `refs/remotes/`, and `FETCH_HEAD` resolves as itself. Under every value
+    // of the setting — `always` included — git writes no tracking config from
+    // this start point, leaving the `set_config` calls below as the only
+    // writers.
     let worktree_path_str = worktree_path.to_string_lossy();
     let git_args = [
         "worktree",
@@ -1193,11 +1208,11 @@ fn execute_switch(
                     repo.run_command(&["fetch", "--", remote, ref_path])
                         .with_context(|| format!("Failed to fetch {} from {}", label, remote))?;
 
-                    // No rollback on failure — `setup_fork_branch` leaves
-                    // nothing half-written. A rollback here once deleted the
+                    // No rollback on failure. One here used to delete the
                     // branch on any error, so the "a branch named 'X' already
                     // exists" case force-deleted a branch `wt` had not created,
-                    // taking any commits only it held.
+                    // taking any commits only it held. `setup_fork_branch`
+                    // leaves nothing for a rollback to clean up.
                     setup_fork_branch(
                         repo,
                         &branch,

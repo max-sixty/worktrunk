@@ -3584,31 +3584,12 @@ fn test_switch_pr_fork_failure_keeps_existing_branch(#[from(repo_with_remote)] r
     fs::create_dir_all(repo.root_path().join(".config")).unwrap();
     fs::write(
         repo.root_path().join(".config/wt.toml"),
-        "pre-switch = \"git -C '{{ repo_path }}' branch -m stale-work feature-fix\"\n",
+        r#"pre-switch = "git -C '{{ repo_path }}' branch -m stale-work feature-fix"
+"#,
     )
     .unwrap();
 
-    let bare_url = String::from_utf8_lossy(
-        &repo
-            .git_command()
-            .args(["config", "remote.origin.url"])
-            .run()
-            .unwrap()
-            .stdout,
-    )
-    .trim()
-    .to_string();
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/test-repo.git",
-    ]);
-    repo.run_git(&[
-        "config",
-        &format!("url.{}.insteadOf", bare_url),
-        "https://github.com/owner/test-repo.git",
-    ]);
+    set_github_remote_url(&repo);
 
     let gh_response = r#"{
         "title": "Add feature fix for edge case",
