@@ -8,7 +8,7 @@ info:
     - "--create"
     - multiline-test
     - "--execute"
-    - echo
+    - multiline-target
     - "--"
     - "{% if branch %}branch={{ branch }}\nrepo={{ repo }}{% endif %}"
   env:
@@ -63,8 +63,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-branch=multiline-test
-repo=repo
+executed
 
 ----- stderr -----
 [2m○[22m [1mworktree-path[22m source
@@ -76,9 +75,9 @@ repo=repo
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
 [2m○[22m [1m--execute command[22m source
-[107m [0m [2m[0m[2m[34mecho[0m
+[107m [0m [2m[0m[2m[34mmultiline-target[0m
 [2m○[22m [1m--execute command[22m result
-[107m [0m [2m[0m[2m[34mecho[0m
+[107m [0m [2m[0m[2m[34mmultiline-target[0m
 [2m○[22m [1m--execute argument[22m source
 [107m [0m [2m{[0m[2m[34m%[0m[2m if branch %}branch=[0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m
 [107m [0m [2mrepo=[0m[2m[32m{{[0m[2m [0m[2m[34mrepo[0m[2m [0m[2m[32m}}[0m[2m{% endif %}[0m
@@ -86,5 +85,5 @@ repo=repo
 [107m [0m [2mbranch=multiline-test[0m
 [107m [0m [2mrepo=repo[0m
 [36m◎[39m [36mExecuting (--execute) @ [1m_REPO_.multiline-test[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'branch=multiline-test[0m
+[107m [0m [2m[0m[2m[34mmultiline-target[0m[2m [0m[2m[32m'branch=multiline-test[0m
 [107m [0m [2m[0m[2m[32mrepo=repo'[0m

@@ -1314,6 +1314,12 @@ fn test_switch_execute_arg_template_error(repo: TestRepo) {
 #[rstest]
 fn test_switch_execute_verbose_multiline_template(repo: TestRepo) {
     // Test that -v shows multiline template expansion with proper formatting
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new("multiline-target")
+        .command("_default", MockResponse::output("executed\n"))
+        .write(&mock_bin);
+
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         // Multiline template in a single argv element.
@@ -1327,13 +1333,14 @@ repo={{ repo }}{% endif %}"#;
                 "--create",
                 "multiline-test",
                 "--execute",
-                "echo",
+                "multiline-target",
                 "--",
                 multiline_template,
             ],
             None,
             &["-v"],
         );
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_execute_verbose_multiline_template", cmd);
     });
 }
