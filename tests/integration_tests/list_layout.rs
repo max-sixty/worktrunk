@@ -54,6 +54,22 @@ fn empty_remote_column_drops_before_populated_ones(mut repo: TestRepo) {
     snapshot_list(&repo, "no_remote_width_100", 100);
 }
 
+/// Two rows that aren't on a branch in the ordinary way. A detached worktree
+/// puts a hash in the Branch column, so `⊘` and the Path cell are what say
+/// which directory it is; a prunable one has no directory to read, so its
+/// data cells stay blank rather than showing a loading dot that can never
+/// resolve.
+#[rstest]
+fn detached_and_prunable_rows_say_what_they_are(mut repo: TestRepo) {
+    let detached = repo.add_worktree("feature-detached");
+    repo.run_git_in(&detached, &["checkout", "--detach"]);
+
+    let gone = repo.add_worktree("feature-gone");
+    std::fs::remove_dir_all(&gone).unwrap();
+
+    snapshot_list(&repo, "detached_and_prunable_width_120", 120);
+}
+
 /// One very long branch must not size the Branch column for every row: past
 /// the cap the name is elided, so the columns that answer "what is going on
 /// here" still fit. Without it, 60 columns degenerates into a branch list and

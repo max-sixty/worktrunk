@@ -1117,9 +1117,12 @@ pub fn collect(
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
 
-            // Check if worktree is at its expected path based on config template
+            // Check if worktree is at its expected path based on config
+            // template. A detached worktree has no branch to imply a path, so
+            // it isn't off-template — it has its own `⊘`, and flagging it here
+            // too would spend the `⚑` on a state the row already reports.
             let branch_worktree_mismatch =
-                !is_worktree_at_expected_path(wt, repo, repo.user_config());
+                wt.branch.is_some() && !is_worktree_at_expected_path(wt, repo, repo.user_config());
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);

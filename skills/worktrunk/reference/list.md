@@ -151,16 +151,17 @@ Independent flags from `git status`; several can show at once (e.g. `+!?`). Each
 
 ### Worktree
 
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⚑ > /`):
+An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /`):
 
 | Symbol | JSON | Meaning |
 |--------|------|---------|
 | `✘` | `worktree.changes.conflicted` | Merge conflicts |
 | `↻` | `worktree.operation` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
-| `⊟` | `worktree.prunable` | Prunable (worktree directory missing) |
+| `⊟` | `worktree.prunable` | Prunable (worktree directory missing); nothing can be read from a directory that isn't there, so the row's data cells stay blank |
 | `⊞` | `worktree.locked` | Locked worktree |
+| `⊘` | `worktree.detached` | Detached HEAD — the worktree is on a commit, not a branch, which is why its Branch cell holds a short hash |
 | `⚑` | `worktree.duplicate_branch` | Branch checked out in more than one worktree, so `wt` resolves it to whichever git lists first; every worktree on the branch is flagged |
-| `⚑` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies — including a detached one, which has no branch to imply a path and so is never at home |
+| `⚑` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
 | `/` | no `worktree` object | Branch without a worktree |
 
 ### Default branch

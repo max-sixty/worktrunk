@@ -1304,12 +1304,14 @@ pub fn calculate_layout_with_width(
     let max_path_width = fit_header(&ColumnKind::Path.header(base), path_data_width);
 
     // The Path column is redundant with Branch unless a path says something the
-    // branch name doesn't: the worktree sits off-template, or two worktrees share
-    // the branch and the path is the only thing telling their rows apart.
-    let path_is_informative = items
-        .iter()
-        .filter_map(|item| item.worktree_data())
-        .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
+    // branch name doesn't: the worktree sits off-template, two worktrees share
+    // the branch and the path is the only thing telling their rows apart, or a
+    // detached row's Branch cell is a hash, which names no directory at all.
+    let path_is_informative = items.iter().any(|item| {
+        item.worktree_data().is_some_and(|data| {
+            data.branch_worktree_mismatch || data.duplicate_branch || item.branch().is_none()
+        })
+    });
 
     // Estimate URL width from template (heuristic, no expansion needed)
     let url_width = estimate_url_width(facts.url_template, link_style);

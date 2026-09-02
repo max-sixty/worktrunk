@@ -294,26 +294,29 @@ symbol in the column.
 [32mWorktree[0m
 
 An in-progress git operation, a worktree-location attribute, or a branch with no
- worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⚑ > /[0m):
+ worktree. One symbol shows, highest priority first ([2m✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /[0m):
 
- Symb            JSON                               Meaning                     
+ Symb           JSON                                Meaning                     
   ol                                                                            
- ──── ────────────────────────── ────────────────────────────────────────────── 
- [31m✘[0m    [2mworktree.changes.conflicte[0m Merge conflicts                                
-      [2md[0m                                                                         
- [33m↻[0m    [2mworktree.operation[0m         A git operation is in progress; [2mgit status[0m     
-      [2m"rebase"[0m, [2m"merge"[0m,         names it                                       
+ ──── ───────────────────────── ─────────────────────────────────────────────── 
+ [31m✘[0m    [2mworktree.changes.conflict[0m Merge conflicts                                 
+      [2med[0m                                                                        
+ [33m↻[0m    [2mworktree.operation[0m        A git operation is in progress; [2mgit status[0m      
+      [2m"rebase"[0m, [2m"merge"[0m,        names it                                        
       [2m"cherry_pick"[0m, [2m"revert"[0m,                                                  
       [2m"bisect"[0m                                                                  
- [33m⊟[0m    [2mworktree.prunable[0m          Prunable (worktree directory missing)          
- [33m⊞[0m    [2mworktree.locked[0m            Locked worktree                                
- [2m[33m⚑[0m    [2mworktree.duplicate_branch[0m  Branch checked out in more than one worktree,  
-                                 so [2mwt[0m resolves it to whichever git lists       
-                                 first; every worktree on the branch is flagged 
- [2m[33m⚑[0m    [2mworktree.branch_mismatch[0m   Worktree isn't at the path its branch implies  
-                                 — including a detached one, which has no       
-                                 branch to imply a path and so is never at home 
- [2m/[0m    no [2mworktree[0m object         Branch without a worktree                      
+ [33m⊟[0m    [2mworktree.prunable[0m         Prunable (worktree directory missing); nothing  
+                                can be read from a directory that isn't there,  
+                                so the row's data cells stay blank              
+ [33m⊞[0m    [2mworktree.locked[0m           Locked worktree                                 
+ [2m⊘[0m    [2mworktree.detached[0m         Detached HEAD — the worktree is on a commit,    
+                                not a branch, which is why its Branch cell      
+                                holds a short hash                              
+ [2m[33m⚑[0m    [2mworktree.duplicate_branch[0m Branch checked out in more than one worktree,   
+                                so [2mwt[0m resolves it to whichever git lists first; 
+                                every worktree on the branch is flagged         
+ [2m[33m⚑[0m    [2mworktree.branch_mismatch[0m  Worktree isn't at the path its branch implies   
+ [2m/[0m    no [2mworktree[0m object        Branch without a worktree                       
 
 [32mDefault branch[0m
 

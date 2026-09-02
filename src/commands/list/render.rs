@@ -278,7 +278,7 @@ impl LayoutConfig {
     /// to [`PLACEHOLDER`] on the reveal tick. Non-progressive callers pass
     /// [`PLACEHOLDER`] directly.
     pub fn render_list_item_line(&self, item: &ListItem, placeholder: &str) -> StyledLine {
-        self.render_line(|column| column.render_cell(item, self, placeholder))
+        self.render_line(|column| column.render_cell(item, self, item.placeholder(placeholder)))
     }
 
     /// Render a skeleton row showing known data (branch, path) with placeholders for other columns.
@@ -293,7 +293,7 @@ impl LayoutConfig {
             .unwrap_or_default();
 
         let dim = Style::new().dimmed();
-        let spinner = placeholder;
+        let spinner = item.placeholder(placeholder);
 
         self.render_line(|col| {
             let mut cell = StyledLine::new();
