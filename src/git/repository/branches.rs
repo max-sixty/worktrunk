@@ -112,7 +112,9 @@ impl Repository {
     /// needs a current SHA for a ref must resolve through a `RefSnapshot`
     /// captured at the moment of read, not through this inventory. The
     /// inventory itself is used for branch listing and upstream-tracking
-    /// metadata, both of which are stable for the duration of a command.
+    /// metadata, stable for the duration of a command unless that command
+    /// runs a hook: a hook that adds, deletes, or renames a branch leaves
+    /// the membership stale too, not just the SHAs.
     pub fn local_branches(&self) -> anyhow::Result<&[LocalBranch]> {
         Ok(self.local_branch_inventory()?.entries())
     }
