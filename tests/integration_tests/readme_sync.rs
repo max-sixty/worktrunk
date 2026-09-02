@@ -1212,8 +1212,8 @@ fn test_config_markdown_links_convert_to_plain_text() {
         // `[[projects."…".post-start]]` pipelines, so a link naming one is the
         // next form to arrive; the code-span class covers it.
         (
-            "see [`[[projects.\"…\".post-start]]` hooks](/config/#hooks) for the pipeline form",
-            "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#hooks) for the pipeline form",
+            "see [`[[projects.\"…\".post-start]]` hooks](/config/#project-hooks) for the pipeline form",
+            "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#project-hooks) for the pipeline form",
         ),
         // Two links on one line still both convert.
         (
@@ -1249,7 +1249,7 @@ fn test_config_markdown_links_convert_to_plain_text() {
 fn test_untransformed_site_link_fails_the_config_transform() {
     // An unbalanced backtick in the link text: the code-span alternative can't
     // close, so the rewrite declines and the raw target would survive.
-    transform_config_source_to_toml("See [a `broken span](/config/#hooks) here");
+    transform_config_source_to_toml("See [a `broken span](/config/#project-hooks) here");
 }
 
 #[test]
