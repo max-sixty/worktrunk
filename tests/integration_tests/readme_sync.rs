@@ -2135,8 +2135,8 @@ fn finalize_skill_content(content: &str) -> String {
 /// only: Codex's plugin installer copies the plugin root with a copier that
 /// silently skips symlink entries (`copy_dir_recursive` in codex-rs
 /// core-plugins), so a symlink anywhere in the tree — a `skills` link at the
-/// top or a nested one like `reference/README.md` — ships no content, and a
-/// symlink also materializes as a plain text file on Windows checkouts.
+/// top or one nested under `reference/` — ships no content, and a symlink
+/// also materializes as a plain text file on Windows checkouts.
 /// Repo-root `skills/` stays the authored home: Gemini reads it directly, and
 /// the earlier sync stages write into it.
 fn sync_plugin_skills_mirror(project_root: &Path) -> (Vec<String>, Vec<String>) {
