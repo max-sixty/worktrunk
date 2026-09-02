@@ -812,7 +812,12 @@ fn validate_worktree_creation(
 /// it untouched, and no caller needs a rollback. (Git is not atomic in
 /// general: a destination path occupied between planning and here leaves the
 /// new branch behind — the leftover the `Regular` arm already accepts, a stray
-/// branch at the PR head rather than someone's work.)
+/// branch at the PR head rather than someone's work. It carries the same
+/// follow-on cost as a failed tracking write, below: no config was written, so
+/// the next `wt switch pr:N` takes the prefixed-branch path or errors. The old
+/// code did roll this one case back cleanly, its own branch being the only
+/// thing it could have deleted — but distinguishing it needs the very
+/// did-we-create-it reasoning that produced the bug.)
 ///
 /// The creating call comes first so nothing is written until the name is won.
 /// Configuring tracking (`remote`, `merge`, `pushRemote`) ahead of it would

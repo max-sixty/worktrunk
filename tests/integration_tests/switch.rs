@@ -3529,7 +3529,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
 /// A failed fork `pr:N` switch leaves a branch it did not create alone.
 ///
 /// The fork path used to create the branch, its tracking config, and its
-/// worktree as four separate git calls, compensating with a force-delete of the
+/// worktree as separate git calls, compensating with a force-delete of the
 /// branch on any error. Only the first call created anything, and its likeliest
 /// failure is git refusing a name that is already taken — so the rollback
 /// deleted a branch someone else owned, took whatever commits only it held with
