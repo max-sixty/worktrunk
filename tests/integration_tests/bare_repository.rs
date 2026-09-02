@@ -72,10 +72,10 @@ fn bare_repo_without_worktrees() -> BareRepoTest {
     test
 }
 
-/// `wt list` in a bare repo with no worktrees printed zero bytes on both
-/// streams. It now names the state and says how to leave it: stderr carries
-/// the message, stdout stays empty because the table has no rows and a lone
-/// header would be noise to anything piping it.
+/// `wt list` in a bare repo with no worktrees exits 0 and names the state on
+/// stderr: the `○ No worktrees` line and the hint under it. Stdout stays
+/// empty because the table has no rows and a lone header would be noise to
+/// anything piping it.
 #[test]
 fn test_bare_repo_list_no_worktrees() {
     let test = bare_repo_without_worktrees();
