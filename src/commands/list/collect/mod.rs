@@ -1315,7 +1315,7 @@ pub fn collect(
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To create one, run <underline>wt switch --create {branch_placeholder}</>"
+                    "To create a worktree, run <underline>wt switch --create {branch_placeholder}</>"
                 ))
             );
         }
