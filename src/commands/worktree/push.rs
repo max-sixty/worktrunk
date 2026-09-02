@@ -197,7 +197,7 @@ impl MergeContext {
         let commit_count = repo.count_commits(&target_branch, "HEAD")?;
 
         let stats_summary = if commit_count > 0 {
-            repo.diff_stats_summary(&[
+            repo.current_worktree().diff_stats_summary(&[
                 "diff",
                 "--shortstat",
                 "--end-of-options",
