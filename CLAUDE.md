@@ -86,7 +86,7 @@ Cmd::new("gh").args(["pr", "list"]).run()?;  // no context for standalone tools
 
 ### Git-Discovery Env Vars Follow Who Chose the Cwd
 
-Git resolves `GIT_DIR`/`GIT_WORK_TREE` (and the rest of `INHERITED_GIT_PATH_VARS`) before walking up from the cwd, so an inherited value silently overrides a child's working directory. **Any spawn site that relocates a user command into a `wt`-chosen worktree — hooks, `wt step for-each`, the `--execute` no-integration fallback — must scrub these vars** (`Cmd::scrub_git_discovery_env` or `scrub_git_discovery_env_vars`); children running in the user's own context (aliases, `commit.generation`) and `wt`'s internal git plumbing keep the inherited context (absolutized). Full site classification and rationale: `scrub_git_discovery_env_vars` in `src/shell_exec.rs`.
+Git resolves `GIT_DIR`/`GIT_WORK_TREE` (and the rest of `INHERITED_GIT_PATH_VARS`) before walking up from the cwd, so an inherited value silently overrides a child's working directory. **Any spawn site that relocates a user command into a `wt`-chosen worktree — hooks, `wt step for-each`, the `--execute` program — must scrub these vars** (`Cmd::scrub_git_discovery_env` or `scrub_git_discovery_env_vars`); children running in the user's own context (aliases, `commit.generation`) and `wt`'s internal git plumbing keep the inherited context (absolutized). Full site classification and rationale: `scrub_git_discovery_env_vars` in `src/shell_exec.rs`.
 
 ### Real-time Output Streaming
 
