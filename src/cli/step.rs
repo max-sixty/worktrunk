@@ -399,7 +399,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
     CopyIgnored {
         /// Source worktree branch
         ///
-        /// Defaults to main worktree.
+        /// Defaults to primary worktree.
         #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         from: Option<String>,
 

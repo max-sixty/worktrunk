@@ -629,7 +629,7 @@ Options:
       --from <FROM>
           Source worktree branch
 
-          Defaults to main worktree.
+          Defaults to primary worktree.
 
       --to <TO>
           Destination worktree branch

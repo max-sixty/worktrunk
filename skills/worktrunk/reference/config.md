@@ -97,7 +97,7 @@ Controls where new worktrees are created.
 **Available template variables:**
 
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
-- `{{ repo }}` — repository directory name (e.g., `myproject`)
+- `{{ repo }}` — repository directory name (e.g., `myproject`); also spelled `{{ main_worktree }}`
 - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
 - `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
@@ -155,7 +155,7 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool.
+Generate commit messages automatically during merge. Requires an external CLI tool. The blocks below are alternatives: the file holds one `[commit.generation]` table, naming whichever CLI is installed.
 
 ### Claude Code
 
@@ -192,7 +192,7 @@ command = "llm -m claude-haiku-4.5"
 command = "aichat -m claude:claude-haiku-4.5"
 ```
 
-See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
+See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](https://worktrunk.dev/config/#custom-prompt-templates) for template customization.
 
 ## List
 
@@ -237,7 +237,7 @@ Valid built-in names:
 - `age` — Time since the last commit
 - `message` — The head commit's subject
 
-A selection mixes built-ins with [custom columns](#custom-columns), each named
+A selection mixes built-ins with [custom columns](https://worktrunk.dev/config/#custom-columns), each named
 by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),
 and is exhaustive: only the listed columns render. Omit `columns` to keep the
 default set, where custom columns append automatically. A built-in name wins a

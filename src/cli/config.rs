@@ -480,6 +480,11 @@ pub enum ConfigCommand {
         action: ConfigShellCommand,
     },
 
+    // The only `wt config` subcommand with no `<!-- subdoc: … -->` marker on
+    // the config page: this help *is* that page's body. Both templates below
+    // are generated from the same `USER_CONFIG` / `PROJECT_CONFIG` blocks the
+    // page renders as prose, so a subdoc would nest the page inside itself.
+    // Terminal help is where they have no rival, and keeps them.
     /// Create configuration file
     #[command(
         after_long_help = concat!(
