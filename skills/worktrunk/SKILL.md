@@ -96,7 +96,7 @@ Test with `wt switch --create test-hooks`.
 - Set up commit message generation → `reference/llm-commits.md`
 - Customize worktree paths → `reference/config.md#worktree-path-template`
 - Custom commit templates → `reference/llm-commits.md#prompt-templates`
-- Configure command defaults → `reference/config.md#command-config`
+- Configure command defaults (`[list]`, `[commit]`, `[merge]`, `[remove]`, `[switch]`, `[step]`) → `reference/config.md#list`
 - Set up personal hooks → `reference/config.md#hooks`
 
 ### Project config tasks

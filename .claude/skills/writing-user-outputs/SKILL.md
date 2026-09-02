@@ -955,9 +955,9 @@ Error and warning messages should communicate four things:
 // Resolution in separate hint: "Restart shell to activate"
 
 // GOOD - actual vs expected with resolution inline
-"Config file has 3 errors, expected valid TOML; run wt config validate for details"
-//              ^^^^^^^    ^^^^^^^^                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-//              actual     expected                  resolution
+"Config file has 3 errors, expected valid TOML; run wt config show for details"
+//                 ^^^^^^  ^^^^^^^^             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+//                 actual  expected             resolution
 
 // BAD - only states actual, no expected or impact
 "Shell probe: wt resolves to binary at /path"
