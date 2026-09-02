@@ -453,7 +453,7 @@ fn render_inline_formatting(line: &str) -> String {
 
 /// Add colors to status symbols in help text (matching wt list output colors)
 fn colorize_status_symbols(text: &str) -> String {
-    // Define semantic styles matching src/commands/list/model.rs StatusSymbols::styled_symbols
+    // Define semantic styles matching src/commands/list/model/status_symbols.rs StatusSymbols::styled_symbols
     let error = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Red)));
     let warning = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Yellow)));
     let success = Style::new().fg_color(Some(AnsiStyleColor::Ansi(AnsiColor::Green)));

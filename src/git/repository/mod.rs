@@ -322,8 +322,8 @@ pub(super) struct RepoCache {
     /// **The `commit_sha` field on each entry is a snapshot at scan time.**
     /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
     /// captured at the moment the read happens — not through this inventory.
-    /// The inventory is used for branch-name listing and upstream-tracking
-    /// metadata, both of which are stable for the duration of a command.
+    /// Everything else the inventory holds goes stale the same way once the
+    /// command runs a hook; [`Repository::local_branches`] owns that contract.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
     /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
     /// scan, cached for the lifetime of the repository. Sorted by most recent
