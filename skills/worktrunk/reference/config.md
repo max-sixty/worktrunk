@@ -206,8 +206,8 @@ Valid built-in names:
 - `branch` — The branch name
 - `status` — Git status symbols, plus any user-defined status
 - `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)
-- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)
-- `branch-diff` — Line changes against the default branch (header `main…±`)
+- `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`, or whatever the default branch is called)
+- `branch-diff` — Line changes against the default branch (header `main…±`, likewise)
 - `summary` — An LLM-generated summary of the branch
 - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit

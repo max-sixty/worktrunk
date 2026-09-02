@@ -173,7 +173,9 @@ Output as JSON for scripting:
  Age      Time since last commit                                                
  Message  Last commit message (truncated)                                       
 
-The [2mmain[0m header label is used regardless of the default branch's actual name.
+The [2mmain↕[0m and [2mmain…±[0m headers name the default branch: its own name where it fits
+ the width those columns already need ([2mtrunk↕[0m, [2mmaster…±[0m), and [2mbase[0m where it 
+doesn't, so a long name never widens every row.
 
 The table sizes itself to the terminal. When the columns don't all fit, the 
 least important go first — roughly right to left, since the order above runs 

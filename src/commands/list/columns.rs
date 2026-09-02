@@ -1,3 +1,7 @@
+use std::borrow::Cow;
+
+use unicode_width::UnicodeWidthStr;
+
 use super::collect::TaskKind;
 
 /// Logical identifier for each column rendered by `wt list`.
@@ -24,15 +28,48 @@ pub enum ColumnKind {
     Custom(u8),
 }
 
+/// Label the two default-branch columns fall back to when the branch's own
+/// name is too long to head them (see [`base_label`]).
+pub const GENERIC_BASE_LABEL: &str = "base";
+
+/// Widest default-branch name that can head `AheadBehind` and `BranchDiff`.
+///
+/// Both columns are sized by their data, not their header: `↑99 ↓99` is 7
+/// cells and `+999 -999` is 9. Subtracting each header's suffix (`↕` is 1
+/// cell, `…±` is 2) leaves budgets of 6 and 7, and the tighter one governs so
+/// the two columns can't disagree about which label to use. A name within it
+/// costs the table nothing — `test_base_label_never_widens_its_columns` pins
+/// that.
+const MAX_BASE_LABEL: usize = 6;
+
+/// The label the two default-branch columns head with.
+///
+/// The repo's own default-branch name where it fits — `trunk↕`, `master…±` —
+/// so the header names what the numbers are measured against instead of
+/// asserting `main` in a repo that has no such branch. A longer name would
+/// widen two columns on every row to spell out a word the reader takes in
+/// once, so it gives way to `base`. Both columns take this one decision, so
+/// they always name the same thing.
+pub fn base_label(default_branch: Option<&str>) -> &str {
+    default_branch
+        .filter(|name| name.width() <= MAX_BASE_LABEL)
+        .unwrap_or(GENERIC_BASE_LABEL)
+}
+
 impl ColumnKind {
-    pub const fn header(self) -> &'static str {
-        match self {
+    /// This column's header text.
+    ///
+    /// `base` is the default-branch label from [`base_label`]; only
+    /// `AheadBehind` and `BranchDiff` — the columns measured against the
+    /// default branch — read it.
+    pub fn header(self, base: &str) -> Cow<'static, str> {
+        Cow::Borrowed(match self {
             ColumnKind::Gutter => "",
             ColumnKind::Branch => "Branch",
             ColumnKind::Status => "Status",
             ColumnKind::WorkingDiff => "HEAD±",
-            ColumnKind::AheadBehind => "main↕",
-            ColumnKind::BranchDiff => "main…±",
+            ColumnKind::AheadBehind => return Cow::Owned(format!("{base}↕")),
+            ColumnKind::BranchDiff => return Cow::Owned(format!("{base}…±")),
             ColumnKind::Path => "Path",
             ColumnKind::Upstream => "Remote⇅",
             ColumnKind::Url => "URL",
@@ -44,7 +81,7 @@ impl ColumnKind {
             // Header is the resolved column name; layout substitutes it when
             // building `ColumnLayout`.
             ColumnKind::Custom(_) => "",
-        }
+        })
     }
 
     /// Get the base priority for this column (lower = more important).
@@ -477,11 +514,46 @@ mod tests {
         for kind in COLUMN_SPECS.iter().map(|spec| spec.kind) {
             if kind != ColumnKind::Gutter {
                 assert!(
-                    !kind.header().is_empty(),
+                    !kind.header(GENERIC_BASE_LABEL).is_empty(),
                     "{:?} should have a non-empty header",
                     kind
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_base_label_names_the_default_branch_when_it_fits() {
+        assert_eq!(base_label(Some("main")), "main");
+        assert_eq!(base_label(Some("trunk")), "trunk");
+        assert_eq!(base_label(Some("master")), "master");
+        // Past the budget the generic label stands in, as it does when the
+        // default branch can't be resolved at all.
+        assert_eq!(base_label(Some("develop")), GENERIC_BASE_LABEL);
+        assert_eq!(base_label(None), GENERIC_BASE_LABEL);
+
+        assert_eq!(ColumnKind::AheadBehind.header("trunk"), "trunk↕");
+        assert_eq!(ColumnKind::BranchDiff.header("trunk"), "trunk…±");
+        // Every other column ignores the label.
+        assert_eq!(ColumnKind::Upstream.header("trunk"), "Remote⇅");
+    }
+
+    /// A label within [`MAX_BASE_LABEL`] costs the table nothing: both
+    /// default-branch columns are already as wide as their data (`↑99 ↓99`,
+    /// `+999 -999`), so the header fits inside the width they'd have anyway.
+    /// This is what lets the real branch name in without widening every row.
+    #[test]
+    fn test_base_label_never_widens_its_columns() {
+        for name in ["main", "master", "trunk", "dev", "Δmain"] {
+            let base = base_label(Some(name));
+            assert!(
+                ColumnKind::AheadBehind.header(base).width() <= 7,
+                "{name}: ahead/behind header outgrew its data width"
+            );
+            assert!(
+                ColumnKind::BranchDiff.header(base).width() <= 9,
+                "{name}: branch-diff header outgrew its data width"
+            );
         }
     }
 

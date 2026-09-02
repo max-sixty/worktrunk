@@ -243,8 +243,8 @@ Valid built-in names:
 - [2mbranch[0m — The branch name
 - [2mstatus[0m — Git status symbols, plus any user-defined status
 - [2mworking-diff[0m — Uncommitted line changes against [2mHEAD[0m, including untracked files (header [2mHEAD±[0m)
-- [2mahead-behind[0m — Commits ahead of and behind the default branch (header [2mmain↕[0m)
-- [2mbranch-diff[0m — Line changes against the default branch (header [2mmain…±[0m)
+- [2mahead-behind[0m — Commits ahead of and behind the default branch (header [2mmain↕[0m, or whatever the default branch is called)
+- [2mbranch-diff[0m — Line changes against the default branch (header [2mmain…±[0m, likewise)
 - [2msummary[0m — An LLM-generated summary of the branch
 - [2mupstream[0m — Commits ahead of and behind the upstream tracking branch (header [2mRemote⇅[0m)
 - [2mci[0m — CI status of the head commit

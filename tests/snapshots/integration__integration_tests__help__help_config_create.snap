@@ -195,8 +195,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `branch` — The branch name[0m
 [107m [0m [2m# - `status` — Git status symbols, plus any user-defined status[0m
 [107m [0m [2m# - `working-diff` — Uncommitted line changes against `HEAD`, including untracked files (header `HEAD±`)[0m
-[107m [0m [2m# - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`)[0m
-[107m [0m [2m# - `branch-diff` — Line changes against the default branch (header `main…±`)[0m
+[107m [0m [2m# - `ahead-behind` — Commits ahead of and behind the default branch (header `main↕`, or whatever the default branch is called)[0m
+[107m [0m [2m# - `branch-diff` — Line changes against the default branch (header `main…±`, likewise)[0m
 [107m [0m [2m# - `summary` — An LLM-generated summary of the branch[0m
 [107m [0m [2m# - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)[0m
 [107m [0m [2m# - `ci` — CI status of the head commit[0m

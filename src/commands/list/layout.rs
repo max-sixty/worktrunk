@@ -313,6 +313,12 @@ pub struct RepoFacts<'a> {
     /// Largest PR/MR number any previous fetch cached, which sizes the CI
     /// column before this run's fetch reports.
     pub max_pr_number: Option<u64>,
+
+    /// The default branch's name, which heads the two columns measured
+    /// against it. `None` when it can't be resolved; either way the label
+    /// itself comes from [`base_label`](super::columns::base_label), which
+    /// falls back to `base`.
+    pub default_branch: Option<&'a str>,
 }
 
 /// Tracks which columns have actual data (vs just headers)
@@ -334,6 +340,9 @@ pub struct LayoutMetadata {
     pub widths: ColumnWidths,
     pub data_flags: ColumnDataFlags,
     pub status_position_mask: super::model::PositionMask,
+    /// What the two default-branch columns head with, resolved once here so
+    /// every header, width floor and footer entry names the same thing.
+    pub base_label: String,
 }
 
 /// Added to a column's base priority when it has nothing to show on any row.
@@ -806,14 +815,15 @@ fn build_estimated_widths(
     // `PositionMask::FULL`, so the column has to be at least that wide or the
     // cell overflows it. Read the width off the mask rather than restating its
     // arithmetic — the two can't drift.
+    let base = super::columns::base_label(facts.default_branch);
     let status_fixed = fit_header(
-        ColumnKind::Status.header(),
+        &ColumnKind::Status.header(base),
         super::model::PositionMask::FULL.total_width(),
     );
-    let working_diff_fixed = fit_header(ColumnKind::WorkingDiff.header(), 9); // "+999 -999"
-    let ahead_behind_fixed = fit_header(ColumnKind::AheadBehind.header(), 7); // "↑99 ↓99"
-    let branch_diff_fixed = fit_header(ColumnKind::BranchDiff.header(), 9); // "+999 -999"
-    let upstream_fixed = fit_header(ColumnKind::Upstream.header(), 7); // "↑99 ↓99"
+    let working_diff_fixed = fit_header(&ColumnKind::WorkingDiff.header(base), 9); // "+999 -999"
+    let ahead_behind_fixed = fit_header(&ColumnKind::AheadBehind.header(base), 7); // "↑99 ↓99"
+    let branch_diff_fixed = fit_header(&ColumnKind::BranchDiff.header(base), 9); // "+999 -999"
+    let upstream_fixed = fit_header(&ColumnKind::Upstream.header(base), 7); // "↑99 ↓99"
     let age_estimate = 4; // "11mo" (short format)
     // CI column: PR/MR reference ("#3035"), sized from the cached largest
     // number seen; "#9999" before the first fetch populates the cache. A
@@ -821,7 +831,7 @@ fn build_estimated_widths(
     // (`PrStatus::format_cell`) — the layout never resizes mid-render — and
     // the ratcheted cache sizes the next invocation correctly.
     let ci_estimate = fit_header(
-        ColumnKind::CiStatus.header(),
+        &ColumnKind::CiStatus.header(base),
         super::ci_status::pr_ref_width(facts.max_pr_number.unwrap_or(9999)),
     );
 
@@ -847,7 +857,7 @@ fn build_estimated_widths(
     // URL width estimated from template + longest branch (or fallback)
     // When url_width is 0 (no template), don't allocate any space for URL column
     let url_estimate = if url_width > 0 {
-        fit_header(ColumnKind::Url.header(), url_width)
+        fit_header(&ColumnKind::Url.header(base), url_width)
     } else {
         0
     };
@@ -888,6 +898,7 @@ fn build_estimated_widths(
         widths,
         data_flags,
         status_position_mask: super::model::PositionMask::FULL,
+        base_label: base.to_string(),
     }
 }
 
@@ -1063,7 +1074,7 @@ fn allocate_columns_with_priority(
 
         let is_first = !needs_spacing(&pending);
         let min_width = if spec.shrinkable {
-            Some(spec.kind.header().width().max(1))
+            Some(spec.kind.header(&metadata.base_label).width().max(1))
         } else {
             None
         };
@@ -1181,7 +1192,7 @@ fn allocate_columns_with_priority(
             ColumnKind::Custom(i) => {
                 std::borrow::Cow::Owned(custom_columns[i as usize].name.clone())
             }
-            kind => std::borrow::Cow::Borrowed(kind.header()),
+            kind => kind.header(&metadata.base_label),
         };
         columns.push(ColumnLayout {
             kind: col.spec.kind,
@@ -1208,7 +1219,7 @@ fn allocate_columns_with_priority(
         .into_iter()
         .map(|kind| match kind {
             ColumnKind::Custom(i) => custom_columns[i as usize].name.clone(),
-            kind => kind.header().to_string(),
+            kind => kind.header(&metadata.base_label).into_owned(),
         })
         .collect();
 
@@ -1281,7 +1292,8 @@ pub fn calculate_layout_with_width(
         .max()
         .unwrap_or(0)
         .min(MAX_BRANCH);
-    let max_branch = fit_header(ColumnKind::Branch.header(), max_branch);
+    let base = super::columns::base_label(facts.default_branch);
+    let max_branch = fit_header(&ColumnKind::Branch.header(base), max_branch);
 
     let path_data_width = items
         .iter()
@@ -1289,7 +1301,7 @@ pub fn calculate_layout_with_width(
         .map(|path| shorten_path(path, main_worktree_path).width())
         .max()
         .unwrap_or(0);
-    let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
+    let max_path_width = fit_header(&ColumnKind::Path.header(base), path_data_width);
 
     // The Path column is redundant with Branch unless a path says something the
     // branch name doesn't: the worktree sits off-template, or two worktrees share
@@ -1341,7 +1353,7 @@ pub fn calculate_layout_with_width(
         .map(|item| item.short_sha.width())
         .max()
         .unwrap_or(0);
-    let commit_width = fit_header(ColumnKind::Commit.header(), commit_data_width);
+    let commit_width = fit_header(&ColumnKind::Commit.header(base), commit_data_width);
 
     allocate_columns_with_priority(
         &metadata,
@@ -1360,14 +1372,16 @@ mod tests {
     use worktrunk::git::LineDiff;
     use worktrunk::styling::terminal_width;
 
-    /// The default repository context: a remote exists, no dev-server URL
-    /// template, and no cached PR/MR number. Tests that care about one of
-    /// these override it (`RepoFacts { has_remote: false, ..test_facts() }`).
+    /// The default repository context: a remote exists, the default branch is
+    /// `main`, and there's no dev-server URL template or cached PR/MR number.
+    /// Tests that care about one of these override it
+    /// (`RepoFacts { has_remote: false, ..test_facts() }`).
     fn test_facts() -> RepoFacts<'static> {
         RepoFacts {
             has_remote: true,
             url_template: None,
             max_pr_number: None,
+            default_branch: Some("main"),
         }
     }
 
@@ -2166,6 +2180,80 @@ mod tests {
             "the Branch column fits the abbreviated HEAD a detached row renders, \
              not just the branch names ({:?} wide)",
             branch.width
+        );
+    }
+
+    /// The two default-branch columns head with the repo's own branch name,
+    /// and the layout is the piece that has to agree with itself about it:
+    /// the rendered header, the width floor and the hidden-column footer all
+    /// read the one label. A name that fits costs no width, so a `trunk` repo
+    /// lays out exactly as a `main` one does.
+    #[test]
+    fn test_headers_name_the_default_branch() {
+        let items = vec![make_test_item("feature-branch")];
+        let layout_at = |default_branch, width| {
+            calculate_layout_with_width(
+                &items,
+                &non_full_run_tasks(),
+                Destination {
+                    width,
+                    link_style: LinkStyle::Expanded,
+                },
+                Path::new("/test"),
+                ColumnSelection {
+                    custom: &[],
+                    selected: None,
+                },
+                RepoFacts {
+                    default_branch,
+                    ..test_facts()
+                },
+            )
+        };
+
+        let trunk = layout_at(Some("trunk"), 200);
+        let ahead_behind =
+            find_column(&trunk, ColumnKind::AheadBehind).expect("AheadBehind allocated");
+        assert_eq!(ahead_behind.header, "trunk↕");
+        assert_eq!(
+            find_column(&trunk, ColumnKind::BranchDiff)
+                .expect("BranchDiff allocated")
+                .header,
+            "trunk…±"
+        );
+
+        let main = layout_at(Some("main"), 200);
+        assert_eq!(
+            ahead_behind.width,
+            find_column(&main, ColumnKind::AheadBehind).unwrap().width,
+            "a name within the budget doesn't widen the column"
+        );
+
+        // A name too long to head the columns gives way to the generic label,
+        // and an unresolved default branch lands on the same one.
+        assert_eq!(
+            find_column(
+                &layout_at(Some("development"), 200),
+                ColumnKind::AheadBehind
+            )
+            .unwrap()
+            .header,
+            "base↕"
+        );
+        assert_eq!(
+            find_column(&layout_at(None, 200), ColumnKind::AheadBehind)
+                .unwrap()
+                .header,
+            "base↕"
+        );
+
+        // The footer names a dropped column by the same label the header
+        // would have carried.
+        let narrow = layout_at(Some("trunk"), 40);
+        assert!(
+            narrow.hidden_columns.iter().any(|name| name == "trunk…±"),
+            "the footer names the hidden column as the header would: {:?}",
+            narrow.hidden_columns
         );
     }
 

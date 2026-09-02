@@ -78,7 +78,7 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-The `main` header label is used regardless of the default branch's actual name.
+The `main↕` and `main…±` headers name the default branch: its own name where it fits the width those columns already need (`trunk↕`, `master…±`), and `base` where it doesn't, so a long name never widens every row.
 
 The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A column with nothing to show on any row — `Remote⇅` in a repo with no remote — ranks below every populated column, so it goes first. A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](https://worktrunk.dev/config/#list); `--format=json` carries every field at any width.
 
