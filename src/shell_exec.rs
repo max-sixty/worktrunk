@@ -2900,6 +2900,38 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn test_cmd_delayed_stream_flushes_what_it_buffered() {
+        // Output written *before* the threshold is buffered, and the switch to
+        // streaming drains that buffer to stderr before phase 2 begins. This
+        // ordering is what reaches the drain loop:
+        // `test_cmd_delayed_stream_crosses_the_threshold` writes after the
+        // switch, so its line streams from the reader thread and the buffer
+        // stays empty throughout.
+        //
+        // What pins the drain is the error's `output`: `drain(..)` empties the
+        // buffer, so a line that was flushed is no longer in the buffer the
+        // failure reports. Had the switch not happened, `early` would still be
+        // there and would show up here.
+        //
+        // The child writes immediately and exits 450 ms after the threshold
+        // passes, so the reader has the line buffered long before the 50 ms
+        // wait expires, and the wait expires long before the child exits.
+        let err = Cmd::new("sh")
+            .args(["-c", "echo early 1>&2; sleep 0.5; exit 3"])
+            .delayed_stream(50, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output buffered before the switch must be drained to stderr, not reported"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn test_cmd_delayed_stream_streams_then_reports_failure() {
         // delay_ms=0 streams immediately (phase-1 threshold crossed → progress
         // message + buffer drain), and a non-zero exit surfaces as a
