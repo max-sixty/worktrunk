@@ -80,7 +80,7 @@ $ wt list --format=json
 
 The `main` header label is used regardless of the default branch's actual name.
 
-The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](https://worktrunk.dev/config/#list); `--format=json` carries every field at any width.
+The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A column with nothing to show on any row — `Remote⇅` in a repo with no remote — ranks below every populated column, so it goes first. A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](https://worktrunk.dev/config/#list); `--format=json` carries every field at any width.
 
 `main↕` and `main…±` measure against the default branch's upstream tip when the local copy lags it — so in a fork whose local `main` trails `origin/main`, a branch reads as ahead of the real mainline, not of a stale local checkout. The `↑`/`↓`/`↕` Status symbols derive from these counts, so they track the upstream tip too.
 
@@ -131,7 +131,7 @@ Each `[list.custom-columns]` entry in user config adds a column: the key is the 
 template = "{{ vars.ticket }}"
 ```
 
-A column that renders empty for every row is dropped from the table. Templates, widths, and drop priority: [custom columns config](https://worktrunk.dev/config/#custom-columns).
+A custom column that renders empty for every row is dropped from the table outright, rather than merely ranked last as an empty built-in is. Templates, widths, and drop priority: [custom columns config](https://worktrunk.dev/config/#custom-columns).
 
 ## Status symbols
 

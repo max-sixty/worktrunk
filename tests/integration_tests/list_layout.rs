@@ -42,6 +42,18 @@ fn representative_widths_render_useful_tables(mut repo: TestRepo) {
     }
 }
 
+/// With no remote configured, `Remote⇅` is blank on every row, so it ranks
+/// below every populated column and drops first. At this width it used to
+/// hold its blank seven columns open while Message — which has something to
+/// say on every row — was dropped for want of them.
+#[rstest]
+fn empty_remote_column_drops_before_populated_ones(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature-with-a-longer-name");
+
+    snapshot_list(&repo, "no_remote_width_100", 100);
+}
+
 /// One very long branch must not size the Branch column for every row: past
 /// the cap the name is elided, so the columns that answer "what is going on
 /// here" still fit. Without it, 60 columns degenerates into a branch list and

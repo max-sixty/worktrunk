@@ -62,17 +62,24 @@
 //! - 5-12: Context (CI, branch diff, path, upstream, URL, summary, commit, time)
 //! - 13: Message (nice-to-have, space-hungry)
 //!
-//! **Empty penalty**: +10 if column has no data (only header)
-//! - Empty working_diff: 3 + 10 = priority 13
-//! - Empty ahead/behind: 4 + 10 = priority 14
+//! **Empty penalty**: +14 if column has no data (only header)
+//! - Empty working_diff: 3 + 14 = priority 17
+//! - Empty ahead/behind: 4 + 14 = priority 18
 //! - etc.
 //!
 //! This creates two effective priority tiers:
 //! - **Tier 1 (priorities 0-13)**: Columns with actual data
-//! - **Tier 2 (priorities 13-23)**: Empty columns (visual consistency)
+//! - **Tier 2 (priorities 14-27)**: Empty columns (visual consistency)
 //!
-//! The empty penalty is large (+10) but not infinite, so empty columns maintain their relative
-//! ordering (empty working_diff still ranks higher than empty ci_status) for visual consistency.
+//! The penalty exceeds the largest base priority, so the tiers can't interleave: an
+//! all-empty column never outranks a populated one. It is not infinite, so empty columns
+//! keep their relative ordering (empty working_diff still ranks higher than empty
+//! ci_status) for visual consistency.
+//!
+//! Priority order alone doesn't finish the job, because the allocation loop keeps going
+//! after a column fails to fit: a narrow blank column would slip into the gap a wider
+//! populated one just failed to fill. So the loop also records whether any populated
+//! column was dropped, and skips every empty column once that happens.
 //!
 //! ## Why This Design?
 //!
@@ -83,8 +90,8 @@
 //! 2. Show nice-to-have data (message, commit hash) when space allows
 //! 3. Maintain visual consistency - empty columns in predictable positions at wide widths
 //!
-//! **Key decision**: Message sits at the boundary (priority 13). Empty columns (priority 13+)
-//! rank below message, so:
+//! **Key decision**: Message sits at the bottom of tier 1 (priority 13). Empty columns
+//! (priority 14+) rank below it, so:
 //! - Narrow terminals: Data columns + message (hide empty columns)
 //! - Wide terminals: Data columns + message + empty columns (visual consistency)
 //!
@@ -94,14 +101,16 @@
 //! computes layout before data arrives. Currently we assume most columns have data (optimistic),
 //! which means empty penalties don't apply in progressive mode.
 //!
-//! Exceptions that we can compute instantly from items:
+//! Exceptions we can settle before any task reports:
 //! - `path`: true only if some worktree's path carries information the branch
 //!   column doesn't — `branch_worktree_mismatch` or `duplicate_branch` (computed
 //!   from items)
-//! - `branch_diff`/`ci_status`: false if their required task is skipped
+//! - `branch_diff`/`ci_status`/`url`: false if their required task is skipped
+//! - `upstream`: false when the repo has no remote ([`RepoFacts::has_remote`]),
+//!   because then no branch can track one
 //!
-//! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
-//! so we assume they have data until proven otherwise.
+//! The rest (status, working_diff, ahead_behind) require expensive git operations, so we
+//! assume they have data until proven otherwise.
 //!
 //! ## Special Cases
 //!
@@ -284,6 +293,28 @@ pub struct ColumnWidths {
     pub custom: Vec<usize>,
 }
 
+/// Facts about the repository that the layout needs and the items can't
+/// answer at skeleton time, when no task has reported yet.
+#[derive(Clone, Copy, Debug)]
+pub struct RepoFacts<'a> {
+    /// The repository has at least one remote configured, so a branch can
+    /// have an upstream. With none, `Remote⇅` is blank on every row, and
+    /// saying so here is what makes it drop before a populated column
+    /// instead of surviving one. Read from the bulk config map (O(1), no
+    /// fork) — see [`Repository::primary_remote`].
+    ///
+    /// [`Repository::primary_remote`]: worktrunk::git::Repository::primary_remote
+    pub has_remote: bool,
+
+    /// The project's `list.url` template, which sizes the URL column; `None`
+    /// when none is configured, and then the column renders nothing.
+    pub url_template: Option<&'a str>,
+
+    /// Largest PR/MR number any previous fetch cached, which sizes the CI
+    /// column before this run's fetch reports.
+    pub max_pr_number: Option<u64>,
+}
+
 /// Tracks which columns have actual data (vs just headers)
 #[derive(Clone, Copy, Debug)]
 pub struct ColumnDataFlags {
@@ -305,7 +336,13 @@ pub struct LayoutMetadata {
     pub status_position_mask: super::model::PositionMask,
 }
 
-const EMPTY_PENALTY: u8 = 10;
+/// Added to a column's base priority when it has nothing to show on any row.
+///
+/// Larger than the largest base priority, so an all-empty column ranks below
+/// every populated one — Message (13) survives a blank `Remote⇅`, not the
+/// other way round. Empty columns keep their relative order among themselves,
+/// so a wide terminal still lays them out predictably.
+const EMPTY_PENALTY: u8 = 14;
 
 /// Widest the Branch column grows to fit its longest name.
 ///
@@ -759,8 +796,8 @@ fn build_estimated_widths(
     tasks: &HashSet<TaskKind>,
     path_is_informative: bool,
     url_width: usize,
-    max_pr_number: Option<u64>,
     custom_widths: Vec<usize>,
+    facts: RepoFacts<'_>,
 ) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
@@ -785,22 +822,23 @@ fn build_estimated_widths(
     // the ratcheted cache sizes the next invocation correctly.
     let ci_estimate = fit_header(
         ColumnKind::CiStatus.header(),
-        super::ci_status::pr_ref_width(max_pr_number.unwrap_or(9999)),
+        super::ci_status::pr_ref_width(facts.max_pr_number.unwrap_or(9999)),
     );
 
     // Assume columns will have data (better to show and hide than to not show).
     // This is a limitation of progressive mode - we can't know which columns have data
     // before the data arrives, so empty penalties don't apply properly.
     //
-    // Exceptions that we can compute instantly from items:
+    // Exceptions we can settle before any task reports:
     // - path: true only if a worktree is off-template or shares its branch
-    // - branch_diff/ci_status: false if their task isn't in the run plan
+    // - branch_diff/ci_status/url: false if their task isn't in the run plan
+    // - upstream: false when the repo has no remote, so no branch can track one
     let data_flags = ColumnDataFlags {
         status: true,
         working_diff: true,
         ahead_behind: true,
         branch_diff: tasks.contains(&TaskKind::BranchDiff),
-        upstream: true,
+        upstream: facts.has_remote,
         url: tasks.contains(&TaskKind::UrlStatus),
         ci_status: tasks.contains(&TaskKind::CiStatus),
         path: path_is_informative,
@@ -974,9 +1012,21 @@ fn allocate_columns_with_priority(
         true
     };
 
+    // Whether a column that has something to show was left out. Priority order
+    // alone doesn't settle "an all-empty column never outranks a populated
+    // one": the loop keeps going after a column doesn't fit, so a narrow blank
+    // `Remote⇅` would otherwise slip into the gap a wider Message just failed
+    // to fill. Every empty candidate sorts after every populated one
+    // (EMPTY_PENALTY exceeds the largest base priority), so one flag covers it.
+    let mut dropped_populated = false;
+
     // Allocate columns in priority order
     for candidate in candidates {
         let spec = candidate.spec;
+        let is_empty_column = !spec.kind.has_data(&metadata.data_flags);
+        if is_empty_column && dropped_populated {
+            continue;
+        }
 
         // Flexible columns: allocate at minimum, expand post-loop
         if matches!(spec.kind, ColumnKind::Summary | ColumnKind::Message) {
@@ -985,6 +1035,7 @@ fn allocate_columns_with_priority(
                 _ => MIN_MESSAGE,
             };
             let spacing_cost = if needs_spacing(&pending) { spacing } else { 0 };
+            let mut allocated = false;
             if remaining > spacing_cost {
                 let available = remaining - spacing_cost;
                 if available >= min_width {
@@ -995,8 +1046,10 @@ fn allocate_columns_with_priority(
                         width: min_width,
                         format: ColumnFormat::Text,
                     });
+                    allocated = true;
                 }
             }
+            dropped_populated |= !allocated && !is_empty_column;
             continue;
         }
 
@@ -1022,6 +1075,8 @@ fn allocate_columns_with_priority(
                 width: allocated,
                 format,
             });
+        } else if !is_empty_column {
+            dropped_populated = true;
         }
     }
 
@@ -1197,9 +1252,8 @@ pub fn calculate_layout_with_width(
     tasks: &HashSet<TaskKind>,
     destination: Destination,
     main_worktree_path: &Path,
-    url_template: Option<&str>,
-    max_pr_number: Option<u64>,
     columns: ColumnSelection,
+    facts: RepoFacts<'_>,
 ) -> LayoutConfig {
     let link_style = destination.link_style;
     let custom_columns = columns.custom;
@@ -1246,7 +1300,7 @@ pub fn calculate_layout_with_width(
         .any(|data| data.branch_worktree_mismatch || data.duplicate_branch);
 
     // Estimate URL width from template (heuristic, no expansion needed)
-    let url_width = estimate_url_width(url_template, link_style);
+    let url_width = estimate_url_width(facts.url_template, link_style);
 
     // Custom column widths are measured, not estimated: values were expanded
     // before layout. A column empty on every row stays 0 and is excluded.
@@ -1274,8 +1328,8 @@ pub fn calculate_layout_with_width(
         tasks,
         path_is_informative,
         url_width,
-        max_pr_number,
         custom_widths,
+        facts,
     );
 
     // Sized from the abbreviated SHAs themselves — `%h` is `core.abbrev` wide
@@ -1305,6 +1359,17 @@ mod tests {
     use super::*;
     use worktrunk::git::LineDiff;
     use worktrunk::styling::terminal_width;
+
+    /// The default repository context: a remote exists, no dev-server URL
+    /// template, and no cached PR/MR number. Tests that care about one of
+    /// these override it (`RepoFacts { has_remote: false, ..test_facts() }`).
+    fn test_facts() -> RepoFacts<'static> {
+        RepoFacts {
+            has_remote: true,
+            url_template: None,
+            max_pr_number: None,
+        }
+    }
 
     #[test]
     fn test_fit_header() {
@@ -1557,7 +1622,8 @@ mod tests {
         // Full run plan means all tasks are computed (equivalent to --full)
         // path_is_informative=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
-        let metadata = build_estimated_widths(20, &full_run_tasks(), true, 0, None, Vec::new());
+        let metadata =
+            build_estimated_widths(20, &full_run_tasks(), true, 0, Vec::new(), test_facts());
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
@@ -1627,12 +1693,31 @@ mod tests {
     #[test]
     fn test_ci_column_width_from_max_pr_number() {
         // Cached largest number sizes the column: "#12345" → 6
-        let metadata =
-            build_estimated_widths(20, &full_run_tasks(), false, 0, Some(12345), Vec::new());
+        let metadata = build_estimated_widths(
+            20,
+            &full_run_tasks(),
+            false,
+            0,
+            Vec::new(),
+            RepoFacts {
+                max_pr_number: Some(12345),
+                ..test_facts()
+            },
+        );
         assert_eq!(metadata.widths.ci_status, 6);
 
         // Never below header width ("CI" → 2)
-        let metadata = build_estimated_widths(20, &full_run_tasks(), false, 0, Some(1), Vec::new());
+        let metadata = build_estimated_widths(
+            20,
+            &full_run_tasks(),
+            false,
+            0,
+            Vec::new(),
+            RepoFacts {
+                max_pr_number: Some(1),
+                ..test_facts()
+            },
+        );
         assert_eq!(metadata.widths.ci_status, 2);
     }
 
@@ -1683,12 +1768,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             &main_worktree_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         assert!(
@@ -1777,12 +1861,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             &main_worktree_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         assert!(
@@ -1881,12 +1964,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         )
     }
 
@@ -1927,12 +2009,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
 
         let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
@@ -1989,12 +2070,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &custom,
                 selected: Some(&selected),
             },
+            test_facts(),
         );
 
         let kinds: Vec<ColumnKind> = layout.columns.iter().map(|c| c.kind).collect();
@@ -2035,12 +2115,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &custom,
                 selected: None,
             },
+            test_facts(),
         );
         assert!(
             find_column(&layout, ColumnKind::Custom(0)).is_some(),
@@ -2073,12 +2152,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         let branch = find_column(&layout, ColumnKind::Branch).expect("Branch allocated");
@@ -2111,12 +2189,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
         assert!(
             find_column(&unplanned, ColumnKind::CiStatus).is_none(),
@@ -2134,12 +2211,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
         assert!(
             find_column(&planned, ColumnKind::CiStatus).is_some(),
@@ -2162,12 +2238,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: Some(&selected),
             },
+            test_facts(),
         );
         assert!(
             find_column(&layout, ColumnKind::Branch).is_some(),
@@ -2406,12 +2481,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         assert!(
             find_column(&layout_wide, ColumnKind::Summary).is_some(),
@@ -2433,12 +2507,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         let summary_170 = find_column(&layout_170, ColumnKind::Summary)
             .expect("Summary should be present at 170")
@@ -2565,12 +2638,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
 
         let mut lines = Vec::new();
@@ -2606,12 +2678,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         let branch = find_column(&layout, ColumnKind::Branch);
         assert!(
@@ -2633,12 +2704,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             main_path,
-            None,
-            None,
             ColumnSelection {
                 custom: &[],
                 selected: None,
             },
+            test_facts(),
         );
         let branch = find_column(&layout, ColumnKind::Branch).unwrap();
         assert!(
@@ -2700,12 +2770,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &columns,
                 selected: None,
             },
+            test_facts(),
         );
 
         // Value wider than max_width clamps to it
@@ -2745,12 +2814,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &columns,
                 selected: None,
             },
+            test_facts(),
         );
 
         // Values are final before layout, so an all-empty column is excluded
@@ -2774,12 +2842,11 @@ mod tests {
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             ColumnSelection {
                 custom: &columns,
                 selected: None,
             },
+            test_facts(),
         );
 
         // Priority 9 loses to the core columns when space runs out, and the

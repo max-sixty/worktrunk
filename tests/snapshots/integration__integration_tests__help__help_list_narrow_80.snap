@@ -178,9 +178,11 @@ The [2mmain[0m header label is used regardless of the default branch's actual 
 The table sizes itself to the terminal. When the columns don't all fit, the 
 least important go first — roughly right to left, since the order above runs 
 from identity to nice-to-have — and the summary footer names them ([2mhidden: 
-[2mCommit, Age, Message[0m). A wider terminal brings them back. To pin a set rather 
-than leave it to the width, name the columns in [2m[list] columns[0m; [2m--format=json[0m 
-carries every field at any width.
+[2mCommit, Age, Message[0m). A column with nothing to show on any row — [2mRemote⇅[0m in a 
+repo with no remote — ranks below every populated column, so it goes first. A 
+wider terminal brings them back. To pin a set rather than leave it to the width,
+ name the columns in [2m[list] columns[0m; [2m--format=json[0m carries every field at any 
+width.
 
 [2mmain↕[0m and [2mmain…±[0m measure against the default branch's upstream tip when the 
 local copy lags it — so in a fork whose local [2mmain[0m trails [2morigin/main[0m, a branch 
@@ -260,7 +262,8 @@ you set yourself, or the git-native [2mdescription[0m) — useful for tracking
 [107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
 
-A column that renders empty for every row is dropped from the table. Templates, 
+A custom column that renders empty for every row is dropped from the table 
+outright, rather than merely ranked last as an empty built-in is. Templates, 
 widths, and drop priority: custom columns config.
 
 [1m[32mStatus symbols[0m
