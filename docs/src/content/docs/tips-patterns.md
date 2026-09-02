@@ -1,6 +1,6 @@
 ---
 title: "Tips & Patterns"
-description: "Practical recipes for Worktrunk workflows: aliases, shell integration, Zellij layouts, and parallel agent patterns."
+description: "Practical recipes for Worktrunk workflows: repo layout, aliases and hooks, per-worktree dev servers and databases, agent handoffs, and branch status."
 sidebar:
   order: 24
 ---
