@@ -69,7 +69,7 @@ Commands:
   eval          Evaluate a template expression
   for-each      Run command in each worktree
   promote       [experimental] Swap a branch into the main worktree
-  prune         Remove worktrees merged into the default branch
+  prune         Remove worktrees and branches merged into the default branch
   relocate      [experimental] Move worktrees to expected paths
   tether        [experimental] Run a command; kill its whole process tree when its worktree is
                 removed
@@ -615,13 +615,18 @@ $ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
-List the available template variables with `-v` (alongside the expansion, on stderr):
+List every template variable and its current value with `-v` (alongside the expansion, on stderr):
 
 ```console
 $ wt step eval -v '{{ branch }}'
 ○ eval template variables:
-  branch        = feature/auth-oauth2
-  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+  branch                = feature/auth-oauth2
+  worktree_path         = /home/user/code/myproject.feature-auth-oauth2
+  worktree_name         = myproject.feature-auth-oauth2
+  commit                = 4f2a1c9e8b3d5a7f0c2e6b4d8a1f3c5e7b9d2a4f
+  short_commit          = 4f2a1c9
+  …
+  cwd                   = /home/user/code/myproject.feature-auth-oauth2
 ○ eval source
   {{ branch }}
 ○ eval result
@@ -799,7 +804,7 @@ Automation:
 
 ## wt step prune
 
-Remove worktrees merged into the default branch.
+Remove worktrees and branches merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
@@ -809,11 +814,11 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 ### Min-age guard
 
-Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+Candidates younger than `--min-age` (default: 1 day) are skipped. A worktree's age comes from its creation time, and a branch with no worktree takes its age from its oldest reflog entry. This prevents removing a worktree just created from the default branch: it looks "merged" because its branch points at the same commit.
 
 ```console
 $ wt step prune --min-age=0s     # no age guard
-$ wt step prune --min-age=2d     # skip worktrees younger than 2 days
+$ wt step prune --min-age=2d     # skip candidates younger than 2 days
 ```
 
 ### JSON output
@@ -837,7 +842,7 @@ $ wt step prune
 ### Command reference
 
 ```text wt-command-reference
-wt step prune - Remove worktrees merged into the default branch
+wt step prune - Remove worktrees and branches merged into the default branch
 
 Usage: wt step prune [OPTIONS]
 
@@ -846,7 +851,7 @@ Options:
           Show what would be removed
 
       --min-age <MIN_AGE>
-          Skip worktrees younger than this
+          Skip candidates younger than this
 
           [default: 1d]
 
