@@ -564,8 +564,8 @@ pub trait PickerProgressHandler: Send + Sync {
     /// the injector while row tasks dominate worker deques.
     ///
     /// Not fired on the `WORKTRUNK_SKELETON_ONLY` / `WORKTRUNK_FIRST_OUTPUT`
-    /// benchmark early-exit, nor on the zero-worktree `Ok(None)` return
-    /// (which exits before `on_skeleton`). Default: no-op.
+    /// benchmark early-exit, nor on the empty-listing return, which carries an
+    /// empty `ListData` but exits before `on_skeleton`. Default: no-op.
     fn on_collect_complete(&self) {}
 
     /// Hand the picker a clone of the collect layout, right after `on_skeleton`.
@@ -969,8 +969,17 @@ pub fn collect(
     };
     let warn_stale_default = needs_stale_check
         && fetched_local.is_some_and(|all| {
-            !all.iter()
-                .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
+            // An empty inventory is a repo with no commits yet, not a branch
+            // someone deleted. `infer_default_branch_locally` resolves
+            // `symbolic-ref HEAD`, which names `main` in a fresh
+            // `git init --bare -b main` before `refs/heads/main` exists, so
+            // warning here would report a branch that was never created as
+            // externally deleted — and the hint's remedy loops, because
+            // clearing the persisted value only lets the next run re-infer it.
+            !all.is_empty()
+                && !all
+                    .iter()
+                    .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
         });
 
     // Filter local branches to those without worktrees (CPU-only, no git
@@ -1307,15 +1316,11 @@ pub fn collect(
     // stdout, and the picker owns the terminal while collect runs.
     if all_items.is_empty() {
         if render_table {
-            // `<branch>` is an argument placeholder, not markup — interpolated
-            // as a runtime value because `cformat!` reads angle brackets in the
-            // format string as color tags and rejects the unknown one.
-            let branch_placeholder = "<branch>";
             eprintln!("{}", info_message("No worktrees"));
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To create a worktree, run <underline>wt switch --create {branch_placeholder}</>"
+                    "To create a worktree, run <underline>wt switch --create <<branch>></>"
                 ))
             );
         }

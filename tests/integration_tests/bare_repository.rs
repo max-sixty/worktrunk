@@ -130,6 +130,27 @@ fn test_bare_repo_list_no_worktrees_branches() {
     });
 }
 
+/// A bare repo with no commits at all — `git init --bare -b main`, before
+/// anything is pushed to it. The empty listing is the whole output: nothing
+/// was deleted here, so the stale-default-branch warning must stay silent even
+/// though `refs/heads/main` doesn't exist. `infer_default_branch_locally`
+/// resolves `symbolic-ref HEAD`, which names `main` regardless, and warning
+/// would send the user to `wt config state default-branch clear` — a remedy
+/// that loops, because the next run re-infers the same value from `HEAD`.
+#[test]
+fn test_bare_repo_list_no_commits() {
+    let test = BareRepoTest::new();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(test.bare_repo_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[test]
 fn test_bare_repo_switch_creates_worktree() {
     let test = BareRepoTest::new();
