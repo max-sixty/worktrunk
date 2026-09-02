@@ -11,6 +11,7 @@ Worktrunk generates commit messages by building a templated prompt and piping it
   <source srcset="/assets/docs/dark/wt-commit.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-commit.gif" alt="LLM commit message generation demo" width="1600" height="900">
 </picture>
+<figcaption>Reviewing the staged diff, generating a message, and committing</figcaption>
 </figure>
 
 ## Setup

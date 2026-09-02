@@ -144,6 +144,7 @@ Worktree state comes from the same cells [`wt list`](/list/) renders; Claude Cod
   <source srcset="/assets/docs/dark/wt-statusline.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-statusline.gif" alt="Claude Code statusline demo" width="1600" height="900">
 </picture>
+<figcaption>Switching to a worktree, then launching Claude Code with the statusline configured</figcaption>
 </figure>
 
 Add to `~/.claude/settings.json`:
