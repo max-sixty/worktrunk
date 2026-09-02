@@ -103,18 +103,18 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 List all worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message[0m
-[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02  30m   Add API tests[0m
-[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee083  4d    Merge fix-auth: h…[0m
-[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m  5h    Add secure token…[0m
-[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m  4d    Merge fix-auth: h…[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m   ⇡3      6814f02   30m  Add API tests[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68[0m[2m    5h  Add secure token…[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                      [0m[2m[36m|[0m[2m     [0m[2m[34m41ee083[0m[2m    4d  Merge fix-auth: h…[0m
 [107m [0m [0m
 [107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path[0m
 
 Include CI status and LLM summaries:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                                                 Remote⇅  CI    Commit[0m
 [107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02[0m
 [107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083[0m
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-time token validation            [0m[2m[36m|[0m[2m     #408  b772e68[0m
@@ -125,7 +125,7 @@ Include CI status and LLM summaries:
 Include branches that don't have worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m
-[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status      HEAD±     main↕    main…±    Summary                                                 Remote⇅  CI    Commit[0m
 [107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02[0m
 [107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083[0m
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-time token validation            [0m[2m[36m|[0m[2m     #408  b772e68[0m

@@ -1381,11 +1381,11 @@ Markers appear at the end of the Status column, after git symbols:
 
 ```console
 $ wt list
-  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
-@ main             ^⇡                                    ⇡1      33323bc  1d    Initial commit
-+ feature-api      ↑ 🤖              ↑1        +1                70343f0  1d    Add REST API endp…
-+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e  1d    Add dashboard com…
-+ wip-docs       ? –       +1                                    33323bc  1d    Initial commit
+  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endp…
++ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard com…
++ wip-docs       ? –       +1                                    33323bc    1d  Initial commit
 
 ○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path
 ```

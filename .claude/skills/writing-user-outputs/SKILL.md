@@ -1095,8 +1095,18 @@ eprintln!("{}", success_message(format!(
 
 ## Table Column Alignment
 
-- **Text columns** (Branch, Path): left-aligned
-- **Numeric columns** (HEAD±, main↕): right-aligned
+- **Text columns** (Branch, Path, Message): left-aligned
+- **Single-value numeric columns** (Age): right-aligned, so `now` and `4m` line
+  up on the unit
+- **Diff columns** (HEAD±, main↕): two right-aligned halves either side of a
+  separator (`+999 -999`)
+
+A header follows its content, except over a diff column, where it centres:
+pushed to either edge it stands over one half and reads as that half's label,
+leaving a lone `+1` stranded left of `HEAD±`.
+
+Rows carry no trailing padding. Padding places a cell; past the last one it
+places nothing, and a reader who selects the row gets it anyway.
 
 ## Snapshot Testing
 

@@ -795,11 +795,11 @@ List all worktrees:
 <!-- wt list -->
 ```console
 $ wt list
-  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02  30m   Add API tests
-^ main             ^⇅                                    ⇡1  ⇣1  41ee083  4d    Merge fix-auth: h…
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68  5h    Add secure token…
-+ fix-typos        _|                                      |     41ee083  4d    Merge fix-auth: h…
+  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests
+^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…
++ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…
++ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…
 
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
@@ -809,7 +809,7 @@ Include CI status and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
+  Branch       Status      HEAD±     main↕    main…±    Summary                                                 Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
 ^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68
@@ -823,7 +823,7 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
+  Branch       Status      HEAD±     main↕    main…±    Summary                                                 Remote⇅  CI    Commit
 @ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
 ^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083
 + fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68

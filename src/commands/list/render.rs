@@ -232,6 +232,11 @@ impl LayoutConfig {
             }
         }
 
+        // Padding after the last cell places nothing. A row whose rightmost
+        // columns are empty carried up to 14 trailing spaces the header line
+        // never had, which a reader inherits the moment they select the row.
+        line.trim_end();
+
         let final_width = line.width();
         tracing::debug!(width = final_width, "Rendered line width: {}", final_width);
 
@@ -248,16 +253,21 @@ impl LayoutConfig {
         self.render_line(|column| {
             let mut cell = StyledLine::new();
             if !column.header.is_empty() {
-                // Diff columns have right-aligned values, so right-align headers too
-                let is_diff_column = matches!(column.format, ColumnFormat::Diff(_));
-
-                if is_diff_column {
-                    // Right-align header within column width
-                    let header_width = column.header.width();
-                    if header_width < column.width {
-                        let padding = column.width - header_width;
-                        cell.push_raw(" ".repeat(padding));
-                    }
+                let padding = column.width.saturating_sub(column.header.width());
+                // A diff column is two right-aligned halves — `+999` then
+                // `-999` — so a header at either edge stands over one of them
+                // and reads as its label: pushed right, `HEAD±` sits over the
+                // deletions and a lone `+1` lands to its left. Centring
+                // straddles the separator, which is what the header names.
+                // Age is a single right-aligned value, so its header goes
+                // right with it; everything else is text, read from the left.
+                let leading = match column.alignment() {
+                    CellAlignment::Split => padding / 2,
+                    CellAlignment::Right => padding,
+                    CellAlignment::Left => 0,
+                };
+                if leading > 0 {
+                    cell.push_raw(" ".repeat(leading));
                 }
 
                 cell.push_styled(column.header.to_string(), style);
@@ -392,17 +402,55 @@ impl LayoutConfig {
     }
 }
 
+/// Which edge a column's content sits against.
+#[derive(Clone, Copy, Debug)]
+enum CellAlignment {
+    /// Text, read from the left: Branch, Path, Message, …
+    Left,
+    /// A single value whose digits and unit only line up from the right —
+    /// Age (`now`, `4m`, `11mo`).
+    Right,
+    /// A diff field: two right-aligned halves either side of a separator
+    /// (`+999 -999`), so neither edge is the field's centre of gravity.
+    Split,
+}
+
 impl ColumnLayout {
+    fn alignment(&self) -> CellAlignment {
+        if matches!(self.format, ColumnFormat::Diff(_)) {
+            CellAlignment::Split
+        } else if self.kind == ColumnKind::Time {
+            CellAlignment::Right
+        } else {
+            CellAlignment::Left
+        }
+    }
+
+    /// Render a cell's content against the column's own edge.
+    fn aligned_cell(&self, content: StyledLine) -> StyledLine {
+        let leading = match self.alignment() {
+            CellAlignment::Left => return content,
+            // A split column's own renderer places the halves; only a
+            // single-glyph stand-in reaches here, and it goes to the right
+            // edge the way the whole field does.
+            CellAlignment::Right | CellAlignment::Split => {
+                self.width.saturating_sub(content.width())
+            }
+        };
+        if leading == 0 {
+            return content;
+        }
+        let mut cell = StyledLine::new();
+        cell.push_raw(" ".repeat(leading));
+        cell.extend(content);
+        cell
+    }
+
     /// Render a placeholder indicator (loading or skipped state).
-    /// Right-aligns for diff columns, left-aligns otherwise.
     fn placeholder_cell(&self, symbol: &str) -> StyledLine {
         let mut cell = StyledLine::new();
-        if matches!(self.format, ColumnFormat::Diff(_)) {
-            let padding = self.width.saturating_sub(symbol.width());
-            cell.push_raw(" ".repeat(padding));
-        }
         cell.push_styled(symbol, Style::new().dimmed());
-        cell
+        self.aligned_cell(cell)
     }
 
     /// Render a text cell with optional style, truncated to column width.
@@ -571,7 +619,9 @@ impl ColumnLayout {
                     format_relative_time_short(commit.timestamp),
                     Style::new().dimmed(),
                 );
-                cell
+                // `now` and `4m` are different lengths with the unit at the
+                // end, so they only line up from the right.
+                self.aligned_cell(cell)
             }
             ColumnKind::Url => {
                 // URL column: shows dev server URL from project config template

@@ -1966,6 +1966,7 @@ pub fn collect(
             show_branches || show_remotes,
             &layout.hidden_columns,
             timed_out_count,
+            None,
         ),
     });
 
