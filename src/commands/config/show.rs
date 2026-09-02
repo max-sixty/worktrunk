@@ -36,7 +36,7 @@ use crate::output::print_json;
 ///
 /// `config show` is the diagnostic surface for a broken config, so its exit
 /// code answers "is this config sound?". A section that finds something `wt`
-/// will reject — unparseable TOML, a schema violation, a `[list] columns`
+/// will reject — unparsable TOML, a schema violation, a `[list] columns`
 /// name no column answers to — reports it and returns `true`; the whole
 /// report still renders, and the non-zero exit comes after it. Warnings
 /// (unknown keys, deprecations) leave the exit code alone: `wt` runs with

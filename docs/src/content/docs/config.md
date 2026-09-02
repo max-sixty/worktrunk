@@ -842,7 +842,7 @@ Shows the location and contents of system config, user config
 Every section names its path whether or not the file exists.
 
 Alongside each file, `config show` reports what `wt` would take issue with:
-unparseable TOML, keys in the wrong file, deprecated settings, a `[list]
+unparsable TOML, keys in the wrong file, deprecated settings, a `[list]
 columns` name no column answers to, and project commands still awaiting
 approval. It exits non-zero when a config is invalid, so a health check can
 branch on it; warnings alone leave the exit code at 0.
