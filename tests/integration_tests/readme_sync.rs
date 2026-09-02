@@ -2656,6 +2656,23 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
 
     let out = format!("{}\n", out.trim_end());
 
+    // Every page llms.txt names is served as `<slug>.md` from a hand-created
+    // symlink into the skill reference. A new page reaches llms.txt from its
+    // frontmatter alone, so without this the listing links a 404.
+    for name in docs_content_page_names(&docs_dir) {
+        let served = project_root.join("docs/public").join(&name);
+        if !served.exists() {
+            errors.push(format!(
+                "docs/public/{name} is missing — add the symlink \
+                 `ln -s ../../skills/worktrunk/reference/{name} docs/public/{name}` \
+                 so llms.txt's https://worktrunk.dev/{name} resolves"
+            ));
+        }
+    }
+    if !errors.is_empty() {
+        return (errors, updated);
+    }
+
     let dst = project_root.join("docs/public/llms.txt");
     let current = fs::read_to_string(&dst).unwrap_or_default();
     if current != out {
