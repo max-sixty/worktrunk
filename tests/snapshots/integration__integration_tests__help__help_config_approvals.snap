@@ -99,7 +99,20 @@ Check whether an unattended run would stop for approval:
 
 [1m[32mHow approvals work[0m
 
-Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves.
+Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m, keyed by project identifier — the same [2m<host>/<owner>/<repo>[0m key a [2m[projects."…"][0m user-config entry uses:
+
+[107m [0m [2m# ~/.config/worktrunk/approvals.toml[0m
+[107m [0m [2m[36m[projects."github.com/user/repo"][0m
+[107m [0m [2mapproved-commands = [[0m
+[107m [0m [2m    [0m[2m[32m"npm ci"[0m[2m,[0m
+[107m [0m [2m    [0m[2m[32m"npm run dev"[0m[2m,[0m
+[107m [0m [2m][0m
+
+Re-approval is required when the command template changes or the project moves.
+
+A [2m*[0m in a key matches any run of characters, [2m/[0m included, exactly as it does in [2m[projects][0m, so one entry can approve its commands for every repository it covers. Only a key written by hand is ever a pattern: [2mwt config approvals add[0m and the interactive prompt record under the exact identifier, and [2mwt config approvals clear[0m removes only that exact entry, leaving a pattern other repositories share intact.
+
+Earlier releases kept these arrays under [2m[projects."…"] approved-commands[0m in [2mconfig.toml[0m. That form is deprecated — it warns on every load, and [2mwt config update[0m moves it here.
 
 [2m--yes[0m bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On [2mwt config approvals add[0m the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
 

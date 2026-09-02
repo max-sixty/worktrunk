@@ -43,7 +43,11 @@
 #
 # ## Copy-ignored excludes
 #
-# Additional excludes for `wt step copy-ignored`:
+# `wt step copy-ignored` seeds a new worktree with the gitignored files the primary worktree already has — `node_modules/`, `target/`, `.env`. A `post-start` hook is what runs it:
+#
+# post-start = "wt step copy-ignored"
+#
+# Additional excludes:
 #
 # [step.copy-ignored]
 # exclude = [".cache/", ".turbo/"]

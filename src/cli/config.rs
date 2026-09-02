@@ -626,7 +626,22 @@ $ wt config approvals list --format=json | jq -r .state
 
 ## How approvals work
 
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves.
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`, keyed by project identifier — the same `<host>/<owner>/<repo>` key a [`[projects."…"]` user-config entry](/config/#user-project-specific-settings) uses:
+
+```toml
+# ~/.config/worktrunk/approvals.toml
+[projects."github.com/user/repo"]
+approved-commands = [
+    "npm ci",
+    "npm run dev",
+]
+```
+
+Re-approval is required when the command template changes or the project moves.
+
+A `*` in a key matches any run of characters, `/` included, exactly as it does in `[projects]`, so one entry can approve its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.
+
+Earlier releases kept these arrays under `[projects."…"] approved-commands` in `config.toml`. That form is deprecated — it warns on every load, and `wt config update` moves it here.
 
 `--yes` bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On `wt config approvals add` the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
 

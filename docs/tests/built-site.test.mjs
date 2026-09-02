@@ -223,7 +223,7 @@ test('build preserves the public route contract', async () => {
   assert.ok(configToc, 'config page is missing its desktop table of contents');
   assert.equal(
     [...configToc.matchAll(/<a href="#[^"]+"/g)].length,
-    32,
+    46,
     'config table of contents should expose overview and structural section headings only',
   );
   for (const [id, title] of [
