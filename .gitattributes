@@ -9,10 +9,22 @@ skills/worktrunk/reference/*.md linguist-generated=true
 skills/worktrunk/reference/README.md linguist-generated=false
 skills/worktrunk/reference/shell-integration.md linguist-generated=false
 skills/worktrunk/reference/troubleshooting.md linguist-generated=false
+# The plugin skills tree is a real-file mirror of repo-root skills/, rewritten by
+# `test_docs_are_in_sync`'s `sync_plugin_skills_mirror` stage. Nothing here is
+# primary, including its copies of the skill-only pages exempted above.
+plugins/worktrunk/skills/** linguist-generated=true
 docs/public/*.md linguist-generated=true
 docs/public/llms.txt linguist-generated=true
 docs/public/.well-known/agent-skills/index.json linguist-generated=true
 docs/src/generated/terminal-styles.json linguist-generated=true
+# Rendered from the USER_CONFIG and PROJECT_CONFIG blocks in src/cli/mod.rs by
+# `test_config_source_generates_example_toml` and
+# `test_project_config_source_generates_example_toml`.
+dev/*.example.toml linguist-generated=true
+# The command pages under docs/src/content/docs/ are generated from src/cli/mod.rs
+# too, but deliberately stay visible: they are the one rendered copy of the help
+# text a reviewer reads. The rest of that directory is hand-written.
+
 # Shell templates are embedded into the binary at compile time (askama); a
 # CRLF checkout would leak \r into the shell code Windows-built binaries emit.
 templates/* text eol=lf
