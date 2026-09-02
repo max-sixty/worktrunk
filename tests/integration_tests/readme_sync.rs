@@ -2857,6 +2857,82 @@ fn test_no_nested_auto_generated_markers() {
     );
 }
 
+/// The authored sidebar in `docs/src/site-navigation.mjs` and each page's
+/// `sidebar.order` frontmatter are two orderings of the same pages, and only
+/// the frontmatter reaches `docs/public/llms.txt`. When they disagree, the
+/// sidebar a reader browses and the index an agent reads put the pages in
+/// different orders.
+///
+/// Only pages the sidebar names are checked. A page may carry an order without
+/// a sidebar entry (`code-signing.md`); the order still places it in llms.txt.
+#[test]
+fn test_sidebar_matches_frontmatter_order() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let nav_path = project_root.join("docs/src/site-navigation.mjs");
+    let nav = fs::read_to_string(&nav_path).unwrap();
+
+    // `link: '/switch/'` names the page `switch.md`; `link: '/'` is the
+    // homepage, `worktrunk.md`. A link carrying a fragment (`/#install`) points
+    // into a page rather than at one, so it has no order of its own.
+    let link_pattern = Regex::new(r"link: '([^']+)'").unwrap();
+    let slugs: Vec<String> = link_pattern
+        .captures_iter(&nav)
+        .map(|captures| captures[1].to_string())
+        .filter(|link| !link.contains('#'))
+        .map(|link| match link.trim_matches('/') {
+            "" => "worktrunk".to_string(),
+            slug => slug.to_string(),
+        })
+        .collect();
+
+    assert!(
+        slugs.len() > 5,
+        "found only {} sidebar links in {} — the `link:` shape changed and this \
+         test would pass on an empty list",
+        slugs.len(),
+        nav_path.display()
+    );
+
+    let mut violations = Vec::new();
+    let mut previous: Option<(String, i64)> = None;
+    for slug in slugs {
+        let path = project_root.join(format!("docs/src/content/docs/{slug}.md"));
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "sidebar names {slug}, but reading {} failed: {e}",
+                path.display()
+            )
+        });
+        let frontmatter = YAML_FRONTMATTER_PATTERN
+            .captures(&content)
+            .unwrap_or_else(|| panic!("no YAML frontmatter in {}", path.display()));
+        let order: i64 = frontmatter
+            .get(1)
+            .unwrap()
+            .as_str()
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("order:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or_else(|| panic!("no numeric sidebar.order in {}", path.display()));
+
+        if let Some((previous_slug, previous_order)) = &previous
+            && order <= *previous_order
+        {
+            violations.push(format!(
+                "{slug} (order {order}) is listed after {previous_slug} (order {previous_order})"
+            ));
+        }
+        previous = Some((slug, order));
+    }
+
+    assert!(
+        violations.is_empty(),
+        "site-navigation.mjs lists pages out of `sidebar.order`, so the sidebar and \
+         docs/public/llms.txt would order them differently. Reconcile the two:\n\n{}",
+        violations.join("\n")
+    );
+}
+
 /// The hand-authored `## Template variables` table in `src/cli/mod.rs` must
 /// match the variable constants in `src/config/expansion.rs`. Drift means the
 /// help docs lie about which vars hooks and aliases can reference.
