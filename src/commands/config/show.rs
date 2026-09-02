@@ -49,20 +49,23 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     let mut show_output = String::new();
 
     // Resolved once and shared: the project config, column, and approval
-    // sections all ask the same repository.
+    // sections all ask the same repository, and a misplaced-key warning in any
+    // section names this project's `[projects."…"]` key.
     let repo = Repository::current().ok();
+    let project = repo.as_ref().and_then(|r| r.project_identifier().ok());
+    let project = project.as_deref();
 
     // Render system config section (shown whether or not a file exists — its
     // absence is part of the diagnostic)
-    let mut invalid = render_system_config(&mut show_output)?;
+    let mut invalid = render_system_config(&mut show_output, project)?;
     show_output.push('\n');
 
     // Render user config
-    invalid |= render_user_config(&mut show_output, repo.as_ref())?;
+    invalid |= render_user_config(&mut show_output, repo.as_ref(), project)?;
     show_output.push('\n');
 
     // Render project config if in a git repository
-    invalid |= render_project_config(&mut show_output, repo.as_ref())?;
+    invalid |= render_project_config(&mut show_output, repo.as_ref(), project)?;
     show_output.push('\n');
 
     // Render the values the layers above resolve to
@@ -590,7 +593,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 /// force" is an answer a diagnostic owes the reader, and reporting it only
 /// when the file happens to exist made the absent case indistinguishable from
 /// a layer `config show` doesn't know about.
-fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
+fn render_system_config(out: &mut String, project: Option<&str>) -> anyhow::Result<bool> {
     let Some(system_path) = system_config_path() else {
         let default_path = default_system_config_path();
         let source = default_path
@@ -633,7 +636,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&contents, project));
     }
 
     // Display TOML with syntax highlighting
@@ -643,7 +646,11 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
 }
 
 /// Render the USER CONFIG section. Returns true if the config is invalid.
-fn render_user_config(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
+fn render_user_config(
+    out: &mut String,
+    repo: Option<&Repository>,
+    project: Option<&str>,
+) -> anyhow::Result<bool> {
     let config_path = require_config_path()?;
 
     writeln!(
@@ -718,7 +725,7 @@ fn render_user_config(out: &mut String, repo: Option<&Repository>) -> anyhow::Re
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&contents, project));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0).
@@ -781,15 +788,27 @@ fn render_column_selection(out: &mut String, repo: Option<&Repository>) -> anyho
 /// only the message wording differs.
 pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
     raw_contents: &str,
+    project: Option<&str>,
 ) -> String {
     let mut out = String::new();
     for warning in worktrunk::config::collect_unknown_warnings::<C>(raw_contents) {
-        let _ = writeln!(out, "{}", warning_message(format_show_warning(&warning)));
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format_show_warning(&warning, project))
+        );
     }
     out
 }
 
-fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
+/// `project` fills the `[projects."<id>"]` placeholder in the scope note. The
+/// load-time warning has no repository to name and leaves it as written;
+/// `config show` computed the identifier for its own `Identifier:` line, so
+/// here the suggested key is one the reader can paste.
+fn format_show_warning(
+    warning: &worktrunk::config::UnknownWarning,
+    project: Option<&str>,
+) -> String {
     use worktrunk::config::UnknownWarning;
     match warning {
         UnknownWarning::TopLevelUnknown { key } => {
@@ -802,6 +821,7 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
             cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
             other_description,
             key,
+            project,
         ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
@@ -815,6 +835,7 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
             cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
             other_description,
             path,
+            project,
         ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("Unknown key <bold>{path}</> will be ignored")
@@ -823,7 +844,11 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
 }
 
 /// Render the PROJECT CONFIG section. Returns true if the config is invalid.
-fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
+fn render_project_config(
+    out: &mut String,
+    repo: Option<&Repository>,
+    project: Option<&str>,
+) -> anyhow::Result<bool> {
     // Try to get current repository root
     let repo = match repo {
         Some(repo) => repo,
@@ -843,14 +868,15 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
     // absent branches so their output stays uniform.
     fn write_heading_and_identifier(
         out: &mut String,
-        repo: &Repository,
+        project: Option<&str>,
         source: &str,
     ) -> anyhow::Result<()> {
         writeln!(out, "{}", format_heading("PROJECT CONFIG", Some(source)))?;
         // Project identifier — used as the key for [projects."..."] sections in
         // user config. Surface it here so users can find the right key without
-        // hand-deriving it from the remote URL.
-        if let Ok(project_id) = repo.project_identifier() {
+        // hand-deriving it from the remote URL. The same value fills the
+        // `[projects."<id>"]` placeholder in any misplaced-key warning below.
+        if let Some(project_id) = project {
             let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
             writeln!(out, "{line}")?;
         }
@@ -870,7 +896,7 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
         Some(path) if path.exists() => {
             let contents = std::fs::read_to_string(path).context("Failed to read config file")?;
             let source = format!("@ {}", format_path_for_display(path));
-            write_heading_and_identifier(out, repo, &source)?;
+            write_heading_and_identifier(out, project, &source)?;
             (path.clone(), contents)
         }
         _ => match repo.default_branch_project_config_content() {
@@ -879,7 +905,7 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
                 // not a filesystem path — display it verbatim, tagged as the
                 // object-store source so it isn't mistaken for an on-disk file.
                 let source = format!("@ {} (from object store)", spec.to_string_lossy());
-                write_heading_and_identifier(out, repo, &source)?;
+                write_heading_and_identifier(out, project, &source)?;
                 (spec, object_store_contents)
             }
             None => {
@@ -890,7 +916,7 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
                     return Ok(false);
                 };
                 let source = format!("@ {}", format_path_for_display(&path));
-                write_heading_and_identifier(out, repo, &source)?;
+                write_heading_and_identifier(out, project, &source)?;
                 writeln!(out, "{}", hint_message("Not found"))?;
                 return Ok(false);
             }
@@ -943,7 +969,7 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        out.push_str(&warn_unknown_keys::<ProjectConfig>(&contents));
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(&contents, project));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0).

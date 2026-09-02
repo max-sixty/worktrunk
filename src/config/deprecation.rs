@@ -1893,6 +1893,7 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
             ),
             other_description,
             key,
+            None,
         ),
         UnknownWarning::TopLevelDeprecatedWrongConfig {
             key,
@@ -1910,6 +1911,7 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
             ),
             other_description,
             path,
+            None,
         ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("{label} has unknown field <bold>{path}</> (will be ignored)")
@@ -1923,9 +1925,22 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
 /// for related clauses. The note is plain text so its `[projects."<id>"]`
 /// placeholder isn't parsed as color-print markup. Shared with `config show`
 /// via [`crate::config::with_scope_note`] so the caveat lives in one place.
-pub fn with_scope_note(message: String, other_description: &str, key: &str) -> String {
+///
+/// `project` substitutes the real identifier for the `<id>` placeholder,
+/// making the note copy-pasteable. Config load holds no repository and passes
+/// `None`; `config show` already resolves the identifier for its own
+/// `Identifier:` line and passes it here.
+pub fn with_scope_note(
+    message: String,
+    other_description: &str,
+    key: &str,
+    project: Option<&str>,
+) -> String {
     match scope_to_repo_note(other_description, key) {
-        Some(note) => format!("{message}; {note}"),
+        Some(note) => match project {
+            Some(id) => format!("{message}; {}", note.replace("<id>", id)),
+            None => format!("{message}; {note}"),
+        },
         None => message,
     }
 }
