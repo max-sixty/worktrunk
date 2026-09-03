@@ -545,6 +545,63 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+/// A user config that doesn't parse must fail these commands *legibly*.
+///
+/// `UserConfig::load()`'s error is `LoadError::File`'s multi-line Display —
+/// the header plus the TOML parser's caret diagram — flattened into a
+/// `ConfigError` string. Propagated bare with `?`, it reaches anyhow with no
+/// context and no cause chain, which is the one shape `main.rs`'s renderer
+/// has no arm for: it trips that function's `debug_assert!` (so a debug build
+/// panics with exit 101 instead of erroring) and degrades to a contentless
+/// `✗ Command failed` in release. `.context("Failed to load config")` — what
+/// the other two thirds of the `UserConfig::load()` call sites already do —
+/// gives the renderer its header and puts the parse detail in the gutter.
+///
+/// `config show --format json` is the sharpest of the three: the text form of
+/// the same command renders a full diagnosis of this exact file.
+#[rstest]
+#[case::config_show_json(&["config", "show", "--format=json"])]
+#[case::step_prune(&["step", "prune", "--dry-run"])]
+#[case::step_relocate(&["step", "relocate", "--dry-run"])]
+fn test_unparsable_user_config_errors_legibly(
+    repo: TestRepo,
+    temp_home: TempDir,
+    #[case] args: &[&str],
+) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "invalid = [toml\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(args).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // 101 is the debug_assert panic; 1 is the error this should be.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{args:?} should fail cleanly, not panic; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "{args:?} panicked; stderr:\n{stderr}"
+    );
+    // The header the renderer needs, and the parse detail it would otherwise
+    // have replaced with "Command failed".
+    assert!(
+        stderr.contains("Failed to load config"),
+        "{args:?} should name what failed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("unclosed array"),
+        "{args:?} should carry the parser's own diagnosis; stderr:\n{stderr}"
+    );
+}
+
 /// Test that `config show` displays invalid system config with error details
 #[rstest]
 fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir) {

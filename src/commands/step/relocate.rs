@@ -2,6 +2,8 @@
 //!
 //! See `src/commands/relocate.rs` for the implementation details and algorithm.
 
+use anyhow::Context;
+
 use std::path::PathBuf;
 
 use worktrunk::config::UserConfig;
@@ -36,7 +38,7 @@ pub fn step_relocate(
     let json_mode = format == crate::cli::SwitchFormat::Json;
 
     let repo = Repository::current()?;
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
     let default_branch = repo.default_branch().unwrap_or_default();
 
     // Validate default branch early - needed for main worktree relocation

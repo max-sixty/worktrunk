@@ -870,7 +870,7 @@ pub fn step_prune(
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
 
     let repo = Repository::current()?;
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     // Capture once at command entry. Reused for every per-branch
     // `integration_reason` probe later in this function.

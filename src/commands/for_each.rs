@@ -27,6 +27,7 @@
 use std::io::Write as _;
 use std::process::Stdio;
 
+use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{UserConfig, VarScope};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
@@ -56,7 +57,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         .iter()
         .filter(|wt| !wt.is_prunable())
         .collect();
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     let mut failed: Vec<String> = Vec::new();
     let mut json_results: Vec<serde_json::Value> = Vec::new();
