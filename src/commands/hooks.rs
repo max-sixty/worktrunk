@@ -211,13 +211,24 @@ fn no_matching_commands_error(
         };
         config.is_some_and(|c| c.commands().next().is_some())
     };
-    if let Some(source) = parsed_filters.iter().find_map(|f| match f {
-        ParsedFilter {
-            source: Some(source),
-            name: "",
-        } => (!configured(*source)).then_some(*source),
-        _ => None,
-    }) {
+    // Only when every filter is a bare source. A list that also names a
+    // command asked about that name, and answering about a source instead
+    // would leave the name unmentioned and offer an invocation nobody typed —
+    // so a mixed list falls through to `HookCommandNotFound`, which lists what
+    // is available across the scopes the filters named.
+    let all_bare = parsed_filters.iter().all(|f| f.name.is_empty());
+    if let Some(source) = all_bare
+        .then(|| {
+            parsed_filters.iter().find_map(|f| match f {
+                ParsedFilter {
+                    source: Some(source),
+                    name: "",
+                } => (!configured(*source)).then_some(*source),
+                _ => None,
+            })
+        })
+        .flatten()
+    {
         let other = match source {
             HookSource::User => HookSource::Project,
             HookSource::Project => HookSource::User,
