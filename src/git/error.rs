@@ -570,6 +570,19 @@ pub enum GitError {
         name: String,
         available: Vec<String>,
     },
+    /// A bare source filter (`wt hook pre-merge user:`) selected a source that
+    /// configures no hooks of this type.
+    ///
+    /// Distinct from [`GitError::HookCommandNotFound`], which means a filter
+    /// named a command: there the fix is to correct the name, here there is no
+    /// name to correct. `other_source` names the source that does configure
+    /// hooks of this type, when one does, so the hint can offer the working
+    /// invocation.
+    HookSourceNotConfigured {
+        source: String,
+        hook_type: HookType,
+        other_source: Option<String>,
+    },
     ParseError {
         message: String,
     },
@@ -881,6 +894,10 @@ impl GitError {
                     cformat!("No command named <bold>{name}</> (available: {styled_list})")
                 }
             }
+
+            GitError::HookSourceNotConfigured {
+                source, hook_type, ..
+            } => format!("No {source} {hook_type} hooks configured"),
 
             GitError::LlmCommandFailed { .. } => "Commit generation command failed".to_string(),
 
@@ -1403,6 +1420,28 @@ impl GitError {
             GitError::HookCommandNotFound { .. } => {
                 let title = self.title();
                 write!(f, "{}", error_message(&title))
+            }
+
+            GitError::HookSourceNotConfigured {
+                hook_type,
+                other_source,
+                ..
+            } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
+                // The filter syntax is `<source>:`, so the working invocation
+                // is the same command with the other prefix — when that source
+                // has hooks of this type to run.
+                match other_source {
+                    Some(other) => write!(
+                        f,
+                        "\n{}",
+                        hint_message(cformat!(
+                            "To run the {other} hooks, run <underline>wt hook {hook_type} {other}:</>"
+                        ))
+                    ),
+                    None => Ok(()),
+                }
             }
 
             GitError::LlmCommandFailed {

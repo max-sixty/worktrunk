@@ -105,6 +105,15 @@ Add to the project config:
 [107m [0m [2m[36m[post-start][0m
 [107m [0m [2mcopy = [0m[2m[32m"wt step copy-ignored"[0m
 
+[1m[32mChoosing source and destination[0m
+
+By default the copy runs from the primary worktree into the current one — what a [2mpost-start[0m hook needs, since the new worktree is where the hook runs. [2m--from[0m and [2m--to[0m name either end by branch, so a copy can run between two worktrees from anywhere:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--from[0m[2m main [0m[2m[36m--to[0m[2m feature   # between two named worktrees[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--from[0m[2m feature             # from feature into the current worktree[0m
+
+A branch named by [2m--from[0m or [2m--to[0m must have a worktree.
+
 [1m[32mWhat gets copied[0m
 
 All gitignored files are copied by default, except for built-in excluded directories: VCS metadata ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m), tool-state ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m), and nested worktrees. Tracked files are never touched. Discovery handles nested [2m.gitignore[0m files, global excludes, and [2m.git/info/exclude[0m. Existing files in the destination are skipped, so re-running is safe; [2m--force[0m overwrites them.

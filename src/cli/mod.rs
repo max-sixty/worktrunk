@@ -1576,7 +1576,7 @@ $ wt step push
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
-`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](/config/#wt-config-state-logs) to find and manage log files). Use `-v` to see the template variables for background hooks; `wt hook <type> --dry-run` previews the commands.
+`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](/config/#wt-config-state-logs) to find and manage log files); `wt hook <type> --foreground` runs one inline instead, so its output arrives in the terminal. Use `-v` to see the template variables for background hooks; `wt hook <type> --dry-run` previews the commands.
 
 The most common creation hook is `post-start` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-start` over `pre-start` unless a later step needs the work completed first.
 
@@ -1586,7 +1586,7 @@ The most common creation hook is `post-start` — it runs background tasks (dev 
 | `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
 | `pre-start` | Runs once when a new worktree is created, blocking `post-start`/`--execute` until complete: dependency install, env file generation |
 | `post-start` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
-| `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
+| `pre-commit` | Formatters, linters, type checking — runs before any Worktrunk commit (`wt step commit`, `wt step squash`, and the commit `wt merge` makes) |
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
 | `post-merge` | Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree |
@@ -1616,7 +1616,7 @@ Project commands require approval on first run:
 - If a command changes, new approval is required
 - Declining skips every project command for that operation — including any already approved — and continues without them; saved approvals are unaffected
 - Use `--yes` to bypass prompts — useful for CI and automation
-- Use `--no-hooks` to skip hooks
+- Use `--no-hooks` to skip hooks — accepted by the commands that run them (`wt switch`, `wt merge`, `wt remove`, `wt step commit`, `wt step squash`), not by `wt hook`
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
@@ -1655,7 +1655,7 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Because an earlier step can still change those values, a preview leaves them alone: `wt hook <type> --dry-run` and `wt hook show --expanded` render `{{ vars.<key> }}` as itself while every other variable expands.
+Templates are syntax-checked before the pipeline starts and rendered as each step runs, so a step can store [per-branch vars](/config/#wt-config-state-vars) that later steps read via `{{ vars.<key> }}`. Because an earlier step can still change those values, a preview stands the reference in for its value instead of resolving it: `wt hook <type> --dry-run` and `wt hook show --expanded` render `{{ vars.thing | default('none') }}` as `{{ vars.thing }}` — the reference is defined, so the `default` never fires — while every other variable expands. A filter that transforms its input still runs, against the placeholder text: `{{ vars.thing | upper }}` previews as `{{ VARS.THING }}`.
 
 Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
@@ -1668,7 +1668,7 @@ Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependenc
 | Approval | Required | Not required |
 | Execution order | After user hooks | First |
 
-Skip all hooks with `--no-hooks`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
+To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 ## Template variables
 
@@ -1753,18 +1753,7 @@ Templates support Jinja2 filters for transforming values:
 | `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
 | `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
 
-The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
-
-```toml
-# Friendly branch-derived worktree names, e.g. myproject.malleable-opah
-worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
-```
-
-When you want both a friendly name and the original branch identity in the path, put the branch name in a parent directory:
-
-```toml
-worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
-```
+The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf — the [`worktree-path` recipes](/config/#worktree-path-template) show it both alone and under a branch-named parent directory.
 
 The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
 
