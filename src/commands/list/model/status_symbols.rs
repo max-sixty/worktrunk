@@ -75,7 +75,7 @@
 //!    `↻`, whichever operation it is.
 //! 3. `has_conflicts == Some(false)` and `git_operation == Some(None)` and
 //!    metadata says prunable → `⊟`.
-//! 4. …continuing down through `⊞`, `⚑`, `/`, nothing.
+//! 4. …continuing down through `⊞`, `⊘`, `⚑`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
 //! out `✘/↻`, so the position renders `·` even if metadata would otherwise
@@ -282,7 +282,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘↻/⊟⊞⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > duplicate_branch > branch_worktree_mismatch > branch)
+            1, // WORKTREE_STATE: ✘↻/⊟⊞⊘⚑ (1 char, priority: conflicts > in-progress operation > prunable > locked > detached > duplicate_branch > branch_worktree_mismatch > branch)
             1, // MAIN_STATE: ^_⊂✗–↕↑↓ (1 char, priority: is_main > orphan > empty > integrated > would_conflict > same_commit > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -369,7 +369,7 @@ impl WorkingTreeStatus {
 /// Symbols are categorized to enable vertical alignment in table output.
 /// Display order (left to right):
 /// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
-/// - Worktree state: ✘, ↻, /, ⚑, ⊟, ⊞ (operations + location)
+/// - Worktree state: ✘, ↻, /, ⚑, ⊘, ⊟, ⊞ (operations + location)
 /// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to default branch - single-stroke vertical arrows)
 /// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
@@ -567,7 +567,7 @@ impl StatusSymbols {
         };
 
         // Gate 2 — worktree state (position 3). Operation family (`✘↻`)
-        // takes priority over metadata family (`⚑⊟⊞/`). The gate is
+        // takes priority over metadata family (`⚑⊘⊟⊞/`). The gate is
         // `Loading` iff `operation_state` is still `None` — even when
         // `worktree_state` metadata would yield `⊟`, we cannot safely show
         // it without ruling out a pending operation signal. Once
