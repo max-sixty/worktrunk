@@ -967,20 +967,23 @@ pub fn collect(
     } else {
         None
     };
-    let warn_stale_default = needs_stale_check
+    // Two questions, deliberately separate. Whether the persisted default
+    // resolves decides what downstream tasks may resolve against; whether to
+    // say so decides only what the user reads.
+    let default_branch_missing = needs_stale_check
         && fetched_local.is_some_and(|all| {
-            // An empty inventory is a repo with no commits yet, not a branch
-            // someone deleted. `infer_default_branch_locally` resolves
-            // `symbolic-ref HEAD`, which names `main` in a fresh
-            // `git init --bare -b main` before `refs/heads/main` exists, so
-            // warning here would report a branch that was never created as
-            // externally deleted — and the hint's remedy loops, because
-            // clearing the persisted value only lets the next run re-infer it.
-            !all.is_empty()
-                && !all
-                    .iter()
-                    .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
+            !all.iter()
+                .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
         });
+    // An empty inventory is a repo with no commits yet, not a branch someone
+    // deleted. `infer_default_branch_locally` resolves `symbolic-ref HEAD`,
+    // which names `main` in a fresh `git init --bare -b main` before
+    // `refs/heads/main` exists, so warning here would report a branch that was
+    // never created as externally deleted — and the hint's remedy loops,
+    // because clearing the persisted value only lets the next run re-infer it.
+    // Only the message is suppressed: the value is still dropped below.
+    let warn_stale_default =
+        default_branch_missing && fetched_local.is_some_and(|all| !all.is_empty());
 
     // Filter local branches to those without worktrees (CPU-only, no git
     // commands). With `show_branches` off there are no branch-only rows.
@@ -1007,12 +1010,15 @@ pub fn collect(
         );
     }
 
-    // When the persisted default is stale, drop it for downstream tasks.
-    // Tasks that resolve against it (ahead-behind, merge-tree-conflicts,
-    // etc.) would otherwise emit a cascade of "ambiguous argument" errors;
-    // passing `None` here preserves the old None-returns silent-skip
-    // behavior that callers already handle for repos with no default branch.
-    let default_branch = if warn_stale_default {
+    // When the persisted default doesn't resolve, drop it for downstream
+    // tasks. Tasks that resolve against it (ahead-behind,
+    // merge-tree-conflicts, etc.) would otherwise emit a cascade of "ambiguous
+    // argument" errors; passing `None` here preserves the old None-returns
+    // silent-skip behavior that callers already handle for repos with no
+    // default branch. This follows the missing value, not the warning: a repo
+    // with no branches at all raises no message and still must not resolve
+    // against a branch that isn't there.
+    let default_branch = if default_branch_missing {
         None
     } else {
         default_branch
