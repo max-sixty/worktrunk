@@ -59,9 +59,9 @@ pub struct SquashArgs {
 }
 
 // Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
-// then standalone utilities (diff, copy-ignored), then experimentals
-// (alphabetical: eval, for-each, promote, prune, relocate, tether). Keep this
-// enum, the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// then standalone utilities (diff, copy-ignored), then the rest, alphabetical
+// (eval, for-each, promote, prune, relocate, tether). Keep this enum, the
+// `## Operations` bullet list in `src/cli/mod.rs`, and the
 // `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
@@ -69,7 +69,21 @@ pub struct SquashArgs {
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
-        after_long_help = r#"See [LLM-generated commit messages](/llm-commits/) for configuration and prompt customization.
+        after_long_help = r#"See [LLM-generated commit messages](/llm-commits/) for configuration and prompt customization. Without a `[commit.generation]` command configured, the commit still happens — the message is built from the staged file names instead (`Changes to README.md`).
+
+## Operating on another worktree
+
+`--branch` commits in another worktree's branch without leaving the current one:
+
+```console
+$ wt step commit --branch feature
+```
+
+The branch must have a checked-out worktree. `--branch` re-roots the whole command: staging, hooks, and the commit all happen there. It has no effect on `--dry-run`, which always previews the current worktree.
+
+## Hooks
+
+`pre-commit` hooks run before the commit and abort it on failure; `post-commit` hooks run after it, in the background with their output logged. `--no-hooks` skips both. See [`wt hook`](/hook/).
 
 ## Options
 
@@ -111,7 +125,11 @@ Three sections are printed: the rendered prompt, the shell command that would in
     ///
     /// Stages changes and generates message with LLM.
     #[command(
-        after_long_help = r#"See [LLM-generated commit messages](/llm-commits/) for configuration and prompt customization.
+        after_long_help = r#"See [LLM-generated commit messages](/llm-commits/) for configuration and prompt customization. Without a `[commit.generation]` command configured, the squash still happens — the message lists the squashed commits' subjects under `Squash commits from <branch>` instead.
+
+## Hooks
+
+`pre-commit` hooks run before the squash commit and abort it on failure; `post-commit` hooks run after it, in the background with their output logged. `--no-hooks` skips both. See [`wt hook`](/hook/).
 
 ## Options
 
@@ -313,6 +331,17 @@ Add to the project config:
 copy = "wt step copy-ignored"
 ```
 
+## Choosing source and destination
+
+By default the copy runs from the primary worktree into the current one — what a `post-start` hook needs, since the new worktree is where the hook runs. `--from` and `--to` name either end by branch, so a copy can run between two worktrees from anywhere:
+
+```console
+$ wt step copy-ignored --from main --to feature   # between two named worktrees
+$ wt step copy-ignored --from feature             # from feature into the current worktree
+```
+
+A branch named by `--from` or `--to` must have a worktree.
+
 ## What gets copied
 
 All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`), tool-state (`.conductor/`, `.entire/`, `.worktrees/`), and nested worktrees. Tracked files are never touched. Discovery handles nested `.gitignore` files, global excludes, and `.git/info/exclude`. Existing files in the destination are skipped, so re-running is safe; `--force` overwrites them.
@@ -399,7 +428,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
     CopyIgnored {
         /// Source worktree branch
         ///
-        /// Defaults to main worktree.
+        /// Defaults to primary worktree.
         #[arg(long, add = crate::completion::worktree_only_completer(), value_parser = crate::cli::non_empty_branch)]
         from: Option<String>,
 
@@ -463,19 +492,21 @@ $ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
-List the available template variables with `-v` (alongside the expansion, on stderr):
+List the available template variables with `-v` (alongside the expansion, on stderr). The real block prints every variable in scope; this one is abridged:
 
 ```console
 $ wt step eval -v '{{ branch }}'
 ○ eval template variables:
-  branch        = feature/auth-oauth2
-  worktree_path = /home/user/projects/myapp-feature-auth-oauth2
+  branch                = feature/auth
+  worktree_path         = /home/user/code/myproject.feature-auth
+  …
+  cwd                   = /home/user/code/myproject.feature-auth
 ○ eval source
   {{ branch }}
 ○ eval result
-  feature/auth-oauth2
+  feature/auth
 
-feature/auth-oauth2
+feature/auth
 ```
 "#
     )]
@@ -601,7 +632,7 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
         format: crate::cli::SwitchFormat,
     },
 
-    /// Remove worktrees merged into the default branch
+    /// Remove worktrees and branches merged into the default branch
     #[command(
         after_long_help = r#"Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
@@ -611,7 +642,7 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 ## Min-age guard
 
-Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+Worktrees and branches younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```console
 $ wt step prune --min-age=0s     # no age guard
@@ -642,7 +673,7 @@ $ wt step prune
         #[arg(long)]
         dry_run: bool,
 
-        /// Skip worktrees younger than this
+        /// Skip worktrees and branches younger than this
         #[arg(long, default_value = "1d")]
         min_age: String,
 

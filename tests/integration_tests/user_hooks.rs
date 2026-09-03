@@ -2373,6 +2373,116 @@ bar = "echo ran > project_bar.txt"
     );
 }
 
+/// A bare source filter (`user:` / `project:`) asks for every hook from one
+/// source, so it runs them all without naming any.
+#[rstest]
+fn test_hook_bare_source_filter_runs_that_source(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-merge]
+fmt = "echo ran > user_fmt.txt"
+lint = "echo ran > user_lint.txt"
+"#,
+    );
+    repo.write_project_config(r#"pre-merge = "echo ran > project.txt""#);
+    repo.commit("Add pre-merge hooks");
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-merge", "user:", "--yes"])
+        .output()
+        .expect("Failed to run wt hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt hook pre-merge user: failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        repo.root_path().join("user_fmt.txt").exists()
+            && repo.root_path().join("user_lint.txt").exists(),
+        "user: should run every user hook"
+    );
+    assert!(
+        !repo.root_path().join("project.txt").exists(),
+        "user: must not reach the project hook"
+    );
+}
+
+/// A bare source filter that matches nothing means the source configures no
+/// hooks of this type — there is no name to have misspelled, so the error says
+/// so and points at the invocation that works.
+#[rstest]
+fn test_hook_bare_source_filter_reports_unconfigured_source(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo TEST"
+lint = "echo LINT"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    assert_cmd_snapshot!(
+        "hook_bare_user_filter_without_user_hooks",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "user:", "--yes"], None)
+    );
+}
+
+/// A filter list that also names a command is answered about that name, not
+/// about a source. `user:` alone would report the unconfigured source, but
+/// alongside `project:nope` that answer would leave `nope` unmentioned and
+/// offer an invocation the user didn't ask for — so the mixed list falls
+/// through to `HookCommandNotFound`, which lists what the named scopes hold.
+#[rstest]
+fn test_hook_mixed_source_and_name_filter_reports_the_name(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo TEST"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    assert_cmd_snapshot!(
+        "hook_mixed_filter_falls_through_to_name_error",
+        make_snapshot_cmd(
+            &repo,
+            "hook",
+            &["pre-merge", "user:", "project:nope", "--yes"],
+            None
+        )
+    );
+}
+
+/// The mirror of the above: `project:` against a repo whose hooks are all in
+/// user config.
+#[rstest]
+fn test_hook_bare_project_filter_reports_unconfigured_source(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-merge]
+fmt = "echo FMT"
+"#,
+    );
+
+    assert_cmd_snapshot!(
+        "hook_bare_project_filter_without_project_hooks",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "project:", "--yes"], None)
+    );
+}
+
+/// With neither source configuring the hook type, there is no working
+/// invocation to suggest — an empty `[pre-merge]` table is a project config
+/// that exists but contributes no commands, so this misses without the
+/// "no hooks configured at all" early exit taking over.
+#[rstest]
+fn test_hook_bare_source_filter_omits_hint_when_neither_source_configured(repo: TestRepo) {
+    repo.write_project_config("[pre-merge]\n");
+    repo.commit("Add empty pre-merge table");
+
+    assert_cmd_snapshot!(
+        "hook_bare_project_filter_no_hooks_anywhere",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "project:", "--yes"], None)
+    );
+}
+
 #[rstest]
 fn test_hook_multiple_name_filters_none_match(repo: TestRepo) {
     // Write project config with named hooks

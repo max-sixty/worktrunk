@@ -141,6 +141,7 @@ pub(crate) fn prepare_and_check(
     // under a non-empty filter means nothing matched.
     if !name_filters.is_empty() && result.is_empty() {
         return Err(no_matching_commands_error(
+            hook_type,
             name_filters,
             user_config,
             project_config,
@@ -180,9 +181,17 @@ fn filter_step_by_name(
     }
 }
 
-/// Build the error for a name filter that matched no commands, listing the
-/// available command names across the filters' source scopes.
+/// Build the error for a filter that matched no commands.
+///
+/// A bare source filter (`user:` / `project:`) asks for every hook from one
+/// source rather than naming a command, so a miss means that source
+/// configures no hooks of this type — there is no name to have misspelled.
+/// That gets [`worktrunk::git::GitError::HookSourceNotConfigured`], pointing
+/// at the other source; a filter that did name a command gets
+/// [`worktrunk::git::GitError::HookCommandNotFound`], listing the available
+/// names across the filters' source scopes.
 fn no_matching_commands_error(
+    hook_type: HookType,
     name_filters: &[String],
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
@@ -194,6 +203,41 @@ fn no_matching_commands_error(
         .iter()
         .map(|f| ParsedFilter::parse(f))
         .collect();
+
+    let configured = |source: HookSource| {
+        let config = match source {
+            HookSource::User => user_config,
+            HookSource::Project => project_config,
+        };
+        config.is_some_and(|c| c.commands().next().is_some())
+    };
+    // Only when every filter is a bare source. A list that also names a
+    // command asked about that name, and answering about a source instead
+    // would leave the name unmentioned and offer an invocation nobody typed —
+    // so a mixed list falls through to `HookCommandNotFound`, which lists what
+    // is available across the scopes the filters named.
+    let all_bare = parsed_filters.iter().all(|f| f.name.is_empty());
+    if let Some(source) = all_bare
+        .then(|| {
+            parsed_filters
+                .iter()
+                .filter_map(|f| f.source)
+                .find(|source| !configured(*source))
+        })
+        .flatten()
+    {
+        let other = match source {
+            HookSource::User => HookSource::Project,
+            HookSource::Project => HookSource::User,
+        };
+        return worktrunk::git::GitError::HookSourceNotConfigured {
+            source: source.to_string(),
+            hook_type,
+            other_source: configured(other).then(|| other.to_string()),
+        }
+        .into();
+    }
+
     let mut available = Vec::new();
 
     let sources = [

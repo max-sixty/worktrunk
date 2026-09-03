@@ -352,9 +352,10 @@ pub fn handle_hook_show(
 
     let repo = Repository::current().context("Failed to show hooks")?;
     let config: &UserConfig = repo.user_config();
-    let project_config: Option<&ProjectConfig> = repo
-        .project_config()
-        .context("Failed to load project config")?;
+    // No `.context()`: `project_config()` already wraps the load failure with
+    // exactly that header, and a second copy renders as a header restating
+    // its own gutter.
+    let project_config: Option<&ProjectConfig> = repo.project_config()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
