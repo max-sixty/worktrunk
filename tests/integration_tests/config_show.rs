@@ -555,8 +555,8 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 /// panics with exit 101 instead of erroring. A release build still prints the
 /// parse detail in the gutter — what it loses is the header, which becomes a
 /// bare `✗ Command failed` naming neither the config nor the file.
-/// `.context("Failed to load config")` — what 7 of the 22 propagating
-/// `UserConfig::load()` call sites already did, and all 13 do after this —
+/// `.context("Failed to load config")` — what 7 of the 22 `UserConfig::load()`
+/// call sites already did, and what all 13 propagating ones do after this —
 /// gives the renderer that header back.
 ///
 /// One case per fixed call site, because the `debug_assert!` only fires on a
@@ -570,6 +570,7 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
 #[case::step_eval(&["step", "eval", "{{ branch }}"])]
 #[case::step_for_each(&["step", "for-each", "--", "true"])]
+#[case::config_show_full(&["config", "show", "--full"])]
 fn test_unparsable_user_config_errors_legibly(
     repo: TestRepo,
     temp_home: TempDir,
@@ -583,6 +584,10 @@ fn test_unparsable_user_config_errors_legibly(
     cmd.args(args).current_dir(repo.root_path());
     set_temp_home_env(&mut cmd, temp_home.path());
     set_xdg_config_path(&mut cmd, temp_home.path());
+    // `config show --full` reaches its `UserConfig::load()` after the version
+    // check, so inject the version the way the other `--full` tests do rather
+    // than letting the case call GitHub. The other cases ignore it.
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
 
     let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
