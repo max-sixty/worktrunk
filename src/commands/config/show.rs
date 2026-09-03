@@ -102,9 +102,8 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
-        Some(serde_json::to_value(
-            &UserConfig::load().context("Failed to load config")?,
-        )?)
+        let config = UserConfig::load().context("Failed to load config")?;
+        Some(serde_json::to_value(&config)?)
     } else {
         None
     };
