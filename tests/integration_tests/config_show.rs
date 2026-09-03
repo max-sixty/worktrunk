@@ -3,6 +3,7 @@ use crate::common::{
     setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
     temp_home, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -2999,6 +3000,68 @@ approved-commands = ["npm install", "npm test"]
     assert!(
         approvals.contains("npm install") && approvals.contains("npm test"),
         "approvals.toml should carry both commands: {approvals}"
+    );
+}
+
+/// A deprecated section carrying a key its replacement has no field for must
+/// not have that key relocated: `[switch.picker]` has only `pager`, so a
+/// `[select] height` written into it would warn as an unknown field on every
+/// later command, for a key the user never typed and no `wt config update` can
+/// clear. The migration drops it and says so instead, leaving a config that
+/// loads clean.
+#[rstest]
+fn test_config_update_drops_keys_the_replacement_cannot_hold(repo: TestRepo, temp_home: TempDir) {
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        r#"[select]
+pager = "delta"
+height = "50%"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        output.status.success(),
+        "config update should succeed: {stderr}"
+    );
+    assert!(
+        stderr.contains("[select] height is no longer supported"),
+        "the unsupported key must be reported: {stderr}"
+    );
+
+    let migrated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        migrated.contains("[switch.picker]") && migrated.contains(r#"pager = "delta""#),
+        "the supported key should migrate: {migrated}"
+    );
+    assert!(
+        !migrated.contains("height"),
+        "the unsupported key should be dropped, not relocated: {migrated}"
+    );
+
+    // The loop closes: the rewritten config warns about nothing.
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "wt list should succeed: {stderr}");
+    assert!(
+        !stderr.contains("unknown field"),
+        "updated config must not warn on load: {stderr}"
     );
 }
 
