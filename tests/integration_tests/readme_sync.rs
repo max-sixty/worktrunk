@@ -123,14 +123,46 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Regex to convert site-root documentation links to full URLs.
-/// Matches: [text](/page/) or [text](/page/#anchor).
+/// Matches: [text](/page/), [text](/page/#anchor), and the page-less forms
+/// [text](/) and [text](/#anchor) that name the site root.
+///
+/// The page segment is optional because the home page is served at `/`:
+/// `docs/src/pages/index.astro` renders `worktrunk.md` there, and that page
+/// declares `/` canonical while marking its own `/worktrunk/` route
+/// `noindex`. Without this alternative the only spelling the rewrite accepted
+/// was the deindexed duplicate.
+///
+/// A page segment still requires its trailing slash, so `](/page)` matches
+/// nothing here and trips [`assert_no_untransformed_site_links`] rather than
+/// being silently rewritten.
 ///
 /// Link text tolerates `]` characters when they appear inside a backticked
 /// code span (e.g. `[[block]]`), alternating "a `...` code span" with "any
 /// non-`]`-non-backtick char". Bare backticks are forbidden so the regex
 /// can't bridge across two unrelated code spans on the same line.
 static SITE_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/([^)/]+)/(#[^)]*)?\)").unwrap());
+    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/(?:([^)/]+)/)?(#[^)]*)?\)").unwrap());
+
+/// Rewrite every site-root link in `content` to its absolute `worktrunk.dev`
+/// URL.
+///
+/// Shared by the two surfaces that need it — the GitHub-rendered copies and
+/// the installed skill files — so the page-optional shape above is honored in
+/// one place rather than in two closures that can drift.
+fn rewrite_site_links(content: &str) -> String {
+    SITE_LINK_PATTERN
+        .replace_all(content, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str();
+            // Absent for a link to the site root; the trailing slash rides
+            // with the segment so `/#anchor` doesn't become `//#anchor`.
+            let page = caps
+                .get(2)
+                .map_or(String::new(), |m| format!("{}/", m.as_str()));
+            let anchor = caps.get(3).map_or("", |m| m.as_str());
+            format!("[{text}](https://worktrunk.dev/{page}{anchor})")
+        })
+        .into_owned()
+}
 
 /// Guardrail for root-relative or legacy Zola links on generated non-site surfaces.
 static UNTRANSFORMED_SITE_LINK_PATTERN: LazyLock<Regex> =
@@ -947,14 +979,7 @@ fn heading_to_anchor(heading: &str) -> String {
 /// - AUTO-GENERATED marker comments → removed, leaving their Markdown body
 fn transform_docs_to_github(content: &str) -> String {
     // Transform internal links
-    let content = SITE_LINK_PATTERN
-        .replace_all(content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
-        .into_owned();
+    let content = rewrite_site_links(content);
     let content = AUTO_GENERATED_MARKER_PATTERN
         .replace_all(&content, "")
         .into_owned();
@@ -1248,6 +1273,36 @@ fn test_untransformed_site_link_fails_the_config_transform() {
 #[should_panic(expected = "legacy syntax")]
 fn test_legacy_zola_link_fails_the_guardrail() {
     assert_no_untransformed_site_links("See [hooks](@/hook.md)", "test content");
+}
+
+/// A link naming the site root carries no page segment. Both generated
+/// surfaces have to rewrite it, or the only spelling the docs can use is
+/// `/worktrunk/` — the route the home page itself marks `noindex` with a
+/// canonical pointing back at `/`.
+///
+/// `](/page)` (a page segment without its trailing slash) stays unmatched, so
+/// the guardrail keeps catching it instead of the widened pattern quietly
+/// absorbing it.
+#[test]
+fn test_site_root_links_rewrite_to_the_canonical_url() {
+    assert_eq!(
+        rewrite_site_links("See [installation](/#install) and [hooks](/hook/#types)."),
+        "See [installation](https://worktrunk.dev/#install) and \
+         [hooks](https://worktrunk.dev/hook/#types)."
+    );
+    assert_eq!(
+        rewrite_site_links("[Worktrunk](/) is a CLI."),
+        "[Worktrunk](https://worktrunk.dev/) is a CLI."
+    );
+    // Both surfaces, since each applies the rewrite on its own path.
+    assert!(
+        transform_docs_to_github("[install](/#install)").contains("https://worktrunk.dev/#install")
+    );
+    assert!(
+        finalize_skill_content("[install](/#install)").contains("https://worktrunk.dev/#install")
+    );
+    // Unchanged: a slash-less page segment is still not a site link.
+    assert_eq!(rewrite_site_links("[hooks](/hook)"), "[hooks](/hook)");
 }
 
 /// Extract a config section from src/cli/mod.rs by marker pattern.
@@ -2093,14 +2148,7 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
 /// Apply final transforms shared between command and non-command skill files:
 /// Site-root links → full URLs, remove "See also", and collapse blank lines.
 fn finalize_skill_content(content: &str) -> String {
-    let content = SITE_LINK_PATTERN
-        .replace_all(content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
-        .into_owned();
+    let content = rewrite_site_links(content);
 
     // Installed skills don't have the site's root URL as a resolution base.
     assert_no_untransformed_site_links(&content, "skill content");

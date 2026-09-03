@@ -256,7 +256,7 @@ Clear with `wt config state logs clear`.
 
 ## Does Worktrunk work on Windows?
 
-Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](/worktrunk/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
+Yes. Core commands, shell integration, and tab completion work in both Git Bash and PowerShell. See [installation](/#install) for setup details, including avoiding the Windows Terminal `wt` conflict.
 
 **Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
