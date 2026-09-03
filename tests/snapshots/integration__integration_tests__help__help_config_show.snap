@@ -82,10 +82,10 @@ Shows the location and contents of system config, user config
 Every section names its path whether or not the file exists.
 
 Alongside each file, [2mconfig show[0m reports what [2mwt[0m would take issue with:
-unparseable TOML, keys in the wrong file, deprecated settings, a [2m[list][0m
-columns[2m name no column answers to, and project commands still awaiting[0m
-approval. It exits non-zero when a config is invalid, so a health check can
-branch on it; warnings alone leave the exit code at 0.
+unparsable TOML, keys in the wrong file, deprecated settings, a name in
+[2m[list] columns[0m that no column answers to, and project commands still
+awaiting approval. It exits non-zero when a config is invalid, so a health
+check can branch on it; warnings alone leave the exit code at 0.
 
 An [2mEFFECTIVE[0m section then gives the value every scalar setting resolves to
 once all the layers apply — [2m--config-set[0m, [2mWORKTRUNK_*[0m, the matching

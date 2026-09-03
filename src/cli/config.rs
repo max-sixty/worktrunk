@@ -514,10 +514,10 @@ pub enum ConfigCommand {
 Every section names its path whether or not the file exists.
 
 Alongside each file, `config show` reports what `wt` would take issue with:
-unparsable TOML, keys in the wrong file, deprecated settings, a `[list]
-columns` name no column answers to, and project commands still awaiting
-approval. It exits non-zero when a config is invalid, so a health check can
-branch on it; warnings alone leave the exit code at 0.
+unparsable TOML, keys in the wrong file, deprecated settings, a name in
+`[list] columns` that no column answers to, and project commands still
+awaiting approval. It exits non-zero when a config is invalid, so a health
+check can branch on it; warnings alone leave the exit code at 0.
 
 An `EFFECTIVE` section then gives the value every scalar setting resolves to
 once all the layers apply — `--config-set`, `WORKTRUNK_*`, the matching
