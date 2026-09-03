@@ -2427,6 +2427,31 @@ lint = "echo LINT"
     );
 }
 
+/// A filter list that also names a command is answered about that name, not
+/// about a source. `user:` alone would report the unconfigured source, but
+/// alongside `project:nope` that answer would leave `nope` unmentioned and
+/// offer an invocation the user didn't ask for — so the mixed list falls
+/// through to `HookCommandNotFound`, which lists what the named scopes hold.
+#[rstest]
+fn test_hook_mixed_source_and_name_filter_reports_the_name(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo TEST"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    assert_cmd_snapshot!(
+        "hook_mixed_filter_falls_through_to_name_error",
+        make_snapshot_cmd(
+            &repo,
+            "hook",
+            &["pre-merge", "user:", "project:nope", "--yes"],
+            None
+        )
+    );
+}
+
 /// The mirror of the above: `project:` against a repo whose hooks are all in
 /// user config.
 #[rstest]
