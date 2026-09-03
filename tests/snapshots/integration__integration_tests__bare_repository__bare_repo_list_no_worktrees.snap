@@ -50,4 +50,4 @@ exit_code: 0
 
 ----- stderr -----
 ○ No worktrees
-↳ To create a worktree, run wt switch --create <branch>
+↳ To see the branches, run wt list --branches; to check one out, run wt switch <branch>

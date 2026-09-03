@@ -1323,12 +1323,16 @@ pub fn collect(
     if all_items.is_empty() {
         if render_table {
             eprintln!("{}", info_message("No worktrees"));
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "To create a worktree, run <underline>wt switch --create <<branch>></>"
-                ))
-            );
+            // A `git clone --bare` reaches this with its branches intact, and
+            // `--create` on one of those errors; point at what the repo has.
+            let hint = if repo.local_branches()?.is_empty() {
+                cformat!("To create a worktree, run <underline>wt switch --create <<branch>></>")
+            } else {
+                cformat!(
+                    "To see the branches, run <underline>wt list --branches</>; to check one out, run <underline>wt switch <<branch>></>"
+                )
+            };
+            eprintln!("{}", hint_message(hint));
         }
         return Ok(Some(super::model::ListData {
             items: Vec::new(),
