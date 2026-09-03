@@ -551,18 +551,25 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 /// the header plus the TOML parser's caret diagram — flattened into a
 /// `ConfigError` string. Propagated bare with `?`, it reaches anyhow with no
 /// context and no cause chain, which is the one shape `main.rs`'s renderer
-/// has no arm for: it trips that function's `debug_assert!` (so a debug build
-/// panics with exit 101 instead of erroring) and degrades to a contentless
-/// `✗ Command failed` in release. `.context("Failed to load config")` — what
-/// the other two thirds of the `UserConfig::load()` call sites already do —
-/// gives the renderer its header and puts the parse detail in the gutter.
+/// has no arm for: it trips that function's `debug_assert!`, so a debug build
+/// panics with exit 101 instead of erroring. A release build still prints the
+/// parse detail in the gutter — what it loses is the header, which becomes a
+/// bare `✗ Command failed` naming neither the config nor the file.
+/// `.context("Failed to load config")` — what 7 of the 22 propagating
+/// `UserConfig::load()` call sites already did, and all 13 do after this —
+/// gives the renderer that header back.
 ///
-/// `config show --format json` is the sharpest of the three: the text form of
-/// the same command renders a full diagnosis of this exact file.
+/// One case per fixed call site, because the `debug_assert!` only fires on a
+/// path something exercises: an uncovered site is one where a future bare `?`
+/// regresses silently. `config show --format json` is the sharpest of them —
+/// the text form of that same command renders a full diagnosis of this exact
+/// file.
 #[rstest]
 #[case::config_show_json(&["config", "show", "--format=json"])]
 #[case::step_prune(&["step", "prune", "--dry-run"])]
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
+#[case::step_eval(&["step", "eval", "{{ branch }}"])]
+#[case::step_for_each(&["step", "for-each", "--", "true"])]
 fn test_unparsable_user_config_errors_legibly(
     repo: TestRepo,
     temp_home: TempDir,
