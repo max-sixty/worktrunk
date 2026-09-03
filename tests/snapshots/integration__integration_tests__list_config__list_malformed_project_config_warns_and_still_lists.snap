@@ -1,11 +1,9 @@
 ---
-source: tests/integration_tests/post_start_commands.rs
+source: tests/integration_tests/list_config.rs
 info:
   program: wt
   args:
-    - switch
-    - "--create"
-    - feature
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -55,15 +53,21 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
+  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m   [1mAge[0m   [1mMessage[0m
+@ main         [36m?[39m [2m^[22m[2m|[22m      [32m+2[0m                              [2m|[0m     .                  [2m05a4a45[0m  [2m16h[0m   [2mInitial commit[0m
++ feature-a      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-a  [2m1b87d47[0m  [2m16h[0m   [2mAdd feature-a file[0m
++ feature-b      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-b  [2mf62940f[0m  [2m16h[0m   [2mAdd feature-b file[0m
++ feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c9[0m  [2m16h[0m   [2mAdd feature-c file[0m
 
 ----- stderr -----
-[31m✗[39m [31mFailed to load project config[39m
-[107m [0m Project config @ _REPO_/.config/wt.toml failed to parse:
-[107m [0m TOML parse error at line 1, column 28
+[33m▲[39m [33mProject config @ [1m_REPO_/.config/wt.toml[22m failed to parse, skipping[39m
+[107m [0m TOML parse error at line 1, column 11
 [107m [0m   |
-[107m [0m 1 | pre-start = [invalid syntax
-[107m [0m   |                            ^
-[107m [0m unclosed array, expected `]`
+[107m [0m 1 | [pre-merge
+[107m [0m   |           ^
+[107m [0m unclosed table, expected `]`
+
+[2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead[0m

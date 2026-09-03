@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::Context;
 use color_print::cformat;
 
-use crate::config::ProjectConfig;
+use crate::config::{LoadError, ProjectConfig};
 
 use crate::git::CommandError;
 use crate::path::format_path_for_display;
@@ -998,6 +998,37 @@ impl Repository {
                 Err(_) => Ok(None), // Not in a worktree, no project config
             })
             .map(Option::as_ref)
+    }
+
+    /// Report an unloadable project config as a warning instead of an error.
+    ///
+    /// Every command that *runs* project config — `wt switch`, `wt merge`,
+    /// `wt hook` — fails hard on a `.config/wt.toml` that doesn't parse:
+    /// acting on a half-read hook list is worse than stopping. `wt list` only
+    /// decorates with it (`[list] url`, `[forge] platform`, both reached
+    /// through accessors that already degrade to `None`), so the file would
+    /// otherwise leave no trace at all on the command people run most, and a
+    /// broken config could sit there indefinitely.
+    ///
+    /// The warning is the one the user-config layer already emits for the
+    /// same condition (`▲ User config @ … failed to parse, skipping`), through
+    /// the shared `emit_config_load_warning`. A failure with no file/parse
+    /// split to render — an unreadable file, a path that can't be resolved —
+    /// warns with its own message instead.
+    pub fn warn_if_project_config_unloadable(&self) {
+        let Err(err) = self.project_config() else {
+            return;
+        };
+        match err
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<LoadError>())
+        {
+            Some(load_error) => super::emit_config_load_warning(load_error),
+            None => crate::styling::eprintln!(
+                "{}",
+                crate::styling::warning_message(format!("{}, skipping", err.root_cause()))
+            ),
+        }
     }
 }
 

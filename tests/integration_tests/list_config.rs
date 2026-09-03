@@ -338,6 +338,61 @@ branches = "not-a-bool"
     });
 }
 
+/// A project config that doesn't parse must warn on stderr and still list.
+///
+/// `wt switch` and `wt hook` fail hard on the same file, but `wt list` reads
+/// project config only for decoration (`[list] url`, `[forge] platform`)
+/// through accessors that shrug the error off — so before this warning a
+/// broken `.config/wt.toml` left no trace on the command run most often, and
+/// could sit there indefinitely.
+///
+/// The snapshot pins the whole contract: the `▲` warning naming the file in
+/// the same shape the user-config layer uses, the parser's own output in a
+/// gutter, exit 0, and the table on stdout below it.
+#[rstest]
+fn test_list_malformed_project_config_warns_and_still_lists(repo: TestRepo) {
+    // Unclosed table header — the file cannot be parsed at all, so no part of
+    // it survives into the listing.
+    repo.write_project_config("[pre-merge\ntest = \"echo hi\"\n");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Every project-config load failure degrades the listing, not only a parse
+/// error. A file that can't be read has no parser output to quote, so it warns
+/// with the message that names it instead of a header-plus-gutter pair.
+///
+/// Asserted rather than snapshotted: the OS's wording for "that's a directory"
+/// differs across the platforms the suite runs on.
+#[rstest]
+fn test_list_unreadable_project_config_warns_and_still_lists(repo: TestRepo) {
+    // A directory where the file belongs: the path exists, the read fails.
+    fs::create_dir_all(repo.root_path().join(".config").join("wt.toml")).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "list must still succeed: {stderr}");
+    assert!(
+        stderr.contains('▲') && stderr.contains("Failed to read") && stderr.contains("skipping"),
+        "expected a warning naming the unreadable file, got: {stderr}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("main"),
+        "table should still render"
+    );
+}
+
 /// When a WORKTRUNK_* env var override fails (e.g. a string value for a typed
 /// field), the warning must blame env vars — not the config file — and list
 /// the override vars currently set.

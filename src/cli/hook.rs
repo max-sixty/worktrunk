@@ -89,7 +89,7 @@ fn hook_show_possible_values() -> Vec<clap::builder::PossibleValue> {
 pub enum HookCommand {
     /// Show configured hooks
     ///
-    /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
+    /// Lists user and project hooks. Project hooks show approval status (`❯` = requires approval).
     Show {
         /// Hook type to show (default: all)
         #[arg(value_parser = PossibleValuesParser::new(hook_show_possible_values()))]

@@ -90,6 +90,7 @@ use anyhow::Context;
 use shared_child::SharedChild;
 
 use crate::git::{GitError, WorktrunkError};
+use crate::styling::eprintln;
 use crate::sync::Semaphore;
 use crate::trace::CommandTrace;
 
@@ -1200,8 +1201,7 @@ fn spawn_delayed_reader<R: Read + Send + 'static>(
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
             if streaming.load(Ordering::Relaxed) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
-                let _ = std::io::stderr().flush();
+                eprintln!("{}", line);
             } else {
                 buffer.lock().unwrap().push(line);
             }
@@ -2059,7 +2059,15 @@ impl Cmd {
     /// to never switch to streaming (always buffer); `0` streams immediately.
     ///
     /// `progress_message`, when set, prints to stderr at the moment streaming
-    /// starts.
+    /// starts. It arrives pre-rendered with its ANSI already in it, so — like
+    /// every relayed line — it goes out through [`crate::styling`]'s
+    /// `eprintln!` rather than a raw handle: anstream is the only thing that
+    /// strips those escapes when stderr is redirected and honors `NO_COLOR`,
+    /// and a single raw write here is enough to make one line of a log
+    /// disagree with the rest. No `flush()` follows, and none did any work
+    /// before: `AutoStream<Stderr>` writes through a locked `std::io::Stderr`,
+    /// which is unbuffered. anstream's macro does not flush either, so a
+    /// buffered stream would still need one.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2160,12 +2168,11 @@ impl Cmd {
             // Delay threshold exceeded — switch to streaming.
             streaming.store(true, Ordering::Relaxed);
             if let Some(ref msg) = progress_message {
-                let _ = writeln!(std::io::stderr(), "{}", msg);
+                eprintln!("{}", msg);
             }
             for line in buffer.lock().unwrap().drain(..) {
-                let _ = writeln!(std::io::stderr(), "{}", line);
+                eprintln!("{}", line);
             }
-            let _ = std::io::stderr().flush();
         }
 
         // Phase 2: Block until the child exits (no polling).
@@ -2891,6 +2898,43 @@ mod tests {
         assert_eq!(
             stream_err.output, "",
             "output written after the switch must stream, not buffer"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_delayed_stream_flushes_what_it_buffered() {
+        // Output written *before* the threshold is buffered, and the switch to
+        // streaming drains that buffer to stderr before phase 2 begins. This
+        // ordering is what reaches the drain loop:
+        // `test_cmd_delayed_stream_crosses_the_threshold` writes after the
+        // switch, so its line streams from the reader thread and the buffer
+        // stays empty throughout.
+        //
+        // The error's `output` is empty either way — the reader relays a line
+        // it picks up after the switch, and the drain empties one it picked up
+        // before — so the assertion pins the switch, not the drain itself. A
+        // unit test cannot capture stderr, so the window is the only lever on
+        // which of the two runs; the integration test next door
+        // (`test_delayed_stream_progress_strips_ansi_when_piped`) is what
+        // asserts on the relayed text.
+        //
+        // The threshold is the whole window the reader has to get `early` into
+        // the buffer: spawning `sh` and reading its first line has to land
+        // inside it, or the switch goes first and the drain runs over nothing.
+        // 250 ms absorbs a slow spawn on a loaded runner, and the child's
+        // 500 ms still outlasts the threshold by the same margin.
+        let err = Cmd::new("sh")
+            .args(["-c", "echo early 1>&2; sleep 0.5; exit 3"])
+            .delayed_stream(250, None)
+            .unwrap_err();
+        let stream_err = err
+            .downcast_ref::<StreamCommandError>()
+            .expect("non-zero delayed_stream exit should be a StreamCommandError");
+        assert_eq!(stream_err.exit_info, "exit code 3");
+        assert_eq!(
+            stream_err.output, "",
+            "output buffered before the switch must be drained to stderr, not reported"
         );
     }
 
