@@ -2008,7 +2008,7 @@ Controls where new worktrees are created.
 **Available template variables:**
 
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
-- `{{ repo }}` — repository directory name (e.g., `myproject`); also spelled `{{ main_worktree }}`
+- `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
 - `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)

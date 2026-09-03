@@ -87,12 +87,14 @@ unparsable TOML, keys in the wrong file, deprecated settings, a name in
 awaiting approval. It exits non-zero when a config is invalid, so a health
 check can branch on it; warnings alone leave the exit code at 0.
 
-An [2mEFFECTIVE[0m section then gives the value every scalar setting resolves to
+An [2mEFFECTIVE[0m section then gives the value each setting it covers resolves to
 once all the layers apply — [2m--config-set[0m, [2mWORKTRUNK_*[0m, the matching
 [2m[projects][0m entries, the global keys, system config — including the ones no
-file sets. Arrays and tables ([2m[list] columns[0m, hooks, aliases) accumulate
-across layers instead of replacing, so the file dumps above already show every
-contribution and the section leaves them out.
+file sets. It covers the scalars, less the [2m[commit.generation][0m prompt
+templates and the two first-run prompt flags. Arrays and tables
+([2m[list] columns[0m, hooks, aliases) accumulate across layers instead of
+replacing, so the file dumps above already show every contribution and the
+section leaves them out.
 
 [1m[32mFull diagnostics[0m
 

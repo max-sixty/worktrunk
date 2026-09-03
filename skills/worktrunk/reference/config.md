@@ -97,7 +97,7 @@ Controls where new worktrees are created.
 **Available template variables:**
 
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
-- `{{ repo }}` — repository directory name (e.g., `myproject`); also spelled `{{ main_worktree }}`
+- `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
 - `{{ remote_repo }}` — repository name in the primary remote URL, without `.git` (e.g., `myproject`); differs from `{{ repo }}`, the directory on disk, when a clone was renamed
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
@@ -839,12 +839,14 @@ unparsable TOML, keys in the wrong file, deprecated settings, a name in
 awaiting approval. It exits non-zero when a config is invalid, so a health
 check can branch on it; warnings alone leave the exit code at 0.
 
-An `EFFECTIVE` section then gives the value every scalar setting resolves to
+An `EFFECTIVE` section then gives the value each setting it covers resolves to
 once all the layers apply — `--config-set`, `WORKTRUNK_*`, the matching
 `[projects]` entries, the global keys, system config — including the ones no
-file sets. Arrays and tables (`[list] columns`, hooks, aliases) accumulate
-across layers instead of replacing, so the file dumps above already show every
-contribution and the section leaves them out.
+file sets. It covers the scalars, less the `[commit.generation]` prompt
+templates and the two first-run prompt flags. Arrays and tables
+(`[list] columns`, hooks, aliases) accumulate across layers instead of
+replacing, so the file dumps above already show every contribution and the
+section leaves them out.
 
 ### Full diagnostics
 

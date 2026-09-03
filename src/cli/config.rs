@@ -519,12 +519,14 @@ unparsable TOML, keys in the wrong file, deprecated settings, a name in
 awaiting approval. It exits non-zero when a config is invalid, so a health
 check can branch on it; warnings alone leave the exit code at 0.
 
-An `EFFECTIVE` section then gives the value every scalar setting resolves to
+An `EFFECTIVE` section then gives the value each setting it covers resolves to
 once all the layers apply — `--config-set`, `WORKTRUNK_*`, the matching
 `[projects]` entries, the global keys, system config — including the ones no
-file sets. Arrays and tables (`[list] columns`, hooks, aliases) accumulate
-across layers instead of replacing, so the file dumps above already show every
-contribution and the section leaves them out.
+file sets. It covers the scalars, less the `[commit.generation]` prompt
+templates and the two first-run prompt flags. Arrays and tables
+(`[list] columns`, hooks, aliases) accumulate across layers instead of
+replacing, so the file dumps above already show every contribution and the
+section leaves them out.
 
 ## Full diagnostics
 

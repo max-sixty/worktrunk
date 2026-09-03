@@ -741,13 +741,22 @@ fn render_user_config(
     Ok(invalid | render_column_selection(out, repo)?)
 }
 
-/// Report a `[list] columns` selection that `wt list` would reject.
+/// Report a `[list.custom-columns]` definition or a `[list] columns` selection
+/// that `wt list` would reject.
 ///
-/// Column names resolve in the command layer, so config load accepts any
-/// string and the typo only surfaces when `wt list` aborts on it. This asks
-/// the same question of the resolved config — the layer `wt list` reads,
-/// `[projects]` entry and `--config-set` included — and reports it with the
-/// same message, so the diagnostic and the command agree.
+/// Both resolve in the command layer, so config load accepts any string and a
+/// bad width, header, or column name surfaces only when `wt list` aborts on
+/// it. This asks the same questions of the resolved config — the layer
+/// `wt list` reads, `[projects]` entry and `--config-set` included — and
+/// reports them with the same messages, so the diagnostic and the command
+/// agree.
+///
+/// The custom columns resolve first and unconditionally: they append to the
+/// default set, so a broken definition aborts `wt list` whether or not a
+/// `columns` selection names it, and returning early on an empty selection
+/// would leave the default case — no selection at all — unchecked. The
+/// selection is only checked once they resolve, since there is no point
+/// second-guessing a name against a set that failed to build.
 ///
 /// Outside a repository there is nothing to resolve custom columns against
 /// (their headers are valid names too), and `wt list` doesn't run there
@@ -757,19 +766,19 @@ fn render_column_selection(out: &mut String, repo: Option<&Repository>) -> anyho
         return Ok(false);
     };
     let config = repo.config();
-    if config.list.columns.is_empty() {
-        return Ok(false);
-    }
     let custom = match crate::commands::list::custom_columns::resolve_custom_columns(
         &config.list.custom_columns,
         repo,
     ) {
         Ok(custom) => custom,
-        // A broken `[list.custom-columns]` definition is its own error, which
-        // `wt list` reports first; don't second-guess the selection against a
-        // custom-column set that failed to resolve.
-        Err(_) => return Ok(false),
+        Err(e) => {
+            writeln!(out, "{}", error_message(e.to_string()))?;
+            return Ok(true);
+        }
     };
+    if config.list.columns.is_empty() {
+        return Ok(false);
+    }
     let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
     if let Err(e) =
         crate::commands::list::columns::parse_selected_columns(&config.list.columns, &custom_names)
@@ -936,6 +945,7 @@ fn render_project_config(
     // mirrors render_user_config so the two stay interchangeable.
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
     let mut details_shown = false;
+    let mut invalid = false;
     let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
@@ -956,13 +966,18 @@ fn render_project_config(
             }
         }
         Err(err) => {
+            // Same as the user-config arm above: a config the migration layer
+            // can't read is not a sound config, whatever the reason. A parse
+            // failure is caught again by the deserialize below, so today this
+            // only matters for a non-parse failure — but the two sections
+            // should answer "is this sound?" the same way.
+            invalid = true;
             writeln!(out, "{}", error_message(err.to_string()))?;
             false
         }
     };
 
     // Validate config (syntax + schema) and warn if invalid
-    let mut invalid = false;
     if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
@@ -995,14 +1010,27 @@ fn render_project_config(
 /// that merge by hand. This is the answer instead — the same accessors every
 /// command calls, so `--config-set list.full=true` shows up here.
 ///
-/// Every scalar is listed, not just the ones that differ from their default.
-/// A diagnostic is read to find out what value is in force, and a
+/// Every scalar it covers is listed, not just the ones that differ from their
+/// default. A diagnostic is read to find out what value is in force, and a
 /// differs-only list answers that only for someone who already knows the
 /// defaults — while in the common case it would render an empty section that
-/// says nothing at all. Arrays and tables (`[list] columns`,
-/// `[list.custom-columns]`, hooks, aliases) are left to the file dumps: they
-/// accumulate across layers rather than replacing, so the dumps already show
-/// every contribution.
+/// says nothing at all.
+///
+/// Two kinds are left out, both because a resolved value would be worse than
+/// the file dump:
+///
+/// - Arrays and tables (`[list] columns`, `[list.custom-columns]`, hooks,
+///   aliases) accumulate across layers rather than replacing, so the dumps
+///   already show every contribution.
+/// - The `[commit.generation]` prompt templates (`template`,
+///   `squash-template`, `template-append`) and the two first-run prompt flags
+///   (`skip-shell-integration-prompt`, `skip-commit-generation-prompt`).
+///   The templates are multi-line strings that would swamp a one-line-per-row
+///   section, and the flags record whether a prompt has been answered rather
+///   than configuring behavior a reader is diagnosing.
+///
+/// The section's own heading says which settings it covers, so an absent row
+/// can't be read as "nothing sets this".
 fn render_effective_config(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
     let config = repo.config();
     let project = repo.project_identifier().ok();
