@@ -451,10 +451,12 @@ fn styling_imports(contents: &str) -> HashSet<String> {
 /// most of what `src/` does with one: `is_terminal()` and `terminal_size_of()`
 /// query it, `flush()` pushes bytes anstream already wrote, `Stdio::from(…)`
 /// hands the fd to a child, and `AutoStream::auto(…)` is anstream itself. So
-/// the scan looks for the four shapes that write rather than for the handle:
+/// the scan looks for the five shapes that write rather than for the handle:
 /// the destination of a `write!`/`writeln!`, a `.write*` call on it, a
-/// `.lock()` (taken only to write through), and a binding (which writes later,
-/// under another name).
+/// `.lock()` (taken only to write through), a binding (which writes later,
+/// under another name), and a bare handle followed by `,` — a
+/// `write!`/`writeln!` destination whose arguments rustfmt moved onto their
+/// own lines.
 #[test]
 fn check_raw_stderr_writes_go_through_anstream() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -529,9 +531,10 @@ fn check_raw_stderr_writes_in_file(
                 || after.starts_with(".write")
                 // rustfmt puts a long `writeln!`'s arguments on their own
                 // lines, leaving `before` blank on the line the handle sits
-                // on. It is passed by value only to be written through —
-                // nothing in `src/` passes it as an argument for any other
-                // reason.
+                // on. Argument position is not a write by itself — the
+                // docstring names `terminal_size_of(…)` and `Stdio::from(…)`,
+                // both live in `src/` — but each of those fits on one line, so
+                // none of them leaves the handle in front of a `,`.
                 || after.trim_start().starts_with(',');
             if is_write {
                 violations.push(format!(
