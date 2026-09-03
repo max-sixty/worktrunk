@@ -2064,7 +2064,10 @@ impl Cmd {
     /// `eprintln!` rather than a raw handle: anstream is the only thing that
     /// strips those escapes when stderr is redirected and honors `NO_COLOR`,
     /// and a single raw write here is enough to make one line of a log
-    /// disagree with the rest.
+    /// disagree with the rest. No `flush()` follows, and none did any work
+    /// before: `AutoStream<Stderr>` writes through a locked `std::io::Stderr`,
+    /// which is unbuffered. anstream's macro does not flush either, so a
+    /// buffered stream would still need one.
     ///
     /// Like [`Cmd::stream`], this does **not** acquire the concurrency
     /// semaphore: a delayed-stream command runs in the foreground and would
@@ -2908,17 +2911,22 @@ mod tests {
         // switch, so its line streams from the reader thread and the buffer
         // stays empty throughout.
         //
-        // What pins the drain is the error's `output`: `drain(..)` empties the
-        // buffer, so a line that was flushed is no longer in the buffer the
-        // failure reports. Had the switch not happened, `early` would still be
-        // there and would show up here.
+        // The error's `output` is empty either way — the reader relays a line
+        // it picks up after the switch, and the drain empties one it picked up
+        // before — so the assertion pins the switch, not the drain itself. A
+        // unit test cannot capture stderr, so the window is the only lever on
+        // which of the two runs; the integration test next door
+        // (`test_delayed_stream_progress_strips_ansi_when_piped`) is what
+        // asserts on the relayed text.
         //
-        // The child writes immediately and exits 450 ms after the threshold
-        // passes, so the reader has the line buffered long before the 50 ms
-        // wait expires, and the wait expires long before the child exits.
+        // The threshold is the whole window the reader has to get `early` into
+        // the buffer: spawning `sh` and reading its first line has to land
+        // inside it, or the switch goes first and the drain runs over nothing.
+        // 250 ms absorbs a slow spawn on a loaded runner, and the child's
+        // 500 ms still outlasts the threshold by the same margin.
         let err = Cmd::new("sh")
             .args(["-c", "echo early 1>&2; sleep 0.5; exit 3"])
-            .delayed_stream(50, None)
+            .delayed_stream(250, None)
             .unwrap_err();
         let stream_err = err
             .downcast_ref::<StreamCommandError>()

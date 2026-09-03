@@ -526,7 +526,13 @@ fn check_raw_stderr_writes_in_file(
                 // never half of `==`.
                 || (before.trim_end().ends_with('=') && after.trim_start().starts_with(';'))
                 || after.starts_with(".lock()")
-                || after.starts_with(".write");
+                || after.starts_with(".write")
+                // rustfmt puts a long `writeln!`'s arguments on their own
+                // lines, leaving `before` blank on the line the handle sits
+                // on. It is passed by value only to be written through —
+                // nothing in `src/` passes it as an argument for any other
+                // reason.
+                || after.trim_start().starts_with(',');
             if is_write {
                 violations.push(format!(
                     "src/{relative_path}:{}: {}",
