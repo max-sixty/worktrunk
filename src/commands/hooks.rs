@@ -186,10 +186,10 @@ fn filter_step_by_name(
 /// A bare source filter (`user:` / `project:`) asks for every hook from one
 /// source rather than naming a command, so a miss means that source
 /// configures no hooks of this type — there is no name to have misspelled.
-/// That gets [`GitError::HookSourceNotConfigured`], pointing at the other
-/// source; a filter that did name a command gets
-/// [`GitError::HookCommandNotFound`], listing the available names across the
-/// filters' source scopes.
+/// That gets [`worktrunk::git::GitError::HookSourceNotConfigured`], pointing
+/// at the other source; a filter that did name a command gets
+/// [`worktrunk::git::GitError::HookCommandNotFound`], listing the available
+/// names across the filters' source scopes.
 fn no_matching_commands_error(
     hook_type: HookType,
     name_filters: &[String],
