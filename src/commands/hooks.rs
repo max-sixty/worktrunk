@@ -219,13 +219,10 @@ fn no_matching_commands_error(
     let all_bare = parsed_filters.iter().all(|f| f.name.is_empty());
     if let Some(source) = all_bare
         .then(|| {
-            parsed_filters.iter().find_map(|f| match f {
-                ParsedFilter {
-                    source: Some(source),
-                    name: "",
-                } => (!configured(*source)).then_some(*source),
-                _ => None,
-            })
+            parsed_filters
+                .iter()
+                .filter_map(|f| f.source)
+                .find(|source| !configured(*source))
         })
         .flatten()
     {
