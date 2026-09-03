@@ -22,7 +22,7 @@
 //! | 0 | `STAGED`            | `+`                  | Are there staged changes?             |
 //! | 1 | `MODIFIED`          | `!`                  | Are there unstaged modifications?     |
 //! | 2 | `UNTRACKED`         | `?`                  | Are there untracked files?            |
-//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⚑ /`      | Operation / worktree attribute        |
+//! | 3 | `WORKTREE_STATE`    | `✘ ↻ ⊟ ⊞ ⊘ ⚑ /`    | Operation / worktree attribute        |
 //! | 4 | `MAIN_STATE`        | `^ _ ⊂ ✗ – ↕ ↑ ↓`    | Relationship to the default branch    |
 //! | 5 | `UPSTREAM_DIVERGENCE` | \| ⇅ ⇡ ⇣           | Relationship to the tracked remote    |
 //! | 6 | `USER_MARKER`       | emoji / text         | User-defined annotation               |
@@ -55,15 +55,15 @@
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
-//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⚑ /`, priority
-//! `✘ > ↻ > ⊟ > ⊞ > ⚑ > /`. The operation family (`✘↻`) comes from live
+//! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⊘ ⚑ /`, priority
+//! `✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /`. The operation family (`✘↻`) comes from live
 //! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
 //! `⚑` covers both irregular-mapping states — a duplicated branch outranks
 //! an off-template path, and the JSON `worktree.state` names which.
 //!
 //! **Inputs:** `data.has_conflicts`, `data.git_operation`, plus metadata
-//! (`locked`, `prunable`, `duplicate_branch`, `branch_worktree_mismatch`,
-//! `ItemKind::Branch`).
+//! (`locked`, `prunable`, `has_branch`, `duplicate_branch`,
+//! `branch_worktree_mismatch`, `ItemKind::Branch`).
 //!
 //! **Rule — short-circuit on priority:** a higher-priority signal, once known
 //! to be positive, resolves the gate immediately without waiting for
@@ -270,7 +270,7 @@ impl PositionMask {
     pub(crate) const STAGED: usize = 0; // + (staged changes)
     pub(crate) const MODIFIED: usize = 1; // ! (modified files)
     pub(crate) const UNTRACKED: usize = 2; // ? (untracked files)
-    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊟⊞
+    pub(crate) const WORKTREE_STATE: usize = 3; // Worktree: ✘↻/⚑⊘⊟⊞
     pub(crate) const MAIN_STATE: usize = 4; // Main relationship: ^_⊂✗↕↑↓
     pub(crate) const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
     pub(crate) const USER_MARKER: usize = 6;
@@ -377,11 +377,12 @@ impl WorkingTreeStatus {
 /// ## Mutual Exclusivity
 ///
 /// **Worktree state (operations take priority over location):**
-/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⚑ > /
+/// Priority: ✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ↻: A git operation is in progress (rebase, merge, cherry-pick, revert, bisect)
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
+/// - ⊘: Detached HEAD — the worktree is on a commit, not a branch
 /// - ⚑: Irregular branch ⇔ worktree mapping — the branch is checked out in
 ///   more than one worktree, or the path is off-template (informational, dim
 ///   yellow)

@@ -1214,7 +1214,9 @@ fn allocate_columns_with_priority(
         .copied()
         .filter(|kind| !allocated_kinds.contains(kind))
         .collect();
-    hidden_kinds.sort_by_key(|&kind| column_display_index(kind));
+    // Display order, which a `[list] columns` selection defines;
+    // `column_display_index` is only the registry order it falls back to.
+    hidden_kinds.sort_by_key(|&kind| display_sort_key(kind, selected));
     let hidden_columns = hidden_kinds
         .into_iter()
         .map(|kind| match kind {

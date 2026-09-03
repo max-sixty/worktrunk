@@ -156,6 +156,15 @@ impl StyledLine {
     /// trim goes too, so no bare escape pair is left standing around nothing.
     pub fn trim_end(&mut self) {
         while let Some(last) = self.segments.last_mut() {
+            // An empty segment has no trailing space to find, so stopping on
+            // one would leave the padding before it in place. `render_text_cell`
+            // pushes exactly that for an empty cell, which is how a row whose
+            // last column renders empty kept the padding the header line
+            // didn't.
+            if last.text.is_empty() {
+                self.segments.pop();
+                continue;
+            }
             let trimmed = last.text.trim_end_matches(' ');
             if trimmed.len() == last.text.len() {
                 return;
