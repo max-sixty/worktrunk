@@ -916,3 +916,64 @@ fn strip_demo_placeholders(text: &str) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reference with no `Global Options:` heading is returned whole, and
+    /// leaves `kept` alone so the first reference that does carry one still
+    /// keeps it. Every clap-rendered reference has the section today, so this
+    /// is the path that runs if clap renames or drops the heading: the page
+    /// loses nothing rather than being truncated at a heading that isn't there.
+    #[test]
+    fn take_global_options_passes_through_a_reference_without_the_section() {
+        let reference = "Usage: wt list\n\nOptions:\n  -h, --help  Print help\n";
+        let mut kept = false;
+
+        assert_eq!(take_global_options(reference, &mut kept), reference);
+        assert!(!kept, "a reference with no section must not claim the slot");
+    }
+
+    /// The first reference keeps the section; every later one ends before the
+    /// heading. This is what stops a subdoc-assembled page from stacking a
+    /// dozen copies of the same twenty lines.
+    #[test]
+    fn take_global_options_keeps_only_the_first_section() {
+        let reference = "Usage: wt list\n\nGlobal Options:\n  -C <path>  Working directory\n";
+        let mut kept = false;
+
+        assert_eq!(take_global_options(reference, &mut kept), reference);
+        assert!(kept);
+        assert_eq!(
+            take_global_options(reference, &mut kept),
+            "Usage: wt list",
+            "a later reference ends before the heading"
+        );
+    }
+
+    /// The caption is optional: a placeholder without one renders a figure with
+    /// no `<figcaption>` rather than an empty element.
+    #[test]
+    fn demo_placeholder_without_a_caption_renders_no_figcaption() {
+        let expanded = expand_demo_placeholders("<!-- demo: wt-switch.gif 1600x900 -->");
+
+        assert!(
+            !expanded.contains("figcaption"),
+            "no caption means no element: {expanded}"
+        );
+        assert!(expanded.contains("width=\"1600\" height=\"900\""));
+    }
+
+    /// A caption after `|` becomes the figure's `<figcaption>`.
+    #[test]
+    fn demo_placeholder_caption_becomes_a_figcaption() {
+        let expanded =
+            expand_demo_placeholders("<!-- demo: wt-switch.gif | Switching worktrees -->");
+
+        assert!(
+            expanded.contains("<figcaption>Switching worktrees</figcaption>"),
+            "{expanded}"
+        );
+    }
+}
