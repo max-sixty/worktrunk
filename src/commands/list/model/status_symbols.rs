@@ -57,7 +57,7 @@
 //!
 //! **Renders:** at most one of `✘ ↻ ⊟ ⊞ ⊘ ⚑ /`, priority
 //! `✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚑ > /`. The operation family (`✘↻`) comes from live
-//! task data; the attribute family (`⊟⊞⚑/`) is metadata, always known.
+//! task data; the attribute family (`⊟⊞⊘⚑/`) is metadata, always known.
 //! `⚑` covers both irregular-mapping states — a duplicated branch outranks
 //! an off-template path, and the JSON `worktree.state` names which.
 //!
