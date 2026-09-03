@@ -913,15 +913,26 @@ fn drop_unsupported_keys(
         .collect()
 }
 
-/// Migrate `[commit-generation]` → `[commit.generation]` in every scope,
-/// reporting which scopes changed via the kind's payload — the top-level flag
-/// plus per-project keys, each of which emits its own warning line — followed
-/// by one line per key dropped for want of a destination field.
-fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+/// Run a wholesale section move over every scope and report what it did.
+///
+/// This is the contract a wholesale-move rule owes, in one place: record the
+/// rename only for a scope that actually got a replacement section written,
+/// count a drop-only outcome as a change so the document is rewritten, and
+/// emit the rename kind before the per-key drops. A third such rule is a row
+/// and a `migrate_*_table`, not another copy of this.
+///
+/// `kind` is the tuple-variant constructor for the rename ([`DeprecationKind`]
+/// variants coerce to `fn` pointers); the scopes it carries each emit their own
+/// warning line.
+fn migrate_section_doc(
+    doc: &mut toml_edit::DocumentMut,
+    migrate: impl Fn(&mut toml_edit::Table, Option<&str>) -> SectionMigration,
+    kind: fn(ScopedSections) -> DeprecationKind,
+) -> Deprecations {
     let mut renamed = ScopedSections::default();
     let mut dropped = Deprecations::new();
     for_each_config_table_mut(doc, |scope, table| {
-        let outcome = migrate_commit_generation_in(table, scope);
+        let outcome = migrate(table, scope);
         if outcome.moved {
             renamed.record(scope);
         }
@@ -931,33 +942,24 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> Deprecatio
     });
     let mut kinds = Deprecations::new();
     if !renamed.is_empty() {
-        kinds.push(DeprecationKind::CommitGeneration(renamed));
+        kinds.push(kind(renamed));
     }
     kinds.extend(dropped);
     kinds
 }
 
-/// Migrate `[select]` → `[switch.picker]` in every scope, reporting the rename
-/// per scope that got a `[switch.picker]` written, followed by one line per
-/// key removed for want of a destination field.
+/// Migrate `[commit-generation]` → `[commit.generation]` in every scope.
+fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+    migrate_section_doc(
+        doc,
+        migrate_commit_generation_in,
+        DeprecationKind::CommitGeneration,
+    )
+}
+
+/// Migrate `[select]` → `[switch.picker]` in every scope.
 fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
-    let mut renamed = ScopedSections::default();
-    let mut dropped = Deprecations::new();
-    for_each_config_table_mut(doc, |scope, table| {
-        let outcome = migrate_select_table(table, scope);
-        if outcome.moved {
-            renamed.record(scope);
-        }
-        let changed = outcome.moved || !outcome.dropped.is_empty();
-        dropped.extend(outcome.dropped);
-        changed
-    });
-    let mut kinds = Deprecations::new();
-    if !renamed.is_empty() {
-        kinds.push(DeprecationKind::Select(renamed));
-    }
-    kinds.extend(dropped);
-    kinds
+    migrate_section_doc(doc, migrate_select_table, DeprecationKind::Select)
 }
 
 /// Whether a TOML item is a table or inline table (can be migrated as a section).
