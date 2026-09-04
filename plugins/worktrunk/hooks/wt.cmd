@@ -15,6 +15,10 @@ rem Every branch here is a bare `goto`: `if <cond> <cmd1> & <cmd2>` runs cmd2
 rem unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if` rather than
 rem cmd1, so neither connector can carry the control flow.
 setlocal EnableExtensions
+rem Clear the locals: `setlocal` inherits the caller's environment, and an
+rem inherited WT would short-circuit the PATH scan below onto whatever it names.
+set "WT="
+set "WT_SEEN="
 
 if defined WORKTRUNK_BIN goto :override
 

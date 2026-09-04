@@ -4396,6 +4396,56 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     );
 }
 
+/// `setlocal` scopes the shim's own writes but still inherits the caller's
+/// environment, and Codex hands each hook the session env snapshot
+/// (`command.env_clear(); command.envs(environment)` in
+/// `codex-rs/hooks/src/engine/command_runner.rs`), so a user's own `WT` arrives
+/// already defined. Unless the shim clears it, the PATH scan it exists to
+/// perform is skipped: `if not defined WT` is false on every iteration, so
+/// `:accept` never runs, `if defined WT goto :run` fires, and the shim executes
+/// whatever the inherited value names — Windows Terminal included, which is the
+/// one binary that block is there to reject.
+#[cfg(windows)]
+#[rstest]
+fn test_shim_ignores_an_inherited_wt(repo: TestRepo) {
+    use std::os::windows::process::CommandExt;
+
+    let shim =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
+
+    // Running the sentinel is the failure this pins, so it records the fact
+    // rather than being detected by its output — the shim's own resolution may
+    // legitimately find a `wt` on the runner's PATH and run that instead.
+    let sentinel = repo.root_path().join("sentinel.cmd");
+    let ran = repo.root_path().join("sentinel-ran.txt");
+    fs::write(
+        &sentinel,
+        format!("@echo off\r\necho ran > \"{}\"\r\n", ran.display()),
+    )
+    .unwrap();
+
+    let mut cmd = std::process::Command::new("cmd.exe");
+    repo.configure_wt_cmd(&mut cmd);
+    let output = cmd
+        .arg("/C")
+        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
+        .env("WT", &sentinel)
+        .env("WT_SEEN", "1")
+        .env_remove("WORKTRUNK_BIN")
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !ran.exists(),
+        "the shim must clear its own locals and resolve worktrunk itself, not run an \
+         inherited WT; got {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Claude hands each hook `command` to the user's LOGIN shell, which parses the
 /// whole line before the leading `bash …` ever launches. The command must
 /// therefore parse cleanly under fish, zsh, and bash — fish in particular
