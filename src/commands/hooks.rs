@@ -528,7 +528,9 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
     // so `steps[0]` is safe.
     let source = pipeline.steps[0].source;
 
-    // "HEAD" fallback matches `CommandContext::branch_or_head` for detached HEAD.
+    // Only names the pipeline's log file, so a detached worktree needs some
+    // literal here — unlike the `branch` template variable, which stays unset
+    // rather than claiming a branch the worktree isn't on (issue #4009).
     let branch = pipeline.branch.unwrap_or_else(|| "HEAD".to_string());
     let hook_type = pipeline.hook_type;
     let spec = PipelineSpec {

@@ -1201,12 +1201,18 @@ pub fn expand_template_with(
                 );
             }
             VarsMode::Resolve => {
-                if let Some(branch) = vars.get("branch") {
-                    context.insert(
-                        "vars".to_string(),
-                        vars_map_to_value(&repo.vars_entries(branch)),
-                    );
-                }
+                // A detached worktree leaves `branch` unset, and per-branch
+                // vars are keyed by branch — so there are none. Insert the
+                // empty map rather than nothing, so `{{ vars.key |
+                // default(…) }}` still renders under SemiStrict instead of
+                // erroring on an undefined `vars` (same reason
+                // `list::custom_columns` injects an empty map for a
+                // branchless row).
+                let entries = vars
+                    .get("branch")
+                    .map(|branch| repo.vars_entries(branch))
+                    .unwrap_or_default();
+                context.insert("vars".to_string(), vars_map_to_value(&entries));
             }
         }
     }
@@ -2734,17 +2740,20 @@ mod tests {
         let test = test_repo();
         let vars = HashMap::new(); // No branch var
 
-        // vars should be undefined (no branch to look up)
+        // A detached worktree leaves `branch` unset, and per-branch vars are
+        // keyed by branch — so there are none. `vars` is still the empty map
+        // rather than undefined, so `default` fires on the missing key instead
+        // of erroring on the missing object under SemiStrict.
         assert_eq!(
             expand_template(
-                "{{ vars | default('none') }}",
+                "{{ vars.env | default('dev') }}",
                 &vars,
                 ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
             .unwrap(),
-            "none"
+            "dev"
         );
     }
 

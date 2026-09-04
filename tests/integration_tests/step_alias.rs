@@ -2520,3 +2520,52 @@ record-git-env = "printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > env_seen.t
         "alias should see wt's inherited git-discovery vars unchanged"
     );
 }
+
+/// A detached worktree leaves `{{ branch }}` undefined, so `{% if branch %}`
+/// guards it the way the hook docs prescribe for every optional variable.
+///
+/// Regression test for #4009: `branch` used to fall back to the literal
+/// `HEAD`, which is a non-empty string git happily resolves as a ref — so
+/// every guard written around `branch` passed and the alias ran against the
+/// wrong thing (`git push origin --delete HEAD`). It also disagreed with
+/// `wt list --json`, which reports `branch: null` for the same worktree.
+#[rstest]
+fn test_alias_branch_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("detached-test");
+    repo.detach_head_in_worktree("detached-test");
+    let detached = repo.worktree_path("detached-test").to_path_buf();
+
+    repo.write_test_config(
+        r#"
+[aliases]
+probe = "echo [{% if branch %}{{ branch }}{% endif %}]"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "probe"])
+        .current_dir(&detached)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("[]"),
+        "`{{% if branch %}}` should not fire in a detached worktree, got: {combined}"
+    );
+    assert!(
+        !combined.contains("[HEAD]"),
+        "`branch` must not fall back to the literal `HEAD`, got: {combined}"
+    );
+}

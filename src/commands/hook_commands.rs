@@ -14,7 +14,7 @@ use worktrunk::config::{
     ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, to_posix_path};
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, println, warning_message,
@@ -83,13 +83,22 @@ fn run_post_hook(
 /// provide reasonable defaults: the current branch as both base and target, and
 /// the current worktree path for directional path vars.
 ///
+/// The directional *path* vars apply either way, since the worktree exists
+/// whether or not it is on a branch. The directional *branch* vars follow
+/// `branch` itself: a detached worktree leaves them unset rather than naming
+/// the literal `HEAD` (issue #4009).
+///
 /// This is the single source of truth for manual hook context — both `run_hook`
 /// (execution + dry-run) and [`hook_command_rows`] (`hook show --expanded`) use
 /// this function. Returns a `TemplateVars` so callers can extend with
 /// additional bindings (e.g. CLI shorthand) before materializing.
 fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) -> TemplateVars {
-    let branch = ctx.branch_or_head();
+    let branch = ctx.branch;
     let worktree_path = ctx.worktree_path;
+    let with_target = |vars: TemplateVars| match branch {
+        Some(branch) => vars.with_target(branch),
+        None => vars,
+    };
     match hook_type {
         // Merge/commit hooks: target = merge target (default branch for commit,
         // current for merge). Only this arm needs the default branch, and
@@ -99,20 +108,19 @@ fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) ->
             .repo
             .default_branch()
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(&t)),
-        HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
-            .with_target(branch)
-            .with_target_worktree_path(worktree_path),
+        HookType::PreMerge | HookType::PostMerge => {
+            with_target(TemplateVars::new()).with_target_worktree_path(worktree_path)
+        }
         // Switch hooks: base = current (we're "switching from" here)
         HookType::PreSwitch | HookType::PreCreate | HookType::PostCreate | HookType::PostSwitch => {
-            TemplateVars::new()
-                .with_base(branch, worktree_path)
-                .with_target(branch)
+            let base_path = to_posix_path(&worktree_path.to_string_lossy());
+            with_target(TemplateVars::new().with_base_strs(branch, Some(&base_path)))
                 .with_target_worktree_path(worktree_path)
         }
         // Remove hooks: target = where user ends up (current worktree is the best guess)
-        HookType::PreRemove | HookType::PostRemove => TemplateVars::new()
-            .with_target(branch)
-            .with_target_worktree_path(worktree_path),
+        HookType::PreRemove | HookType::PostRemove => {
+            with_target(TemplateVars::new()).with_target_worktree_path(worktree_path)
+        }
     }
 }
 
