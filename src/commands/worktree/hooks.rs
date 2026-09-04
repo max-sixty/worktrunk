@@ -51,7 +51,7 @@ pub(crate) struct PostRemoveContext {
     commit: String,
     short_commit: String,
     target_path_str: String,
-    target_branch: String,
+    target_branch: Option<String>,
 }
 
 impl PostRemoveContext {
@@ -79,13 +79,12 @@ impl PostRemoveContext {
         };
 
         // Target vars: where the user ends up after removal (primary worktree).
+        // A detached primary worktree leaves `target` unset rather than empty,
+        // matching `branch`: `format_variables_table` renders an absent var as
+        // `(unset)` — "the operation couldn't supply this" — and that label only
+        // holds while a branch var nobody can name stays out of the map.
         let target_path_str = to_posix_path(&main_path.to_string_lossy());
-        let target_branch = repo
-            .worktree_at(main_path)
-            .branch()
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let target_branch = repo.worktree_at(main_path).branch().ok().flatten();
 
         Self {
             worktree_path_str,
@@ -103,7 +102,8 @@ impl PostRemoveContext {
     /// It is `None` when the removed worktree was detached: `extra_vars` is
     /// applied unconditionally at the end of `build_hook_context`, so emitting a
     /// `"HEAD"` literal here would overwrite the unset `branch` that context
-    /// deliberately leaves out (issue #4009).
+    /// deliberately leaves out (issue #4009). `target` is skipped the same way
+    /// when the primary worktree the removal lands in is itself detached.
     pub fn extra_vars<'a>(&'a self, removed_branch: Option<&'a str>) -> Vec<(&'a str, &'a str)> {
         let mut vars = vec![
             ("worktree_path", &*self.worktree_path_str),
@@ -111,9 +111,11 @@ impl PostRemoveContext {
             ("worktree_name", &self.worktree_name),
             ("commit", &self.commit),
             ("short_commit", &self.short_commit),
-            ("target", &self.target_branch),
             ("target_worktree_path", &self.target_path_str),
         ];
+        if let Some(target) = self.target_branch.as_deref() {
+            vars.push(("target", target));
+        }
         if let Some(branch) = removed_branch {
             vars.push(("branch", branch));
         }

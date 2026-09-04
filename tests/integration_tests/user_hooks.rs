@@ -888,6 +888,43 @@ capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremov
     );
 }
 
+/// `target` names the branch the user lands on after removal — the primary
+/// worktree's — so a detached primary leaves it unset for the same reason
+/// `branch` is unset above. `is defined` is what separates the two states here:
+/// an empty string renders identically under `{% if target %}`, but it makes
+/// `wt -v` print `target = ` where the var was never supplied.
+#[rstest]
+fn test_user_post_remove_target_unset_with_detached_primary_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.detach_head();
+
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'target=[{% if target is defined %}defined:{{ target }}{% else %}unset{% endif %}]' > ../postremove_detached_target.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["remove", "feature", "--force", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_detached_target.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+    assert_eq!(
+        content.trim(),
+        "target=[unset]",
+        "post-remove `target` should be unset when the primary worktree is detached, got: {content}"
+    );
+}
+
 #[rstest]
 fn test_user_post_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove
@@ -3113,6 +3150,45 @@ check = "echo 'USER_PRE_SWITCH_RAN' > pre_switch_marker.txt"
     assert!(
         contents.contains("USER_PRE_SWITCH_RAN"),
         "Marker file should contain expected content"
+    );
+}
+
+/// Switching out of a detached worktree leaves `base` unset rather than empty:
+/// `base` is the source branch, and there isn't one. Only `is defined`
+/// separates that from the `unwrap_or_default()` this replaced — both render
+/// as nothing under `{% if base %}` — so this pins the distinction the
+/// `(unset)` label in `wt -v` depends on (issue #4009).
+#[rstest]
+fn test_user_pre_switch_base_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.add_worktree("detached-src");
+    repo.detach_head_in_worktree("detached-src");
+    let src_path = repo.worktree_path("detached-src");
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'base=[{% if base is defined %}defined:{{ base }}{% else %}unset{% endif %}]' > ../preswitch_detached.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["switch", "feature"])
+        .current_dir(src_path)
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("preswitch_detached.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+    assert_eq!(
+        content.trim(),
+        "base=[unset]",
+        "pre-switch `base` should be unset when switching out of a detached worktree, got: {content}"
     );
 }
 

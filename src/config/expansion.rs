@@ -313,16 +313,18 @@ const ALWAYS_COMPUTED_VARS: &[&str] = &["branch"];
 /// When `referenced` is `Some`, vars absent from `ctx` *and* not in the set
 /// render as dim `(unused)` — `build_hook_context` only skips computation for
 /// expensive vars, so this fires precisely when the gate saved real work.
-/// Cheap vars are populated unconditionally and always show their value, even
-/// when the body doesn't reference them. `(unset)` is reserved for the
-/// distinct case of a var the operation couldn't supply — including
-/// [`ALWAYS_COMPUTED_VARS`], the cheap vars that are computed whatever the
-/// scope but can still be genuinely absent.
+/// Cheap vars are populated unconditionally, so they show their value even
+/// when the body doesn't reference them — though a cheap var can still come
+/// out absent. `(unset)` is reserved for the distinct case of a var the
+/// operation couldn't supply — including [`ALWAYS_COMPUTED_VARS`], the cheap
+/// vars that are computed whatever the scope but can still be genuinely
+/// absent.
 ///
-/// `(unset)` relies on an invariant in `build_hook_context`: optional vars
-/// are omitted from the map rather than inserted as empty strings. If a
-/// future caller starts inserting `""`, revisit the empty-vs-absent
-/// distinction here.
+/// `(unset)` relies on an invariant in `build_hook_context` that the
+/// `extra_vars` layered on top must hold too (see
+/// `PostRemoveContext::extra_vars`): optional vars are omitted from the map
+/// rather than inserted as empty strings. If a future caller starts inserting
+/// `""`, revisit the empty-vs-absent distinction here.
 fn format_variables_table(
     vars: &[&'static str],
     ctx: &TemplateContext,
