@@ -1103,10 +1103,8 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
 /// failure the hooks' own `|| true` already discarded (#3921).
 #[rstest]
 fn test_state_set_marker_outside_repo_is_noop() {
-    let outside = tempfile::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["config", "state", "marker", "set", "🤖"]);
-    cmd.current_dir(outside.path());
     let output = cmd.output().unwrap();
 
     assert!(
@@ -1120,10 +1118,8 @@ fn test_state_set_marker_outside_repo_is_noop() {
 
 #[rstest]
 fn test_state_clear_marker_outside_repo_is_noop() {
-    let outside = tempfile::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["config", "state", "marker", "clear"]);
-    cmd.current_dir(outside.path());
     let output = cmd.output().unwrap();
 
     assert!(
@@ -1141,10 +1137,8 @@ fn test_state_clear_marker_outside_repo_is_noop() {
 /// beyond the one command the hooks actually call unconditionally.
 #[rstest]
 fn test_state_set_default_branch_outside_repo_still_fails() {
-    let outside = tempfile::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["config", "state", "default-branch", "set", "main"]);
-    cmd.current_dir(outside.path());
     let output = cmd.output().unwrap();
 
     assert!(!output.status.success());
@@ -1160,10 +1154,8 @@ fn test_state_set_default_branch_outside_repo_still_fails() {
 /// match with its own fallback arm.
 #[rstest]
 fn test_state_clear_default_branch_outside_repo_still_fails() {
-    let outside = tempfile::tempdir().unwrap();
     let mut cmd = wt_command();
     cmd.args(["config", "state", "default-branch", "clear"]);
-    cmd.current_dir(outside.path());
     let output = cmd.output().unwrap();
 
     assert!(!output.status.success());

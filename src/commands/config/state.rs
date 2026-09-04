@@ -834,16 +834,19 @@ pub fn handle_state_get(
     Ok(())
 }
 
-/// True when `err` is `Repository::current()` failing because the discovery
-/// path isn't inside a git repository at all — as opposed to a permission
-/// error, a corrupt repo, or any other `git rev-parse --git-common-dir`
-/// failure. Distinguishing this narrows the marker hooks' no-op fallback
-/// (#3921) to the one case it's meant for, rather than swallowing every
-/// repository-resolution failure a session might hit.
+/// True when `err` is `Repository::current()` failing with the exit 128 that
+/// `git rev-parse --git-common-dir` returns when the discovery path has no
+/// usable git repository. That covers the missing-repo case the marker hooks
+/// hit, and equally an unreadable or corrupt `.git`, which git reports the
+/// same way and which no-ops just as harmlessly for a marker. Any other exit
+/// code still propagates, so the #3921 fallback stays off unrelated failures.
+///
+/// The exit code is the whole check on purpose. git translates
+/// `not a git repository`, and the translation ships in the distro package,
+/// so matching that text would leave every non-English user on the old
+/// behavior with nothing in the suite able to catch it.
 fn is_missing_repository_error(err: &anyhow::Error) -> bool {
-    CommandError::find_in(err).is_some_and(|cmd_err| {
-        cmd_err.exit_code == Some(128) && cmd_err.stderr.contains("not a git repository")
-    })
+    CommandError::find_in(err).is_some_and(|cmd_err| cmd_err.exit_code == Some(128))
 }
 
 /// Handle the state set command
