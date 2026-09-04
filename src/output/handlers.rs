@@ -16,6 +16,7 @@ use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
+use crate::commands::template_vars::TemplateVars;
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{
     BranchFate, RemovalPlan, RetainedReason, SharedBranchCheckout, SwitchBranchInfo, SwitchResult,
@@ -1714,17 +1715,15 @@ fn execute_pre_remove_hooks_if_needed(
     } else {
         Some(ctx.worktree_path)
     };
-    let target_branch = repo
-        .worktree_at(ctx.main_path)
-        .branch()
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let target_path_str = worktrunk::path::to_posix_path(&ctx.main_path.to_string_lossy());
-    let extra_vars: Vec<(&str, &str)> = vec![
-        ("target", &target_branch),
-        ("target_worktree_path", &target_path_str),
-    ];
+    // `TemplateVars` rather than a hand-rolled vec: `as_extra_vars` omits an
+    // absent `target` instead of pushing `""`, so a detached primary worktree
+    // renders the same here as it does for the `post-remove` half of the same
+    // removal (issue #4009).
+    let target_branch = repo.worktree_at(ctx.main_path).branch().ok().flatten();
+    let vars = TemplateVars::new()
+        .with_target_opt(target_branch.as_deref())
+        .with_target_worktree_path(ctx.main_path);
+    let extra_vars = vars.as_extra_vars();
 
     execute_planned_hook(
         ctx.hook_plan,

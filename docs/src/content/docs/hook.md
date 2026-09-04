@@ -173,7 +173,7 @@ Undefined variables error — use conditionals or defaults for optional behavior
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
-A detached worktree is on no branch, so `branch` is undefined there — as are the `base` and `target` names a manual `wt hook` derives from it — and the same `{% if branch %}` guard applies. This matches `wt list --format=json`, which reports `branch: null` for the same worktree.
+A detached worktree is on no branch, so `branch` is undefined there — as are the `base` and `target` names derived from it, whether by a manual `wt hook` or by an operation whose source or destination worktree is detached (`base` in a `pre-switch` fired from one, `target` in a removal that lands in one) — and the same `{% if branch %}` guard applies. This matches `wt list --format=json`, which reports `branch: null` for the same worktree.
 
 Run any hook-firing command with `-v` to see the resolved variables for the actual invocation — each hook prints a `template variables:` block showing every in-scope variable and its value (`(unset)` for conditional vars that didn't populate, like `target_worktree_path` during `wt switch -`). Aliases do the same under `-v`: `wt -v <alias>` prints the alias's in-scope variables before the pipeline runs.
 

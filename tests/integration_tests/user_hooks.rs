@@ -890,16 +890,22 @@ capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremov
 
 /// `target` names the branch the user lands on after removal — the primary
 /// worktree's — so a detached primary leaves it unset for the same reason
-/// `branch` is unset above. `is defined` is what separates the two states here:
-/// an empty string renders identically under `{% if target %}`, but it makes
-/// `wt -v` print `target = ` where the var was never supplied.
+/// `branch` is unset above. Both halves of one removal have to agree: the
+/// `pre-remove` site builds its own extra vars, so it drifted to an empty
+/// string while `post-remove` omitted the key. `is defined` is what separates
+/// the two states — an empty string renders identically under
+/// `{% if target %}`, but it makes `wt -v` print `target = ` where the var was
+/// never supplied.
 #[rstest]
-fn test_user_post_remove_target_unset_with_detached_primary_worktree(mut repo: TestRepo) {
+fn test_user_remove_hooks_target_unset_with_detached_primary_worktree(mut repo: TestRepo) {
     repo.add_worktree("feature");
     repo.detach_head();
 
     repo.write_test_config(
-        r#"[post-remove]
+        r#"[pre-remove]
+capture = "echo 'target=[{% if target is defined %}defined:{{ target }}{% else %}unset{% endif %}]' > ../preremove_detached_target.txt"
+
+[post-remove]
 capture = "echo 'target=[{% if target is defined %}defined:{{ target }}{% else %}unset{% endif %}]' > ../postremove_detached_target.txt"
 "#,
     );
@@ -910,19 +916,21 @@ capture = "echo 'target=[{% if target is defined %}defined:{{ target }}{% else %
         .output()
         .unwrap();
 
-    let vars_file = repo
-        .root_path()
-        .parent()
-        .unwrap()
-        .join("postremove_detached_target.txt");
-    crate::common::wait_for_file_content(&vars_file);
+    let parent = repo.root_path().parent().unwrap().to_path_buf();
+    for (hook, file) in [
+        ("pre-remove", "preremove_detached_target.txt"),
+        ("post-remove", "postremove_detached_target.txt"),
+    ] {
+        let vars_file = parent.join(file);
+        crate::common::wait_for_file_content(&vars_file);
 
-    let content = std::fs::read_to_string(&vars_file).unwrap();
-    assert_eq!(
-        content.trim(),
-        "target=[unset]",
-        "post-remove `target` should be unset when the primary worktree is detached, got: {content}"
-    );
+        let content = std::fs::read_to_string(&vars_file).unwrap();
+        assert_eq!(
+            content.trim(),
+            "target=[unset]",
+            "{hook} `target` should be unset when the primary worktree is detached, got: {content}"
+        );
+    }
 }
 
 #[rstest]
