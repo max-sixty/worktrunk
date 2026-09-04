@@ -4446,6 +4446,73 @@ fn test_shim_ignores_an_inherited_wt(repo: TestRepo) {
     );
 }
 
+/// `where git-wt.exe` searches the current directory before it searches PATH,
+/// and cmd resolves a bare `git-wt.exe` the same way — so with the lookup
+/// unscoped, a `git-wt.exe` (or a `wt.exe`, through the scan below it) committed
+/// to a repo is what every prompt, permission request, stop, and session end
+/// executes, since the hook runs with the user's project as its current
+/// directory. `wt.sh` carries no such surface: `command -v` consults PATH only.
+///
+/// The decoys planted here are not valid executables, which is what makes the
+/// shim's choice observable: had it taken one, cmd could not have run it, so a
+/// version line pins that it resolved through PATH instead. That also exercises
+/// `where`'s `$var:` prefix — a syntax error there would leave `git-wt.exe`
+/// unfound and fall through to the `wt.exe` scan, which finds nothing on the
+/// PATH this test pins.
+#[cfg(windows)]
+#[rstest]
+fn test_shim_ignores_a_binary_in_the_current_directory(repo: TestRepo) {
+    use std::os::windows::process::CommandExt;
+
+    let shim =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
+
+    // The only worktrunk the shim is allowed to find: a real one, in a directory
+    // on the PATH this test pins.
+    let path_dir = repo.root_path().join("path-dir");
+    fs::create_dir_all(&path_dir).unwrap();
+    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
+
+    // ...and the decoys, in the directory the hook runs from.
+    fs::write(repo.root_path().join("git-wt.exe"), b"not an executable").unwrap();
+    fs::write(repo.root_path().join("wt.exe"), b"not an executable").unwrap();
+
+    // System32 stays on PATH: the shim runs `where` and `findstr` from there.
+    let system32 = std::path::PathBuf::from(
+        std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into()),
+    )
+    .join("System32");
+    let path_value = std::env::join_paths([path_dir, system32]).unwrap();
+    // Windows environment names are case-insensitive; reuse whichever spelling
+    // this process inherited rather than adding a second entry beside it.
+    let path_var = std::env::vars_os()
+        .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+        .map_or_else(
+            || "PATH".to_owned(),
+            |(name, _)| name.to_string_lossy().into_owned(),
+        );
+
+    let mut cmd = std::process::Command::new("cmd.exe");
+    repo.configure_wt_cmd(&mut cmd);
+    let output = cmd
+        .arg("/C")
+        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
+        .env(&path_var, &path_value)
+        .env_remove("WORKTRUNK_BIN")
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(env!("CARGO_PKG_VERSION")),
+        "the shim must resolve worktrunk through PATH, not through the current \
+         directory; got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Claude hands each hook `command` to the user's LOGIN shell, which parses the
 /// whole line before the leading `bash …` ever launches. The command must
 /// therefore parse cleanly under fish, zsh, and bash — fish in particular

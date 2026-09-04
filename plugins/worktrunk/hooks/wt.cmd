@@ -22,13 +22,20 @@ set "WT_SEEN="
 
 if defined WORKTRUNK_BIN goto :override
 
-where /q git-wt.exe
-if not errorlevel 1 goto :gitwt
+rem Both PATH lookups use `where`'s `$var:` prefix, which searches the
+rem directories named in that variable and nowhere else, and :run executes the
+rem absolute path they return. A bare `where git-wt.exe` searches the current
+rem directory first, as cmd's own bare-name lookup does, and a hook's current
+rem directory is the user's project -- so a `git-wt.exe` or `wt.exe` committed
+rem to a repo would otherwise be what every event executes. wt.sh has no such
+rem surface: `command -v` consults PATH only.
+for /f "delims=" %%I in ('where "$PATH:git-wt.exe" 2^>nul') do if not defined WT set "WT=%%I"
+if defined WT goto :run
 
 rem A cargo install builds no git-wt (that binary is behind a non-default
 rem feature), so fall back to whichever `wt` PATH resolves -- unless that is
 rem Windows Terminal, which would open a window instead of setting a marker.
-for /f "delims=" %%I in ('where wt.exe 2^>nul') do (
+for /f "delims=" %%I in ('where "$PATH:wt.exe" 2^>nul') do (
     set "WT_SEEN=1"
     if not defined WT call :accept "%%I"
 )
@@ -46,10 +53,6 @@ goto :eof
 
 :override
 set "WT=%WORKTRUNK_BIN%"
-goto :run
-
-:gitwt
-set "WT=git-wt.exe"
 goto :run
 
 :run
