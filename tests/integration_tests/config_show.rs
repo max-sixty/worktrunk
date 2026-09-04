@@ -4503,9 +4503,12 @@ fn test_shim_ignores_a_binary_in_the_current_directory(repo: TestRepo) {
         .output()
         .unwrap();
 
+    // The version line is `wt <version>`, where the version is whatever the
+    // build embedded — the semver from a tagged checkout, a bare commit hash
+    // from CI's — so the prefix is the part worth pinning.
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        output.status.success() && stdout.contains(env!("CARGO_PKG_VERSION")),
+        output.status.success() && stdout.trim_start().starts_with("wt "),
         "the shim must resolve worktrunk through PATH, not through the current \
          directory; got {}\nstdout:\n{stdout}\nstderr:\n{}",
         output.status,
