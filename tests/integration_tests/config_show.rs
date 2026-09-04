@@ -4190,6 +4190,212 @@ fn test_plugin_layout_is_consolidated() {
     }
 }
 
+/// Codex resolves a hook `command` through the platform shell — `/bin/sh -lc`
+/// on Unix, `cmd.exe /C` on Windows (`default_shell_command` in
+/// `codex-rs/hooks/src/engine/command_runner.rs`). The Unix commands lead with
+/// `bash "$PLUGIN_ROOT/hooks/wt.sh"`, and under `cmd.exe` that bare `bash`
+/// resolves through the Windows PATH to `System32\bash.exe`, the WSL launcher —
+/// not Git Bash. In a sandboxed Codex session the launcher refuses to start
+/// (`Bash/Service/CreateInstance/E_ACCESSDENIED`), so every prompt, permission,
+/// stop, and session-end event raises a "Hook failed" banner (#4007).
+///
+/// Codex's fix for this is the per-handler `commandWindows` override, which
+/// *replaces* `command` on Windows (`command_windows.unwrap_or(command)` in
+/// `codex-rs/hooks/src/engine/discovery.rs`). Every Codex command hook must
+/// carry one, and it must reach worktrunk without `bash` and without bare `wt`
+/// — that name belongs to Windows Terminal on Windows.
+///
+/// Codex substitutes only the braced `${PLUGIN_ROOT}` form textually, before
+/// the shell runs; the unbraced `$PLUGIN_ROOT` survives to the shell and is
+/// expanded only by the Unix `/bin/sh`. `cmd.exe` would pass it through
+/// literally, so the Windows commands must brace it.
+#[test]
+fn test_codex_hooks_carry_windows_commands() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let codex: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("plugins/worktrunk/.codex-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+
+    let hooks: Vec<&serde_json::Value> = codex["hooks"]["hooks"]
+        .as_object()
+        .expect("the Codex manifest must define hooks inline (#3362)")
+        .values()
+        .flat_map(|event| event.as_array().expect("each hook event must be an array"))
+        .flat_map(|group| {
+            group["hooks"]
+                .as_array()
+                .expect("each hook group must have a `hooks` array")
+        })
+        .collect();
+    assert_eq!(
+        hooks.len(),
+        4,
+        "expected all 4 Codex hooks (UserPromptSubmit, PermissionRequest, Stop, \
+         SessionEnd); a newly added one must be pinned too"
+    );
+
+    for hook in hooks {
+        let command = hook["command"]
+            .as_str()
+            .expect("each Codex hook must define a command");
+        let windows = hook["commandWindows"].as_str().unwrap_or_else(|| {
+            panic!(
+                "Codex hook has no `commandWindows`; on Windows its `command` runs under \
+                 cmd.exe, where bare `bash` resolves to the WSL launcher rather than Git \
+                 Bash and fails outright in a sandboxed session (#4007). command:\n{command}"
+            )
+        });
+        assert!(
+            !windows.split_whitespace().any(|word| word == "bash"),
+            "`commandWindows` must not invoke bash — cmd.exe resolves it to the WSL \
+             launcher (#4007). commandWindows:\n{windows}"
+        );
+        assert!(
+            !windows
+                .split_whitespace()
+                .any(|word| word == "wt" || word == "wt.exe" || word.ends_with("\\wt.exe")),
+            "`commandWindows` must not invoke bare `wt` — that name resolves to Windows \
+             Terminal. commandWindows:\n{windows}"
+        );
+        assert!(
+            windows.contains(r"${PLUGIN_ROOT}\hooks\wt.cmd")
+                && root.join("plugins/worktrunk/hooks/wt.cmd").is_file(),
+            "`commandWindows` must call the cmd.exe shim that ships beside wt.sh. \
+             commandWindows:\n{windows}"
+        );
+        assert!(
+            windows.contains("${PLUGIN_ROOT}") && !windows.contains("$PLUGIN_ROOT/"),
+            "`commandWindows` must reference the plugin root as ${{PLUGIN_ROOT}}: Codex \
+             substitutes only the braced form textually, and cmd.exe would pass the \
+             unbraced one through literally. commandWindows:\n{windows}"
+        );
+        // The Unix side keeps the unbraced form the login shell expands.
+        assert!(
+            command.contains("$PLUGIN_ROOT") && !command.contains("${PLUGIN_ROOT}"),
+            "the Unix `command` must keep the unbraced $PLUGIN_ROOT. command:\n{command}"
+        );
+    }
+}
+
+/// The structural guard above pins that a `commandWindows` exists and avoids
+/// `bash`; this one runs the real one the way Codex does and checks it lands the
+/// marker. Codex spawns `cmd.exe /C "<command>"` with the command line wrapped
+/// in quotes as a single raw argument (`build_command` in
+/// `codex-rs/hooks/src/engine/command_runner.rs`) after substituting the braced
+/// `${PLUGIN_ROOT}` textually (`codex-rs/hooks/src/engine/discovery.rs`), so
+/// this reproduces both steps rather than approximating them.
+///
+/// What that covers beyond the manifest text: cmd.exe's quote handling across
+/// the nested quoting around the shim path, the shim's own `goto`-based binary
+/// resolution, the emoji argument surviving cmd.exe and reaching worktrunk
+/// intact, and the `|| exit /b 0` tail keeping a failed marker best-effort — a
+/// hook that exits nonzero is what raises the repeated "Hook failed" banner
+/// #4007 reports.
+#[cfg(windows)]
+#[rstest]
+fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
+    use std::os::windows::process::CommandExt;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let plugin_root = root.join("plugins/worktrunk");
+    let codex: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(plugin_root.join(".codex-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    let command_for = |event: &str| -> String {
+        codex["hooks"]["hooks"][event][0]["hooks"][0]["commandWindows"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{event} must define a commandWindows"))
+            .replace("${PLUGIN_ROOT}", &plugin_root.display().to_string())
+    };
+
+    // `bin` is what the shim resolves to; an absent one exercises the
+    // best-effort tail.
+    let run_hook = |event: &str, bin: &std::path::Path| -> std::process::Output {
+        let mut cmd = std::process::Command::new("cmd.exe");
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("/C")
+            .raw_arg(format!("\"{}\"", command_for(event)))
+            .env("WORKTRUNK_BIN", bin)
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap()
+    };
+    let describe = |output: &std::process::Output| {
+        format!(
+            "got {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    };
+    let marker_key = format!("worktrunk.state.{}.marker", repo.current_branch());
+    let marker = || -> String {
+        let output = repo
+            .git_command()
+            .args(["config", "--get", &marker_key])
+            .run();
+        output.map_or_else(
+            |_| String::new(),
+            |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        )
+    };
+
+    let wt = crate::common::wt_bin();
+    let output = run_hook("UserPromptSubmit", &wt);
+    assert!(
+        output.status.success(),
+        "UserPromptSubmit hook must succeed; {}",
+        describe(&output)
+    );
+    assert!(
+        marker().contains('🤖'),
+        "UserPromptSubmit must store the working marker, not a mangled byte sequence; \
+         got {:?}",
+        marker()
+    );
+
+    let output = run_hook("Stop", &wt);
+    assert!(
+        output.status.success(),
+        "Stop hook must succeed; {}",
+        describe(&output)
+    );
+    assert!(
+        marker().contains('💬'),
+        "Stop must replace the marker with the waiting one; got {:?}",
+        marker()
+    );
+
+    let output = run_hook("SessionEnd", &wt);
+    assert!(
+        output.status.success(),
+        "SessionEnd hook must succeed; {}",
+        describe(&output)
+    );
+    assert!(
+        marker().is_empty(),
+        "SessionEnd must clear the marker; got {:?}",
+        marker()
+    );
+
+    // Worktrunk not installed: the marker is optional decoration, so the hook
+    // must stay silent rather than fail every prompt (#4007).
+    let output = run_hook("UserPromptSubmit", &repo.root_path().join("no-such-wt.exe"));
+    assert!(
+        output.status.success(),
+        "a hook that cannot find worktrunk must still exit 0 — a nonzero exit is what \
+         raises Codex's repeated \"Hook failed\" banner; {}",
+        describe(&output)
+    );
+    assert!(
+        marker().is_empty(),
+        "a failed hook must not invent a marker; got {:?}",
+        marker()
+    );
+}
+
 /// Claude hands each hook `command` to the user's LOGIN shell, which parses the
 /// whole line before the leading `bash …` ever launches. The command must
 /// therefore parse cleanly under fish, zsh, and bash — fish in particular

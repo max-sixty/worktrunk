@@ -28,6 +28,11 @@ dev/*.example.toml linguist-generated=true
 # Shell templates are embedded into the binary at compile time (askama); a
 # CRLF checkout would leak \r into the shell code Windows-built binaries emit.
 templates/* text eol=lf
+# cmd.exe resolves a `goto` label by seeking through the batch file, and an
+# LF-only batch file can fail that search ("The system cannot find the batch
+# label specified"). The hook shim is only ever run by cmd.exe, so pin its
+# checkout to CRLF regardless of the platform cloning it.
+plugins/worktrunk/hooks/*.cmd text eol=crlf
 # A fixture's object store and index are git's own binary formats, but git only
 # calls a file binary when it finds a NUL in the first 8000 bytes, and a small
 # enough zlib object may have none. Those diff as text, so `git diff` writes raw
