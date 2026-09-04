@@ -3138,6 +3138,49 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
     );
 }
 
+/// A manual `wt hook <type>` in a detached worktree leaves `branch` unset, and
+/// the `base` / `target` names it derives from the current branch follow —
+/// rather than naming the literal `HEAD`, which git resolves as a ref (issue
+/// #4009). The directional *path* vars still apply: the worktree exists
+/// whether or not it is on a branch, so `{{ base_worktree_path }}` renders
+/// unguarded here.
+#[rstest]
+fn test_manual_hook_branch_vars_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("detached-test");
+    repo.detach_head_in_worktree("detached-test");
+    let detached = repo.worktree_path("detached-test").to_path_buf();
+
+    repo.write_test_config(
+        r#"[pre-switch]
+record = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}] base=[{% if base %}{{ base }}{% endif %}] target=[{% if target %}{{ target }}{% endif %}] base_worktree_path=[{{ base_worktree_path }}]' > vars.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-switch"])
+        .current_dir(&detached)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "manual hook failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recorded = std::fs::read_to_string(detached.join("vars.txt"))
+        .expect("hook should have recorded its variables");
+    assert!(
+        recorded.starts_with("branch=[] base=[] target=[] base_worktree_path=["),
+        "branch, base and target must be unset in a detached worktree, got: {recorded}"
+    );
+    assert!(
+        !recorded.contains("base_worktree_path=[]"),
+        "base_worktree_path should still name the detached worktree, got: {recorded}"
+    );
+}
+
 /// Test that `{{ branch }}` in pre-switch hooks is the destination branch argument, not the source.
 #[rstest]
 fn test_user_pre_switch_branch_var_is_destination(mut repo: TestRepo) {
