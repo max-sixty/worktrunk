@@ -4483,21 +4483,13 @@ fn test_shim_ignores_a_binary_in_the_current_directory(repo: TestRepo) {
     )
     .join("System32");
     let path_value = std::env::join_paths([path_dir, system32]).unwrap();
-    // Windows environment names are case-insensitive; reuse whichever spelling
-    // this process inherited rather than adding a second entry beside it.
-    let path_var = std::env::vars_os()
-        .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
-        .map_or_else(
-            || "PATH".to_owned(),
-            |(name, _)| name.to_string_lossy().into_owned(),
-        );
 
     let mut cmd = std::process::Command::new("cmd.exe");
     repo.configure_wt_cmd(&mut cmd);
     let output = cmd
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
-        .env(&path_var, &path_value)
+        .env("PATH", &path_value)
         .env_remove("WORKTRUNK_BIN")
         .current_dir(repo.root_path())
         .output()
