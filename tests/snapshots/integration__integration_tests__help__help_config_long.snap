@@ -174,7 +174,7 @@ By remote owner path ([2m~/development/max-sixty/myproject/feature/auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
 
-Bare repository ([2m~/code/myproject/feature-auth[0m):
+Bare repository cloned to [2m~/code/myproject/.git[0m ([2m~/code/myproject/feature-auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
 

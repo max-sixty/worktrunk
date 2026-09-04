@@ -123,7 +123,7 @@ By remote owner path (`~/development/max-sixty/myproject/feature/auth`):
 worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"
 ```
 
-Bare repository (`~/code/myproject/feature-auth`):
+Bare repository cloned to `~/code/myproject/.git` (`~/code/myproject/feature-auth`):
 
 ```toml
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
