@@ -8,6 +8,7 @@ use crate::common::{
 // or it reads as unused on Windows under `-D warnings`.
 #[cfg(unix)]
 use crate::common::SLEEP_FOR_ABSENCE_CHECK;
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
@@ -2567,5 +2568,44 @@ probe = "echo [{% if branch %}{{ branch }}{% endif %}]"
     assert!(
         !combined.contains("[HEAD]"),
         "`branch` must not fall back to the literal `HEAD`, got: {combined}"
+    );
+}
+
+/// `branch` is cheap enough that `build_hook_context` computes it whatever the
+/// scope, so its absence in a detached worktree is `(unset)` — a fact about the
+/// worktree — even in an alias body that never names it. `(unused)` is reserved
+/// for a var the scope gate actually skipped computing.
+#[rstest]
+fn test_verbose_variables_table_marks_detached_branch_unset(mut repo: TestRepo) {
+    repo.add_worktree("detached-vars");
+    repo.detach_head_in_worktree("detached-vars");
+    let detached = repo.worktree_path("detached-vars").to_path_buf();
+
+    // The body references neither `branch` nor `upstream`, so the scope gate
+    // skips only the latter — an expensive var behind a git-config read.
+    repo.write_test_config(
+        r#"
+[aliases]
+probe = "echo hello"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["-v", "-y", "probe"])
+        .current_dir(&detached)
+        .output()
+        .unwrap();
+    let raw_stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = raw_stderr.ansi_strip();
+
+    let branch_row = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("branch "))
+        .unwrap_or_else(|| panic!("no `branch` row in the variables table:\n{stderr}"));
+    assert!(
+        branch_row.ends_with("= (unset)"),
+        "detached `branch` should read `(unset)`, not `(unused)`, got: {branch_row}"
     );
 }

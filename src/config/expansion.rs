@@ -297,6 +297,12 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
+/// Cheap vars `build_hook_context` computes regardless of [`VarScope`] but
+/// which can still come out absent, so their absence is `(unset)` — a fact
+/// about the worktree — rather than `(unused)`, which claims the scope gate
+/// skipped the work. `branch` is absent in a detached worktree.
+const ALWAYS_COMPUTED_VARS: &[&str] = &["branch"];
+
 /// Shared formatter for [`format_hook_variables`] and [`format_alias_variables`].
 ///
 /// Renders `vars` as an aligned `name = value` block — no heading, no indent,
@@ -309,7 +315,9 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// expensive vars, so this fires precisely when the gate saved real work.
 /// Cheap vars are populated unconditionally and always show their value, even
 /// when the body doesn't reference them. `(unset)` is reserved for the
-/// distinct case of a referenced var the operation couldn't supply.
+/// distinct case of a var the operation couldn't supply — including
+/// [`ALWAYS_COMPUTED_VARS`], the cheap vars that are computed whatever the
+/// scope but can still be genuinely absent.
 ///
 /// `(unset)` relies on an invariant in `build_hook_context`: optional vars
 /// are omitted from the map rather than inserted as empty strings. If a
@@ -324,7 +332,9 @@ fn format_variables_table(
     vars.iter()
         .map(|var| match ctx.get(var) {
             Some(value) => format!("{var:<max_name$} = {value}"),
-            None if !scope.wants(var) => cformat!("<dim>{var:<max_name$} = (unused)</>"),
+            None if !scope.wants(var) && !ALWAYS_COMPUTED_VARS.contains(var) => {
+                cformat!("<dim>{var:<max_name$} = (unused)</>")
+            }
             None => format!("{var:<max_name$} = (unset)"),
         })
         .collect::<Vec<_>>()
@@ -1185,8 +1195,8 @@ pub fn expand_template_with(
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
 
     // Inject vars data as a nested object: {{ vars.env }}, {{ vars["env"] }},
-    // {{ vars.config.port }}. When branch is present, always inject (even if
-    // empty map) so {{ vars.key | default(...) }} works in SemiStrict mode.
+    // {{ vars.config.port }}. Always inject (even as an empty map) so
+    // {{ vars.key | default(...) }} works in SemiStrict mode.
     // Only look up vars data if the parsed template references the top-level
     // `vars` object (avoids a git process spawn per expansion while supporting
     // every MiniJinja access form without false positives from literal text).

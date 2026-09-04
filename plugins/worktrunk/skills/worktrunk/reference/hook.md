@@ -243,7 +243,7 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## JSON context
 
-Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
+Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express. Variables that are unset in a template are absent from the JSON too, so read the optional ones with a default — `branch` has none in a detached worktree:
 
 ```toml
 [pre-start]
@@ -253,7 +253,7 @@ setup = "python3 scripts/pre-start-setup.py"
 ```python
 import json, sys, subprocess
 ctx = json.load(sys.stdin)
-if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
+if ctx.get('branch', '').startswith('feature/') and 'backend' in ctx['repo']:
     subprocess.run(['make', 'seed-db'])
 ```
 

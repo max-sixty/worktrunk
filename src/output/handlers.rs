@@ -1361,7 +1361,7 @@ fn handle_branch_only_output(
 fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
-    removed_branch: &str,
+    removed_branch: Option<&str>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     let Ok(config) = UserConfig::load() else {
@@ -1385,7 +1385,7 @@ fn spawn_hooks_after_remove(
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
+    let remove_ctx = CommandContext::new(repo, &config, removed_branch, ctx.main_path, false);
 
     // `post-remove` is *about* the removed worktree (gone by now); it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
@@ -1838,8 +1838,9 @@ fn handle_detached_removed_worktree_output(
         )?;
     }
 
-    // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-    spawn_hooks_after_remove(repo, ctx, "HEAD", announcer)?;
+    // A detached worktree was on no branch, so `{{ branch }}` stays unset for
+    // the post-remove hooks (issue #4009).
+    spawn_hooks_after_remove(repo, ctx, None, announcer)?;
     stderr().flush()?;
     Ok(BranchFate::NotAttempted)
 }
@@ -1898,7 +1899,7 @@ fn handle_named_removed_worktree_foreground(
     }
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -1946,7 +1947,7 @@ fn handle_named_removed_worktree_background(
         ctx.background_fallback(),
     )?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
+    spawn_hooks_after_remove(repo, ctx, Some(branch_name), announcer)?;
     stderr().flush()?;
     Ok(fate)
 }
@@ -2027,7 +2028,7 @@ fn remove_removed_worktree_silently(
 
     // Post-remove (and post-switch when the picker cd'd away) hooks — registered
     // onto the caller's announcer, which `flush`es after this returns.
-    spawn_hooks_after_remove(repo, ctx, ctx.branch_name.unwrap_or("HEAD"), announcer)?;
+    spawn_hooks_after_remove(repo, ctx, ctx.branch_name, announcer)?;
     Ok(fate)
 }
 

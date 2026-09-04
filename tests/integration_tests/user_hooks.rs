@@ -843,6 +843,51 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
     );
 }
 
+/// A detached worktree is on no branch, so `post-remove` hooks see `branch`
+/// unset rather than the literal `HEAD` — the string git resolves as a ref,
+/// which made `git push origin --delete {{ branch }}` target the wrong thing
+/// (issue #4009). `post-remove` overrides `branch` through
+/// `PostRemoveContext::extra_vars`, which is applied after the base context, so
+/// it needs the same `None` the base context has.
+#[rstest]
+fn test_user_post_remove_branch_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+    let feature_wt_path = repo.worktree_path("feature");
+
+    // Guarded the way the hook docs prescribe for every optional variable.
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremove_detached.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args([
+            "remove",
+            feature_wt_path.to_str().unwrap(),
+            "--force",
+            "--yes",
+        ])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_detached.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+    assert_eq!(
+        content.trim(),
+        "branch=[]",
+        "post-remove `branch` should be unset for a detached worktree, got: {content}"
+    );
+}
+
 #[rstest]
 fn test_user_post_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove

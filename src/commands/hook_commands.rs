@@ -14,7 +14,7 @@ use worktrunk::config::{
     ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
-use worktrunk::path::{format_path_for_display, to_posix_path};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
     info_message, println, warning_message,
@@ -95,10 +95,6 @@ fn run_post_hook(
 fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) -> TemplateVars {
     let branch = ctx.branch;
     let worktree_path = ctx.worktree_path;
-    let with_target = |vars: TemplateVars| match branch {
-        Some(branch) => vars.with_target(branch),
-        None => vars,
-    };
     match hook_type {
         // Merge/commit hooks: target = merge target (default branch for commit,
         // current for merge). Only this arm needs the default branch, and
@@ -108,19 +104,20 @@ fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) ->
             .repo
             .default_branch()
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(&t)),
-        HookType::PreMerge | HookType::PostMerge => {
-            with_target(TemplateVars::new()).with_target_worktree_path(worktree_path)
-        }
+        HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
+            .with_target_opt(branch)
+            .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
         HookType::PreSwitch | HookType::PreCreate | HookType::PostCreate | HookType::PostSwitch => {
-            let base_path = to_posix_path(&worktree_path.to_string_lossy());
-            with_target(TemplateVars::new().with_base_strs(branch, Some(&base_path)))
+            TemplateVars::new()
+                .with_base(branch, worktree_path)
+                .with_target_opt(branch)
                 .with_target_worktree_path(worktree_path)
         }
         // Remove hooks: target = where user ends up (current worktree is the best guess)
-        HookType::PreRemove | HookType::PostRemove => {
-            with_target(TemplateVars::new()).with_target_worktree_path(worktree_path)
-        }
+        HookType::PreRemove | HookType::PostRemove => TemplateVars::new()
+            .with_target_opt(branch)
+            .with_target_worktree_path(worktree_path),
     }
 }
 
@@ -185,7 +182,8 @@ pub struct HookCliArgs<'a> {
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
 ///
-/// Works in detached HEAD state - `{{ branch }}` template variable will be "HEAD".
+/// Works in detached HEAD state - the `{{ branch }}` template variable (and the
+/// `{{ base }}` / `{{ target }}` names derived from it) is simply unset there.
 ///
 /// Template variables come from three sources in [`HookCliArgs`], routed per
 /// alias semantics:
@@ -376,7 +374,8 @@ pub fn handle_hook_show(
 
     // Build context for template expansion (only used if --expanded).
     // Need to keep CommandEnv alive for the lifetime of ctx. Detached HEAD is
-    // fine: `{{ branch }}` expands to "HEAD" there.
+    // fine: `{{ branch }}` is unset there, and `--expanded` renders the
+    // guarded form the way any other unset variable renders.
     let env = if expanded {
         Some(CommandEnv::for_action_loading_config()?)
     } else {

@@ -100,16 +100,23 @@ impl PostRemoveContext {
     /// Build extra_vars that override the base context with removed-worktree identity.
     ///
     /// `removed_branch` is borrowed from the caller (it outlives the returned Vec).
-    pub fn extra_vars<'a>(&'a self, removed_branch: &'a str) -> Vec<(&'a str, &'a str)> {
-        vec![
-            ("branch", removed_branch),
-            ("worktree_path", &self.worktree_path_str),
+    /// It is `None` when the removed worktree was detached: `extra_vars` is
+    /// applied unconditionally at the end of `build_hook_context`, so emitting a
+    /// `"HEAD"` literal here would overwrite the unset `branch` that context
+    /// deliberately leaves out (issue #4009).
+    pub fn extra_vars<'a>(&'a self, removed_branch: Option<&'a str>) -> Vec<(&'a str, &'a str)> {
+        let mut vars = vec![
+            ("worktree_path", &*self.worktree_path_str),
             ("worktree", &self.worktree_path_str), // deprecated alias
             ("worktree_name", &self.worktree_name),
             ("commit", &self.commit),
             ("short_commit", &self.short_commit),
             ("target", &self.target_branch),
             ("target_worktree_path", &self.target_path_str),
-        ]
+        ];
+        if let Some(branch) = removed_branch {
+            vars.push(("branch", branch));
+        }
+        vars
     }
 }
