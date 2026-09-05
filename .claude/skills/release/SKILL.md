@@ -36,7 +36,7 @@ metadata:
    cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
    ```
    This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 10 to fold in the CHANGELOG.
-9. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
+9. **Update CHANGELOG**: the top section holds this release's changes (see MANDATORY verification below). If it is `## Unreleased`, rename that heading to `## X.Y.Z` and fold the remaining entries into it — inserting a new heading above it ships a stale `## Unreleased` in the release notes. Otherwise the top section is the last shipped version: add a `## X.Y.Z` section above it, never append to it.
 10. **Commit**: Reset the auto-commit from step 8, stage everything, and create the final release commit:
     ```bash
     git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Codex on Windows: the activity hooks no longer fail on every event**: each hook led with a bare `bash`, which `cmd.exe` resolves to the WSL launcher rather than Git Bash; in a sandboxed session it refuses to start, so every event raised a `Hook failed` banner. Each hook now carries a Windows-only command that reaches Worktrunk through a `cmd.exe` shim. ([#4008](https://github.com/max-sixty/worktrunk/pull/4008), fixes [#4007](https://github.com/max-sixty/worktrunk/issues/4007), thanks @McNultyyy for reporting and diagnosing)
+
 ## 0.76.0
 
 ### Improved
