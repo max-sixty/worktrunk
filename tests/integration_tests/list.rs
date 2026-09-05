@@ -3870,6 +3870,46 @@ fn test_list_branches_with_nonexistent_default_branch(repo: TestRepo) {
     });
 }
 
+/// A repo whose branch inventory is empty still drops an unresolvable default
+/// branch, even though it raises no warning about it.
+///
+/// The two are separate decisions. `wt list` stays quiet here because an empty
+/// inventory is as likely to be a repo with no commits — nothing was deleted,
+/// and `wt config state default-branch clear` would only be re-inferred on the
+/// next run. But the persisted value still names no branch, so the tasks that
+/// resolve against it (ahead/behind, branch diff, merge-conflict check) must
+/// not be handed it: each would fail with `fatal: Needed a single revision`,
+/// and the run would end in a "3 tasks failed" block.
+///
+/// Detaching HEAD and deleting the only branch is the shape that reaches this
+/// with a row still on the table; the bare-no-commits repo has no rows, so
+/// nothing downstream fires there.
+#[rstest]
+fn test_list_detached_with_no_branches_drops_stale_default() {
+    let repo = TestRepo::with_initial_commit();
+    repo.run_git(&["config", "worktrunk.default-branch", "main"]);
+    repo.run_git(&["checkout", "--detach"]);
+    repo.run_git(&["branch", "-D", "main"]);
+
+    let output = list_snapshots::command(&repo, repo.root_path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt list should succeed; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("tasks failed"),
+        "the dropped default must keep every task off the missing branch; got: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("does not exist locally"),
+        "an empty branch inventory reports nothing; got: {stderr:?}"
+    );
+}
+
 /// Tests that the current worktree indicator (@) is correct for nested worktrees.
 ///
 /// When worktrees are placed inside other worktrees (e.g., `.worktrees/` layout),

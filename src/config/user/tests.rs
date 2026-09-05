@@ -2396,7 +2396,7 @@ fn test_load_error_display_file() {
         err: Box::new(toml_err),
     };
     let msg = err.to_string();
-    assert!(msg.contains("User config at"), "{msg}");
+    assert!(msg.contains("User config @"), "{msg}");
     assert!(msg.contains("failed to parse"), "{msg}");
     assert!(msg.contains("line 2"), "{msg}");
 }

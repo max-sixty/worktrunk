@@ -288,6 +288,30 @@ fn test_error_with_context_formatting(temp_home: TempDir) {
     });
 }
 
+/// A project config that doesn't parse stops `wt hook show` — showing a
+/// half-read hook list is worse than stopping — and the failure renders as one
+/// header over the parser's own output.
+///
+/// `Repository::project_config()` already wraps the load with "Failed to load
+/// project config", so the handler must not add a second copy: that rendered
+/// as a header restating its own gutter line. The snapshot pins the single
+/// header, and the `@` before the path (never "at", per the path vocabulary).
+#[rstest]
+fn test_hook_show_invalid_project_config(repo: TestRepo, temp_home: TempDir) {
+    // Unclosed table header — the file cannot be parsed at all.
+    repo.write_project_config("[pre-merge\ntest = \"echo hi\"\n");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_hook_show_project_config_no_hooks(repo: TestRepo, temp_home: TempDir) {
     // Create user config without hooks

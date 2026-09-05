@@ -442,18 +442,31 @@ fn migrate_template_vars_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
         .collect()
 }
 
-/// Information about deprecated commit-generation sections found in config
+/// Which scopes of one config file carried a deprecated section: the top
+/// level, and/or named `[projects."<id>"]` entries.
+///
+/// A section rename warns once per scope so the line names a path the reader
+/// actually has — `[projects."<id>".select]` rather than a bare `[select]`
+/// they never wrote.
 #[derive(Debug, Default, Clone)]
-pub struct CommitGenerationDeprecations {
-    /// Has top-level [commit-generation] section
+pub struct ScopedSections {
+    /// The deprecated section appeared at the top level.
     pub has_top_level: bool,
-    /// Project keys that have deprecated [projects."...".commit-generation]
+    /// Project keys whose `[projects."<id>"]` entry carried the section.
     pub project_keys: Vec<String>,
 }
 
-impl CommitGenerationDeprecations {
+impl ScopedSections {
     pub fn is_empty(&self) -> bool {
         !self.has_top_level && self.project_keys.is_empty()
+    }
+
+    /// Record that the section was migrated in `scope`.
+    fn record(&mut self, scope: Option<&str>) {
+        match scope {
+            None => self.has_top_level = true,
+            Some(key) => self.project_keys.push(key.to_string()),
+        }
     }
 }
 
@@ -469,13 +482,19 @@ pub enum DeprecationKind {
         old: &'static str,
         new: &'static str,
     },
-    /// `[commit-generation]` sections → `[commit.generation]`. Carries the
-    /// top-level flag plus per-project keys so each emits its own warning line.
-    CommitGeneration(CommitGenerationDeprecations),
+    /// `[commit-generation]` sections → `[commit.generation]`, one warning
+    /// line per scope that was migrated.
+    CommitGeneration(ScopedSections),
     /// `approved-commands` under `[projects."..."]` (moved to approvals.toml).
     ApprovedCommands,
-    /// `[select]` section (moved to `[switch.picker]`).
-    Select,
+    /// `[select]` sections → `[switch.picker]`, one warning line per scope
+    /// that was migrated.
+    Select(ScopedSections),
+    /// A key in a deprecated section that its replacement has no field for,
+    /// so the migration removes it instead of carrying it over. `section` is
+    /// the deprecated section's display form in its own scope (`[select]`,
+    /// `[projects."<id>".commit-generation]`); `key` is the key.
+    UnsupportedKey { section: String, key: String },
     /// `[ci]` section (moved to `[forge]`).
     CiSection,
     /// `no-ff` in `[merge]` (use `ff` instead).
@@ -586,6 +605,14 @@ enum RulePass {
 /// rewrite key spaces no other rule reads (template strings and
 /// `approved-commands`).
 ///
+/// A rule that moves a section's table wholesale into a new location must
+/// remove the keys its destination has no field for, reporting each via
+/// [`drop_unsupported_keys`]. Carrying such a key over puts it at a path the
+/// user never typed, which the unknown-field check then names on every command
+/// and which `wt config update` writes into the file rather than clearing.
+/// `test_warning_fires_iff_update_changes` pins the resulting invariant: what
+/// an update writes raises neither warning.
+///
 /// Adding a deprecation: a single idempotent migrate-and-report fn, a
 /// [`DeprecationKind`] variant with its `format_deprecation_warnings` arm,
 /// and a row here (plus a [`DeprecatedSection`] entry for a removed top-level
@@ -604,13 +631,7 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     // (see `copy_approved_commands_to_approvals_file`).
     DeprecationRule::UpdateOnly(remove_approved_commands_doc),
     // [select] → [switch.picker].
-    DeprecationRule::Structural(|doc| {
-        if for_each_config_table_mut(doc, |_, table| migrate_select_table(table)) {
-            vec![DeprecationKind::Select]
-        } else {
-            Vec::new()
-        }
-    }),
+    DeprecationRule::Structural(migrate_select_doc),
     // pre-create/post-create → pre-start/post-start. Silent: the creation
     // hook rename is paused (see #2838) — both names load via serde aliases,
     // but in-memory migration to canonical keeps round-trip analysis
@@ -621,7 +642,10 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
         let post = rename_hook_key(doc, "post-create", "post-start");
         pre || post
     }),
-    // [ci] → [forge].
+    // [ci] → [forge]. Moves `platform` only; unrelated `[ci]` keys stay where
+    // the user wrote them, so they keep warning at their own path rather than
+    // being relocated (contrast the wholesale-move rules above, which drop
+    // what the destination can't hold).
     DeprecationRule::Structural(migrate_ci_doc),
     // merge.no-ff → merge.ff (inverted).
     DeprecationRule::Structural(|doc| {
@@ -634,8 +658,8 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     // list.task-timeout-ms — removed; `[list] timeout-ms` bounds the collect
     // phase, and the drain has its own fallback bound.
     DeprecationRule::Structural(|doc| {
-        if for_each_config_table_mut(doc, |_, table| {
-            remove_section_key_in(table, "list", "task-timeout-ms")
+        if for_each_config_table_mut(doc, |scope, table| {
+            remove_section_key_in(table, scope, "list", "task-timeout-ms")
         }) {
             vec![DeprecationKind::ListTaskTimeout]
         } else {
@@ -792,26 +816,150 @@ fn for_each_config_table_mut(
     modified
 }
 
-/// Migrate `[commit-generation]` → `[commit.generation]` in every scope,
-/// reporting which scopes changed via the kind's payload — the top-level flag
-/// plus per-project keys, each of which emits its own warning line.
-fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
-    let mut found = CommitGenerationDeprecations::default();
-    for_each_config_table_mut(doc, |scope, table| {
-        let migrated = migrate_commit_generation_in(table);
-        if migrated {
-            match scope {
-                None => found.has_top_level = true,
-                Some(key) => found.project_keys.push(key.to_string()),
-            }
+/// Keys `[switch.picker]` accepts — the destination of the `[select]` rename.
+/// One schema, because only user config has a picker section; were a project
+/// one added, this would need the union too, for the reason
+/// [`COMMIT_GENERATION_KEYS`] gives.
+static SWITCH_PICKER_KEYS: LazyLock<Vec<String>> =
+    LazyLock::new(crate::config::schema_property_names::<crate::config::SwitchPickerConfig>);
+
+/// Keys `[commit.generation]` accepts, across both config files: the user
+/// schema plus the project one (a subset — `template-append` only). The union,
+/// rather than the schema of the file being migrated, is what keeps a
+/// user-only key written into project config on its "belongs in user config"
+/// redirect (see `USER_ONLY_COMMIT_GENERATION_PATHS`) instead of dropping it.
+static COMMIT_GENERATION_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut keys = crate::config::schema_property_names::<crate::config::CommitGenerationConfig>();
+    keys.extend(crate::config::schema_property_names::<
+        crate::config::ProjectCommitGenerationConfig,
+    >());
+    keys
+});
+
+/// What a section-rename migration did to one scope.
+struct SectionMigration {
+    /// Whether the replacement section was written. False when the rule
+    /// declined, and when every key was dropped (nothing left to move).
+    moved: bool,
+    /// One [`DeprecationKind::UnsupportedKey`] per key removed for want of a
+    /// destination field.
+    dropped: Deprecations,
+}
+
+impl SectionMigration {
+    /// The rule declined: nothing moved, nothing removed.
+    fn none() -> Self {
+        Self {
+            moved: false,
+            dropped: Vec::new(),
         }
-        migrated
-    });
-    if found.is_empty() {
-        Vec::new()
-    } else {
-        vec![DeprecationKind::CommitGeneration(found)]
     }
+
+    /// Every key was removed, so there was nothing left to move.
+    fn dropped_only(dropped: Deprecations) -> Self {
+        Self {
+            moved: false,
+            dropped,
+        }
+    }
+}
+
+/// Display form of a deprecated section within its scope: `[select]` at the
+/// top level, `[projects."<id>".select]` under a project entry.
+fn section_display(scope: Option<&str>, section: &str) -> String {
+    match scope {
+        None => format!("[{section}]"),
+        Some(project) => format!("[projects.\"{project}\".{section}]"),
+    }
+}
+
+/// Remove every key `supported` doesn't list, reporting one
+/// [`DeprecationKind::UnsupportedKey`] each in document order.
+///
+/// A rename that moves its table wholesale would otherwise carry a key with no
+/// destination field to a path the user never typed. The unknown-field check
+/// then names that path (`switch.picker.height` for a `[select] height`) on
+/// every command, and `wt config update` — the command the deprecation hint
+/// points at — writes the key there rather than clearing it, so the warning
+/// outlives every fix available to the user. Removing the key closes the loop:
+/// applying the update silences every warning it raised.
+///
+/// `supported` is the union of the destination's schemas across config files,
+/// so a key that is merely *misplaced* (valid in the other config) survives to
+/// collect its redirect warning; only a key with no home anywhere goes. Those
+/// schemas must not use `#[serde(alias = "…")]`, which
+/// [`schema_property_names`](crate::config::schema_property_names) cannot see;
+/// an alias would have to be added here the way `schema_top_level_keys` adds
+/// the `pre-create`/`post-create` hook aliases.
+fn drop_unsupported_keys(
+    table: &mut toml_edit::Table,
+    supported: &[String],
+    section: &str,
+) -> Deprecations {
+    let unsupported: Vec<String> = table
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .filter(|key| !supported.iter().any(|s| s == key))
+        .collect();
+    unsupported
+        .into_iter()
+        .map(|key| {
+            table.remove(&key);
+            DeprecationKind::UnsupportedKey {
+                section: section.to_string(),
+                key,
+            }
+        })
+        .collect()
+}
+
+/// Run a wholesale section move over every scope and report what it did.
+///
+/// This is the contract a wholesale-move rule owes, in one place: record the
+/// rename only for a scope that actually got a replacement section written,
+/// count a drop-only outcome as a change so the document is rewritten, and
+/// emit the rename kind before the per-key drops. A third such rule is a row
+/// and a `migrate_*_table`, not another copy of this.
+///
+/// `kind` is the tuple-variant constructor for the rename ([`DeprecationKind`]
+/// variants coerce to `fn` pointers); the scopes it carries each emit their own
+/// warning line.
+fn migrate_section_doc(
+    doc: &mut toml_edit::DocumentMut,
+    migrate: impl Fn(&mut toml_edit::Table, Option<&str>) -> SectionMigration,
+    kind: fn(ScopedSections) -> DeprecationKind,
+) -> Deprecations {
+    let mut renamed = ScopedSections::default();
+    let mut dropped = Deprecations::new();
+    for_each_config_table_mut(doc, |scope, table| {
+        let outcome = migrate(table, scope);
+        if outcome.moved {
+            renamed.record(scope);
+        }
+        let changed = outcome.moved || !outcome.dropped.is_empty();
+        dropped.extend(outcome.dropped);
+        changed
+    });
+    let mut kinds = Deprecations::new();
+    if !renamed.is_empty() {
+        kinds.push(kind(renamed));
+    }
+    kinds.extend(dropped);
+    kinds
+}
+
+/// Migrate `[commit-generation]` → `[commit.generation]` in every scope.
+fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+    migrate_section_doc(
+        doc,
+        migrate_commit_generation_in,
+        DeprecationKind::CommitGeneration,
+    )
+}
+
+/// Migrate `[select]` → `[switch.picker]` in every scope.
+fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+    migrate_section_doc(doc, migrate_select_table, DeprecationKind::Select)
 }
 
 /// Whether a TOML item is a table or inline table (can be migrated as a section).
@@ -888,29 +1036,49 @@ fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
 /// absent or a table — a scalar `commit = "x"` blocks insertion of
 /// `[commit.generation]`, and removing the source then would silently drop the
 /// deprecated section.
-fn migrate_commit_generation_in(table: &mut toml_edit::Table) -> bool {
+///
+/// Keys `[commit.generation]` has no field for are dropped and reported (see
+/// [`drop_unsupported_keys`]) rather than moved into a section that would
+/// reject them. A section left empty by those drops writes no
+/// `[commit.generation]` at all — removing the source is the whole change.
+fn migrate_commit_generation_in(
+    table: &mut toml_edit::Table,
+    scope: Option<&str>,
+) -> SectionMigration {
     if has_table_like_child(table.get("commit"), "generation")
         || !table
             .get("commit-generation")
             .is_some_and(is_nonempty_table_like)
         || !can_host_subtable(table.get("commit"))
     {
-        return false;
+        return SectionMigration::none();
     }
     let Some(old_section) = table.remove("commit-generation") else {
-        return false;
+        return SectionMigration::none();
     };
     let mut generation = into_table(old_section).expect("checked is_nonempty_table_like above");
 
     // Merge args into command if present.
     merge_args_into_command(&mut generation);
 
+    let dropped = drop_unsupported_keys(
+        &mut generation,
+        &COMMIT_GENERATION_KEYS,
+        &section_display(scope, "commit-generation"),
+    );
+    if generation.is_empty() {
+        return SectionMigration::dropped_only(dropped);
+    }
+
     // Ensure [commit] exists (implicit, so only [commit.generation] renders a
     // header) and move the migrated section under it.
     if let Some(commit_table) = ensure_standard_table_parent(table, "commit") {
         commit_table.insert("generation", toml_edit::Item::Table(generation));
     }
-    true
+    SectionMigration {
+        moved: true,
+        dropped,
+    }
 }
 
 /// Remove non-empty `approved-commands` arrays from `\[projects."..."\]`
@@ -968,38 +1136,54 @@ fn remove_approved_commands_doc(doc: &mut toml_edit::DocumentMut) -> Deprecation
 }
 
 /// Migrate a non-empty `select` key to `switch.picker` within a table.
-/// Returns whether a migration was performed. Skips when `[switch.picker]`
-/// already exists.
+/// Skips when `[switch.picker]` already exists.
 ///
 /// Leaves a malformed `select` (e.g., a string) in place rather than removing
 /// it — silently dropping it would lose user config when a sibling migration
 /// also rewrites the document. An empty section is likewise left alone — it
 /// contributes no config, so rewriting it isn't worth a warning.
-fn migrate_select_table(table: &mut toml_edit::Table) -> bool {
+///
+/// Keys `[switch.picker]` has no field for are dropped and reported (see
+/// [`drop_unsupported_keys`]) rather than moved into a section that would
+/// reject them. A `[select]` left empty by those drops writes no
+/// `[switch.picker]` at all — removing the source is the whole change.
+fn migrate_select_table(table: &mut toml_edit::Table, scope: Option<&str>) -> SectionMigration {
     let has_new_section = has_table_like_child(table.get("switch"), "picker");
 
     if has_new_section {
-        return false;
+        return SectionMigration::none();
     }
 
     if !table.get("select").is_some_and(is_nonempty_table_like) {
-        return false;
+        return SectionMigration::none();
     }
 
     // A scalar `switch = "x"` blocks insertion of `[switch.picker]`; removing
     // `select` then would silently drop the user's picker config.
     if !can_host_subtable(table.get("switch")) {
-        return false;
+        return SectionMigration::none();
     }
 
-    let select_table =
+    let mut select_table =
         into_table(table.remove("select").unwrap()).expect("checked is_nonempty_table_like above");
+
+    let dropped = drop_unsupported_keys(
+        &mut select_table,
+        &SWITCH_PICKER_KEYS,
+        &section_display(scope, "select"),
+    );
+    if select_table.is_empty() {
+        return SectionMigration::dropped_only(dropped);
+    }
 
     if let Some(switch_table) = ensure_standard_table_parent(table, "switch") {
         switch_table.insert("picker", toml_edit::Item::Table(select_table));
     }
 
-    true
+    SectionMigration {
+        moved: true,
+        dropped,
+    }
 }
 
 fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
@@ -1171,19 +1355,40 @@ fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &st
     modified
 }
 
-/// Remove `key` from a top-level `section` in a table (top-level or project).
-/// An emptied section is left in place — it round-trips harmlessly.
+/// Remove `key` from a top-level `section` in a table, dropping a
+/// `[projects."<id>"]`-scoped section that the removal empties.
+///
+/// A default section serializes away, so an empty one is absent from the
+/// round-trip `unknown_tree` compares against. `seed_schema_skeleton` puts
+/// every valid *top-level* key back, which is why an emptied top-level
+/// `[list]` reads as known and an emptied `[projects."<id>".list]` reads as
+/// `unknown field projects.<id>.list`. So only the project scope needs the
+/// section removed; a top-level one keeps its position and the comments above
+/// its header. (An empty nested section the user wrote by hand warns the same
+/// way — that false positive belongs to `unknown_tree`, and this rule only
+/// avoids adding to it.)
 ///
 /// A section can be written as a section table (`[list]`) or inline
 /// (`list = { … }`); `toml_edit` surfaces these as different node types, so
 /// each shape gets its own branch — matching the inline-aware `no-cd`/`no-ff`
 /// rules.
-fn remove_section_key_in(table: &mut toml_edit::Table, section: &str, key: &str) -> bool {
-    match table.get_mut(section) {
-        Some(toml_edit::Item::Table(t)) => t.remove(key).is_some(),
-        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(it))) => it.remove(key).is_some(),
-        _ => false,
+fn remove_section_key_in(
+    table: &mut toml_edit::Table,
+    scope: Option<&str>,
+    section: &str,
+    key: &str,
+) -> bool {
+    let (removed, now_empty) = match table.get_mut(section) {
+        Some(toml_edit::Item::Table(t)) => (t.remove(key).is_some(), t.is_empty()),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(it))) => {
+            (it.remove(key).is_some(), it.is_empty())
+        }
+        _ => return false,
+    };
+    if removed && now_empty && scope.is_some() {
+        table.remove(section);
     }
+    removed
 }
 
 fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> String {
@@ -1266,10 +1471,12 @@ fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()>
 /// Converts: command = "llm", args = ["-m", "haiku"]
 /// To: command = "llm -m haiku"
 ///
-/// Only removes `args` if it can be successfully merged into `command`.
-/// Preserves `args` if:
-/// - `command` is missing or not a string
-/// - `args` is not an array
+/// Only removes `args` if it can be successfully merged into `command` —
+/// `command` missing or not a string, or `args` not an array of strings,
+/// leaves it in place. `[commit.generation]` has no `args` field, so what this
+/// leaves behind is then dropped and reported by [`drop_unsupported_keys`]:
+/// `args` was only ever a way of spelling part of `command`, and one that
+/// couldn't be merged has nowhere to go.
 fn merge_args_into_command(table: &mut toml_edit::Table) {
     // Validate preconditions before removing args. Every element must be a
     // string — a single non-string (e.g. `args = [1, "--ok"]`) would otherwise
@@ -1586,8 +1793,8 @@ fn format_warning_lines<'a>(
                     ))
                 );
             }
-            DeprecationKind::CommitGeneration(commit_gen) => {
-                if commit_gen.has_top_level {
+            DeprecationKind::CommitGeneration(scopes) => {
+                if scopes.has_top_level {
                     let _ = writeln!(
                         out,
                         "{}",
@@ -1596,7 +1803,7 @@ fn format_warning_lines<'a>(
                         ))
                     );
                 }
-                for k in &commit_gen.project_keys {
+                for k in &scopes.project_keys {
                     let _ = writeln!(
                         out,
                         "{}",
@@ -1615,12 +1822,32 @@ fn format_warning_lines<'a>(
                     ))
                 );
             }
-            DeprecationKind::Select => {
+            DeprecationKind::Select(scopes) => {
+                if scopes.has_top_level {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        warning_message(cformat!(
+                            "{label}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>"
+                        ))
+                    );
+                }
+                for k in &scopes.project_keys {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        warning_message(cformat!(
+                            "{label}: <bold>[projects.\"{k}\".select]</> is deprecated in favor of <bold>[projects.\"{k}\".switch.picker]</>"
+                        ))
+                    );
+                }
+            }
+            DeprecationKind::UnsupportedKey { section, key } => {
                 let _ = writeln!(
                     out,
                     "{}",
                     warning_message(cformat!(
-                        "{label}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>"
+                        "{label}: <bold>{section} {key}</> is no longer supported and will be removed"
                     ))
                 );
             }
@@ -1942,14 +2169,8 @@ mod tests {
     /// the list, a misplaced key would silently degrade to "unknown field".
     #[test]
     fn user_only_commit_generation_paths_track_schema() {
-        let schema = schemars::SchemaGenerator::default()
-            .into_root_schema_for::<crate::config::CommitGenerationConfig>();
-        let mut expected: Vec<String> = schema
-            .as_object()
-            .and_then(|o| o.get("properties"))
-            .and_then(|p| p.as_object())
-            .map(|props| props.keys().cloned().collect())
-            .unwrap_or_default();
+        let mut expected =
+            crate::config::schema_property_names::<crate::config::CommitGenerationConfig>();
         expected.retain(|k| k != "template-append");
         let mut expected: Vec<String> = expected
             .iter()
@@ -2007,7 +2228,7 @@ mod tests {
         deprecations.iter().any(pred)
     }
 
-    fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
+    fn find_commit_generation_deprecations(content: &str) -> ScopedSections {
         detect_deprecations(content, ConfigFileKind::User)
             .into_iter()
             .find_map(|k| match k {
@@ -2025,7 +2246,7 @@ mod tests {
 
     fn find_select_deprecation(content: &str) -> bool {
         has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
-            matches!(k, DeprecationKind::Select)
+            matches!(k, DeprecationKind::Select(_))
         })
     }
 
@@ -2867,9 +3088,11 @@ commit-generation = {}
         );
     }
 
+    /// `args` with no `command` to merge into has nowhere to go —
+    /// `[commit.generation]` has no `args` field — so it is dropped and
+    /// reported rather than moved to a path that would warn forever.
     #[test]
-    fn test_migrate_args_without_command_preserved() {
-        // Args preserved when no command to merge into
+    fn test_migrate_args_without_command_dropped() {
         let content = r#"
 [commit-generation]
 args = ["-m", "haiku"]
@@ -2879,14 +3102,19 @@ template = "some template"
         insta::assert_snapshot!(result, @r#"
 
         [commit.generation]
-        args = ["-m", "haiku"]
         template = "some template"
         "#);
+        assert!(has_kind(
+            &detect_deprecations(content, ConfigFileKind::User),
+            |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
+                if section == "[commit-generation]" && key == "args")
+        ));
     }
 
+    /// A non-string `command` blocks the merge, so `args` is dropped for the
+    /// same reason — and `command` itself survives for serde's type error.
     #[test]
     fn test_migrate_args_with_non_string_command() {
-        // Args preserved when command is not a string
         let content = r#"
 [commit-generation]
 command = 123
@@ -2897,7 +3125,6 @@ args = ["-m", "haiku"]
 
         [commit.generation]
         command = 123
-        args = ["-m", "haiku"]
         "#);
     }
 
@@ -3110,32 +3337,27 @@ no-ff = true
         );
     }
 
-    /// `args = [1, "--ok"]`: a single non-string element would previously be
-    /// filtered out while `args` was removed, dropping user data. The whole
-    /// `args` array must be preserved unchanged when any element isn't a
-    /// string.
+    /// `args = [1, "--ok"]`: a single non-string element blocks the merge —
+    /// joining it would silently filter the non-string out and corrupt
+    /// `command`. `command` is therefore left as written, and the unmergeable
+    /// `args` is dropped and reported rather than moved into a
+    /// `[commit.generation]` that has no field for it.
     #[test]
-    fn test_commit_generation_args_preserved_when_non_string_element() {
+    fn test_commit_generation_args_dropped_when_non_string_element() {
         let content = r#"[commit-generation]
 command = "echo"
 args = [1, "--ok"]
 "#;
         let result = migrate_content(content);
-        // Section migrated to [commit.generation], but `args` preserved
-        // because it contains a non-string element.
-        assert!(
-            result.contains("[commit.generation]"),
-            "section should still migrate; got:\n{result}"
-        );
-        assert!(
-            result.contains("args = [1, \"--ok\"]") || result.contains("args = [ 1, \"--ok\" ]"),
-            "args must be preserved unchanged when any element is non-string; got:\n{result}"
-        );
-        // command must NOT have been mutated to include the partial join.
-        assert!(
-            result.contains(r#"command = "echo""#),
-            "command must not be mutated when args is preserved; got:\n{result}"
-        );
+        insta::assert_snapshot!(result, @r#"
+        [commit.generation]
+        command = "echo"
+        "#);
+        assert!(has_kind(
+            &detect_deprecations(content, ConfigFileKind::User),
+            |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
+                if section == "[commit-generation]" && key == "args")
+        ));
     }
 
     /// `[ci]` migration only owns `platform`; other keys in the same section
@@ -3208,11 +3430,13 @@ json-schema = 1
     /// The framework invariant: a warning fires exactly when `wt config
     /// update` would change the file. Degenerate configs that can't be safely
     /// rewritten produce no warning and no rewrite; deprecated configs
-    /// produce both. (Silent renames change the file without warning by
-    /// design and aren't part of this battery. Every case gets an explicit
-    /// json-schema value appended so only the rule under test drives the diff;
-    /// the pending-default row satisfies the same invariant with its warning
-    /// at the JSON-emitting surface — see `test_json_schema_adopt_iff`.)
+    /// produce both, and what the update writes is schema-clean — a rewritten
+    /// file must not warn about a key the user never typed. (Silent renames
+    /// change the file without warning by design and aren't part of this
+    /// battery. Every case gets an explicit json-schema value appended so only
+    /// the rule under test drives the diff; the pending-default row satisfies
+    /// the same invariant with its warning at the JSON-emitting surface — see
+    /// `test_json_schema_adopt_iff`.)
     #[test]
     fn test_warning_fires_iff_update_changes() {
         let untouched = [
@@ -3236,6 +3460,9 @@ json-schema = 1
             "merge = { no-ff = \"yes\" }\n",
             // retired deprecations are left for generic unknown-field handling
             "switch = { picker = { timeout-ms = 500 } }\n",
+            // a scalar destination blocks the whole rule, unsupported keys
+            // included — nothing is dropped from a section that can't move
+            "switch = \"x\"\n\n[select]\nheight = \"50%\"\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
         ];
@@ -3260,6 +3487,15 @@ json-schema = 1
             "merge = { no-ff = true }\n",
             "switch = { no-cd = true }\n",
             "[select]\ntimeout-ms = 500\n",
+            // a key the destination has no field for is dropped, not
+            // relocated: on its own (the section goes away entirely), and
+            // alongside a supported one
+            "[select]\nheight = \"50%\"\n",
+            "[select]\npager = \"delta\"\nheight = \"50%\"\n",
+            "[commit-generation]\ncommand = \"llm\"\nmodel = \"haiku\"\n",
+            "[projects.\"github.com/u/r\".select]\nheight = \"50%\"\n",
+            // an `args` that can't be merged into `command` has nowhere to go
+            "[commit-generation]\nargs = [\"-m\", \"haiku\"]\n",
             // list.task-timeout-ms, section and inline forms (project-scoped so
             // the appended `[list]` below isn't a duplicate table)
             "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
@@ -3280,6 +3516,26 @@ json-schema = 1
             assert!(
                 detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
                 "no warning expected after update for:\n{migrated}"
+            );
+            // …and closes it for the *other* warning channel too: the update
+            // must not write a key that the unknown-field check then flags
+            // forever. A misplaced-but-known key (`forge` in user config) is
+            // the user's own to move; a key with no home anywhere is the
+            // migration's to drop.
+            let unknown: Vec<_> =
+                crate::config::collect_unknown_warnings::<crate::config::UserConfig>(&migrated)
+                    .into_iter()
+                    .filter(|w| {
+                        matches!(
+                            w,
+                            crate::config::UnknownWarning::TopLevelUnknown { .. }
+                                | crate::config::UnknownWarning::NestedUnknown { .. }
+                        )
+                    })
+                    .collect();
+            assert!(
+                unknown.is_empty(),
+                "update must not write unknown fields, got {unknown:?} for:\n{migrated}"
             );
         }
     }
@@ -3388,25 +3644,97 @@ json-schema = 1
         assert_eq!(migrate_content(""), "");
     }
 
-    /// A retired `timeout-ms` key under `[select]` does not add a second
-    /// deprecation after the section is migrated to `[switch.picker]`.
+    /// A retired `timeout-ms` key under `[select]` is removed instead of
+    /// being carried into `[switch.picker]`, and reported after the section
+    /// rename: the rename lines first, then one line per unsupported key.
     #[test]
-    fn test_select_timeout_ms_warns_for_select() {
-        let deprecations = detect_deprecations(
-            "[select]\npager = \"delta\"\ntimeout-ms = 500\n",
-            ConfigFileKind::User,
-        );
-        assert!(has_kind(&deprecations, |k| matches!(
-            k,
-            DeprecationKind::Select
-        )));
-        assert_eq!(
-            deprecations
-                .iter()
-                .filter(|kind| !kind.is_pending_default())
-                .count(),
-            1
-        );
+    fn test_select_timeout_ms_removed_alongside_rename() {
+        let content = "[select]\npager = \"delta\"\ntimeout-ms = 500\n";
+        let deprecations: Vec<_> = detect_deprecations(content, ConfigFileKind::User)
+            .into_iter()
+            .filter(|kind| !kind.is_pending_default())
+            .collect();
+        assert!(matches!(
+            deprecations.as_slice(),
+            [
+                DeprecationKind::Select(scopes),
+                DeprecationKind::UnsupportedKey { section, key }
+            ] if scopes.has_top_level
+                && scopes.project_keys.is_empty()
+                && section == "[select]"
+                && key == "timeout-ms"
+        ));
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [switch.picker]
+        pager = "delta"
+        "#);
+    }
+
+    /// A `[select]` whose every key is unsupported writes no `[switch.picker]`
+    /// at all, since an empty section would just be noise. Only the key is
+    /// reported; a rename that didn't happen is not.
+    #[test]
+    fn test_select_with_only_unsupported_keys_leaves_no_section() {
+        let content = "[select]\nheight = \"50%\"\n";
+        let deprecations: Vec<_> = detect_deprecations(content, ConfigFileKind::User)
+            .into_iter()
+            .filter(|kind| !kind.is_pending_default())
+            .collect();
+        assert!(matches!(
+            deprecations.as_slice(),
+            [DeprecationKind::UnsupportedKey { section, key }]
+                if section == "[select]" && key == "height"
+        ));
+        assert_eq!(migrate_content(content), "");
+    }
+
+    /// Both lines name the scope they came from, so a project-scoped
+    /// `[select]` never reports a top-level `[select]` the user doesn't have.
+    #[test]
+    fn test_select_warnings_name_the_project_scope() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            deprecations: detect_deprecations(
+                "[projects.\"github.com/u/r\".select]\npager = \"delta\"\nheight = \"50%\"\n",
+                ConfigFileKind::User,
+            )
+            .into_iter()
+            .filter(|kind| !kind.is_pending_default())
+            .collect(),
+            kind: ConfigFileKind::User,
+            main_worktree_path: None,
+        };
+        assert_snapshot!(format_deprecation_warnings(&info).ansi_strip(), @r#"
+        ▲ User config: [projects."github.com/u/r".select] is deprecated in favor of [projects."github.com/u/r".switch.picker]
+        ▲ User config: [projects."github.com/u/r".select] height is no longer supported and will be removed
+        "#);
+    }
+
+    /// The union of the destination's schemas across config files is what
+    /// separates a key with no home from one that is merely misplaced. A
+    /// user-only `command` written into project config is valid *somewhere*,
+    /// so the migration carries it into `[commit.generation]` and lets the
+    /// unknown-field check redirect it; a key valid nowhere goes.
+    #[test]
+    fn test_project_config_keeps_misplaced_user_only_keys() {
+        let content = "[commit-generation]\ncommand = \"llm\"\nbogus = 1\n";
+        assert!(has_kind(
+            &detect_deprecations(content, ConfigFileKind::Project),
+            |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
+                if section == "[commit-generation]" && key == "bogus")
+        ));
+        let migrated = compute_migrated_content(content, ConfigFileKind::Project);
+        insta::assert_snapshot!(migrated, @r#"
+        [commit.generation]
+        command = "llm"
+        "#);
+        // `command` survives to collect its redirect, not an "unknown field".
+        assert!(matches!(
+            crate::config::collect_unknown_warnings::<crate::config::ProjectConfig>(&migrated)
+                .as_slice(),
+            [crate::config::UnknownWarning::NestedWrongConfig { path, .. }]
+                if path == "commit.generation.command"
+        ));
     }
 
     #[test]
@@ -4035,7 +4363,7 @@ pager = "delta"
         let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
-            DeprecationKind::Select
+            DeprecationKind::Select(_)
         )));
         assert!(!deprecations.is_empty());
     }
@@ -4061,7 +4389,10 @@ pager = "delta --paging=never"
 "#;
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: vec![DeprecationKind::Select],
+            deprecations: vec![DeprecationKind::Select(ScopedSections {
+                has_top_level: true,
+                project_keys: Vec::new(),
+            })],
             kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
@@ -4275,19 +4606,27 @@ timeout-ms = 500
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             // Keep one representative of each warning kind in
-            // DEPRECATION_RULES emission order. Commit-generation includes
-            // both scopes because its formatter has distinct branches.
+            // DEPRECATION_RULES emission order. The two section renames
+            // include both scopes because their formatters have distinct
+            // branches.
             deprecations: vec![
                 DeprecationKind::TemplateVar {
                     old: "repo_root",
                     new: "repo_path",
                 },
-                DeprecationKind::CommitGeneration(CommitGenerationDeprecations {
+                DeprecationKind::CommitGeneration(ScopedSections {
                     has_top_level: true,
                     project_keys: vec!["github.com/user/repo".to_string()],
                 }),
                 DeprecationKind::ApprovedCommands,
-                DeprecationKind::Select,
+                DeprecationKind::Select(ScopedSections {
+                    has_top_level: true,
+                    project_keys: vec!["github.com/user/repo".to_string()],
+                }),
+                DeprecationKind::UnsupportedKey {
+                    section: "[select]".to_string(),
+                    key: "height".to_string(),
+                },
                 DeprecationKind::CiSection,
                 DeprecationKind::NoFf,
                 DeprecationKind::NoCd,
@@ -4303,6 +4642,8 @@ timeout-ms = 500
         ▲ User config: [projects."github.com/user/repo".commit-generation] is deprecated in favor of [projects."github.com/user/repo".commit.generation]
         ▲ User config: approved-commands under [projects] is deprecated in favor of approvals.toml
         ▲ User config: [select] is deprecated in favor of [switch.picker]
+        ▲ User config: [projects."github.com/user/repo".select] is deprecated in favor of [projects."github.com/user/repo".switch.picker]
+        ▲ User config: [select] height is no longer supported and will be removed
         ▲ User config: [ci] is deprecated in favor of [forge]
         ▲ User config: merge.no-ff is deprecated in favor of merge.ff (inverted)
         ▲ User config: switch.no-cd is deprecated in favor of switch.cd (inverted)
@@ -4428,7 +4769,7 @@ pager = "bat"
         let deprecations = detect_deprecations(content, ConfigFileKind::User);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
-            DeprecationKind::Select
+            DeprecationKind::Select(_)
         )));
     }
 

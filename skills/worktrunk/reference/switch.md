@@ -191,6 +191,12 @@ Options:
           base }} and {{ base_worktree_path }} describe the source: the selected base with --create,
           or the invoking worktree when switching to an existing worktree.
 
+          A variable inside a shell body is substituted before that shell parses it, so a path with
+          spaces splits into several arguments. Pass it as a separate argument instead — sh binds
+          the first one to $0, so the path arrives as $1:
+
+            wt switch feature -x sh -- -c 'cd "$1" && npm test' sh '{{ worktree_path }}'
+
           Especially useful with shell aliases:
 
             alias wsc='wt switch --create -x claude'

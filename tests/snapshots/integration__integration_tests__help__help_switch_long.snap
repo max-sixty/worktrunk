@@ -75,6 +75,10 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           
           Supports ]8;;https://worktrunk.dev/hook/#template-variables\[4mhook template variables]8;;\[0m ([1m{{ branch }}[0m, [1m{{ worktree_path }}[0m, etc.) and filters. [1m{{ base }}[0m and [1m{{ base_worktree_path }}[0m describe the source: the selected base with [1m--create[0m, or the invoking worktree when switching to an existing worktree.[0m
           
+          A variable inside a shell body is substituted before that shell parses it, so a path with spaces splits into several arguments. Pass it as a separate argument instead — [1msh[0m binds the first one to [1m$0[0m, so the path arrives as [1m$1[0m:[0m
+          
+            [1m[1mwt switch feature -x sh -- -c 'cd "$1" && npm test' sh '{{ worktree_path }}'[0m
+          [0m
           Especially useful with shell aliases:[0m
           
             [1m[1malias wsc='wt switch --create -x claude'[0m

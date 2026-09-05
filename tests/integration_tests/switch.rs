@@ -3526,6 +3526,191 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// A failed fork `pr:N` switch leaves a branch it did not create alone.
+///
+/// The fork path used to create the branch, its tracking config, and its
+/// worktree as separate git calls, compensating with a force-delete of the
+/// branch on any error. Only the first call created anything, and its likeliest
+/// failure is git refusing a name that is already taken — so the rollback
+/// deleted a branch someone else owned, took whatever commits only it held with
+/// it, and then printed "a branch named 'X' already exists", which reads as if
+/// nothing happened. `git worktree add -b` creates the branch and the worktree
+/// in one call, and writes nothing when the name is taken, so there is nothing
+/// to roll back.
+///
+/// The `pre-switch` hook claims the name after the forge answered (which is
+/// what selects the fork path) and before the worktree is created, standing in
+/// for the concurrent session that does the same in real use. It renames a
+/// never-pushed local branch onto the PR's branch name, so `feature-fix` is the
+/// only ref holding that commit when the switch fails.
+#[rstest]
+fn test_switch_pr_fork_failure_keeps_existing_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Same fork-PR fixture as test_switch_pr_fork: refs/pull/42/head on the
+    // bare remote, origin redirected to a GitHub-style URL, `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Local work that exists nowhere else.
+    repo.run_git(&["checkout", "-b", "stale-work"]);
+    fs::write(repo.root_path().join("stale.txt"), "unpushed work").unwrap();
+    repo.run_git(&["add", "stale.txt"]);
+    repo.run_git(&["commit", "-m", "Unpushed local work"]);
+    let stale_sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["checkout", "main"]);
+
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-switch = "git -C '{{ repo_path }}' branch -m stale-work feature-fix"
+"#,
+    )
+    .unwrap();
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch pr:42 should fail once the branch name is taken: stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("already exists"),
+        "the failure should name the branch collision: stderr={stderr}"
+    );
+
+    let head = repo
+        .git_command()
+        .args(["rev-parse", "--verify", "refs/heads/feature-fix"])
+        .run()
+        .unwrap();
+    assert!(
+        head.status.success(),
+        "feature-fix must survive the failed switch: stderr={stderr}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&head.stdout).trim(),
+        stale_sha,
+        "feature-fix must still point at the unpushed commit"
+    );
+}
+
+/// A fork PR whose head ref collides with an existing branch's namespace names
+/// the conflicting branch rather than passing on git's raw "cannot lock ref".
+///
+/// Git stores refs as file paths, so `feature-fix` and `feature-fix/nested`
+/// can't both exist. The fork path creates its branch with the same
+/// `git worktree add -b` as the `Regular` arm, so it maps the failure the same
+/// way; the user can't rename a PR's head ref, so the message has to point at
+/// the local branch that's in the way.
+#[rstest]
+fn test_switch_pr_fork_namespace_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    // Same fork-PR fixture as test_switch_pr_fork: refs/pull/42/head on the
+    // bare remote, origin redirected to a GitHub-style URL, `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Occupy the namespace the PR's branch name needs.
+    repo.run_git(&["branch", "feature-fix/nested"]);
+
+    set_github_remote_url(&repo);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, gh_response);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch pr:42 should fail when the branch name is unavailable: stderr={stderr}"
+    );
+    // `collides with existing branch` is `BranchNamespaceConflict`'s own
+    // wording. Asserting only on `feature-fix/nested` would pass against the
+    // unmapped error too — git names the conflicting ref in its raw text.
+    assert!(
+        stderr.contains("collides with existing branch") && stderr.contains("feature-fix/nested"),
+        "the failure should name the branch in the way: stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("cannot lock ref"),
+        "git's raw ref-lock text should not reach the user: stderr={stderr}"
+    );
+}
+
 /// Every hook on a PR/MR-created worktree — `pre-switch`, `pre-start`,
 /// `post-start`, `post-switch` — sees `pr_number` and `pr_url` in its template
 /// context. Both GitHub PRs and GitLab MRs canonicalize to the same `pr_*`

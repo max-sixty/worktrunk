@@ -296,6 +296,13 @@ pub(super) fn detect_gitlab_pipeline(
     })
 }
 
+/// The `author` object nested in a `glab mr list` entry.
+#[derive(Debug, Default, Deserialize)]
+struct GitLabMrAuthor {
+    #[serde(default)]
+    username: String,
+}
+
 /// Basic MR info from `glab mr list --output json`.
 ///
 /// Note: `glab mr list` does NOT return `head_pipeline` or `pipeline` fields.
@@ -303,12 +310,6 @@ pub(super) fn detect_gitlab_pipeline(
 ///
 /// We include `source_project_id` for client-side filtering by source project.
 /// See the `# Filtering Strategy` docs on [`detect_gitlab`] for why we filter by source, not by author.
-#[derive(Debug, Default, Deserialize)]
-struct GitLabMrAuthor {
-    #[serde(default)]
-    username: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct GitLabMrListEntry {
     /// The internal MR ID (used to fetch full details via `glab mr view <iid>`)

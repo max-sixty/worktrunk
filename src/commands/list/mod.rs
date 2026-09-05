@@ -168,6 +168,13 @@ pub fn handle_list(
 ) -> anyhow::Result<()> {
     let render_target = RenderTarget::detect(format, progressive_flag);
 
+    // A `.config/wt.toml` that doesn't parse reaches the listing only through
+    // accessors that shrug it off (`[list] url`, `[forge] platform`), so it
+    // would otherwise leave no trace on the command run most often. Warn
+    // ahead of `collect()`, where those accessors run, so the line lands
+    // above the rows instead of between them.
+    repo.warn_if_project_config_unloadable();
+
     // Resolve the JSON schema before collecting, so the unset-nag lands
     // above the output rather than after a long collection.
     let json_schema =

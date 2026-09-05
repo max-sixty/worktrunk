@@ -106,7 +106,7 @@ impl std::fmt::Display for LoadError {
             LoadError::File { path, kind, err } => {
                 write!(
                     f,
-                    "{} at {} failed to parse:\n{err}",
+                    "{} @ {} failed to parse:\n{err}",
                     kind.label(),
                     crate::path::format_path_for_display(path)
                 )

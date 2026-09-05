@@ -1,22 +1,66 @@
 # Changelog
 
-## 0.75.0
+## 0.76.0
 
 ### Improved
 
-- **`wt switch --execute` launches argv directly instead of parsing a shell command**: `-x` now names one external program and arguments after `--` go directly to it without Worktrunk shell parsing. Program lookup and argument decoding follow the operating system; on Windows, shell shims such as `code` need their `.cmd` extension or an explicit `cmd.exe /C`. Shell syntax remains available explicitly with `-x sh -- -c '…'`. Worktrunk starts the program in the selected worktree, so wrappers need no exec channel and Nushell needs no implicit `sh`. A live shell whose old exec-file wrapper buffers `--execute` output now warns to rerun `wt config shell install`; Nushell requires that update because its wrapper is a static file. (Breaking: pass a program name to `-x`; existing shell command strings must opt into a shell.) ([#2860](https://github.com/max-sixty/worktrunk/issues/2860), fixes [#3944](https://github.com/max-sixty/worktrunk/issues/3944))
+- **`wt switch --execute` takes a program, not a shell string**: `-x` names one program, with everything after `--` passed as literal argv. Worktrunk spawns it as a child rather than running it in your interactive shell, so shell functions and its `cd` no longer reach you. `-x sh -- -c '…'` recovers shell syntax, not functions. (Breaking: existing `-x` strings, plus `WORKTRUNK_DIRECTIVE_EXEC_FILE` and `WORKTRUNK_SHELL`.) ([#3977](https://github.com/max-sixty/worktrunk/pull/3977), closes [#2860](https://github.com/max-sixty/worktrunk/issues/2860), fixes [#3944](https://github.com/max-sixty/worktrunk/issues/3944), thanks @omgreenfield for testing the migration path)
+
+- **Worktrunk decides tracking for the branches it creates**: a new branch gets an upstream only when its name matches the remote branch it starts from, whatever `branch.autoSetupMerge` says: `--create release --base origin/release` tracks, `--create feature --base origin/release` does not. Under `autoSetupMerge = false` this previously exited 128 after creating the worktree. ([#3913](https://github.com/max-sixty/worktrunk/pull/3913), [#3950](https://github.com/max-sixty/worktrunk/pull/3950), fixes [#3937](https://github.com/max-sixty/worktrunk/issues/3937), thanks @mjakl for reporting and diagnosing)
+
+- **Retired config keys are no longer read**: `commit.generation.template-file` and `squash-template-file` are gone — put the file's contents in `template` or `squash-template`. There is no migration: the key stays, warns as unknown on every load, and the prompt reverts to the built-in default. Setting both `template` and `template-file` used to fail the load; it now loads `template`. `switch.picker.timeout-ms` likewise warns rather than being stripped. (Breaking.) ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
+
+- **Project aliases and hooks can use `wt switch --execute`**: their bodies previously refused it. Worktrunk now starts the program itself instead of handing shell text to your shell, and the command-approval gate remains the control on project-defined commands. ([#3977](https://github.com/max-sixty/worktrunk/pull/3977))
 
 - **Established automation and LLM customization interfaces are now stable**: `wt step eval`, `wt step for-each`, `wt step prune`, LLM branch summaries, `wt config state vars`, and `commit.generation.template-append` are no longer marked experimental. ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
 
-- **Deprecated config compatibility has been removed**: `commit.generation.template-file` and `squash-template-file` are no longer supported; put the file contents in `template` or `squash-template` instead. `switch.picker.timeout-ms` now follows the generic unknown-field path instead of being removed by `wt config update`. (Breaking.) ([#3949](https://github.com/max-sixty/worktrunk/pull/3949))
+- **`wt step prune` stages removals concurrently again**: only the `git worktree remove` teardowns serialize, so dirty checks, fsmonitor shutdown, and the trash rename overlap. The `prune_e2e/live` benchmark median went from 377 ms to 222 ms. ([#3954](https://github.com/max-sixty/worktrunk/pull/3954))
+
+- **`wt config approvals add` reads as a review rather than a warning**: it opens with a cyan `Review 1 command for repo:` instead of a yellow `▲ … needs approval to execute`. The execution-time gate is unchanged. ([#3953](https://github.com/max-sixty/worktrunk/pull/3953))
+
+### Fixed
+
+- **The `wt switch` picker survives a preview longer than 65,535 lines**: skim keeps the pane's line count in a `u16`, so a larger diff aborted `wt` with exit 101 seconds after it painted — on screen the picker looked like it closed by itself. Panes now cap at 60,000 lines and say so. ([#3959](https://github.com/max-sixty/worktrunk/pull/3959), fixes [#3958](https://github.com/max-sixty/worktrunk/issues/3958), thanks @sandertammesoo for reporting and diagnosing)
+
+- **The nushell wrapper propagates exit codes without a POSIX shell**: it reported a failing `wt` by spawning `sh`, so on Windows every failing command printed a ``Command `sh` not found`` trace and exit 1 whatever the real code was. Nushell's wrapper is a static file, so rerun `wt config shell install` to pick this up. ([#3945](https://github.com/max-sixty/worktrunk/pull/3945))
+
+- **The picker no longer shows one detached worktree's diff for another**: previews were keyed by branch name, so every detached row shared the key `(detached)`. Rows now key by canonical identity, which also lets `wt remove feature ~/repo.feature` plan that worktree once instead of failing on the second. ([#3926](https://github.com/max-sixty/worktrunk/pull/3926))
+
+- **`wt switch pr:<n>` gives `pre-switch` hooks the real branch**: `branch` and `target` held the literal `pr:3933`, and `target_worktree_path` was unset even when that branch had a worktree. `pr_number` and `pr_url` are now set for same-repo PRs, not only forks. ([#3941](https://github.com/max-sixty/worktrunk/pull/3941), fixes [#3934](https://github.com/max-sixty/worktrunk/issues/3934), thanks @robsonpeixoto for reporting)
+
+- **`wt config shell install` no longer replaces an rc file created while it was checking**: the missing-file path refuses to clobber and fails with a rerun hint. A dangling rc symlink is preserved and rejected rather than overwritten. ([#3929](https://github.com/max-sixty/worktrunk/pull/3929))
+
+- **`wt switch --create X --base pr:<n>` works when the PR branch has no local branch**: the fetch writes only the remote-tracking ref, and git won't expand a bare name to one, so the command failed with `No branch, tag, or commit named …`. The base is now named under its remote. ([#3951](https://github.com/max-sixty/worktrunk/pull/3951))
+
+- **`wt switch --create` streams `git worktree add` instead of stalling**: where a sandbox denied the timed wait's pipe or `sigaction`, the command waited out git's entire run and then reported `Failed to wait for command` for work that had already succeeded. ([#3881](https://github.com/max-sixty/worktrunk/pull/3881))
+
+- **Claude Code activity markers stay on the session's launch worktree**: the plugin's marker hooks pass `-C "$CLAUDE_PROJECT_DIR"`, so a `cd` mid-session no longer marks another repository. A session launched outside a repository gets no marker. ([#3956](https://github.com/max-sixty/worktrunk/pull/3956))
+
+### Documentation
+
+- **`--execute` documents how to get a variable into a shell body**: each position is substituted verbatim, so a variable spliced into `sh -c` text is re-parsed by that shell and splits on spaces. The help now shows passing it as a separate argument and referencing it positionally. ([#3977](https://github.com/max-sixty/worktrunk/pull/3977))
+
+- **The clone-local default-branch override is documented**: `wt config state default-branch set` writes `worktrunk.default-branch` to the clone's local git config — machine-local, never committed, and shared by every linked worktree. `set` warns when the branch isn't checked out locally, and `wt list` skips its comparisons until it is. ([#3947](https://github.com/max-sixty/worktrunk/pull/3947), [#3948](https://github.com/max-sixty/worktrunk/pull/3948), fixes [#3946](https://github.com/max-sixty/worktrunk/issues/3946), thanks @danielo515 for the request)
+
+- **The docs site renders code with the CLI's own colors**: terminal examples reproduce each snapshot's exact ANSI roles, while command references and the homepage command comparison get clap and shell syntax color from paired light/dark themes. File excerpts gain a path tab, and code wraps instead of scrolling on mobile. ([#3936](https://github.com/max-sixty/worktrunk/pull/3936), [#3938](https://github.com/max-sixty/worktrunk/pull/3938), [#3939](https://github.com/max-sixty/worktrunk/pull/3939), [#3942](https://github.com/max-sixty/worktrunk/pull/3942))
+
+- **The `pre-start` upstream example uses `--base`**: it showed `wt switch --create feature origin/feature`, which `wt switch` rejects. ([#3955](https://github.com/max-sixty/worktrunk/pull/3955))
+
+### Internal
+
+- **Library API rework** (Breaking library API): `cargo-semver-checks` fails ten lints — `RemoteRefProvider` and its provider structs give way to `ForgeKind` dispatch, the `--execute` rework retires the fish and PowerShell `ShellEscapeMode` escapes and `WORKTRUNK_SHELL_ENV_VAR`, `BranchRef` swaps `full_ref`/`worktree_path` for `id`, and accessors including `Branch::unset_upstream` and `ProjectConfig::ci_platform` are gone. ([#3913](https://github.com/max-sixty/worktrunk/pull/3913), [#3926](https://github.com/max-sixty/worktrunk/pull/3926), [#3949](https://github.com/max-sixty/worktrunk/pull/3949), [#3963](https://github.com/max-sixty/worktrunk/pull/3963), [#3977](https://github.com/max-sixty/worktrunk/pull/3977))
+
+- **Hook pipelines and `wt list` collection lost two indirection layers**: the background pipeline carries `PreparedStep` directly, and 15 marker task types collapse into one exhaustive dispatch. The synthesized-`--force` submodule path keeps its dirty re-check and destructive command under one lock, so prune's narrower locking doesn't widen that window. ([#3964](https://github.com/max-sixty/worktrunk/pull/3964), [#3954](https://github.com/max-sixty/worktrunk/pull/3954))
+
+## 0.75.0
+
+### Improved
 
 - **The `wt switch` picker opens on one unified diff**: local rows combine committed, staged, unstaged, and untracked changes. Tab skips empty subsidiary views, while `Alt-1` through `Alt-8` retain direct access. [Docs](https://worktrunk.dev/switch/#interactive-picker) ([#3865](https://github.com/max-sixty/worktrunk/pull/3865))
 
 - **Git 2.43 is now the minimum supported version**: older Git exits with an upgrade message before Git-dependent commands run; `wt config shell` remains available so shell startup continues. (Breaking.) ([#3895](https://github.com/max-sixty/worktrunk/pull/3895))
 
 ### Fixed
-
-- **The `wt switch` picker survives a preview longer than 65,535 lines**: skim keeps the preview pane's line count in a `u16`, so a branch whose diff against the default branch ran past that aborted `wt` with exit 101 a few seconds after the picker painted — on screen, the picker appeared to close by itself. Preview panes now cap at 60,000 lines and say so above the pane. ([#3959](https://github.com/max-sixty/worktrunk/pull/3959), fixes [#3958](https://github.com/max-sixty/worktrunk/issues/3958), thanks @sandertammesoo for reporting and diagnosing)
 
 - **`wt list` no longer grows `.git/objects` during advisory conflict checks**: untracked content stays visible but is excluded from synthetic trees, and all probe-only objects use temporary storage. ([#3906](https://github.com/max-sixty/worktrunk/pull/3906), fixes [#3883](https://github.com/max-sixty/worktrunk/issues/3883), thanks @srobroek for reporting and the original fix)
 
@@ -25,8 +69,6 @@
 - **Timed child processes no longer abort `wt` in restricted sandboxes**: `wt switch --create`, picker pagers, and other bounded commands survive denied signal-handler wakes. TERM→KILL cleanup also returns promptly once the process group is gone. ([#3857](https://github.com/max-sixty/worktrunk/pull/3857), [#3887](https://github.com/max-sixty/worktrunk/pull/3887), fixes [#3856](https://github.com/max-sixty/worktrunk/issues/3856), thanks @tomascamargo for reporting)
 
 - **JSON list output ignores display-column gates**: `[list] columns` no longer makes `wt list --format json` contact a forge or generate summaries. CI requires `--full`; summaries also require `[list] summary = true` and a configured generator. (Breaking: schema 1 loses config-driven `ci` and `summary` fields.) ([#3812](https://github.com/max-sixty/worktrunk/pull/3812), thanks @emeren for the request)
-
-- **The nushell wrapper propagates command failures without a POSIX shell**: `wt config shell install` writes the nushell wrapper on any platform where `nu` is on PATH, but the wrapper reported a failing `wt` by spawning `sh`. On Windows, where `sh` doesn't exist, every failing command printed a nushell ``Command `sh` not found`` trace over the wrapper's own source and reported exit 1 whatever the real code was. It now re-invokes nushell itself. ([#3945](https://github.com/max-sixty/worktrunk/pull/3945))
 
 - **Long Windows paths compare consistently**: paths beyond 260 characters could retain a `\\?\` prefix and appear to be on another drive. `copy-ignored` then refused them, while switch, remove, merge, and relocate landed at the worktree root instead of the original subdirectory. ([#3899](https://github.com/max-sixty/worktrunk/pull/3899), fixes [#3898](https://github.com/max-sixty/worktrunk/issues/3898), thanks @Persedes for reporting and verifying the fix)
 

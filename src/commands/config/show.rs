@@ -102,7 +102,8 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
-        Some(serde_json::to_value(&UserConfig::load()?)?)
+        let config = UserConfig::load().context("Failed to load config")?;
+        Some(serde_json::to_value(&config)?)
     } else {
         None
     };
@@ -519,7 +520,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     render_version_check(out)?;
 
     // Test commit generation - use effective config for current project
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
     let commit_config = config.commit_generation(project_id.as_deref());
 

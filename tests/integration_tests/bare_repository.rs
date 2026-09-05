@@ -54,6 +54,103 @@ fn test_bare_repo_list_shows_no_bare_entry() {
     });
 }
 
+/// A bare repo carrying branches but no worktrees — the shape `git clone
+/// --bare` leaves, and the only shape where `git worktree list` reports
+/// nothing once the bare entry is filtered out.
+fn bare_repo_without_worktrees() -> BareRepoTest {
+    let test = BareRepoTest::new();
+
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+    test.create_worktree("feature", "feature");
+
+    // Detach both branches from their worktrees: `main` and `feature` remain in
+    // the bare repo, and nothing is registered as a worktree.
+    test.run_git_in(test.bare_repo_path(), &["worktree", "remove", "feature"]);
+    test.run_git_in(test.bare_repo_path(), &["worktree", "remove", "main"]);
+
+    test
+}
+
+/// `wt list` in a bare repo with no worktrees exits 0 and names the state on
+/// stderr: the `○ No worktrees` line and the hint under it. Stdout stays
+/// empty because the table has no rows and a lone header would be noise to
+/// anything piping it.
+#[test]
+fn test_bare_repo_list_no_worktrees() {
+    let test = bare_repo_without_worktrees();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(test.bare_repo_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `--format json` owes its consumer a payload in the same state: the schema-2
+/// envelope with `items: []`, not an empty stdout that no parser accepts.
+#[test]
+fn test_bare_repo_list_no_worktrees_json() {
+    let test = bare_repo_without_worktrees();
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"{{ branch }}\"\n\n[list]\njson-schema = 2\n",
+    )
+    .unwrap();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--format", "json"])
+            .current_dir(test.bare_repo_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The branches are still listable with no worktree to anchor them: `wt list
+/// --branches` renders its rows, and the empty-worktree message stays out of
+/// the way because the listing isn't empty.
+#[test]
+fn test_bare_repo_list_no_worktrees_branches() {
+    let test = bare_repo_without_worktrees();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.args(["list", "--branches"])
+            .current_dir(test.bare_repo_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A bare repo with no commits at all — `git init --bare -b main`, before
+/// anything is pushed to it. The empty listing is the whole output: nothing
+/// was deleted here, so the stale-default-branch warning must stay silent even
+/// though `refs/heads/main` doesn't exist. `infer_default_branch_locally`
+/// resolves `symbolic-ref HEAD`, which names `main` regardless, and warning
+/// would send the user to `wt config state default-branch clear` — a remedy
+/// that loops, because the next run re-infers the same value from `HEAD`.
+#[test]
+fn test_bare_repo_list_no_commits() {
+    let test = BareRepoTest::new();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(test.bare_repo_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[test]
 fn test_bare_repo_switch_creates_worktree() {
     let test = BareRepoTest::new();
