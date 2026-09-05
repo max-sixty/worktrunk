@@ -111,7 +111,7 @@ Global Options:
 
 Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
 
-<!-- demo: wt-merge.gif 1600x900 -->
+<!-- demo: wt-merge.gif 1600x900 | Creating a worktree, committing in it, and merging it away -->
 ## Examples
 
 Merge to the default branch:

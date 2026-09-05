@@ -114,12 +114,12 @@ There are three source categories:
    region in `docs/src/content/docs/{command}.md`, then generates the matching
    `skills/worktrunk/reference/` page.
 2. **Non-command pages**: files such as `claude-code.md`, `extending.md`,
-   `faq.md`, `llm-commits.md`, `tips-patterns.md`, and `worktrunk.md` are primary
-   in `docs/src/content/docs/`. The sync test derives the skill copy.
-3. **Skill-only pages**: files such as `shell-integration.md` and
-   `troubleshooting.md` are primary in `skills/worktrunk/reference/` and have no
-   site page. When adding one, add a `linguist-generated=false` entry to
-   `.gitattributes`.
+   `faq.md`, `llm-commits.md`, `shell-integration.md`, `tips-patterns.md`, and
+   `worktrunk.md` are primary in `docs/src/content/docs/`. The sync test derives
+   the skill copy.
+3. **Skill-only pages**: `troubleshooting.md` is primary in
+   `skills/worktrunk/reference/` and has no site page. When adding one, add a
+   `linguist-generated=false` entry to `.gitattributes`.
 
 Never hand-edit a generated mirror.
 

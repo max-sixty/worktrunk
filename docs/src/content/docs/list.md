@@ -15,6 +15,7 @@ Shows uncommitted changes, divergence from the default branch and remote, and op
   <source srcset="/assets/docs/dark/wt-list.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-list.gif" alt="wt list demo" width="1600" height="900">
 </picture>
+<figcaption>Progressive rendering, then --full and --branches</figcaption>
 </figure>
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
@@ -582,24 +583,6 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 <!-- END AUTO-GENERATED -->

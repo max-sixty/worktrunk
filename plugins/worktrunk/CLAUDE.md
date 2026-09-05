@@ -106,8 +106,8 @@ end-to-end against codex-cli 0.144.1 (scratch marketplaces through
   that handles only regular files and directories, silently skipping symlink
   entries (`copy_dir_recursive` in `codex-rs/core-plugins/src/store.rs`), and
   sessions load from that cache copy. A symlink anywhere in the tree — a
-  top-level `skills` link or a nested one like `reference/README.md` — ships
-  no content. No manifest value can bridge it: manifest paths must stay within
+  top-level `skills` link or one nested under `reference/` — ships no
+  content. No manifest value can bridge it: manifest paths must stay within
   the plugin root (`..` and absolute paths are rejected,
   `resolve_manifest_path` in `codex-rs/core-plugins/src/manifest.rs`).
 - Codex's convention scan (`default_skill_roots`, the empty-`skills` branch of

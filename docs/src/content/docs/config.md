@@ -329,7 +329,7 @@ exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 
 Built-in excludes (VCS metadata and tool-state directories) always apply; [the `wt step copy-ignored` docs](/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 
-### Aliases
+### User aliases
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for usage and flags.
 
@@ -339,7 +339,7 @@ greet = "echo Hello from {{ branch }}"
 url = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-Aliases defined here apply to all projects. For project-specific aliases, use the [project config](/config/#project-configuration) `[aliases]` section instead.
+Aliases defined here apply to all projects. For project-specific aliases, use the [project config](/config/#project-aliases) `[aliases]` section instead.
 
 ### User project-specific settings
 
@@ -535,9 +535,9 @@ template-append = """
 
 How the fragment renders, and the project-config counterpart: [the LLM commits guide](/llm-commits/#appending-to-the-prompt).
 
-## Hooks
+## User hooks
 
-See [`wt hook`](/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](/config/#project-configuration) apply only to that repository.
+See [`wt hook`](/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](/config/#project-hooks) apply only to that repository.
 <!-- USER_CONFIG_END -->
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration
@@ -546,7 +546,7 @@ Project configuration lets teams share repository-specific settings — hooks, d
 
 To create a starter file with commented-out examples, run `wt config create --project`.
 
-## Hooks
+## Project hooks
 
 Project hooks apply to this repository only. See [`wt hook`](/hook/) for hook types, execution order, and examples.
 
@@ -602,7 +602,7 @@ exclude = [".cache/", ".turbo/"]
 
 Built-in excludes (VCS metadata and tool-state directories) always apply; [the `wt step copy-ignored` docs](/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 
-## Aliases
+## Project aliases
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for usage and flags.
 
@@ -612,7 +612,7 @@ deploy = "make deploy BRANCH={{ branch }}"
 url = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-Aliases defined here are shared with teammates. For personal aliases, use the [user config](/config/#aliases) `[aliases]` section instead.
+Aliases defined here are shared with teammates. For personal aliases, use the [user config](/config/#user-aliases) `[aliases]` section instead.
 <!-- PROJECT_CONFIG_END -->
 
 # Shell Integration
@@ -789,24 +789,6 @@ Output:
 
           [default: text]
           [possible values: text, json]
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config approvals
@@ -815,7 +797,7 @@ Manage command approvals.
 
 Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
 
-### Examples
+### Approval examples
 
 List commands and their approval status for current project:
 ```console
@@ -892,24 +874,6 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config alias
@@ -918,7 +882,7 @@ Inspect and preview aliases.
 
 Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for the configuration format.
 
-### Examples
+### Alias examples
 
 Show every configured alias's template:
 ```console
@@ -950,24 +914,6 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state
@@ -984,7 +930,7 @@ State is stored in `.git/` (config entries and log files), separate from configu
 - **vars**: [Custom variables per branch](/config/#wt-config-state-vars)
 - **logs**: [Operation and debug logs](/config/#wt-config-state-logs)
 
-### Examples
+### State examples
 
 Get the default branch:
 ```console
@@ -1040,24 +986,6 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state cache
@@ -1078,7 +1006,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 Without a subcommand, runs `get`.
 
-### Examples
+### Cache examples
 
 Show cache contents:
 ```console
@@ -1108,24 +1036,6 @@ Options:
 Output:
       --format <FORMAT>
           Output format (text, json) [default: text]
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state default-branch
@@ -1180,24 +1090,6 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state logs
@@ -1255,7 +1147,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 `wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
 
-### Examples
+### Log examples
 
 List all log files:
 ```console
@@ -1301,24 +1193,6 @@ Options:
 Output:
       --format <FORMAT>
           Output format (text, json) [default: text]
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state ci-status
@@ -1349,24 +1223,6 @@ Options:
 Output:
       --format <FORMAT>
           Output format (text, json) [default: text]
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state marker
@@ -1425,24 +1281,6 @@ Options:
 Output:
       --format <FORMAT>
           Output format (text, json) [default: text]
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 ## wt config state vars
@@ -1451,7 +1289,7 @@ Custom variables per branch.
 
 Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
-### Examples
+### Variable examples
 
 Set and get values:
 ```console
@@ -1513,24 +1351,6 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-      --config-set <toml>
-          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
-          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
-          apply the same level everywhere — including shell completion, which no flag can reach
-
-  -y, --yes
-          Skip approval prompts
 ```
 
 <!-- END AUTO-GENERATED -->

@@ -2,7 +2,7 @@
 title: "Agent Integration"
 description: "Worktrunk plugins for Claude Code, Codex, OpenCode, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation."
 sidebar:
-  order: 23
+  order: 21
 ---
 Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
@@ -11,9 +11,11 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Configuration skill | ✓ | ✓ |  | ✓ |
 | Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  |  |  |
-| `/wt-switch-create` command | ✓ |  |  |  |
+| `/wt-switch-create` skill | ✓ | ✓\* |  | ✓\* |
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
+\* Codex and Gemini load the `/wt-switch-create` skill from the same shared skill set, but neither lets a skill change the session's working directory, so it does nothing there.
+
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
 
 ## Installation
 
@@ -125,7 +127,7 @@ Three things to get right:
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
 
-## `/wt-switch-create` command (Claude Code only)
+## `/wt-switch-create` skill (Claude Code only)
 
 `/wt-switch-create [<branch>] [<repo>] [-- <task>]` starts a task in a fresh worktree without leaving the session: it creates the worktree, switches into it, and runs the task (all arguments optional). The worktree shows up in `wt list`; merge or remove it with `wt merge` / `wt remove`.
 
@@ -142,6 +144,7 @@ Worktree state comes from the same cells [`wt list`](/list/) renders; Claude Cod
   <source srcset="/assets/docs/dark/wt-statusline.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-statusline.gif" alt="Claude Code statusline demo" width="1600" height="900">
 </picture>
+<figcaption>Switching to a worktree, then launching Claude Code with the statusline configured</figcaption>
 </figure>
 
 Add to `~/.claude/settings.json`:

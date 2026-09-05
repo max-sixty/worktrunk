@@ -59,16 +59,7 @@ Detect which tools are installed (`which claude codex llm aichat`); if none, rec
 
 ### Configuring project hooks
 
-Pick the hook type by when the command should run and whether it may block (10 types: 5 events × pre/post — full reference in `reference/hook.md`):
-
-- Dependencies and env files a later step needs → `pre-start` (blocks creation)
-- Dev servers, long builds, cache copying → `post-start` (background)
-- Formatters, linters, type checks → `pre-commit`
-- Tests that must pass before merging → `pre-merge`
-- CI triggers, notifications → `post-commit`
-- Deployment → `post-merge`
-- Setup before branch resolution / terminal-IDE updates → `pre-switch` / `post-switch`
-- Cleanup before/after removal (save artifacts; stop servers, remove containers) → `pre-remove` / `post-remove`
+Pick the hook type by when the command should run and whether it may block — `reference/hook.md` maps all ten (5 events × pre/post) to their timing and typical uses.
 
 Derive the commands from the project itself (`package.json` scripts, `Cargo.toml`, `pyproject.toml`) and verify they run before adding them.
 
@@ -97,7 +88,7 @@ Test with `wt switch --create test-hooks`.
 - Customize worktree paths → `reference/config.md#worktree-path-template`
 - Custom commit templates → `reference/llm-commits.md#prompt-templates`
 - Configure command defaults → `reference/config.md#command-config`
-- Set up personal hooks → `reference/config.md#hooks`
+- Set up personal hooks → `reference/config.md#user-hooks`
 
 ### Project config tasks
 - Set up hooks for new project → `reference/hook.md`
@@ -146,36 +137,14 @@ The resolution is for the user to make the trust decision themselves:
 
 ## Advanced: agent handoffs
 
-When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `claude` for Claude Code, `'opencode run'` for OpenCode.
-
-**tmux** (check `$TMUX` env var):
-```bash
-tmux new-session -d -s <branch-name> "wt switch --create <branch-name> -x <agent-cli> -- '<task description>'"
-```
-
-**Zellij** (check `$ZELLIJ` env var):
-```bash
-zellij run -- wt switch --create <branch-name> -x <agent-cli> -- '<task description>'
-```
+When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the tmux or Zellij command from [Agent handoffs](https://worktrunk.dev/tips-patterns/#agent-handoffs), substituting the CLI you are running as for `claude`.
 
 **Requirements** (all must be true):
 - User explicitly requests spawning/handoff
-- User is in a supported multiplexer (tmux or Zellij)
+- User is in a supported multiplexer (check `$TMUX` / `$ZELLIJ`)
 - The user's project instructions (`CLAUDE.md` or `AGENTS.md`) or an explicit prompt authorize this pattern
 
 **Do not use this pattern** for normal worktree operations.
-
-Example (tmux, Claude Code):
-```bash
-tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
-  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
-```
-
-Example (Zellij, OpenCode):
-```bash
-zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
-  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
-```
 
 ### Parallel sub-Agents (single Claude Code session)
 
@@ -188,10 +157,10 @@ wt switch --create <branch> --no-cd --no-hooks
 Then call the `Agent` tool **without** `isolation: "worktree"`, naming the path in the prompt:
 
 ```
-You are working in `/abs/path/to/worktrunk.<branch>` on branch `<branch>`.
+You are working in `/abs/path/to/myproject.<branch>` on branch `<branch>`.
 All edits must stay in that worktree.
 ```
 
 `--no-cd` skips the shell-integration cd script the parent can't consume; `--no-hooks` is appropriate when each sub-Agent will run its own build/test step (e.g. `cargo run -- hook pre-merge --yes`) and you don't need post-start setup repeated per worktree.
 
-**Do not** use `Agent { isolation: "worktree" }` for this. Claude Code passes its internal agent ID as `name` to the `WorktreeCreate` hook, so `wt` creates the worktree as `worktrunk.agent-<id>` on a throwaway branch. If the sub-Agent then creates a feature branch on top, you end up with non-canonical paths, orphan branches, and post-start hooks fired against the wrong branch. Pre-creating with `wt switch --create` keeps path, branch, and hook target aligned.
+**Do not** use `Agent { isolation: "worktree" }` for this. Claude Code passes its internal agent ID as `name` to the `WorktreeCreate` hook, so `wt` creates the worktree as `myproject.agent-<id>` on a throwaway branch. If the sub-Agent then creates a feature branch on top, you end up with non-canonical paths, orphan branches, and post-start hooks fired against the wrong branch. Pre-creating with `wt switch --create` keeps path, branch, and hook target aligned.

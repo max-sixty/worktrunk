@@ -567,7 +567,7 @@ $ wt config update --print
     #[command(
         after_long_help = r#"Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
 
-## Examples
+## Approval examples
 
 List commands and their approval status for current project:
 ```console
@@ -638,7 +638,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
     #[command(
         after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for the configuration format.
 
-## Examples
+## Alias examples
 
 Show every configured alias's template:
 ```console
@@ -696,7 +696,7 @@ $ wt config plugins opencode install
 - **vars**: [Custom variables per branch](/config/#wt-config-state-vars)
 - **logs**: [Operation and debug logs](/config/#wt-config-state-logs)
 
-## Examples
+## State examples
 
 Get the default branch:
 ```console
@@ -816,7 +816,7 @@ untouched."#)]
 
 Without a subcommand, runs `get`.
 
-## Examples
+## Cache examples
 
 Show cache contents:
 ```console
@@ -949,7 +949,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 `wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
 
-## Examples
+## Log examples
 
 List all log files:
 ```console
@@ -1075,7 +1075,7 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
         name = "vars",
         after_long_help = r#"Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
-## Examples
+## Variable examples
 
 Set and get values:
 ```console

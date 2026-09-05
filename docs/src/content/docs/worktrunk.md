@@ -41,7 +41,7 @@ A quick demo:
 
 AI agents like Claude Code and Codex can handle longer tasks without
 supervision, such that it's possible to manage 5-10+ in parallel. Git's native
-worktree feature give each agent its own working directory, so they don't step
+worktree feature gives each agent its own working directory, so they don't step
 on each other's changes.
 
 But the git worktree UX is clunky. Even a task as small as starting a new
@@ -112,7 +112,7 @@ Multiple parallel agents, same simple commands:
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-zellij-omnibus.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
+  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900" loading="lazy">
 </picture>
 <figcaption>Multiple Claude agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
 </figure>
