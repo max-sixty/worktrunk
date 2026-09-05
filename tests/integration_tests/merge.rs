@@ -4873,9 +4873,9 @@ fn test_merge_refuses_diverged_target_when_branch_based_on_upstream(
 /// background runner has started and drained for this scenario on this
 /// machine/load — the dominant CI-load failure mode (cold spawn under
 /// llvm-cov) is then excluded, so the injected marker's absence is meaningful
-/// rather than a fixed-timeout false negative. Sibling detached pipelines
-/// (user vs project source) differ only by a `touch`'s sub-millisecond skew
-/// once spawned; the short grace covers it.
+/// rather than a fixed-timeout false negative. The project pipeline is queued
+/// behind the user one, so `control` also marks the point its process is
+/// spawned; the short grace covers that spawn and a `touch`.
 #[rstest]
 fn test_post_merge_hook_from_rebased_in_config_does_not_run(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;

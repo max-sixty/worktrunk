@@ -64,7 +64,6 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, format_hook_variables};
@@ -79,7 +78,6 @@ use super::command_executor::{
     alias_error_wrapper, execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
 };
 use super::hook_announcement::{SourcedStep, format_pipeline_summary};
-use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::DirectivePassthrough;
 
 // Re-export for backward compatibility with existing imports
@@ -287,6 +285,13 @@ pub struct HookAnnouncer<'a> {
 /// only ever sees hook pipelines, so `hook_type` and `display_path` live on
 /// this struct directly rather than wrapped in a `PipelineKind` variant.
 /// `steps` is non-empty by construction (see [`HookAnnouncer::add_groups`]).
+///
+/// Every pipeline in one announcer carries the same `worktree_path`: a `post-*`
+/// hook runs where the command leaves the user, and one command leaves them in
+/// one place. That is why the batch can be spawned as a single chain. A batch
+/// covering several worktrees would need grouping first — `wt step prune`
+/// removes several, and gets per-worktree concurrency by flushing a separate
+/// announcer for each rather than by carrying them in one.
 struct PendingPipeline {
     worktree_path: PathBuf,
     branch: Option<String>,
@@ -469,11 +474,9 @@ fn run_hooks_background(
     };
     eprintln!("{}", progress_message(message));
 
-    for pipeline in pipelines {
-        spawn_hook_pipeline_quiet(repo, pipeline)?;
-    }
-
-    Ok(())
+    // One chain, so the batch's pipelines never run concurrently against the
+    // worktree's git state. See the `run_pipeline` module spec.
+    spawn_hook_chain(repo, pipelines)
 }
 
 /// Group sourced steps into one Vec per source, preserving insertion order.
@@ -518,55 +521,32 @@ fn print_background_variable_table(pipelines: &[PendingPipeline], hook_type: Hoo
     }
 }
 
-/// Spawn a hook pipeline without displaying a summary line.
+/// Spawn a batch's pipelines as one queue, without displaying a summary line.
 ///
 /// Used by `run_hooks_background` after the combined announcement is printed.
-fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> anyhow::Result<()> {
-    use super::run_pipeline::PipelineSpec;
+/// Only the head is spawned here; each runner hands the rest on when it
+/// finishes (see the [`mod@super::run_pipeline`] module spec).
+fn spawn_hook_chain(repo: &Repository, chain: Vec<PendingPipeline>) -> anyhow::Result<()> {
+    use super::run_pipeline::{PipelineSpec, spawn_pipeline_queue};
 
-    // Registration never adds an empty step group (asserted in `add_groups`),
-    // so `steps[0]` is safe.
-    let source = pipeline.steps[0].source;
+    let queue: Vec<PipelineSpec> = chain
+        .into_iter()
+        .map(|pipeline| PipelineSpec {
+            worktree_path: pipeline.worktree_path,
+            // Only names the pipeline's log file, so a detached worktree needs
+            // some literal here — unlike the `branch` template variable, which
+            // stays unset rather than claiming a branch the worktree isn't on
+            // (issue #4009).
+            branch: pipeline.branch.unwrap_or_else(|| "HEAD".to_string()),
+            hook_type: pipeline.hook_type,
+            // Registration never adds an empty step group (asserted in
+            // `add_groups`), so `steps[0]` is safe.
+            source: pipeline.steps[0].source,
+            steps: pipeline.steps.into_iter().map(|step| step.step).collect(),
+        })
+        .collect();
 
-    // Only names the pipeline's log file, so a detached worktree needs some
-    // literal here — unlike the `branch` template variable, which stays unset
-    // rather than claiming a branch the worktree isn't on (issue #4009).
-    let branch = pipeline.branch.unwrap_or_else(|| "HEAD".to_string());
-    let hook_type = pipeline.hook_type;
-    let spec = PipelineSpec {
-        worktree_path: pipeline.worktree_path,
-        branch,
-        hook_type,
-        source,
-        steps: pipeline.steps.into_iter().map(|step| step.step).collect(),
-    };
-
-    let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
-
-    let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
-
-    let hook_log = HookLog::hook(source, hook_type, "runner");
-    let log_label = format!("{hook_type} {source} runner");
-
-    if let Err(err) = spawn_detached_exec(
-        repo,
-        &spec.worktree_path,
-        &wt_bin,
-        &["hook", "run-pipeline"],
-        &spec.branch,
-        &hook_log,
-        &spec_json,
-    ) {
-        eprintln!(
-            "{}",
-            warning_message(format!("Failed to spawn pipeline: {err:#}"))
-        );
-    } else {
-        let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
-        worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
-    }
-
-    Ok(())
+    spawn_pipeline_queue(repo, &queue)
 }
 
 /// Convert source-tagged steps into foreground steps with pipeline-kind policy.

@@ -1,18 +1,36 @@
 //! Pipeline runner for background hook execution.
 //!
-//! The parent `wt` process serializes a [`PipelineSpec`] to JSON and spawns
-//! `wt hook run-pipeline` as a detached process (via `spawn_detached_exec`, which
-//! pipes the JSON to stdin, redirects stdout/stderr to a log file, and puts
-//! the process in its own process group). This module is that background
-//! process.
+//! The parent `wt` process serializes a queue of [`PipelineSpec`]s to JSON and
+//! spawns `wt hook run-pipeline` as a detached process (via
+//! [`spawn_pipeline_queue`], which pipes the JSON to stdin, redirects
+//! stdout/stderr to a log file, and puts the process in its own process
+//! group). This module is that background process.
 //!
 //! ## Lifecycle
 //!
-//! 1. Read and deserialize the spec from stdin.
-//! 2. Open a [`Repository`] from the worktree path in the spec.
-//! 3. Walk steps in order. For each step, expand templates and spawn shell
-//!    children (see Execution model). Abort on the first serial step failure.
-//! 4. Exit. Log files in `.git/wt/logs/` are the only artifacts.
+//! 1. Read and deserialize the queue from stdin.
+//! 2. Open a [`Repository`] from the worktree path in the head spec.
+//! 3. Walk the head spec's steps in order. For each step, expand templates and
+//!    spawn shell children (see Execution model). Abort on the first serial
+//!    step failure.
+//! 4. Hand the rest of the queue to a fresh detached process, however the head
+//!    ended. Exit. Log files in `.git/wt/logs/` are the only artifacts.
+//!
+//! ## Why a queue rather than one process per pipeline
+//!
+//! A batch splits into one pipeline per source, so that a user hook failure
+//! can't abort project hooks (`hooks::into_source_groups`). Those pipelines act
+//! on one worktree, so spawning them side by side ran them against one git
+//! state. Two `git pull`s in the same worktree append to each other's
+//! `FETCH_HEAD`, and both then die with `Cannot rebase onto multiple branches`
+//! — a `post-merge` shape common enough that it left `wt merge` reporting
+//! success with the target unpushed.
+//!
+//! A queue keeps each spec in its own process, with its own `runner.log`, so
+//! the failure isolation survives. It also restores the order `wt hook --help`
+//! documents under "Project vs user hooks": project hooks run after user hooks.
+//! One batch is one worktree (see `hooks::PendingPipeline`), so the parent
+//! queues a batch whole.
 //!
 //! ## Execution model
 //!
@@ -65,13 +83,14 @@ use serde::{Deserialize, Serialize};
 use worktrunk::HookType;
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
+use worktrunk::styling::{eprintln, warning_message};
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{
     PreparedCommand, PreparedStep, expand_shell_template, wait_first_error,
 };
 use super::hook_filter::HookSource;
-use super::process::HookLog;
+use super::process::{HookLog, spawn_detached_exec};
 
 /// Serialized specification for a background hook pipeline.
 ///
@@ -88,27 +107,54 @@ pub(super) struct PipelineSpec {
     pub steps: Vec<PreparedStep>,
 }
 
-/// Run a serialized pipeline from stdin.
+/// Run the head of a serialized pipeline queue from stdin, then hand the tail
+/// to a fresh detached process.
 ///
-/// This is the entry point for `wt hook run-pipeline`.
-/// The orchestrator is a long-lived background process spawned by
-/// `spawn_detached_exec`; stdout/stderr are already redirected to a log file.
+/// This is the entry point for `wt hook run-pipeline`. The orchestrator is a
+/// long-lived background process spawned by [`spawn_pipeline_queue`];
+/// stdout/stderr are already redirected to the head spec's `runner.log`.
 ///
 /// Each command's output is written to its own repository log file,
-/// named `{branch}-{source}-{hook_type}-{name}.log`. The runner process's
+/// named `{branch}/{source}/{hook_type}/{name}.log`. The runner process's
 /// own stdout/stderr captures only runner-level errors.
+///
+/// The tail is handed on however the head ended — isolating each source from
+/// the one before it is the whole point of the split — while the process still
+/// exits on the head's failure, so `runner.log` names the command that broke.
+///
+/// The "Signal Handling" section of the project `CLAUDE.md` asks loops over
+/// child processes to stop on a signal instead. That rule is about a Ctrl-C the
+/// user typed, and this loop can't see one: the runner has its own process
+/// group, so the terminal's signal never arrives, and a signal that is aimed at
+/// the group kills the runner before it reaches this line.
 pub fn run_pipeline() -> anyhow::Result<()> {
     let mut contents = String::new();
     std::io::stdin()
         .read_to_string(&mut contents)
-        .context("failed to read pipeline spec from stdin")?;
+        .context("failed to read pipeline queue from stdin")?;
 
-    let spec: PipelineSpec =
-        serde_json::from_str(&contents).context("failed to deserialize pipeline spec")?;
+    let mut queue: Vec<PipelineSpec> =
+        serde_json::from_str(&contents).context("failed to deserialize pipeline queue")?;
+
+    if queue.is_empty() {
+        return Ok(());
+    }
+    let spec = queue.remove(0);
 
     let repo =
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
+    let head = run_spec(&spec, &repo);
+    let tail = if queue.is_empty() {
+        Ok(())
+    } else {
+        spawn_pipeline_queue(&repo, &queue)
+    };
+    head.and(tail)
+}
+
+/// Run one pipeline's steps to completion in `repo`.
+fn run_spec(spec: &PipelineSpec, repo: &Repository) -> anyhow::Result<()> {
     let log_dir = repo.wt_logs_dir();
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create log directory: {}", log_dir.display()))?;
@@ -119,9 +165,9 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         match step {
             PreparedStep::Single(cmd) => {
                 let log_name = command_log_name(cmd.name.as_deref(), cmd_index);
-                let log_file = create_command_log(&spec, &log_dir, &log_name)?;
+                let log_file = create_command_log(spec, &log_dir, &log_name)?;
                 let expanded =
-                    expand_shell_template(&cmd.template, &cmd.context, &repo, &cmd.template_name)?;
+                    expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
                 let step_json = cmd.context_json();
                 let (mut child, mut trace) =
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
@@ -135,9 +181,51 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 cmd_index += 1;
             }
             PreparedStep::Concurrent(commands) => {
-                run_concurrent_group(commands, &spec, &repo, &log_dir, &mut cmd_index)?;
+                run_concurrent_group(commands, spec, repo, &log_dir, &mut cmd_index)?;
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Spawn a detached `wt hook run-pipeline` process for `queue`.
+///
+/// The whole queue is piped to the child on stdin; the child runs `queue[0]`
+/// and calls back here with the rest (see the module spec for why the batch is
+/// a queue rather than one process per pipeline). The child's own
+/// stdout/stderr land in `queue[0]`'s `runner.log`, so a spawn failure is
+/// reported by the process that owns the *previous* log — the last place a
+/// reader can still see it.
+///
+/// Callers pass a non-empty queue.
+pub(super) fn spawn_pipeline_queue(
+    repo: &Repository,
+    queue: &[PipelineSpec],
+) -> anyhow::Result<()> {
+    let head = &queue[0];
+    let payload = serde_json::to_vec(queue).context("failed to serialize pipeline queue")?;
+    let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
+
+    let hook_log = HookLog::hook(head.source, head.hook_type, "runner");
+    let log_label = format!("{} {} runner", head.hook_type, head.source);
+
+    if let Err(err) = spawn_detached_exec(
+        repo,
+        &head.worktree_path,
+        &wt_bin,
+        &["hook", "run-pipeline"],
+        &head.branch,
+        &hook_log,
+        &payload,
+    ) {
+        eprintln!(
+            "{}",
+            warning_message(format!("Failed to spawn pipeline: {err:#}"))
+        );
+    } else {
+        let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
+        worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
     }
 
     Ok(())
