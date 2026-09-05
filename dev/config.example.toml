@@ -1,6 +1,8 @@
 # # User Configuration
 #
-# Create with `wt config create`. Values shown are defaults unless noted otherwise.
+# Create with `wt config create`.
+#
+# Where a block sets a flag `wt` has a default for — `[list]`, `[commit] stage`, `[merge]`, `[remove]`, `[switch]`, `[step.copy-ignored]` — the value shown is that default, except where a comment says otherwise. Everything else is an example of a setting that is simply unset until written: commit generation, custom columns, aliases, and `[projects]` entries.
 #
 # Location:
 #
@@ -30,7 +32,7 @@
 #
 # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 #
-# Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
+# Inside the repository (`~/code/myproject/.worktrees/feature-auth`). Git sees the worktree directory as untracked, so add `.worktrees/` to `.gitignore` or `.git/info/exclude`:
 #
 # worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 #
@@ -58,7 +60,7 @@
 #
 # ## LLM commit messages
 #
-# Generate commit messages automatically during merge. Requires an external CLI tool.
+# Generate commit messages automatically during merge. Requires an external CLI tool. The blocks below are alternatives: the file holds one `[commit.generation]` table, naming whichever CLI is installed.
 #
 # ### Claude Code
 #
@@ -85,26 +87,24 @@
 # [commit.generation]
 # command = "aichat -m claude:claude-haiku-4.5"
 #
-# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
+# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (https://worktrunk.dev/config/#custom-prompt-templates) for template customization.
 #
-# ## Command config
-#
-# ### List
+# ## List
 #
 # Persistent flag values for `wt list`. Override on command line as needed.
 #
 # [list]
 # summary = false    # Enable LLM branch summaries (requires [commit.generation])
 #
-# full = false       # Show CI status and LLM summaries (--full)
+# full = false       # Add the CI column, and the Summary column when summary above and a [commit.generation] command are both set (--full)
 # branches = false   # Include branches without worktrees (--branches)
 # remotes = false    # Include remote-only branches (--remotes)
 #
-# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
+# json-schema = 2    # Not a default: 1 (bare array) is what an unset key emits, with a warning; a future release switches it to 2 (envelope), and wt config update writes 2 now
 #
-# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
+# columns = ["branch", "status", "ci", "path"]   # Not a default, an example: unset, the table renders its own set, which carries no ci column
 #
-# timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables
+# timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables, and --full discards the budget entirely
 #
 # `columns` selects and orders the columns the `wt list` table and the `wt switch`
 # picker render; `--format json` ignores it and always emits every field. Omit it
@@ -125,12 +125,12 @@
 # - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 # - `ci` — CI status of the head commit
 # - `path` — The worktree's path
-# - `url` — Dev-server URL from the `[list] url` template
+# - `url` — Dev-server URL, from the project config's `[list] url` template (a key this file does not accept)
 # - `commit` — The head commit's short hash
 # - `age` — Time since the last commit
 # - `message` — The head commit's subject
 #
-# A selection mixes built-ins with custom columns (#custom-columns), each named
+# A selection mixes built-ins with custom columns (https://worktrunk.dev/config/#custom-columns), each named
 # by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),
 # and is exhaustive: only the listed columns render. Omit `columns` to keep the
 # default set, where custom columns append automatically. A built-in name wins a
@@ -142,7 +142,7 @@
 # needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 # template — since listing can't supply the data.
 #
-# #### Custom columns [experimental]
+# ### Custom columns [experimental]
 #
 # Custom columns add per-branch context to the `wt list` table. Each
 # `[list.custom-columns]` entry is a column: the key is the header, the template
@@ -179,14 +179,16 @@
 # [list.custom-columns.Summary]
 # template = "{{ git.branch.description | lines | first }}"
 #
-# ### Commit
+# ## Commit
 #
 # Shared by `wt step commit`, `wt step squash`, and `wt merge`.
 #
 # [commit]
 # stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 #
-# ### Merge
+# `stage` is a user-config key. The project file's `[commit]` accepts only `[commit.generation] template-append` (https://worktrunk.dev/config/#commit-message-append) — the LLM command and the prompt template describe a developer's own environment, so they stay here.
+#
+# ## Merge
 #
 # Most flags are on by default. Set to false to change default behavior.
 #
@@ -198,14 +200,14 @@
 # verify = true      # Run project hooks (--no-hooks to skip)
 # ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
-# ### Remove
+# ## Remove
 #
 # Persistent flag values for `wt remove`. Override on command line as needed.
 #
 # [remove]
 # delete-branch = true   # Delete branch after removal (--no-delete-branch to keep)
 #
-# ### Switch
+# ## Switch
 #
 # [switch]
 # cd = true          # Change directory after switching (--no-cd to skip)
@@ -213,14 +215,19 @@
 # [switch.picker]
 # pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
 #
-# ### Step
+# ## Step
 #
 # [step.copy-ignored]
 # exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 #
 # Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 #
-# ### Aliases
+# `exclude` only narrows the copy — nothing copies until a hook runs the step. A `post-start` hook in the project config (`.config/wt.toml`) is what gives every worktree the files:
+#
+# [post-start]
+# copy = "wt step copy-ignored"
+#
+# ## Aliases
 #
 # Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.
 #
@@ -230,7 +237,7 @@
 #
 # Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.
 #
-# ### User project-specific settings
+# ## User project-specific settings
 #
 # User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config (https://worktrunk.dev/config/#project-configuration) shared with teammates.
 #
@@ -247,7 +254,7 @@
 # step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
-# #### Matching several repositories with one entry
+# ### Matching several repositories with one entry
 #
 # A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.
 #
@@ -261,9 +268,7 @@
 #
 # Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
 #
-# `approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.
-#
-# #### Forge platform and hostname
+# ### Forge platform and hostname
 #
 # `forge` names the forge for the matched repositories — the user-level counterpart of the project config's forge platform (https://worktrunk.dev/config/#forge-platform) block, for a self-hosted host whose name carries no `github`, `gitlab`, or `gitea` for detection to read.
 #
@@ -292,11 +297,11 @@
 # build = "npm run build"
 # server = "npm run dev"
 #
-# ### Custom prompt templates
+# ## Custom prompt templates
 #
 # Templates use minijinja (https://docs.rs/minijinja/) syntax.
 #
-# #### Commit template
+# ### Commit template
 #
 # Available variables:
 #
@@ -350,7 +355,7 @@
 # """
 # <!-- DEFAULT_TEMPLATE_END -->
 #
-# #### Squash template
+# ### Squash template
 #
 # Available variables (in addition to commit template variables):
 #
@@ -399,7 +404,7 @@
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 #
-# #### Appending to the prompt
+# ### Appending to the prompt
 #
 # `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 #
@@ -409,6 +414,13 @@
 # """
 #
 # How the fragment renders, and the project-config counterpart: the LLM commits guide (https://worktrunk.dev/llm-commits/#appending-to-the-prompt).
+#
+# ## First-run prompts
+#
+# Worktrunk offers to install shell integration on a first run without it, and to configure a detected LLM tool (`claude`, `codex`) on a first commit with no `[commit.generation] command`. Declining either sets its key here; setting one by hand suppresses that prompt from the start.
+#
+# skip-shell-integration-prompt = false   # Never offer to install shell integration
+# skip-commit-generation-prompt = false   # Never offer to configure a commit-message tool
 #
 # ## Hooks
 #

@@ -1304,8 +1304,14 @@ fn test_bare_repo_config_show_reflects_object_store_fallback() {
         stdout.contains("from object store") && stdout.contains("post-start"),
         "config show text must label the object-store source and dump the config; stdout:\n{stdout}"
     );
+    // Scoped to the project section: the SYSTEM CONFIG section reports its own
+    // absence with a `Not found` of its own.
+    let project_section = stdout
+        .split("PROJECT CONFIG")
+        .nth(1)
+        .expect("PROJECT CONFIG section");
     assert!(
-        !stdout.contains("Not found"),
+        !project_section.contains("Not found"),
         "config show must not report the object-store config as `Not found`; stdout:\n{stdout}"
     );
 }

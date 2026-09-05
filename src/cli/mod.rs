@@ -1937,6 +1937,26 @@ $ wt config show
 
 Organizations can deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
 
+## Which key goes in which file
+
+Each file parses into a schema of its own, so a section name the two share can still carry disjoint keys — `[list]` is the sharpest case, and `[commit]` the next. A key written into the wrong file is ignored; `wt config show` names it.
+
+| Key | User config | Project config |
+|-----|-------------|----------------|
+| `worktree-path` | ✓ | |
+| `[list] full`, `branches`, `remotes`, `summary`, `json-schema`, `timeout-ms`, `columns`, `[list.custom-columns]` | ✓ | |
+| `[list] url` | | ✓ |
+| `[commit] stage` | ✓ | |
+| `[commit.generation] command`, `template`, `squash-template` | ✓ | |
+| `[commit.generation] template-append` | ✓ | ✓ |
+| `[merge]`, `[remove]`, `[switch]` | ✓ | |
+| `[step.copy-ignored] exclude` | ✓ | ✓ |
+| `[forge] platform`, `hostname` | only under `[projects."…"]` | ✓ |
+| `[aliases]` | ✓ | ✓ |
+| hooks — `pre-start`, `post-start`, `pre-merge`, … | ✓ | ✓ |
+| `[projects."…"]` | ✓ | |
+| `skip-shell-integration-prompt`, `skip-commit-generation-prompt` | ✓ | |
+
 **User config** — personal preferences:
 
 ```toml
@@ -1961,7 +1981,9 @@ test = "npm test"
 <!-- USER_CONFIG_START -->
 # User Configuration
 
-Create with `wt config create`. Values shown are defaults unless noted otherwise.
+Create with `wt config create`.
+
+Where a block sets a flag `wt` has a default for — `[list]`, `[commit] stage`, `[merge]`, `[remove]`, `[switch]`, `[step.copy-ignored]` — the value shown is that default, except where a comment says otherwise. Everything else is an example of a setting that is simply unset until written: commit generation, custom columns, aliases, and `[projects]` entries.
 
 Location:
 
@@ -1993,7 +2015,7 @@ Default — sibling directory (`~/code/myproject.feature-auth`):
 worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
 ```
 
-Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
+Inside the repository (`~/code/myproject/.worktrees/feature-auth`). Git sees the worktree directory as untracked, so add `.worktrees/` to `.gitignore` or `.git/info/exclude`:
 
 ```toml
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
@@ -2033,7 +2055,7 @@ worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 
 ## LLM commit messages
 
-Generate commit messages automatically during merge. Requires an external CLI tool.
+Generate commit messages automatically during merge. Requires an external CLI tool. The blocks below are alternatives: the file holds one `[commit.generation]` table, naming whichever CLI is installed.
 
 ### Claude Code
 
@@ -2070,11 +2092,9 @@ command = "llm -m claude-haiku-4.5"
 command = "aichat -m claude:claude-haiku-4.5"
 ```
 
-See [LLM commits docs](/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
+See [LLM commits docs](/llm-commits/) for setup and [Custom prompt templates](/config/#custom-prompt-templates) for template customization.
 
-## Command config
-
-### List
+## List
 
 Persistent flag values for `wt list`. Override on command line as needed.
 
@@ -2082,15 +2102,15 @@ Persistent flag values for `wt list`. Override on command line as needed.
 [list]
 summary = false    # Enable LLM branch summaries (requires [commit.generation])
 
-full = false       # Show CI status and LLM summaries (--full)
+full = false       # Add the CI column, and the Summary column when summary above and a [commit.generation] command are both set (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
-json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
+json-schema = 2    # Not a default: 1 (bare array) is what an unset key emits, with a warning; a future release switches it to 2 (envelope), and wt config update writes 2 now
 
-columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
+columns = ["branch", "status", "ci", "path"]   # Not a default, an example: unset, the table renders its own set, which carries no ci column
 
-timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables
+timeout-ms = 0     # Wall-clock budget for the entire collect phase; 0 disables, and --full discards the budget entirely
 ```
 
 `columns` selects and orders the columns the `wt list` table and the `wt switch`
@@ -2112,12 +2132,12 @@ Valid built-in names:
 - `upstream` — Commits ahead of and behind the upstream tracking branch (header `Remote⇅`)
 - `ci` — CI status of the head commit
 - `path` — The worktree's path
-- `url` — Dev-server URL from the `[list] url` template
+- `url` — Dev-server URL, from the project config's `[list] url` template (a key this file does not accept)
 - `commit` — The head commit's short hash
 - `age` — Time since the last commit
 - `message` — The head commit's subject
 
-A selection mixes built-ins with [custom columns](#custom-columns), each named
+A selection mixes built-ins with [custom columns](/config/#custom-columns), each named
 by its `[list.custom-columns]` header (`columns = ["branch", "Ticket", "ci"]`),
 and is exhaustive: only the listed columns render. Omit `columns` to keep the
 default set, where custom columns append automatically. A built-in name wins a
@@ -2129,7 +2149,7 @@ named one. A column whose data source is missing still stays hidden — `summary
 needs an LLM command (`[commit.generation]`), `url` needs a `[list] url`
 template — since listing can't supply the data.
 
-#### Custom columns [experimental]
+### Custom columns [experimental]
 
 Custom columns add per-branch context to the `wt list` table. Each
 `[list.custom-columns]` entry is a column: the key is the header, the template
@@ -2170,7 +2190,7 @@ template = "{{ git.branch.jira }}"
 template = "{{ git.branch.description | lines | first }}"
 ```
 
-### Commit
+## Commit
 
 Shared by `wt step commit`, `wt step squash`, and `wt merge`.
 
@@ -2179,7 +2199,9 @@ Shared by `wt step commit`, `wt step squash`, and `wt merge`.
 stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 ```
 
-### Merge
+`stage` is a user-config key. The project file's `[commit]` accepts only [`[commit.generation] template-append`](/config/#commit-message-append) — the LLM command and the prompt template describe a developer's own environment, so they stay here.
+
+## Merge
 
 Most flags are on by default. Set to false to change default behavior.
 
@@ -2193,7 +2215,7 @@ verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
-### Remove
+## Remove
 
 Persistent flag values for `wt remove`. Override on command line as needed.
 
@@ -2202,7 +2224,7 @@ Persistent flag values for `wt remove`. Override on command line as needed.
 delete-branch = true   # Delete branch after removal (--no-delete-branch to keep)
 ```
 
-### Switch
+## Switch
 
 ```toml
 [switch]
@@ -2212,7 +2234,7 @@ cd = true          # Change directory after switching (--no-cd to skip)
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
 ```
 
-### Step
+## Step
 
 ```toml
 [step.copy-ignored]
@@ -2221,7 +2243,14 @@ exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 
 Built-in excludes (VCS metadata and tool-state directories) always apply; [the `wt step copy-ignored` docs](/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 
-### Aliases
+`exclude` only narrows the copy — nothing copies until a hook runs the step. A `post-start` hook in the project config (`.config/wt.toml`) is what gives every worktree the files:
+
+```toml
+[post-start]
+copy = "wt step copy-ignored"
+```
+
+## Aliases
 
 Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for usage and flags.
 
@@ -2233,7 +2262,7 @@ url = "echo http://localhost:{{ branch | hash_port }}"
 
 Aliases defined here apply to all projects. For project-specific aliases, use the [project config](/config/#project-configuration) `[aliases]` section instead.
 
-### User project-specific settings
+## User project-specific settings
 
 User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the [project config](/config/#project-configuration) shared with teammates.
 
@@ -2252,7 +2281,7 @@ step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
-#### Matching several repositories with one entry
+### Matching several repositories with one entry
 
 A key containing `*` matches any run of characters, `/` included, so one entry covers a whole host or namespace — including nested groups. `*` is the only wildcard; every other character, `.` among them, is literal.
 
@@ -2268,9 +2297,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — `git.company.example/platform/*` over `git.company.example/*` — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-`*` characters in the key. End a host-wide key with `/*` — a bare `git.company.example*` also covers hosts whose names merely start with that string.
 
-`approved-commands` matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.
-
-#### Forge platform and hostname
+### Forge platform and hostname
 
 `forge` names the forge for the matched repositories — the user-level counterpart of the project config's [forge platform](/config/#forge-platform) block, for a self-hosted host whose name carries no `github`, `gitlab`, or `gitea` for detection to read.
 
@@ -2303,11 +2330,11 @@ build = "npm run build"
 server = "npm run dev"
 ```
 
-### Custom prompt templates
+## Custom prompt templates
 
 Templates use [minijinja](https://docs.rs/minijinja/) syntax.
 
-#### Commit template
+### Commit template
 
 Available variables:
 
@@ -2363,7 +2390,7 @@ Branch: {{ branch }}
 ```
 <!-- DEFAULT_TEMPLATE_END -->
 
-#### Squash template
+### Squash template
 
 Available variables (in addition to commit template variables):
 
@@ -2414,7 +2441,7 @@ squash-template = """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
-#### Appending to the prompt
+### Appending to the prompt
 
 `template-append` adds personal conventions to the commit and squash prompts without restating the whole template:
 
@@ -2426,6 +2453,15 @@ template-append = """
 ```
 
 How the fragment renders, and the project-config counterpart: [the LLM commits guide](/llm-commits/#appending-to-the-prompt).
+
+## First-run prompts
+
+Worktrunk offers to install shell integration on a first run without it, and to configure a detected LLM tool (`claude`, `codex`) on a first commit with no `[commit.generation] command`. Declining either sets its key here; setting one by hand suppresses that prompt from the start.
+
+```toml
+skip-shell-integration-prompt = false   # Never offer to install shell integration
+skip-commit-generation-prompt = false   # Never offer to configure a commit-message tool
+```
 
 ## Hooks
 
@@ -2485,7 +2521,13 @@ The first time the fragment is used (and whenever it changes), `wt` prompts the 
 
 ## Copy-ignored excludes
 
-Additional excludes for `wt step copy-ignored`:
+`wt step copy-ignored` seeds a new worktree with the gitignored files the primary worktree already has — `node_modules/`, `target/`, `.env`. A `post-start` hook is what runs it:
+
+```toml
+post-start = "wt step copy-ignored"
+```
+
+Additional excludes:
 
 ```toml
 [step.copy-ignored]
@@ -2519,15 +2561,13 @@ For manual setup, see `wt config shell init --help`.
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
-### First-run prompts
-
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+Declining the first-run offer to install it sets `skip-shell-integration-prompt` in user config, so the offer isn't made again — see [first-run prompts](/config/#first-run-prompts).
 
 # Other
 
 ## Environment variables
 
-All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
+Every scalar user config option can be overridden with an environment variable using the `WORKTRUNK_` prefix. Arrays and maps — `[list] columns`, `[list.custom-columns]`, `[step.copy-ignored] exclude`, hooks, aliases — cannot: the overlay carries a single string per key. Use [`--config-set`](/config/#inline-config-overrides-config-set) for those, which takes a TOML fragment.
 
 ### Naming convention
 
@@ -2557,7 +2597,8 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`); relative paths resolve from the worktree root |
-| `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
+| `WORKTRUNK_APPROVALS_PATH` | Override the approvals file location (defaults to `approvals.toml` beside the user config) |
+| `XDG_CONFIG_DIRS` | Colon-separated system config directories, Unix only. When set it replaces the platform defaults outright: `/etc/xdg` on Linux, `/Library/Application Support` then `/etc/xdg` on macOS. Windows ignores it and reads `%PROGRAMDATA%` |
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Internal: set by shell wrappers. wt writes a raw path; the wrapper `cd`s to it |
 | `WORKTRUNK_SHELL_CWD` | Internal: set by wt on alias and hook bodies, so a nested `wt` preserves the user's subdirectory |
 | `WORKTRUNK_COMPLETE_NAME` | Internal: set by shell wrappers to the command name completions register under (defaults to the binary name) |
@@ -2578,6 +2619,16 @@ $ wt step copy-ignored --config-set 'step.copy-ignored.exclude=["target", "dist"
 
 This composes with aliases — an alias body can invoke `wt --config-set … <command>` to render a named view without changing the saved config.
 
+## A different config file (`--config`)
+
+`--config <path>` reads the user config from somewhere else for one invocation. Like `--config-set` it is global, so it works before or after the subcommand:
+
+```console
+$ wt --config ~/configs/work.toml list
+```
+
+It names the file the user-config layer loads, rather than overriding a key: the system config layer, `WORKTRUNK_*`, and `--config-set` all still apply on top. It outranks `WORKTRUNK_CONFIG_PATH`, and commands that write user config (`wt config create`, `wt config update`) write to the named path.
+
 ## Precedence
 
 Sources closer to the invocation rank higher (user config above system config), and within a config file a [project entry](/config/#user-project-specific-settings) outranks the global key of the same name. So `worktree-path` comes from the first of these that sets it:
@@ -2586,6 +2637,9 @@ Sources closer to the invocation rank higher (user config above system config), 
 2. `WORKTRUNK_WORKTREE_PATH`
 3. `[projects."github.com/owner/repo"]` in the config file
 4. global `worktree-path` in the config file
+5. the same two, in the system config file
+
+`--config <path>` is not a layer of its own; it decides which file steps 3 and 4 read.
 
 A `--config-set` that names a project entry is both the highest layer and the most specific key, so it beats the same flag's global key:
 
@@ -2594,9 +2648,12 @@ $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratc
 ```
 
 Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
+<!-- subdoc: shell -->
 <!-- subdoc: show -->
+<!-- subdoc: update -->
 <!-- subdoc: approvals -->
 <!-- subdoc: alias -->
+<!-- subdoc: plugins -->
 <!-- subdoc: state -->"#)]
     Config {
         #[command(subcommand)]

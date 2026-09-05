@@ -105,6 +105,26 @@ Show current configuration and file locations:
 
 Organizations can deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
+[1m[32mWhich key goes in which file[0m
+
+Each file parses into a schema of its own, so a section name the two share can still carry disjoint keys — [2m[list][0m is the sharpest case, and [2m[commit][0m the next. A key written into the wrong file is ignored; [2mwt config show[0m names it.
+
+                                               Key                                                       User config        Project config 
+ ──────────────────────────────────────────────────────────────────────────────────────────────── ───────────────────────── ────────────── 
+ [2mworktree-path[0m                                                                                    ✓                                        
+ [2m[list] full[0m, [2mbranches[0m, [2mremotes[0m, [2msummary[0m, [2mjson-schema[0m, [2mtimeout-ms[0m, [2mcolumns[0m, [2m[list.custom-columns][0m ✓                                        
+ [2m[list] url[0m                                                                                                                 ✓              
+ [2m[commit] stage[0m                                                                                   ✓                                        
+ [2m[commit.generation] command[0m, [2mtemplate[0m, [2msquash-template[0m                                           ✓                                        
+ [2m[commit.generation] template-append[0m                                                              ✓                         ✓              
+ [2m[merge][0m, [2m[remove][0m, [2m[switch][0m                                                                      ✓                                        
+ [2m[step.copy-ignored] exclude[0m                                                                      ✓                         ✓              
+ [2m[forge] platform[0m, [2mhostname[0m                                                                       only under [2m[projects."…"][0m ✓              
+ [2m[aliases][0m                                                                                        ✓                         ✓              
+ hooks — [2mpre-start[0m, [2mpost-start[0m, [2mpre-merge[0m, …                                                      ✓                         ✓              
+ [2m[projects."…"][0m                                                                                   ✓                                        
+ [2mskip-shell-integration-prompt[0m, [2mskip-commit-generation-prompt[0m                                     ✓                                        
+
 [1mUser config[0m — personal preferences:
 
 [107m [0m [2m# ~/.config/worktrunk/config.toml[0m
@@ -124,7 +144,9 @@ Organizations can deploy a system-wide config file for shared defaults — run 
 
 [32mUSER CONFIGURATION[0m
 
-Create with [2mwt config create[0m. Values shown are defaults unless noted otherwise.
+Create with [2mwt config create[0m.
+
+Where a block sets a flag [2mwt[0m has a default for — [2m[list][0m, [2m[commit] stage[0m, [2m[merge][0m, [2m[remove][0m, [2m[switch][0m, [2m[step.copy-ignored][0m — the value shown is that default, except where a comment says otherwise. Everything else is an example of a setting that is simply unset until written: commit generation, custom columns, aliases, and [2m[projects][0m entries.
 
 Location:
 
@@ -154,7 +176,7 @@ Default — sibling directory ([2m~/code/myproject.feature-auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
 
-Inside the repository ([2m~/code/myproject/.worktrees/feature-auth[0m):
+Inside the repository ([2m~/code/myproject/.worktrees/feature-auth[0m). Git sees the worktree directory as untracked, so add [2m.worktrees/[0m to [2m.gitignore[0m or [2m.git/info/exclude[0m:
 
 [107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
 
@@ -182,7 +204,7 @@ Bare repository cloned to [2m~/code/myproject/.git[0m ([2m~/code/myproject/fe
 
 [1m[32mLLM commit messages[0m
 
-Generate commit messages automatically during merge. Requires an external CLI tool.
+Generate commit messages automatically during merge. Requires an external CLI tool. The blocks below are alternatives: the file holds one [2m[commit.generation][0m table, naming whichever CLI is installed.
 
 [32mClaude Code[0m
 
@@ -211,24 +233,22 @@ Generate commit messages automatically during merge. Requires an external CLI to
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
-[1m[32mCommand config[0m
-
-[32mList[0m
+[1m[32mList[0m
 
 Persistent flag values for [2mwt list[0m. Override on command line as needed.
 
 [107m [0m [2m[36m[list][0m
 [107m [0m [2msummary = [0m[2m[33mfalse[0m[2m    [0m[2m# Enable LLM branch summaries (requires [commit.generation])[0m
 [107m [0m 
-[107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI status and LLM summaries (--full)[0m
+[107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Add the CI column, and the Summary column when summary above and a [commit.generation] command are both set (--full)[0m
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
 [107m [0m 
-[107m [0m [2mjson-schema = [0m[2m[33m2[0m[2m    [0m[2m# JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
+[107m [0m [2mjson-schema = [0m[2m[33m2[0m[2m    [0m[2m# Not a default: 1 (bare array) is what an unset key emits, with a warning; a future release switches it to 2 (envelope), and wt config update writes 2 now[0m
 [107m [0m 
-[107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
+[107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"status"[0m[2m, [0m[2m[32m"ci"[0m[2m, [0m[2m[32m"path"[0m[2m]   [0m[2m# Not a default, an example: unset, the table renders its own set, which carries no ci column[0m
 [107m [0m 
-[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m     [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m     [0m[2m# Wall-clock budget for the entire collect phase; 0 disables, and --full discards the budget entirely[0m
 
 [2mcolumns[0m selects and orders the columns the [2mwt list[0m table and the [2mwt switch[0m
 picker render; [2m--format json[0m ignores it and always emits every field. Omit it
@@ -249,7 +269,7 @@ Valid built-in names:
 - [2mupstream[0m — Commits ahead of and behind the upstream tracking branch (header [2mRemote⇅[0m)
 - [2mci[0m — CI status of the head commit
 - [2mpath[0m — The worktree's path
-- [2murl[0m — Dev-server URL from the [2m[list] url[0m template
+- [2murl[0m — Dev-server URL, from the project config's [2m[list] url[0m template (a key this file does not accept)
 - [2mcommit[0m — The head commit's short hash
 - [2mage[0m — Time since the last commit
 - [2mmessage[0m — The head commit's subject
@@ -266,7 +286,7 @@ named one. A column whose data source is missing still stays hidden — [2msumm
 needs an LLM command ([2m[commit.generation][0m), [2murl[0m needs a [2m[list] url[0m
 template — since listing can't supply the data.
 
-[1mCustom columns [experimental][0m
+[32mCustom columns [experimental][0m
 
 Custom columns add per-branch context to the [2mwt list[0m table. Each
 [2m[list.custom-columns][0m entry is a column: the key is the header, the template
@@ -303,14 +323,16 @@ showing just the first line of the git-native branch description:
 [107m [0m [2m[36m[list.custom-columns.Summary][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ git.branch.description | lines | first }}"[0m
 
-[32mCommit[0m
+[1m[32mCommit[0m
 
 Shared by [2mwt step commit[0m, [2mwt step squash[0m, and [2mwt merge[0m.
 
 [107m [0m [2m[36m[commit][0m
 [107m [0m [2mstage = [0m[2m[32m"all"[0m[2m      [0m[2m# What to stage before commit: "all", "tracked", or "none"[0m
 
-[32mMerge[0m
+[2mstage[0m is a user-config key. The project file's [2m[commit][0m accepts only [2m[commit.generation] template-append[0m — the LLM command and the prompt template describe a developer's own environment, so they stay here.
+
+[1m[32mMerge[0m
 
 Most flags are on by default. Set to false to change default behavior.
 
@@ -322,14 +344,14 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2mff = [0m[2m[33mtrue[0m[2m          [0m[2m# Fast-forward merge (--no-ff to create a merge commit instead)[0m
 
-[32mRemove[0m
+[1m[32mRemove[0m
 
 Persistent flag values for [2mwt remove[0m. Override on command line as needed.
 
 [107m [0m [2m[36m[remove][0m
 [107m [0m [2mdelete-branch = [0m[2m[33mtrue[0m[2m   [0m[2m# Delete branch after removal (--no-delete-branch to keep)[0m
 
-[32mSwitch[0m
+[1m[32mSwitch[0m
 
 [107m [0m [2m[36m[switch][0m
 [107m [0m [2mcd = [0m[2m[33mtrue[0m[2m          [0m[2m# Change directory after switching (--no-cd to skip)[0m
@@ -337,14 +359,19 @@ Persistent flag values for [2mwt remove[0m. Override on command line as needed
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never"[0m[2m   [0m[2m# Example: override git's core.pager for diff preview[0m
 
-[32mStep[0m
+[1m[32mStep[0m
 
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = []   [0m[2m# Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 
 Built-in excludes (VCS metadata and tool-state directories) always apply; the [2mwt step copy-ignored[0m docs list them. User config and project config exclusions are combined.
 
-[32mAliases[0m
+[2mexclude[0m only narrows the copy — nothing copies until a hook runs the step. A [2mpost-start[0m hook in the project config ([2m.config/wt.toml[0m) is what gives every worktree the files:
+
+[107m [0m [2m[36m[post-start][0m
+[107m [0m [2mcopy = [0m[2m[32m"wt step copy-ignored"[0m
+
+[1m[32mAliases[0m
 
 Command templates that run as [2mwt <name>[0m. See the Extending Worktrunk guide for usage and flags.
 
@@ -354,7 +381,7 @@ Command templates that run as [2mwt <name>[0m. See the Extending Worktrunk gui
 
 Aliases defined here apply to all projects. For project-specific aliases, use the project config [2m[aliases][0m section instead.
 
-[32mUser project-specific settings[0m
+[1m[32mUser project-specific settings[0m
 
 User config can include a [2m[projects][0m table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config shared with teammates.
 
@@ -371,7 +398,7 @@ Scalar values (like [2mworktree-path[0m) replace the global value; everything 
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
 
-[1mMatching several repositories with one entry[0m
+[32mMatching several repositories with one entry[0m
 
 A key containing [2m*[0m matches any run of characters, [2m/[0m included, so one entry covers a whole host or namespace — including nested groups. [2m*[0m is the only wildcard; every other character, [2m.[0m among them, is literal.
 
@@ -386,9 +413,7 @@ A key containing [2m*[0m matches any run of characters, [2m/[0m included, so
 Every matching entry applies, least- to most-specific, following the rule above: a more specific entry — [2mgit.company.example/platform/*[0m over [2mgit.company.example/*[0m — wins where both set the same setting, while hooks and aliases from every matching entry all run, least-specific first. A literal key is the most specific of all; specificity is the count of non-[2m*[0m characters in the key. End a host-wide key with [2m/*[0m — a bare [2mgit.company.example*[0m also covers hosts whose names merely start with that 
 string.
 
-[2mapproved-commands[0m matches the same way, so a pattern entry approves its commands for every repository it covers. Only a key written by hand is ever a pattern: [2mwt config approvals add[0m and the interactive prompt record under the exact identifier, and [2mwt config approvals clear[0m removes only that exact entry, leaving a pattern other repositories share intact.
-
-[1mForge platform and hostname[0m
+[32mForge platform and hostname[0m
 
 [2mforge[0m names the forge for the matched repositories — the user-level counterpart of the project config's forge platform block, for a self-hosted host whose name carries no [2mgithub[0m, [2mgitlab[0m, or [2mgitea[0m for detection to read.
 
@@ -417,11 +442,11 @@ Hooks support all three hook forms. A table runs multiple commands concurrently;
 [107m [0m [2mbuild = [0m[2m[32m"npm run build"[0m
 [107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
 
-[32mCustom prompt templates[0m
+[1m[32mCustom prompt templates[0m
 
 Templates use minijinja syntax.
 
-[1mCommit template[0m
+[32mCommit template[0m
 
 Available variables:
 
@@ -473,7 +498,7 @@ Default template:
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-[1mSquash template[0m
+[32mSquash template[0m
 
 Available variables (in addition to commit template variables):
 
@@ -520,7 +545,7 @@ Default template:
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-[1mAppending to the prompt[0m
+[32mAppending to the prompt[0m
 
 [2mtemplate-append[0m adds personal conventions to the commit and squash prompts without restating the whole template:
 
@@ -530,6 +555,13 @@ Default template:
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
 How the fragment renders, and the project-config counterpart: the LLM commits guide.
+
+[1m[32mFirst-run prompts[0m
+
+Worktrunk offers to install shell integration on a first run without it, and to configure a detected LLM tool ([2mclaude[0m, [2mcodex[0m) on a first commit with no [2m[commit.generation] command[0m. Declining either sets its key here; setting one by hand suppresses that prompt from the start.
+
+[107m [0m [2mskip-shell-integration-prompt = [0m[2m[33mfalse[0m[2m   [0m[2m# Never offer to install shell integration[0m
+[107m [0m [2mskip-commit-generation-prompt = [0m[2m[33mfalse[0m[2m   [0m[2m# Never offer to configure a commit-message tool[0m
 
 [1m[32mHooks[0m
 
@@ -579,7 +611,11 @@ The first time the fragment is used (and whenever it changes), [2mwt[0m prompt
 
 [1m[32mCopy-ignored excludes[0m
 
-Additional excludes for [2mwt step copy-ignored[0m:
+[2mwt step copy-ignored[0m seeds a new worktree with the gitignored files the primary worktree already has — [2mnode_modules/[0m, [2mtarget/[0m, [2m.env[0m. A [2mpost-start[0m hook is what runs it:
+
+[107m [0m [2mpost-start = [0m[2m[32m"wt step copy-ignored"[0m
+
+Additional excludes:
 
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
@@ -606,15 +642,13 @@ For manual setup, see [2mwt config shell init --help[0m.
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 
-[32mFirst-run prompts[0m
-
-On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
+Declining the first-run offer to install it sets [2mskip-shell-integration-prompt[0m in user config, so the offer isn't made again — see first-run prompts.
 
 [32mOTHER[0m
 
 [1m[32mEnvironment variables[0m
 
-All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
+Every scalar user config option can be overridden with an environment variable using the [2mWORKTRUNK_[0m prefix. Arrays and maps — [2m[list] columns[0m, [2m[list.custom-columns][0m, [2m[step.copy-ignored] exclude[0m, hooks, aliases — cannot: the overlay carries a single string per key. Use [2m--config-set[0m for those, which takes a TOML fragment.
 
 [32mNaming convention[0m
 
@@ -636,21 +670,22 @@ Override the LLM command in CI to use a mock:
 
 [32mOther environment variables[0m
 
-             Variable                                                                   Purpose                                                       
- ───────────────────────────────── ────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                                             
- [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                 
- [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                               
- [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m); relative paths resolve from the worktree root 
- [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                                                      
- [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                       
- [2mWORKTRUNK_SHELL_CWD[0m               Internal: set by wt on alias and hook bodies, so a nested [2mwt[0m preserves the user's subdirectory                     
- [2mWORKTRUNK_COMPLETE_NAME[0m           Internal: set by shell wrappers to the command name completions register under (defaults to the binary name)       
- [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                  
- [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach  
- [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                 
- [2mNO_COLOR[0m                          Disable colored output (standard)                                                                                  
- [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                                           
+             Variable                                                                                                                         Purpose                                                                                                            
+ ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                                                                                                                                                        
+ [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                                                                                                                                                            
+ [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                                                                                                                                                          
+ [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m); relative paths resolve from the worktree root                                                                                                            
+ [2mWORKTRUNK_APPROVALS_PATH[0m          Override the approvals file location (defaults to [2mapprovals.toml[0m beside the user config)                                                                                                                                      
+ [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories, Unix only. When set it replaces the platform defaults outright: [2m/etc/xdg[0m on Linux, [2m/Library/Application Support[0m then [2m/etc/xdg[0m on macOS. Windows ignores it and reads [2m%PROGRAMDATA%[0m 
+ [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it                                                                                                                                                  
+ [2mWORKTRUNK_SHELL_CWD[0m               Internal: set by wt on alias and hook bodies, so a nested [2mwt[0m preserves the user's subdirectory                                                                                                                                
+ [2mWORKTRUNK_COMPLETE_NAME[0m           Internal: set by shell wrappers to the command name completions register under (defaults to the binary name)                                                                                                                  
+ [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.                                                                                                                                             
+ [2mWORKTRUNK_VERBOSE[0m                 Verbosity level ([2m0[0m/[2m1[0m/[2m2[0m), like [2m-v[0m/[2m-vv[0m but applied everywhere — including shell completion, which no flag can reach                                                                                                             
+ [2mRUST_LOG[0m                          Logging directive (e.g. [2mworktrunk=debug[0m); overrides the verbosity baseline for what reaches stderr                                                                                                                            
+ [2mNO_COLOR[0m                          Disable colored output (standard)                                                                                                                                                                                             
+ [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                                                                                                                                                      
 
 [1m[32mInline config overrides (--config-set)[0m
 
@@ -661,6 +696,14 @@ Override the LLM command in CI to use a mock:
 
 This composes with aliases — an alias body can invoke [2mwt --config-set … <command>[0m to render a named view without changing the saved config.
 
+[1m[32mA different config file (--config)[0m
+
+[2m--config <path>[0m reads the user config from somewhere else for one invocation. Like [2m--config-set[0m it is global, so it works before or after the subcommand:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m [0m[2m[36m--config[0m[2m ~/configs/work.toml list[0m
+
+It names the file the user-config layer loads, rather than overriding a key: the system config layer, [2mWORKTRUNK_*[0m, and [2m--config-set[0m all still apply on top. It outranks [2mWORKTRUNK_CONFIG_PATH[0m, and commands that write user config ([2mwt config create[0m, [2mwt config update[0m) write to the named path.
+
 [1m[32mPrecedence[0m
 
 Sources closer to the invocation rank higher (user config above system config), and within a config file a project entry outranks the global key of the same name. So [2mworktree-path[0m comes from the first of these that sets it:
@@ -669,6 +712,9 @@ Sources closer to the invocation rank higher (user config above system config), 
 2. [2mWORKTRUNK_WORKTREE_PATH[0m
 3. [2m[projects."github.com/owner/repo"][0m in the config file
 4. global [2mworktree-path[0m in the config file
+5. the same two, in the system config file
+
+[2m--config <path>[0m is not a layer of its own; it decides which file steps 3 and 4 read.
 
 A [2m--config-set[0m that names a project entry is both the highest layer and the most specific key, so it beats the same flag's global key:
 

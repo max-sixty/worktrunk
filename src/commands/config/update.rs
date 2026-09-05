@@ -10,13 +10,14 @@ use std::path::PathBuf;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
-    copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
+    Approvals, ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content,
+    config_path, copy_approved_commands_to_approvals_file, format_deprecation_warnings,
+    format_migration_diff,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, println,
-    success_message, suggest_command_in_dir,
+    eprint, eprintln, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
+    print, println, success_message, suggest_command_in_dir, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -56,7 +57,11 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
     if print {
         // Emit migrated content to stdout. Multiple configs → separate with a
         // labeled header so the output is still parseable. `--print` is for
-        // piping, so stderr stays empty.
+        // piping, so stdout carries nothing but the migrated TOML; the
+        // approvals warning below is the one thing on stderr.
+        for candidate in &candidates {
+            eprint!("{}", format_dropped_approvals_warning(candidate));
+        }
         let multi = candidates.len() > 1;
         for (idx, candidate) in candidates.iter().enumerate() {
             if multi {
@@ -120,6 +125,54 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Warn that `--print` drops `approved-commands` without preserving them.
+///
+/// The migration moves those arrays to `approvals.toml`, and the write path
+/// copies them there before rewriting the config. `--print` writes no file at
+/// all, so `wt config update --print > config.toml` keeps the migrated TOML
+/// and loses every approval it named — silently, since the dropped keys never
+/// appear in the printed output. Goes to stderr so stdout stays pipeable.
+fn format_dropped_approvals_warning(candidate: &UpdateCandidate) -> String {
+    if !candidate
+        .info
+        .deprecations
+        .iter()
+        .any(|k| matches!(k, DeprecationKind::ApprovedCommands))
+    {
+        return String::new();
+    }
+    let Ok(approvals) = Approvals::load_from_config_file(&candidate.config_path) else {
+        return String::new();
+    };
+    let entries: Vec<&str> = approvals.projects().map(|(id, _)| id).collect();
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let plural = if entries.len() == 1 {
+        "entry"
+    } else {
+        "entries"
+    };
+    let _ = writeln!(
+        out,
+        "{}",
+        warning_message(cformat!(
+            "Printed config drops <bold>approved-commands</> from {} <bold>[projects]</> {plural}; --print writes no approvals.toml",
+            entries.len()
+        ))
+    );
+    let _ = writeln!(out, "{}", format_with_gutter(&entries.join("\n"), None));
+    let _ = writeln!(
+        out,
+        "{}",
+        hint_message(cformat!(
+            "To migrate them to approvals.toml, run <underline>wt config update</>"
+        ))
+    );
+    out
 }
 
 /// Format update preview for display.

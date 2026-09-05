@@ -411,9 +411,10 @@ deps = "post-create-tool"
 }
 
 #[rstest]
-fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_home: TempDir) {
-    // When no system config exists but user config does, config show should
-    // display a hint under USER CONFIG with the platform-specific default path
+fn test_config_show_absent_system_config_still_gets_a_section(repo: TestRepo, temp_home: TempDir) {
+    // With no system config file, the SYSTEM CONFIG section still renders,
+    // naming the platform-specific default path — "no organization-wide
+    // defaults are in force" is an answer the diagnostic owes the reader.
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -432,16 +433,13 @@ fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_ho
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should NOT show a full SYSTEM CONFIG heading
     assert!(
-        !stdout.contains("SYSTEM CONFIG"),
-        "Should not show SYSTEM CONFIG section when absent, got:\n{stdout}"
+        stdout.contains("SYSTEM CONFIG") && stdout.contains("worktrunk/config.toml"),
+        "Expected a SYSTEM CONFIG section naming the default path, got:\n{stdout}"
     );
-    // Should show a system config hint under USER CONFIG
     assert!(
-        stdout.contains("Optional system config not found")
-            && stdout.contains("worktrunk/config.toml"),
-        "Expected system config hint in output, got:\n{stdout}"
+        stdout.contains("Not found; optional"),
+        "Expected the absent system config to be marked optional, got:\n{stdout}"
     );
 }
 
@@ -1340,6 +1338,32 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
     fs::write(
         global_config_dir.join("config.toml"),
         "this is not valid toml {{{",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A `[list] columns` name no column answers to is reported here rather than
+/// waiting for `wt list` to abort on it, with the same message and a non-zero
+/// exit.
+#[rstest]
+fn test_config_show_unknown_list_column(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list]\njson-schema = 2\ncolumns = [\"branch\", \"nosuchcolumn\"]\n",
     )
     .unwrap();
 
@@ -3262,7 +3286,8 @@ json-schema = 1
 }
 
 /// `wt config update --print` emits the migrated TOML to stdout without
-/// touching the config file. Stderr stays empty so the output is pipeable.
+/// touching the config file. With nothing dropped, stderr stays empty so the
+/// output is pipeable.
 #[rstest]
 fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     let config_path = repo.test_config_path();
@@ -3299,6 +3324,47 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     assert!(
         !config_path.with_extension("toml.new").exists(),
         "--print must not write a .new file"
+    );
+}
+
+/// `wt config update --print` names the `approved-commands` arrays it drops.
+///
+/// The write path copies them to `approvals.toml` first; `--print` writes no
+/// file, so `--print > config.toml` would lose them without a word. The
+/// warning goes to stderr, leaving stdout pipeable.
+#[rstest]
+fn test_config_update_print_warns_about_dropped_approvals(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+json-schema = 1
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm ci", "npm test"]
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("approved-commands") && stderr.contains("github.com/user/repo"),
+        "stderr should name the dropped approvals, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("wt config update"),
+        "stderr should say how to keep them, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("approved-commands"),
+        "the printed config drops them, got: {stdout}"
     );
 }
 

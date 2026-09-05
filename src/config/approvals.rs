@@ -325,7 +325,10 @@ impl Approvals {
     }
 
     /// Extract approved-commands from a specific config file.
-    pub(crate) fn load_from_config_file(config_path: &Path) -> Result<Self, ConfigError> {
+    ///
+    /// Only entries carrying a non-empty array are included, so an empty
+    /// result means the file has nothing to migrate.
+    pub fn load_from_config_file(config_path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(config_path).map_err(|e| {
             ConfigError(format!(
                 "Failed to read config file {}: {}",

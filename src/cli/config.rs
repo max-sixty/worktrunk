@@ -480,11 +480,19 @@ pub enum ConfigCommand {
         action: ConfigShellCommand,
     },
 
+    // The only `wt config` subcommand with no `<!-- subdoc: … -->` marker on
+    // the config page: this help *is* that page's body. Both templates below
+    // are generated from the same `USER_CONFIG` / `PROJECT_CONFIG` blocks the
+    // page renders as prose, so a subdoc would nest the page inside itself.
+    // Terminal help is where they have no rival, and keeps them.
     /// Create configuration file
     #[command(
         after_long_help = concat!(
             "## User config\n\n",
-            "Creates `~/.config/worktrunk/config.toml` with the following content:\n\n```\n",
+            "Creates `~/.config/worktrunk/config.toml` with the content below, every setting ",
+            "commented out. On top of it the file gets the defaults a future release switches — ",
+            "currently `[list] json-schema = 2` — written live, the same values `wt config update` ",
+            "would adopt, so a file just created doesn't warn on its first read.\n\n```\n",
             include_str!("../../dev/config.example.toml"),
             "```\n\n",
             "## Project config\n\n",
@@ -501,10 +509,24 @@ pub enum ConfigCommand {
 
     /// Show configuration files & locations
     #[command(
-        after_long_help = r#"Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
-and project config (`.config/wt.toml`). Also shows system config if present.
+        after_long_help = r#"Shows the location and contents of system config, user config
+(`~/.config/worktrunk/config.toml`), and project config (`.config/wt.toml`).
+Every section names its path whether or not the file exists.
 
-If a config file doesn't exist, shows defaults that would be used.
+Alongside each file, `config show` reports what `wt` would take issue with:
+unparsable TOML, keys in the wrong file, deprecated settings, a name in
+`[list] columns` that no column answers to, and project commands still
+awaiting approval. It exits non-zero when a config is invalid, so a health
+check can branch on it; warnings alone leave the exit code at 0.
+
+An `EFFECTIVE` section then gives the value each setting it covers resolves to
+once all the layers apply — `--config-set`, `WORKTRUNK_*`, the matching
+`[projects]` entries, the global keys, system config — including the ones no
+file sets. It covers the scalars, less the `[commit.generation]` prompt
+templates and the two first-run prompt flags. Arrays and tables
+(`[list] columns`, hooks, aliases) accumulate across layers instead of
+replacing, so the file dumps above already show every contribution and the
+section leaves them out.
 
 ## Full diagnostics
 
@@ -539,6 +561,11 @@ edit rather than at upgrade. Shows a diff and asks for confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
 command. Use `--print` to see the migrated TOML without touching any file.
+
+`--print` writes no `approvals.toml` either, so the `[projects]`
+`approved-commands` arrays the migration moves there are dropped from the
+printed config. It names them on stderr first, leaving stdout pipeable —
+redirecting it over the config file would lose those approvals.
 
 ## Examples
 
@@ -606,7 +633,22 @@ $ wt config approvals list --format=json | jq -r .state
 
 ## How approvals work
 
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves.
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`, keyed by project identifier — the same `<host>/<owner>/<repo>` key a [`[projects."…"]` user-config entry](/config/#user-project-specific-settings) uses:
+
+```toml
+# ~/.config/worktrunk/approvals.toml
+[projects."github.com/user/repo"]
+approved-commands = [
+    "npm ci",
+    "npm run dev",
+]
+```
+
+Re-approval is required when the command template changes or the project moves.
+
+A `*` in a key matches any run of characters, `/` included, exactly as it does in `[projects]`, so one entry can approve its commands for every repository it covers. Only a key written by hand is ever a pattern: `wt config approvals add` and the interactive prompt record under the exact identifier, and `wt config approvals clear` removes only that exact entry, leaving a pattern other repositories share intact.
+
+Earlier releases kept these arrays under `[projects."…"] approved-commands` in `config.toml`. That form is deprecated — it warns on every load, and `wt config update` moves it here.
 
 `--yes` bypasses the prompt, and what it leaves behind depends on the command it is passed to. On a command that runs project commands it grants consent for that run alone and records nothing, so the next run asks again. On `wt config approvals add` the record is the whole point, so the approvals are written — which is how an unattended environment pre-approves a project it has just cloned.
 

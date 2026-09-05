@@ -61,36 +61,18 @@ exit_code: 1
 [2m↳[22m [2mNot found; optional[22m
 
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
-[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
-[2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex a10f823..894e11f 100644[m
-[107m [0m [1m--- a/config.toml/current[m
-[107m [0m [1m+++ b/config.toml/migrated[m
-[107m [0m [36m@@ -1 +1,4 @@[m
-[107m [0m [31m-worktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m \ No newline at end of file[m
-[107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m [32m+[m
-[107m [0m [32m+[m[32m[list][m
-[107m [0m [32m+[m[32mjson-schema = 2[m
-
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
+[107m [0m [2m[36m[list][0m
+[107m [0m [2mjson-schema = [0m[2m[33m2[0m
+[107m [0m [2mcolumns = [[0m[2m[32m"branch"[0m[2m, [0m[2m[32m"nosuchcolumn"[0m[2m][0m
+[31m✗[39m [31mUnknown column "nosuchcolumn" in [list] columns. Valid columns: branch, status, working-diff, ahead-behind, branch-diff, summary, upstream, ci, path, url, commit, age, message[39m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
 [2m○[22m Identifier: [1m../origin[22m
-[31m✗[39m [31mInvalid config[39m
-[107m [0m TOML parse error at line 1, column 28
-[107m [0m   |
-[107m [0m 1 | invalid = [unclosed bracket
-[107m [0m   |                            ^
-[107m [0m unclosed array, expected `]`
-[107m [0m [2minvalid = [unclosed bracket[0m
+[2m↳[22m [2mNot found[22m
 
 [36mEFFECTIVE[39m
 [2m○[22m Resolved scalar settings, every layer applied
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit][0m
 [107m [0m [2mstage = [0m[2m[32m"all"[0m
@@ -103,7 +85,7 @@ exit_code: 1
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m
 [107m [0m [2msummary = [0m[2m[33mfalse[0m
-[107m [0m [2m# json-schema unset (emits schema 1)[0m
+[107m [0m [2mjson-schema = [0m[2m[33m2[0m
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m
 [107m [0m 
 [107m [0m [2m[36m[merge][0m

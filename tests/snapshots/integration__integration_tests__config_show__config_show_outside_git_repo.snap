@@ -50,6 +50,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[2m[36mSYSTEM CONFIG[39m @ /etc/xdg/worktrunk/config.toml[22m
+[2m↳[22m [2mNot found; optional[22m
+
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
@@ -65,7 +68,6 @@ exit_code: 0
 [107m [0m [32m+[m[32mjson-schema = 2[m
 
 [107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
-[2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [2m[36mPROJECT CONFIG[39m Not in a git repository[22m
 

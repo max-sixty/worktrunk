@@ -137,17 +137,17 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_empty() {
-        let out = warn_unknown_keys::<UserConfig>("");
+        let out = warn_unknown_keys::<UserConfig>("", None);
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_warn_unknown_keys() {
         // Single unknown key
-        assert_snapshot!(warn_unknown_keys::<UserConfig>("unknown-key = \"value\"\n"), @"[33m▲[39m [33mUnknown key [1munknown-key[22m will be ignored[39m");
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("unknown-key = \"value\"\n", None), @"[33m▲[39m [33mUnknown key [1munknown-key[22m will be ignored[39m");
 
         // Multiple unknown keys (output is sorted deterministically)
-        assert_snapshot!(warn_unknown_keys::<UserConfig>("key1 = \"v1\"\nkey2 = \"v2\"\n"), @"
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("key1 = \"v1\"\nkey2 = \"v2\"\n", None), @"
         [33m▲[39m [33mUnknown key [1mkey1[22m will be ignored[39m
         [33m▲[39m [33mUnknown key [1mkey2[22m will be ignored[39m
         ");
@@ -156,18 +156,21 @@ mod tests {
     #[test]
     fn test_warn_unknown_keys_nested() {
         // Nested typos surface as dotted paths — a UX win from round-trip analysis.
-        insta::assert_snapshot!(warn_unknown_keys::<UserConfig>("[merge]\nsquas = true\n"));
+        insta::assert_snapshot!(warn_unknown_keys::<UserConfig>(
+            "[merge]\nsquas = true\n",
+            None
+        ));
     }
 
     #[test]
     fn test_warn_unknown_keys_suggests_other_config() {
         // skip-shell-integration-prompt in project config should suggest user config
         assert_snapshot!(
-            warn_unknown_keys::<ProjectConfig>("skip-shell-integration-prompt = true\n"),
+            warn_unknown_keys::<ProjectConfig>("skip-shell-integration-prompt = true\n", None),
             @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
 
         // forge in user config should suggest project config
-        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n"), @r#"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored); to set it from user config, add it under [projects."<id>"][39m"#);
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n", None), @r#"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored); to set it from user config, add it under [projects."<id>"][39m"#);
     }
 
     #[test]
@@ -178,21 +181,37 @@ mod tests {
         // `[commit.generation]` is now a valid project section (for
         // `template-append`) so the offending key surfaces nested.
         assert_snapshot!(
-            warn_unknown_keys::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n"),
+            warn_unknown_keys::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n", None),
             @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects.\"<id>\"] in user config[39m");
         assert_snapshot!(
-            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ncommand = \"llm\"\n"),
+            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ncommand = \"llm\"\n", None),
             @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored); to scope it to this repo, add it under [projects.\"<id>\"] in user config[39m");
 
         // The one project-valid key in the section is unaffected.
         assert!(
-            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ntemplate-append = \"x\"\n")
-                .is_empty()
+            warn_unknown_keys::<ProjectConfig>(
+                "[commit.generation]\ntemplate-append = \"x\"\n",
+                None
+            )
+            .is_empty()
         );
         // The same user-only key in user config is valid — no warning there.
         assert!(
-            warn_unknown_keys::<UserConfig>("[commit.generation]\ncommand = \"llm\"\n").is_empty()
+            warn_unknown_keys::<UserConfig>("[commit.generation]\ncommand = \"llm\"\n", None)
+                .is_empty()
         );
+    }
+
+    /// A known project identifier replaces the `[projects."<id>"]`
+    /// placeholder, so `config show` suggests a key that can be pasted.
+    #[test]
+    fn test_warn_unknown_keys_substitutes_project_identifier() {
+        assert_snapshot!(
+            warn_unknown_keys::<UserConfig>(
+                "[forge]\nplatform = \"github\"\n",
+                Some("github.com/user/repo"),
+            ),
+            @r#"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored); to set it from user config, add it under [projects."github.com/user/repo"][39m"#);
     }
 
     #[test]
@@ -200,7 +219,7 @@ mod tests {
         // `ci` is deprecated in favor of `[forge]`, which is project-only; in
         // user config it redirects with the canonical form.
         assert_snapshot!(
-            warn_unknown_keys::<UserConfig>("[ci]\nplatform = \"github\"\n"),
+            warn_unknown_keys::<UserConfig>("[ci]\nplatform = \"github\"\n", None),
             @"[33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m");
     }
 
@@ -208,11 +227,14 @@ mod tests {
     fn test_warn_unknown_keys_deprecated_in_right_config_is_skipped() {
         // commit-generation in user config should be skipped (deprecation system handles it)
         assert!(
-            warn_unknown_keys::<UserConfig>("[commit-generation]\ncommand = \"llm\"\n").is_empty()
+            warn_unknown_keys::<UserConfig>("[commit-generation]\ncommand = \"llm\"\n", None)
+                .is_empty()
         );
 
         // ci in project config should be skipped (deprecation system handles it)
-        assert!(warn_unknown_keys::<ProjectConfig>("[ci]\nplatform = \"github\"\n").is_empty());
+        assert!(
+            warn_unknown_keys::<ProjectConfig>("[ci]\nplatform = \"github\"\n", None).is_empty()
+        );
     }
 
     // ==================== render_ci_tool_status tests ====================

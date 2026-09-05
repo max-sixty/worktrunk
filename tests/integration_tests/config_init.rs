@@ -65,6 +65,15 @@ fn test_config_init_creates_file(temp_home: TempDir) {
     // Verify file was actually created
     let config_path = global_config_dir.join("config.toml");
     assert!(config_path.exists());
+
+    // Every example line is commented, so the pending defaults have to be
+    // written live — otherwise the file warns about `[list] json-schema` the
+    // first time anything reads it.
+    let contents = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        contents.contains("[list]\njson-schema = 2\n"),
+        "created config should adopt the pending default, got:\n{contents}"
+    );
 }
 
 #[rstest]
