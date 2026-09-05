@@ -971,8 +971,9 @@ fn test_alias_runs_execute_directly(repo: TestRepo) {
 ///
 /// Regression test for #406: alias execution used to pipe the template
 /// context JSON into each child's stdin, which displaced the tty and broke
-/// `stdin().is_terminal()` guards in interactive commands. Only hooks have a
-/// documented JSON-on-stdin contract; aliases must leave stdin alone.
+/// `stdin().is_terminal()` guards in interactive commands. Hooks no longer
+/// pipe JSON either, so the `"branch"` assertion below pins the rule for
+/// every foreground step rather than a hooks-vs-aliases distinction.
 #[rstest]
 fn test_alias_inherits_stdin(repo: TestRepo) {
     repo.write_test_config(
@@ -1017,7 +1018,7 @@ echo-stdin = "cat"
     // "branch" key) to stdin, so `cat` would have echoed that instead.
     assert!(
         !combined.contains("\"branch\""),
-        "alias stdin should not receive the hook JSON context, \
+        "no foreground step should receive a JSON context on stdin, \
          got stdout={stdout:?} stderr={stderr:?}",
     );
 }

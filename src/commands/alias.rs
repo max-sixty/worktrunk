@@ -330,8 +330,9 @@ fn format_alias_announcement(name: &str, entry: &AliasEntry) -> Option<String> {
 /// `load_aliases` returns (a name only appears in the map if some source
 /// defines it). When both are set, both bodies run — user first, then
 /// project — and each runs under its own trust regime: user steps skip
-/// approval and pass EXEC through (issue #2101); project steps require
-/// approval and scrub EXEC.
+/// approval, project steps require it. Directive passthrough no longer
+/// varies by source: the EXEC directive file is retired (#3977), so every
+/// child scrubs it and only the CD file is passed through.
 pub(crate) struct AliasEntry {
     pub user: Option<CommandConfig>,
     pub project: Option<CommandConfig>,
