@@ -159,6 +159,60 @@ impl<'repo> WorkingTree<'repo> {
         index.register_untracked()?;
         Ok(PreparedDiff::with_temp_index(index, revisions))
     }
+
+    /// Get recent commit subjects for style reference.
+    ///
+    /// Returns up to `count` commit subjects (first line of message), excluding merges.
+    /// If `start_ref` is provided, gets commits starting from that ref.
+    /// Returns `None` if no commits are found or the command fails.
+    ///
+    /// Lives on the worktree, not the repository: without `start_ref` this
+    /// walks back from HEAD, and HEAD is per-worktree. Asking the repository
+    /// would answer for whichever worktree it was discovered from — the
+    /// invoking one, which is the wrong branch's history whenever the command
+    /// acts on another worktree (`wt step commit --branch <b>`).
+    pub fn recent_commit_subjects(
+        &self,
+        start_ref: Option<&str>,
+        count: usize,
+    ) -> Option<Vec<String>> {
+        let count_str = count.to_string();
+        let mut args = vec![
+            "log",
+            "--pretty=format:%s",
+            "--no-show-signature",
+            "-n",
+            &count_str,
+            "--no-merges",
+        ];
+        if let Some(ref_name) = start_ref {
+            args.push("--end-of-options");
+            args.push(ref_name);
+        }
+        self.run_command(&args).ok().and_then(|output| {
+            if output.trim().is_empty() {
+                None
+            } else {
+                Some(output.lines().map(String::from).collect())
+            }
+        })
+    }
+
+    /// Get formatted diff stats summary for display.
+    ///
+    /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
+    /// Returns empty vector if diff command fails or produces no output.
+    ///
+    /// Callers pass args including `--shortstat` which produces a single summary line.
+    ///
+    /// Worktree-scoped for the same reason as [`Self::recent_commit_subjects`]:
+    /// every caller diffs the index or HEAD, both of which are per-worktree.
+    pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
+        self.run_command(args)
+            .ok()
+            .map(|output| DiffStats::from_shortstat(&output).format_summary())
+            .unwrap_or_default()
+    }
 }
 
 /// Subject and body for one commit in a range.
@@ -336,38 +390,6 @@ impl Repository {
             range,
         ])?;
         parse_commit_message_details_output(&output)
-    }
-
-    /// Get recent commit subjects for style reference.
-    ///
-    /// Returns up to `count` commit subjects (first line of message), excluding merges.
-    /// If `start_ref` is provided, gets commits starting from that ref.
-    /// Returns `None` if no commits are found or the command fails.
-    pub fn recent_commit_subjects(
-        &self,
-        start_ref: Option<&str>,
-        count: usize,
-    ) -> Option<Vec<String>> {
-        let count_str = count.to_string();
-        let mut args = vec![
-            "log",
-            "--pretty=format:%s",
-            "--no-show-signature",
-            "-n",
-            &count_str,
-            "--no-merges",
-        ];
-        if let Some(ref_name) = start_ref {
-            args.push("--end-of-options");
-            args.push(ref_name);
-        }
-        self.run_command(&args).ok().and_then(|output| {
-            if output.trim().is_empty() {
-                None
-            } else {
-                Some(output.lines().map(String::from).collect())
-            }
-        })
     }
 
     /// Get the merge base between two commits.
@@ -595,19 +617,6 @@ impl Repository {
             super::sha_cache::put_diff_stats(self, base_sha, head_sha, result);
         }
         Ok(result)
-    }
-
-    /// Get formatted diff stats summary for display.
-    ///
-    /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
-    /// Returns empty vector if diff command fails or produces no output.
-    ///
-    /// Callers pass args including `--shortstat` which produces a single summary line.
-    pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
-        self.run_command(args)
-            .ok()
-            .map(|output| DiffStats::from_shortstat(&output).format_summary())
-            .unwrap_or_default()
     }
 }
 

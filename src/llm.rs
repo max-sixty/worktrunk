@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository};
+use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository, WorkingTree};
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 
 use minijinja::Environment;
@@ -692,6 +692,11 @@ fn build_prompt(
     Ok(rendered)
 }
 
+/// `wt` is the worktree being committed — the diff, branch, and history all
+/// come from there. It is not always the invoking worktree: `wt step commit
+/// --branch <b>` and `wt step relocate --commit` commit somewhere else, and
+/// reading the diff from the cwd instead handed the LLM an empty diff.
+///
 /// `index_override` is forwarded to git operations that read the staging area, so
 /// `--dry-run` can preview against a temp index without touching the user's real one.
 ///
@@ -702,6 +707,7 @@ fn build_prompt(
 /// separately into `<user-guidance>`.
 pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
+    wt: &WorkingTree<'_>,
     index_override: Option<&Path>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
@@ -711,7 +717,8 @@ pub(crate) fn generate_commit_message(
         // Prompt-build failures (git plumbing) propagate as-is; only a
         // failure of the LLM command itself gets the `LlmCommandFailed`
         // wrapper — mirroring `generate_squash_message`.
-        let prompt = build_commit_prompt(commit_generation_config, index_override, project_append)?;
+        let prompt =
+            build_commit_prompt(commit_generation_config, wt, index_override, project_append)?;
         // A slow or hung command is otherwise silent (stdout is captured); the
         // watchdog surfaces a "still waiting" status. Held until this function
         // returns, clearing the block before the caller prints the message.
@@ -731,10 +738,9 @@ pub(crate) fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let repo = Repository::current()?;
     let file_list = run_git_capture(
         &["diff", "--staged", "--name-only", "-z"],
-        repo.discovery_path(),
+        wt.path(),
         index_override,
     )?;
     let staged_files = file_list
@@ -793,16 +799,19 @@ fn run_git_capture(
 /// the prompt template. Used by normal commit generation, `--show-prompt`, and
 /// `--dry-run`.
 ///
+/// Every input is read from `wt`, the worktree being committed — which is not
+/// always the invoking one (see [`generate_commit_message`]).
+///
 /// `index_override` points git at an alternate index via `GIT_INDEX_FILE` — used by
 /// `--dry-run` to preview what `git add` per the user's `--stage` flag would produce
 /// without modifying the real index.
 pub(crate) fn build_commit_prompt(
     config: &CommitGenerationConfig,
+    wt: &WorkingTree<'_>,
     index_override: Option<&Path>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let repo = Repository::current()?;
-    let cwd = repo.discovery_path();
+    let cwd = wt.path();
 
     let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
     diff_args.extend(["--no-pager", "diff", "--staged"]);
@@ -816,8 +825,7 @@ pub(crate) fn build_commit_prompt(
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
-    // Get current branch and repo root
-    let wt = repo.current_worktree();
+    // Get the committed branch and its worktree root
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
     let repo_root = wt.root()?;
     let repo_name = repo_root
@@ -825,7 +833,7 @@ pub(crate) fn build_commit_prompt(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    let recent_commits = repo.recent_commit_subjects(None, 5);
+    let recent_commits = wt.recent_commit_subjects(None, 5);
 
     let context = PromptContext {
         git_diff: &prepared.diff,
@@ -913,7 +921,9 @@ pub(crate) fn build_squash_prompt(
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
-    let recent_commits = repo.recent_commit_subjects(Some(merge_base), 5);
+    let recent_commits = repo
+        .current_worktree()
+        .recent_commit_subjects(Some(merge_base), 5);
     let context = PromptContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,

@@ -79,7 +79,7 @@ pub enum StepCommand {
 $ wt step commit --branch feature
 ```
 
-The branch must have a checked-out worktree. `--branch` re-roots the whole command: staging, hooks, and the commit all happen there. It has no effect on `--dry-run`, which always previews the current worktree.
+The branch must have a checked-out worktree. `--branch` re-roots the whole command: staging, hooks, and the commit all happen there. It selects the previewed worktree the same way, so `--dry-run` describes the commit the same flags would make.
 
 ## Hooks
 
