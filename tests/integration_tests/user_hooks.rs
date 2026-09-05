@@ -843,6 +843,96 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
     );
 }
 
+/// A detached worktree is on no branch, so `post-remove` hooks see `branch`
+/// unset rather than the literal `HEAD` — the string git resolves as a ref,
+/// which made `git push origin --delete {{ branch }}` target the wrong thing
+/// (issue #4009). `post-remove` overrides `branch` through
+/// `PostRemoveContext::extra_vars`, which is applied after the base context, so
+/// it needs the same `None` the base context has.
+#[rstest]
+fn test_user_post_remove_branch_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.detach_head_in_worktree("feature");
+    let feature_wt_path = repo.worktree_path("feature");
+
+    // Guarded the way the hook docs prescribe for every optional variable.
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}]' > ../postremove_detached.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args([
+            "remove",
+            feature_wt_path.to_str().unwrap(),
+            "--force",
+            "--yes",
+        ])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_detached.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+    assert_eq!(
+        content.trim(),
+        "branch=[]",
+        "post-remove `branch` should be unset for a detached worktree, got: {content}"
+    );
+}
+
+/// `target` names the branch the user lands on after removal — the primary
+/// worktree's — so a detached primary leaves it unset for the same reason
+/// `branch` is unset above. Both halves of one removal have to agree: the
+/// `pre-remove` site builds its own extra vars, so it drifted to an empty
+/// string while `post-remove` omitted the key. `is defined` is what separates
+/// the two states — an empty string renders identically under
+/// `{% if target %}`, but it makes `wt -v` print `target = ` where the var was
+/// never supplied.
+#[rstest]
+fn test_user_remove_hooks_target_unset_with_detached_primary_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.detach_head();
+
+    repo.write_test_config(
+        r#"[pre-remove]
+capture = "echo 'target=[{% if target is defined %}defined:{{ target }}{% else %}unset{% endif %}]' > ../preremove_detached_target.txt"
+
+[post-remove]
+capture = "echo 'target=[{% if target is defined %}defined:{{ target }}{% else %}unset{% endif %}]' > ../postremove_detached_target.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["remove", "feature", "--force", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let parent = repo.root_path().parent().unwrap().to_path_buf();
+    for (hook, file) in [
+        ("pre-remove", "preremove_detached_target.txt"),
+        ("post-remove", "postremove_detached_target.txt"),
+    ] {
+        let vars_file = parent.join(file);
+        crate::common::wait_for_file_content(&vars_file);
+
+        let content = std::fs::read_to_string(&vars_file).unwrap();
+        assert_eq!(
+            content.trim(),
+            "target=[unset]",
+            "{hook} `target` should be unset when the primary worktree is detached, got: {content}"
+        );
+    }
+}
+
 #[rstest]
 fn test_user_post_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove
@@ -3071,6 +3161,45 @@ check = "echo 'USER_PRE_SWITCH_RAN' > pre_switch_marker.txt"
     );
 }
 
+/// Switching out of a detached worktree leaves `base` unset rather than empty:
+/// `base` is the source branch, and there isn't one. Only `is defined`
+/// separates that from the `unwrap_or_default()` this replaced — both render
+/// as nothing under `{% if base %}` — so this pins the distinction the
+/// `(unset)` label in `wt -v` depends on (issue #4009).
+#[rstest]
+fn test_user_pre_switch_base_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.add_worktree("detached-src");
+    repo.detach_head_in_worktree("detached-src");
+    let src_path = repo.worktree_path("detached-src");
+
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'base=[{% if base is defined %}defined:{{ base }}{% else %}unset{% endif %}]' > ../preswitch_detached.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["switch", "feature"])
+        .current_dir(src_path)
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("preswitch_detached.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = std::fs::read_to_string(&vars_file).unwrap();
+    assert_eq!(
+        content.trim(),
+        "base=[unset]",
+        "pre-switch `base` should be unset when switching out of a detached worktree, got: {content}"
+    );
+}
+
 /// Test that a failing pre-switch hook blocks the switch (including --create)
 #[rstest]
 fn test_user_pre_switch_failure_blocks_switch(repo: TestRepo) {
@@ -3135,6 +3264,49 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
     assert!(
         marker_file.exists(),
         "Manual pre-switch hook should have created marker"
+    );
+}
+
+/// A manual `wt hook <type>` in a detached worktree leaves `branch` unset, and
+/// the `base` / `target` names it derives from the current branch follow —
+/// rather than naming the literal `HEAD`, which git resolves as a ref (issue
+/// #4009). The directional *path* vars still apply: the worktree exists
+/// whether or not it is on a branch, so `{{ base_worktree_path }}` renders
+/// unguarded here.
+#[rstest]
+fn test_manual_hook_branch_vars_unset_in_detached_worktree(mut repo: TestRepo) {
+    repo.add_worktree("detached-test");
+    repo.detach_head_in_worktree("detached-test");
+    let detached = repo.worktree_path("detached-test").to_path_buf();
+
+    repo.write_test_config(
+        r#"[pre-switch]
+record = "echo 'branch=[{% if branch %}{{ branch }}{% endif %}] base=[{% if base %}{{ base }}{% endif %}] target=[{% if target %}{{ target }}{% endif %}] base_worktree_path=[{{ base_worktree_path }}]' > vars.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-switch"])
+        .current_dir(&detached)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "manual hook failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recorded = std::fs::read_to_string(detached.join("vars.txt"))
+        .expect("hook should have recorded its variables");
+    assert!(
+        recorded.starts_with("branch=[] base=[] target=[] base_worktree_path=["),
+        "branch, base and target must be unset in a detached worktree, got: {recorded}"
+    );
+    assert!(
+        !recorded.contains("base_worktree_path=[]"),
+        "base_worktree_path should still name the detached worktree, got: {recorded}"
     );
 }
 

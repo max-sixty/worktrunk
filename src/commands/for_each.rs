@@ -75,7 +75,8 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         );
 
         // Build full hook context for this worktree
-        // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
+        // Pass wt.branch directly (not the display string) so a detached
+        // worktree maps to None and leaves `{{ branch }}` unset
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
         let context_map = build_hook_context(&ctx, &[], VarScope::All)?;
 

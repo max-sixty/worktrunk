@@ -83,12 +83,17 @@ fn run_post_hook(
 /// provide reasonable defaults: the current branch as both base and target, and
 /// the current worktree path for directional path vars.
 ///
+/// The directional *path* vars apply either way, since the worktree exists
+/// whether or not it is on a branch. The directional *branch* vars follow
+/// `branch` itself: a detached worktree leaves them unset rather than naming
+/// the literal `HEAD` (issue #4009).
+///
 /// This is the single source of truth for manual hook context — both `run_hook`
 /// (execution + dry-run) and [`hook_command_rows`] (`hook show --expanded`) use
 /// this function. Returns a `TemplateVars` so callers can extend with
 /// additional bindings (e.g. CLI shorthand) before materializing.
 fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) -> TemplateVars {
-    let branch = ctx.branch_or_head();
+    let branch = ctx.branch;
     let worktree_path = ctx.worktree_path;
     match hook_type {
         // Merge/commit hooks: target = merge target (default branch for commit,
@@ -100,18 +105,18 @@ fn build_manual_hook_template_vars(ctx: &CommandContext, hook_type: HookType) ->
             .default_branch()
             .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(&t)),
         HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
-            .with_target(branch)
+            .with_target_opt(branch)
             .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
         HookType::PreSwitch | HookType::PreCreate | HookType::PostCreate | HookType::PostSwitch => {
             TemplateVars::new()
                 .with_base(branch, worktree_path)
-                .with_target(branch)
+                .with_target_opt(branch)
                 .with_target_worktree_path(worktree_path)
         }
         // Remove hooks: target = where user ends up (current worktree is the best guess)
         HookType::PreRemove | HookType::PostRemove => TemplateVars::new()
-            .with_target(branch)
+            .with_target_opt(branch)
             .with_target_worktree_path(worktree_path),
     }
 }
@@ -177,7 +182,8 @@ pub struct HookCliArgs<'a> {
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
 ///
-/// Works in detached HEAD state - `{{ branch }}` template variable will be "HEAD".
+/// Works in detached HEAD state - the `{{ branch }}` template variable (and the
+/// `{{ base }}` / `{{ target }}` names derived from it) is simply unset there.
 ///
 /// Template variables come from three sources in [`HookCliArgs`], routed per
 /// alias semantics:
@@ -368,7 +374,8 @@ pub fn handle_hook_show(
 
     // Build context for template expansion (only used if --expanded).
     // Need to keep CommandEnv alive for the lifetime of ctx. Detached HEAD is
-    // fine: `{{ branch }}` expands to "HEAD" there.
+    // fine: `{{ branch }}` is unset there, and `--expanded` renders the
+    // guarded form the way any other unset variable renders.
     let env = if expanded {
         Some(CommandEnv::for_action_loading_config()?)
     } else {

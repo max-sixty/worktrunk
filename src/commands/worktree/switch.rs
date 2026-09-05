@@ -1513,12 +1513,15 @@ fn run_pre_switch_hooks(
         // Active overrides come from the destination worktree if it exists —
         // for creates the planned path is computed later during plan_switch,
         // so worktree_path stays at its default (the source = cwd).
-        let base_branch = current_wt.branch().ok().flatten().unwrap_or_default();
+        // A detached source worktree leaves `base` unset rather than empty,
+        // matching `branch` and what `wt hook pre-switch` already renders
+        // there (issue #4009).
+        let base_branch = current_wt.branch().ok().flatten();
         let dest_path = repo.worktree_for_branch(&resolved_target).ok().flatten();
 
         let ref_identity = ref_target.and_then(|t| t.ref_identity.as_ref());
         let mut vars = TemplateVars::new()
-            .with_base(&base_branch, &current_path)
+            .with_base(base_branch.as_deref(), &current_path)
             .with_target(&resolved_target)
             .with_pr(
                 ref_identity.map(|id| id.number),
