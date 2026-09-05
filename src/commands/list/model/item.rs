@@ -22,17 +22,25 @@ use crate::commands::list::layout::{LinkStyle, format_url_cell};
 ///
 /// Used by `refresh_status_symbols` to resolve the worktree-state position
 /// (Gate 2) from metadata alone. The decision priority is:
-/// `prunable` > `locked` > `duplicate_branch` > `branch_worktree_mismatch` >
-/// `None` — the yellow actionable states outrank the informational (dim
-/// yellow) `⚑`. The last two both render `⚑`, so their order decides only
-/// which cause the JSON `worktree.state` names; a duplicate wins because a
-/// force-added worktree lands off-template as a side effect of being
-/// force-added, not as the fact worth reporting.
-fn metadata_worktree_state(data: &WorktreeData) -> WorktreeState {
+/// `prunable` > `locked` > detached > `duplicate_branch` >
+/// `branch_worktree_mismatch` > `None` — the yellow actionable states outrank
+/// the informational (dim yellow) `⊘` and `⚑`. The last two both render `⚑`,
+/// so their order decides only which cause the JSON `worktree.state` names; a
+/// duplicate wins because a force-added worktree lands off-template as a side
+/// effect of being force-added, not as the fact worth reporting.
+///
+/// `has_branch` is the row's own answer, not `data.detached`: git reports a
+/// worktree mid-rebase as detached while worktree parsing still recovers its
+/// branch name, and such a row is on a branch as far as every other cell is
+/// concerned. A row with no branch is exactly the one whose Branch cell shows
+/// a hash.
+fn metadata_worktree_state(data: &WorktreeData, has_branch: bool) -> WorktreeState {
     if data.is_prunable() {
         WorktreeState::Prunable
     } else if data.locked.is_some() {
         WorktreeState::Locked
+    } else if !has_branch {
+        WorktreeState::Detached
     } else if data.duplicate_branch {
         WorktreeState::DuplicateBranch
     } else if data.branch_worktree_mismatch {
@@ -486,6 +494,22 @@ impl ListItem {
         matches!(&self.kind, ItemKind::Worktree(data) if data.is_main)
     }
 
+    /// The glyph this row's unresolved cells render, given the render's
+    /// current one.
+    ///
+    /// A prunable worktree's directory is gone, so `work_items_for_worktree`
+    /// spawns nothing for it and no cell a task would fill will ever arrive.
+    /// The loading dot would promise data that isn't coming — for the life of
+    /// the row, not for a tick — so those cells stay blank and the `⊟` in
+    /// Status is the row's whole story.
+    pub(crate) fn placeholder<'a>(&self, rendering: &'a str) -> &'a str {
+        if self.worktree_data().is_some_and(|data| data.is_prunable()) {
+            crate::commands::list::render::PLACEHOLDER_BLANK
+        } else {
+            rendering
+        }
+    }
+
     pub fn head(&self) -> &str {
         &self.branch_ref.commit_sha
     }
@@ -683,8 +707,9 @@ impl ListItem {
         // line, `status_symbols.worktree_state` is always `Some`.
         // (Prunable worktrees are pre-seeded at spawn time and have
         // `worktree_state = Some(Prunable)` by the time this runs.)
+        let has_branch = self.branch().is_some();
         let metadata_state = match &self.kind {
-            ItemKind::Worktree(data) => metadata_worktree_state(data),
+            ItemKind::Worktree(data) => metadata_worktree_state(data, has_branch),
             ItemKind::Branch(_) => WorktreeState::Branch,
         };
         if self.status_symbols.worktree_state.is_none() {
@@ -935,17 +960,19 @@ mod tests {
     use super::*;
 
     /// The yellow actionable states outrank the informational (dim yellow)
-    /// `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
+    /// `⊘` and `⚑`, so a demoted flag can never mask `⊟` or `⊞`. A force-added
     /// duplicate lands off-template too, so the two `⚑` states routinely
     /// co-occur and their order picks the cause the JSON reports.
     #[test]
     fn test_metadata_worktree_state_priority() {
+        const ON_BRANCH: bool = true;
+
         let mismatched = WorktreeData {
             branch_worktree_mismatch: true,
             ..Default::default()
         };
         assert_eq!(
-            metadata_worktree_state(&mismatched),
+            metadata_worktree_state(&mismatched, ON_BRANCH),
             WorktreeState::BranchWorktreeMismatch
         );
 
@@ -954,7 +981,7 @@ mod tests {
             ..mismatched.clone()
         };
         assert_eq!(
-            metadata_worktree_state(&duplicate),
+            metadata_worktree_state(&duplicate, ON_BRANCH),
             WorktreeState::DuplicateBranch
         );
 
@@ -962,13 +989,30 @@ mod tests {
             prunable: Some("gone".to_string()),
             ..duplicate.clone()
         };
-        assert_eq!(metadata_worktree_state(&prunable), WorktreeState::Prunable);
+        assert_eq!(
+            metadata_worktree_state(&prunable, ON_BRANCH),
+            WorktreeState::Prunable
+        );
 
         let locked = WorktreeData {
             locked: Some("pinned".to_string()),
             ..duplicate.clone()
         };
-        assert_eq!(metadata_worktree_state(&locked), WorktreeState::Locked);
+        assert_eq!(
+            metadata_worktree_state(&locked, ON_BRANCH),
+            WorktreeState::Locked
+        );
+
+        // Off a branch, `⊘` outranks both `⚑` states — nothing else in the
+        // row says the Branch cell is a hash — but still yields to `⊟`/`⊞`.
+        assert_eq!(
+            metadata_worktree_state(&duplicate, false),
+            WorktreeState::Detached
+        );
+        assert_eq!(
+            metadata_worktree_state(&locked, false),
+            WorktreeState::Locked
+        );
     }
 
     #[test]

@@ -249,7 +249,8 @@ exit_code: 0
     "is_current": false,
     "is_previous": false,
     "statusline": "with-status  \u001b[2m_\u001b[22m🔧",
-    "symbols": "_🔧"
+    "symbols": "_🔧",
+    "marker": "🔧"
   },
   {
     "branch": "without-status",

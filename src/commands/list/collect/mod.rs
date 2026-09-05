@@ -1143,9 +1143,12 @@ pub fn collect(
             // is_previous set to false initially - computed after skeleton
             let is_previous = false;
 
-            // Check if worktree is at its expected path based on config template
+            // Check if worktree is at its expected path based on config
+            // template. A detached worktree has no branch to imply a path, so
+            // it isn't off-template — it has its own `⊘`, and flagging it here
+            // too would spend the `⚑` on a state the row already reports.
             let branch_worktree_mismatch =
-                !is_worktree_at_expected_path(wt, repo, repo.user_config());
+                wt.branch.is_some() && !is_worktree_at_expected_path(wt, repo, repo.user_config());
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
@@ -1376,11 +1379,18 @@ pub fn collect(
         &tasks,
         destination,
         &main_worktree_path,
-        url_template.as_deref(),
-        max_pr_number,
         super::layout::ColumnSelection {
             custom: &custom_columns,
             selected: (!selected_columns.is_empty()).then_some(selected_columns.as_slice()),
+        },
+        super::layout::RepoFacts {
+            // O(1) off the bulk config map, no fork. With no remote no branch
+            // can track one, so `Remote⇅` drops instead of holding a blank
+            // column open ahead of Path, Commit, Age and Message.
+            has_remote: repo.primary_remote().is_ok(),
+            url_template: url_template.as_deref(),
+            max_pr_number,
+            default_branch: default_branch.as_deref(),
         },
     );
 
@@ -2012,8 +2022,9 @@ pub fn collect(
         summary: super::format_summary_message(
             &all_items,
             show_branches || show_remotes,
-            layout.hidden_column_count,
+            &layout.hidden_columns,
             timed_out_count,
+            None,
         ),
     });
 
@@ -2611,11 +2622,15 @@ remove the file manually to continue.";
                 link_style: LinkStyle::Expanded,
             },
             Path::new("/tmp"),
-            None,
-            None,
             super::super::layout::ColumnSelection {
                 custom: &[],
                 selected: None,
+            },
+            super::super::layout::RepoFacts {
+                has_remote: true,
+                url_template: None,
+                max_pr_number: None,
+                default_branch: None,
             },
         );
         let placeholder = super::super::render::PLACEHOLDER;

@@ -79,11 +79,11 @@ The Claude Code, Codex, OpenCode, and Gemini plugins track agent sessions with s
 
 ```console
 $ wt list
-  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Path                 Commit   Age   Message
-@ main             ^⇡                                    ⇡1      .                    33323bc  1d    Initial commit
-+ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0  1d    Add REST API endpoints
-+ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e  1d    Add dashboard component
-+ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc  1d    Initial commit
+  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Path                 Commit    Age  Message
+@ main             ^⇡                                    ⇡1      .                    33323bc    1d  Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0    1d  Add REST API endpoints
++ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e    1d  Add dashboard component
++ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc    1d  Initial commit
 
 ○ Showing 4 worktrees, 2 with changes, 2 ahead
 ```
