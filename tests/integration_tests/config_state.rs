@@ -1094,6 +1094,78 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No markers to clear");
 }
 
+/// `marker set`/`marker clear` run unconditionally from the Claude Code,
+/// Codex, and Gemini plugin hooks (`UserPromptSubmit`, `Stop`, `SessionEnd`,
+/// …), whether or not the session's directory is inside a git repository.
+/// Outside a repository, both must no-op silently — exit 0, nothing on
+/// stdout or stderr — rather than the pre-fix behavior of printing
+/// `git rev-parse --git-common-dir failed (exit 128)` and exiting 1, a
+/// failure the hooks' own `|| true` already discarded (#3921).
+#[rstest]
+fn test_state_set_marker_outside_repo_is_noop() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "marker", "set", "🤖"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}
+
+#[rstest]
+fn test_state_clear_marker_outside_repo_is_noop() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "marker", "clear"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+}
+
+/// The no-op fallback is scoped to `marker` — a state key without a git
+/// hook depending on it, run outside a repository, must keep failing the
+/// way every `wt` command does. Guards against widening the `#3921` fix
+/// beyond the one command the hooks actually call unconditionally.
+#[rstest]
+fn test_state_set_default_branch_outside_repo_still_fails() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "default-branch", "set", "main"]);
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Same guard as `test_state_set_default_branch_outside_repo_still_fails`,
+/// for the `clear` side — `handle_state_clear` has its own `Repository::current()`
+/// match with its own fallback arm.
+#[rstest]
+fn test_state_clear_default_branch_outside_repo_still_fails() {
+    let mut cmd = wt_command();
+    cmd.args(["config", "state", "default-branch", "clear"]);
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed"),
+        "stderr: {stderr}"
+    );
+}
+
 // ============================================================================
 // logs
 // ============================================================================
