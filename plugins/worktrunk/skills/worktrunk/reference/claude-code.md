@@ -2,14 +2,14 @@
 
 Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-| Capability | Claude Code | Codex | OpenCode | Gemini CLI |
-|---|:-:|:-:|:-:|:-:|
-| Configuration skill | ✓ | ✓ |  | ✓ |
-| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ |
-| Worktree isolation | ✓ |  |  |  |
-| `/wt-switch-create` command | ✓ |  |  |  |
+| Capability | Claude Code | Codex | OpenCode | Pi | Gemini CLI |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Configuration skill | ✓ | ✓ |  |  | ✓ |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Worktree isolation | ✓ |  |  |  |  |
+| `/wt-switch-create` command | ✓ |  |  |  |  |
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, Pi, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
 
 ## Installation
 
@@ -48,6 +48,14 @@ wt config plugins opencode install
 
 This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
 
+### Pi
+
+```bash
+wt config plugins pi install
+```
+
+This writes the activity hook to `~/.omp/agent/hooks/pre/worktrunk.ts`. Named `$OMP_PROFILE` or `$PI_PROFILE` profiles use `~/.omp/profiles/<profile>/agent`, `$PI_CONFIG_DIR` changes the `.omp` config root, and `$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile. `wt config plugins pi uninstall` removes the hook.
+
 ### Gemini CLI
 
 ```bash
@@ -69,7 +77,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The Claude Code, Codex, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
+The Claude Code, Codex, OpenCode, Pi, and Gemini plugins track agent sessions with status markers in `wt list`:
 
 ```console
 $ wt list

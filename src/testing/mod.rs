@@ -1187,6 +1187,14 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // matches the setup helpers and stays hermetic against an ambient
     // CLAUDE_CONFIG_DIR inherited from the test runner's environment.
     cmd.env("CLAUDE_CONFIG_DIR", home.join(".claude"));
+    for var in [
+        "OMP_PROFILE",
+        "PI_PROFILE",
+        "PI_CONFIG_DIR",
+        "PI_CODING_AGENT_DIR",
+    ] {
+        cmd.env_remove(var);
+    }
 }
 
 /// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
@@ -2272,14 +2280,14 @@ impl TestRepo {
         self.gemini_installed = true;
     }
 
-    /// Make `claude`, `codex`, `opencode`, and `gemini` resolvable on `PATH`.
+    /// Make `claude`, `codex`, `opencode`, `omp`, and `gemini` resolvable on `PATH`.
     ///
     /// The `setup_mock_*_installed` helpers force detection through the
     /// `WORKTRUNK_TEST_*_INSTALLED` env overrides, so the `which::which`
     /// lookup inside each `is_*_available()` never runs under test. This
     /// helper instead drops those overrides and prepends real mock
     /// executables, exercising the production PATH-detection path for all
-    /// four AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
+    /// five AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
     /// first to create the mock bin directory.
     pub fn setup_mock_clis_on_path(&mut self) {
         let mock_bin = self
@@ -2288,7 +2296,7 @@ impl TestRepo {
             .expect("call setup_mock_ci_tools_unauthenticated() first");
         // `wt config show` only `which`-detects these CLIs (never runs
         // them), so the mocks need no command behavior.
-        for cli in ["claude", "codex", "opencode", "gemini"] {
+        for cli in ["claude", "codex", "opencode", "omp", "gemini"] {
             MockConfig::new(cli).write(mock_bin);
         }
         self.detect_clis_via_path = true;
@@ -2866,6 +2874,7 @@ impl TestRepo {
                 "WORKTRUNK_TEST_CLAUDE_INSTALLED",
                 "WORKTRUNK_TEST_CODEX_INSTALLED",
                 "WORKTRUNK_TEST_OPENCODE_INSTALLED",
+                "WORKTRUNK_TEST_PI_INSTALLED",
                 "WORKTRUNK_TEST_GEMINI_INSTALLED",
             ] {
                 cmd.env_remove(var);

@@ -51,6 +51,7 @@ Usage: [1m[36mwt config plugins[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mclaude[0m    Claude Code plugin
   [1m[36mcodex[0m     Codex plugin
   [1m[36mopencode[0m  OpenCode plugin
+  [1m[36mpi[0m        Pi / oh-my-pi activity hook
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -79,11 +80,13 @@ Install and manage Worktrunk plugins for AI coding tools.
 - [1mclaude[0m — Claude Code plugin (activity tracking + statusline)
 - [1mcodex[0m — Codex plugin (Worktrunk configuration skill)
 - [1mopencode[0m — OpenCode plugin (activity tracking)
+- [1mpi[0m — Pi / oh-my-pi plugin (activity tracking)
 
 [1m[32mExamples[0m
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m config plugins claude install[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m config plugins codex install[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m config plugins opencode install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins pi install[0m
 
 ----- stderr -----

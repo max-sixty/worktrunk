@@ -204,6 +204,42 @@ $ wt config plugins opencode uninstall
 
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
+pub enum ConfigPluginsPiCommand {
+    /// Install the activity tracking hook
+    #[command(
+        after_long_help = r#"Writes the Worktrunk hook to Pi's profile-aware user hook directory.
+
+## Examples
+
+```console
+$ wt config plugins pi install
+$ wt config plugins pi install --yes
+```
+
+## Plugin location
+
+The default location is `~/.omp/agent/hooks/pre/worktrunk.ts`. The installer
+honors `$PI_CONFIG_DIR` and active `$OMP_PROFILE` / `$PI_PROFILE` profiles.
+`$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile
+only — named profiles ignore it, matching Pi's own resolution."#
+    )]
+    Install,
+
+    /// Remove the activity tracking hook
+    #[command(
+        after_long_help = r#"Removes the Worktrunk hook from Pi's active user hook directory.
+
+## Examples
+
+```console
+$ wt config plugins pi uninstall
+```"#
+    )]
+    Uninstall,
+}
+
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
 pub enum ConfigPluginsCodexCommand {
     /// Configure the Worktrunk marketplace in Codex
     #[command(
@@ -360,6 +396,26 @@ config precedence: `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
     Opencode {
         #[command(subcommand)]
         action: ConfigPluginsOpencodeCommand,
+    },
+
+    /// Pi / oh-my-pi activity hook
+    #[command(
+        after_long_help = r#"Activity tracking hook — shows status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+Pi's `session_shutdown` event clears the marker when the session exits.
+
+## Examples
+
+```console
+$ wt config plugins pi install
+$ wt config plugins pi uninstall
+```"#
+    )]
+    Pi {
+        #[command(subcommand)]
+        action: ConfigPluginsPiCommand,
     },
 }
 
@@ -670,6 +726,7 @@ $ wt config alias dry-run deploy -- --env=staging
 - **claude** — Claude Code plugin (activity tracking + statusline)
 - **codex** — Codex plugin (Worktrunk configuration skill)
 - **opencode** — OpenCode plugin (activity tracking)
+- **pi** — Pi / oh-my-pi plugin (activity tracking)
 
 ## Examples
 
@@ -677,6 +734,7 @@ $ wt config alias dry-run deploy -- --env=staging
 $ wt config plugins claude install
 $ wt config plugins codex install
 $ wt config plugins opencode install
+$ wt config plugins pi install
 ```"#
     )]
     Plugins {

@@ -8,11 +8,6 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use color_print::cformat;
-use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
-
-use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 /// The plugin source, embedded at compile time.
 const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
@@ -59,97 +54,14 @@ pub fn plugin_file_exists() -> bool {
     plugin_path().map(|p| p.exists()).unwrap_or(false)
 }
 
-/// Confirm an action via prompt, or accept automatically with `--yes`.
-fn confirm_or_yes(yes: bool, prompt: &str, preview: impl Fn()) -> Result<bool> {
-    Ok(yes || prompt_yes_no_preview(prompt, preview)? == PromptResponse::Accepted)
-}
-
 /// Handle `wt config plugins opencode install`.
 pub fn handle_opencode_install(yes: bool) -> Result<()> {
     let target = plugin_path()?;
-    let target_display = format_path_for_display(&target);
-
-    // Check if already installed with current content
-    if target.exists()
-        && let Ok(existing) = std::fs::read_to_string(&target)
-        && existing == PLUGIN_SOURCE
-    {
-        eprintln!(
-            "{}",
-            info_message(cformat!(
-                "Plugin already installed @ <bold>{target_display}</>"
-            ))
-        );
-        return Ok(());
-    }
-
-    let action = if target.exists() { "Update" } else { "Install" };
-    let preview_msg = info_message(cformat!("Would write to <bold>{target_display}</>"));
-    let preview = || eprintln!("{}", preview_msg);
-
-    let confirmed = confirm_or_yes(
-        yes,
-        &cformat!("{action} OpenCode plugin @ <bold>{target_display}</>?"),
-        preview,
-    );
-    if !confirmed? {
-        return Ok(());
-    }
-
-    // Create parent directories if needed
-    let parent = target
-        .parent()
-        .context("Plugin path has no parent directory")?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-
-    // Write the plugin file
-    worktrunk::utils::write_atomically(&target, PLUGIN_SOURCE)
-        .with_context(|| format!("Failed to write plugin to {target_display}"))?;
-
-    eprintln!(
-        "{}",
-        success_message(cformat!("Plugin installed @ <bold>{target_display}</>"))
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "Activity markers (🤖/💬) will appear in <underline>wt list</>"
-        ))
-    );
-
-    Ok(())
+    super::install_file_plugin("OpenCode", &target, PLUGIN_SOURCE, yes)
 }
 
 /// Handle `wt config plugins opencode uninstall`.
 pub fn handle_opencode_uninstall(yes: bool) -> Result<()> {
     let target = plugin_path()?;
-    let target_display = format_path_for_display(&target);
-
-    if !target.exists() {
-        eprintln!("{}", info_message("Plugin not installed"));
-        return Ok(());
-    }
-
-    let preview_msg = info_message(cformat!("Would remove <bold>{target_display}</>"));
-    let preview = || eprintln!("{}", preview_msg);
-
-    let confirmed = confirm_or_yes(
-        yes,
-        &cformat!("Remove OpenCode plugin @ <bold>{target_display}</>?"),
-        preview,
-    );
-    if !confirmed? {
-        return Ok(());
-    }
-
-    std::fs::remove_file(&target)
-        .with_context(|| format!("Failed to remove plugin at {target_display}"))?;
-
-    eprintln!(
-        "{}",
-        success_message(cformat!("Plugin removed from <bold>{target_display}</>"))
-    );
-
-    Ok(())
+    super::uninstall_file_plugin("OpenCode", &target, yes)
 }

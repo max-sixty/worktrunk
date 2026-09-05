@@ -23,7 +23,7 @@ with many parallel changes, including hooks to automate local workflows.
 
 - [Extending Worktrunk](https://worktrunk.dev/extending.md): Three ways to add custom behavior: hooks for lifecycle automation, aliases for reusable commands, and custom subcommands for standalone tools.
 - [LLM Commit Messages](https://worktrunk.dev/llm-commits.md): Generate commit messages from diffs using any LLM. Integrates with wt merge, wt step commit, and wt step squash.
-- [Agent Integration](https://worktrunk.dev/claude-code.md): Worktrunk plugins for Claude Code, Codex, OpenCode, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation.
+- [Agent Integration](https://worktrunk.dev/claude-code.md): Worktrunk plugins for Claude Code, Codex, OpenCode, Pi, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation.
 - [Tips & Patterns](https://worktrunk.dev/tips-patterns.md): Practical recipes for Worktrunk workflows: aliases, shell integration, Zellij layouts, and parallel agent patterns.
 - [FAQ](https://worktrunk.dev/faq.md): Common questions about Worktrunk: comparison to git worktree and branch switching, bare repos, TUI support, and more.
 - [Code Signing Policy](https://worktrunk.dev/code-signing.md): How Worktrunk's Windows release binaries are code-signed: certificate provenance, the build and signing pipeline, project roles, and per-release approval.

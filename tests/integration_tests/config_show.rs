@@ -2329,6 +2329,43 @@ fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: Temp
 }
 
 #[rstest]
+#[case(None, "Plugin not installed")]
+#[case(Some("// outdated plugin content\n"), "Plugin outdated")]
+#[case(Some(include_str!("../../dev/pi-plugin.ts")), "Plugin installed")]
+fn test_config_show_pi_plugin_status(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] plugin_content: Option<&str>,
+    #[case] expected_status: &str,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    if let Some(content) = plugin_content {
+        fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+        fs::write(&plugin_path, content).unwrap();
+    }
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "show"]).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+
+    let output = cmd.output().expect("config show should run");
+    assert!(output.status.success(), "config show failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PI"), "missing Pi section: {stdout}");
+    assert!(
+        stdout.contains(expected_status),
+        "missing Pi status: {stdout}"
+    );
+}
+
+#[rstest]
 fn test_config_show_gemini_available_extension_not_installed(
     mut repo: TestRepo,
     temp_home: TempDir,
@@ -2423,7 +2460,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 /// override the harness sets, so the production `which::which` PATH lookup is
 /// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
 /// and prepends real mock executables, so this single run covers the
-/// PATH-detection path for all four AI CLIs at once.
+/// PATH-detection path for all five AI CLIs at once.
 #[rstest]
 fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -2675,6 +2712,165 @@ fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
         plugin_path.exists(),
         "Plugin should still exist when uninstall prompt is declined"
     );
+}
+
+// =============================================================================
+// Pi plugin install/uninstall
+// =============================================================================
+
+#[rstest]
+fn test_pi_install_creates_profile_aware_hook(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("OMP_PROFILE", "research");
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join(".omp/profiles/research/agent/hooks/pre/worktrunk.ts");
+    let content = fs::read_to_string(&plugin_path).expect("Pi hook should be installed");
+    assert!(content.contains("agent_start"));
+    assert!(content.contains("agent_end"));
+    assert!(content.contains("session_shutdown"));
+}
+
+#[rstest]
+fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-pi-agent");
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(agent_dir.join("hooks/pre/worktrunk.ts").exists());
+}
+
+#[rstest]
+fn test_pi_named_profile_ignores_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-pi-agent");
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("OMP_PROFILE", "research");
+    cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(!agent_dir.join("hooks/pre/worktrunk.ts").exists());
+    assert!(
+        temp_home
+            .path()
+            .join(".omp/profiles/research/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_pi_install_honors_pi_profile_and_config_dir(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env_remove("OMP_PROFILE");
+    cmd.env("PI_PROFILE", "research");
+    cmd.env("PI_CONFIG_DIR", ".pi-config");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        temp_home
+            .path()
+            .join(".pi-config/profiles/research/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_pi_install_is_idempotent(temp_home: TempDir) {
+    for _ in 0..2 {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+        let output = cmd.output().expect("install command should run");
+        assert!(output.status.success(), "install failed: {output:?}");
+    }
+
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    assert_eq!(
+        fs::read_to_string(plugin_path).unwrap(),
+        include_str!("../../dev/pi-plugin.ts")
+    );
+}
+
+#[rstest]
+fn test_pi_install_prompt_declined(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "pi", "install"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        !temp_home
+            .path()
+            .join(".omp/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_pi_uninstall_removes_hook(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join(".omp/agent");
+    let plugin_path = agent_dir.join("hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(!plugin_path.exists());
+}
+
+#[rstest]
+fn test_pi_uninstall_missing_is_a_no_op(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+    let output = cmd.output().expect("uninstall command should run");
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+}
+
+#[rstest]
+fn test_pi_uninstall_prompt_declined(temp_home: TempDir) {
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "pi", "uninstall"]);
+
+    let output = cmd.output().expect("uninstall command should run");
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+    assert!(plugin_path.exists());
 }
 
 /// When $SHELL is not set but PSModulePath is, config show should display
