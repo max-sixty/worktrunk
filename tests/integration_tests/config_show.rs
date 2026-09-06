@@ -95,6 +95,7 @@ fn test_config_show_without_project_identifier_uses_global_worktree_path() {
         "worktree-path = \"../global/{{ branch }}\"\n\n[list]\njson-schema = 2\n",
     )
     .unwrap();
+    repo.write_project_config("pre-start = \"npm install\"\n");
     let mut path_bytes = repo.root_path().as_os_str().as_bytes().to_vec();
     path_bytes.extend_from_slice(b"-\xff");
     let non_utf8_path = std::ffi::OsString::from_vec(path_bytes);
@@ -3618,6 +3619,29 @@ approved-commands = ["cargo test"]
     assert!(
         !stdout.contains("approved-commands"),
         "the printed config drops them, got: {stdout}"
+    );
+
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+json-schema = 1
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm test"]
+"#,
+    )
+    .unwrap();
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains("from 1 [projects] entry"),
+        "singular warning should say entry, got: {stderr}"
     );
 }
 
