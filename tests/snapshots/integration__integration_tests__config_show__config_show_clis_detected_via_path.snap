@@ -90,6 +90,9 @@ exit_code: 0
 [36mOPENCODE[39m
 [2m↳[22m [2mPlugin not installed. To install, run [4mwt config plugins opencode install[24m[22m
 
+[36mPI[39m
+[2m↳[22m [2mPlugin not installed. To install, run [4mwt config plugins pi install[24m[22m
+
 [36mGEMINI CLI[39m
 [2m↳[22m [2mExtension not installed. To install, run [4mgemini extensions install https://github.com/max-sixty/worktrunk[24m[22m
 
