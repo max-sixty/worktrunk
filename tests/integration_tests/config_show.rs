@@ -3967,12 +3967,17 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
         let stderr = String::from_utf8_lossy(&output.stderr)
             .ansi_strip()
             .to_string();
-        for command in expected {
-            assert!(
-                stderr.contains(command),
-                "{action} preview is missing {command:?}: {stderr}"
-            );
-        }
+        // Compare the whole set of previewed commands, not each one in
+        // isolation: a command the preview lists but never runs is exactly
+        // what a per-command `contains` would let through.
+        // The first gutter line shares a line with the prompt, which `eprint!`
+        // leaves unterminated, so slice from each `codex ` rather than
+        // matching the line start.
+        let previewed: Vec<&str> = stderr
+            .lines()
+            .filter_map(|line| line.find("codex ").map(|i| line[i..].trim_end()))
+            .collect();
+        assert_eq!(previewed, expected, "{action} preview: {stderr}");
     }
 }
 
