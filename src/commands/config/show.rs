@@ -141,6 +141,8 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 }
 
 /// JSON output for config show: paths, existence, and parsed config contents.
+/// Invalid sources retain their path and existence but use a null config, so
+/// callers can always parse the report before branching on its exit code.
 fn handle_config_show_json() -> anyhow::Result<()> {
     let repo = Repository::current().ok();
     let mut invalid = false;
@@ -168,20 +170,22 @@ fn handle_config_show_json() -> anyhow::Result<()> {
                 }
             };
             let on_disk = repo.project_config_path()?;
-            // When config resolved but not from an existing on-disk file, it came
-            // from the object-store fallback (bare repo, default branch checked out
-            // in no worktree — #3461). Surface that revision spec as the source so
-            // `path`/`exists`/`config` agree, instead of pointing `path` at a
-            // missing file while `config` is populated.
+            let object_store = match &on_disk {
+                Some(path) if path.exists() => None,
+                _ => repo.default_branch_project_config_content(),
+            };
+            let object_store_exists = object_store.is_some();
+            // When the source is not an existing on-disk file, it may come from
+            // the object-store fallback (bare repo, default branch checked out in
+            // no worktree — #3461). Surface that revision spec even when its
+            // contents are invalid, instead of pointing at a missing file.
             let path = match &on_disk {
                 Some(p) if p.exists() => on_disk.clone(),
-                _ if config.is_some() => repo
-                    .default_branch_project_config_content()
-                    .map(|(_, spec)| spec),
+                _ if object_store_exists => object_store.map(|(_, spec)| spec),
                 _ => on_disk.clone(),
             };
             let identifier = repo.project_identifier().ok();
-            let exists = config.is_some() || on_disk.as_ref().is_some_and(|path| path.exists());
+            let exists = on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
             (
                 path,
                 exists,
@@ -216,8 +220,8 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         "project": {
             "path": project_path,
             // An invalid on-disk source still exists even though `config` is
-            // null. The object-store fallback counts as existing when it
-            // deserializes, though its revision spec is not a filesystem path.
+            // null. The object-store fallback counts as existing too, though
+            // its revision spec is not a filesystem path.
             "exists": project_exists,
             "identifier": project_identifier,
             "config": project_config,
