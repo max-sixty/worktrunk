@@ -3,6 +3,7 @@
 //! Evaluates a template expression in the current worktree context and prints
 //! the result to stdout.
 
+use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{UserConfig, VarScope, format_base_variables};
 use worktrunk::git::Repository;
@@ -29,7 +30,7 @@ const EVAL_NAME: &str = "eval";
 /// composes with either output format.
 pub fn step_eval(template: &str, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let config = UserConfig::load()?;
+    let config = UserConfig::load().context("Failed to load config")?;
 
     let wt = repo.current_worktree();
     let branch = wt.branch()?;

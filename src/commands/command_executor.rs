@@ -200,11 +200,6 @@ impl<'a> CommandContext<'a> {
         }
     }
 
-    /// Get branch name, using "HEAD" as fallback for detached HEAD state.
-    pub fn branch_or_head(&self) -> &str {
-        self.branch.unwrap_or("HEAD")
-    }
-
     /// Get the project identifier for per-project config lookup.
     ///
     /// Uses the remote URL if available, otherwise the canonical repository path.
@@ -273,7 +268,15 @@ pub fn build_hook_context(
     // (subprocesses, git config / remote lookups) consult `scope`.
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
-    map.insert("branch".into(), ctx.branch_or_head().into());
+    // A detached worktree has no branch, so `branch` stays unset and
+    // `{% if branch %}` guards it the way every other optional variable is
+    // guarded. The old `HEAD` fallback was worse than useless: it is a string
+    // git resolves as a ref, so a guard passed and the command ran against the
+    // wrong thing (issue #4009). Unset also agrees with `wt list --json`,
+    // which reports `branch: null` for the same worktree.
+    if let Some(branch) = ctx.branch {
+        map.insert("branch".into(), branch.into());
+    }
     map.insert("worktree_name".into(), worktree_name.into());
     map.insert("repo_path".into(), repo_path.clone());
     map.insert("worktree_path".into(), worktree.clone());

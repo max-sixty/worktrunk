@@ -137,7 +137,7 @@ The resolution is for the user to make the trust decision themselves:
 
 ## Advanced: agent handoffs
 
-When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the tmux or Zellij command from [Agent handoffs](https://worktrunk.dev/tips-patterns/#agent-handoffs), substituting the CLI you are running as for `claude`.
+When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the tmux or Zellij command from `reference/tips-patterns.md#agent-handoffs`, substituting the CLI you are running as for `claude`.
 
 **Requirements** (all must be true):
 - User explicitly requests spawning/handoff
