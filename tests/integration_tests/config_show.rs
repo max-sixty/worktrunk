@@ -4293,8 +4293,9 @@ fn git_dir_on_path() -> std::path::PathBuf {
         .expect("a Windows test runner must have git.exe on PATH")
 }
 
-/// `extra` first, then Git and System32 — the latter because the shim runs
-/// `where` from there.
+/// `extra` first, then Git and System32 — the latter so that a bare command
+/// name a test spells itself still resolves. The shim's own `where` is spelled
+/// absolutely, so it no longer depends on this.
 #[cfg(windows)]
 fn pinned_windows_path(extra: &[std::path::PathBuf]) -> std::ffi::OsString {
     let system32 = std::path::PathBuf::from(
@@ -4553,6 +4554,95 @@ fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
         output.status.success() && stdout.trim_start().starts_with("wt "),
         "the shim must find git through PATH, not through the current directory; \
          got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The scoping above is only as good as the command doing it. `where` is not a
+/// cmd built-in — it is `System32\where.exe` — so cmd resolves that name the
+/// way it resolves any other: current directory first, then PATH. A `where`
+/// committed to a repo therefore picks the `git.exe` that picks the `bash.exe`
+/// every prompt, permission request, stop, and session end runs, which is the
+/// surface `$PATH:` closes one level down.
+///
+/// The decoy is a `.bat` rather than an inert `where.exe`, and it names a Git
+/// install whose `bin\bash.exe` exists, because both are what make the wrong
+/// answer *observable*: a decoy that cannot run leaves the lookup empty, and a
+/// decoy install without a `bash.exe` falls through — either way the shim
+/// reaches `%ProgramFiles%\Git\bin\bash.exe`, which resolves on any Windows
+/// box, and the test would pass on the unscoped shim for the wrong reason.
+/// Reaching `:derive` with a decoy instead leaves `BASH` set and unrunnable.
+///
+/// The probe below pins the premise separately, so this cannot go green
+/// because the planted `where` was never the one cmd would have chosen.
+#[cfg(windows)]
+#[rstest]
+fn test_shim_ignores_a_where_in_the_current_directory(repo: TestRepo) {
+    use std::os::windows::process::CommandExt;
+
+    let shim =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
+
+    // The only worktrunk the shim is allowed to find: a real one, in a
+    // directory on the PATH this test pins.
+    let path_dir = repo.root_path().join("path-dir");
+    fs::create_dir_all(&path_dir).unwrap();
+    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
+
+    // The decoy Git install the planted `where` names. `:derive` takes
+    // `<install>\cmd\` and accepts `<install>\bin\bash.exe`, so that file has
+    // to exist for the wrong branch to win rather than fall through.
+    let decoy = repo.root_path().join("decoy-git");
+    fs::create_dir_all(decoy.join("bin")).unwrap();
+    fs::write(decoy.join("bin").join("bash.exe"), b"not an executable").unwrap();
+
+    // ...and the lookup that names it, in the directory the hook runs from.
+    // `.bat` is enough to shadow `System32\where.exe`: cmd tries every PATHEXT
+    // extension in one directory before it moves to the next.
+    let project = repo.root_path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let decoy_git = decoy.join("cmd").join("git.exe");
+    fs::write(
+        project.join("where.bat"),
+        format!("@echo {}\r\n", decoy_git.display()),
+    )
+    .unwrap();
+
+    // The premise, checked directly: without it the decoy is never consulted
+    // and every assertion below would hold on the unscoped shim too.
+    let mut probe = std::process::Command::new("cmd.exe");
+    repo.configure_wt_cmd(&mut probe);
+    let probe_output = probe
+        .arg("/C")
+        .raw_arg("\"where $PATH:git.exe\"")
+        .env("PATH", pinned_windows_path(&[]))
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    let probed = String::from_utf8_lossy(&probe_output.stdout);
+    assert!(
+        probed.contains("decoy-git"),
+        "a `where.bat` in the current directory must shadow System32's `where.exe`, \
+         or this test pins nothing; got {probed:?}"
+    );
+
+    let mut cmd = std::process::Command::new("cmd.exe");
+    repo.configure_wt_cmd(&mut cmd);
+    let output = cmd
+        .arg("/C")
+        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
+        .env("PATH", pinned_windows_path(&[path_dir]))
+        .env_remove("WORKTRUNK_BIN")
+        .current_dir(&project)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.trim_start().starts_with("wt "),
+        "the shim must run System32's `where.exe`, not one from the current \
+         directory; got {}\nstdout:\n{stdout}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );

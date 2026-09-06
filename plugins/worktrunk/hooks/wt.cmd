@@ -26,8 +26,9 @@ rem prefix, which searches the directories named in that variable and nowhere
 rem else: a bare `where git.exe` searches the current directory first, as cmd's
 rem own bare-name lookup does, and a hook's current directory is the user's
 rem project -- so a `git.exe` committed to a repo would otherwise choose the
-rem bash every event runs.
-for /f "delims=" %%I in ('where "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~dpI"
+rem bash every event runs. `where` itself is spelled absolutely for the same
+rem reason: cmd resolves that name from the current directory too.
+for /f "delims=" %%I in ('"%SystemRoot%\System32\where.exe" "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~dpI"
 
 rem A git.exe PATH doesn't name, or names through a shim outside its install:
 rem the system-wide default, then the per-user one an install without admin
