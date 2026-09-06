@@ -1,11 +1,12 @@
 //! Config update command.
 //!
-//! Updates deprecated settings in user and project config files by
-//! re-migrating in memory and overwriting the file. The previous `.new` file
-//! flow was removed — nothing writes to disk outside this command.
+//! Computes user- and project-config migrations in memory. The default mode
+//! previews and applies them atomically; output mode writes one migration
+//! artifact to the named destination instead. The previous `.new` file flow
+//! was removed — nothing writes to disk outside this command.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -13,10 +14,11 @@ use worktrunk::config::{
     ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
     copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
 };
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, resolve_input_path};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, println,
-    success_message, suggest_command_in_dir,
+    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
+    suggest_command_in_dir,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -34,43 +36,24 @@ struct UpdateCandidate {
 }
 
 /// Handle the `wt config update` command.
-pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
+pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Result<()> {
     let mut candidates = Vec::new();
+    let read_only = output.is_some();
 
     if let Some(candidate) = check_user_config()? {
         candidates.push(candidate);
     }
-    if let Some(candidate) = check_project_config()? {
+    if let Some(candidate) = check_project_config(read_only)? {
         candidates.push(candidate);
     }
 
-    if candidates.is_empty() {
-        if print {
-            // --print on a clean config is a no-op; stay quiet on stdout.
-            return Ok(());
-        }
-        eprintln!("{}", info_message("No deprecated settings found"));
+    if let Some(output) = output {
+        write_migrated_output(&output, &candidates)?;
         return Ok(());
     }
 
-    if print {
-        // Emit migrated content to stdout. Multiple configs → separate with a
-        // labeled header so the output is still parseable. `--print` is for
-        // piping, so stderr stays empty.
-        let multi = candidates.len() > 1;
-        for (idx, candidate) in candidates.iter().enumerate() {
-            if multi {
-                if idx > 0 {
-                    println!();
-                }
-                println!(
-                    "# {} ({})",
-                    candidate.info.label(),
-                    candidate.config_path.display()
-                );
-            }
-            print!("{}", candidate.migrated);
-        }
+    if candidates.is_empty() {
+        eprintln!("{}", info_message("No deprecated settings found"));
         return Ok(());
     }
 
@@ -120,6 +103,49 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Write the migration artifact to a path, or to stdout when the path is `-`.
+fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
+    let artifact = format_migrated_output(candidates);
+
+    if output == Path::new("-") {
+        // A clean config produces no output, so stdout composes in a pipe.
+        print!("{artifact}");
+        return Ok(());
+    }
+
+    let output = resolve_input_path(output);
+    worktrunk::utils::write_atomically(&output, &artifact).with_context(|| {
+        format!(
+            "Failed to write output @ {}",
+            format_path_for_display(&output)
+        )
+    })?;
+    Ok(())
+}
+
+/// Format the migration artifact shared by file and stdout destinations.
+fn format_migrated_output(candidates: &[UpdateCandidate]) -> String {
+    let mut artifact = String::new();
+    let multi = candidates.len() > 1;
+
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if multi {
+            if idx > 0 {
+                artifact.push('\n');
+            }
+            let _ = writeln!(
+                artifact,
+                "# {} ({})",
+                candidate.info.label(),
+                candidate.config_path.display()
+            );
+        }
+        artifact.push_str(&candidate.migrated);
+    }
+
+    artifact
 }
 
 /// Format update preview for display.
@@ -177,7 +203,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
     }))
 }
 
-fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
+fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidate>> {
     let repo = match Repository::current() {
         Ok(repo) => repo,
         Err(_) => return Ok(None),
@@ -192,6 +218,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
     }
 
     let is_linked = repo.current_worktree().is_linked().unwrap_or(true);
+    let actionable = read_only || !is_linked;
 
     let original =
         std::fs::read_to_string(&config_path).context("Failed to read project config")?;
@@ -199,7 +226,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
     let result = worktrunk::config::check_and_migrate(
         &config_path,
         &original,
-        !is_linked, // only actionable from main worktree
+        actionable,
         ConfigFileKind::Project,
         Some(&repo),
         false,
@@ -209,7 +236,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    if is_linked {
+    if !actionable {
         let cmd = suggest_command_in_dir(repo.repo_path()?, "config", &["update"], &[]);
         eprintln!("{}", hint_message("To update project config:"));
         eprintln!("{}", format_bash_with_gutter(&cmd));

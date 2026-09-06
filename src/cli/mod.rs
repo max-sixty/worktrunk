@@ -2597,6 +2597,7 @@ $ wt --config-set 'projects."github.com/owner/repo".worktree-path = "/tmp/scratc
 
 Hooks, aliases and `step.copy-ignored.exclude` accumulate rather than replace, so an env-set hook and a project's hook both run.
 <!-- subdoc: show -->
+<!-- subdoc: update -->
 <!-- subdoc: approvals -->
 <!-- subdoc: alias -->
 <!-- subdoc: state -->"#)]
