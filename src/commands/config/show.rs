@@ -650,14 +650,9 @@ fn render_system_config(out: &mut String, project: Option<&str>) -> anyhow::Resu
         let source = default_path
             .as_ref()
             .map(|p| format!("@ {}", format_path_for_display(p)));
-        writeln!(
-            out,
-            "{}",
-            cformat!(
-                "<dim>{}</>",
-                format_heading("SYSTEM CONFIG", source.as_deref())
-            )
-        )?;
+        let heading = format_heading("SYSTEM CONFIG", source.as_deref());
+        let heading = cformat!("<dim>{heading}</>");
+        writeln!(out, "{heading}")?;
         writeln!(out, "{}", hint_message("Not found; optional"))?;
         return Ok(false);
     };
@@ -1091,50 +1086,35 @@ fn render_effective_config(out: &mut String, repo: &Repository) -> anyhow::Resul
     };
 
     writeln!(out, "{}", format_heading("EFFECTIVE", None))?;
-    writeln!(
-        out,
-        "{}",
-        info_message("Resolved scalar settings, every layer applied")
-    )?;
+    let description = info_message("Resolved scalar settings, every layer applied");
+    writeln!(out, "{description}")?;
 
     let mut toml = String::new();
     writeln!(toml, "worktree-path = {}", toml_string(&worktree_path))?;
     writeln!(toml)?;
     writeln!(toml, "[commit]")?;
-    writeln!(
-        toml,
-        "stage = {}",
-        toml::Value::try_from(config.commit.stage())?
-    )?;
+    let stage = toml::Value::try_from(config.commit.stage())?;
+    writeln!(toml, "stage = {stage}")?;
     writeln!(toml)?;
     writeln!(toml, "[commit.generation]")?;
-    writeln!(
-        toml,
-        "{}",
-        optional_row("command", config.commit_generation.command.as_deref())
-    )?;
+    let command = optional_row("command", config.commit_generation.command.as_deref());
+    writeln!(toml, "{command}")?;
     writeln!(toml)?;
     writeln!(toml, "[list]")?;
     writeln!(toml, "full = {}", config.list.full())?;
     writeln!(toml, "branches = {}", config.list.branches())?;
     writeln!(toml, "remotes = {}", config.list.remotes())?;
     writeln!(toml, "summary = {}", config.list.summary())?;
-    writeln!(
-        toml,
-        "{}",
-        match config.list.json_schema {
-            Some(v) => format!("json-schema = {v}"),
-            None => "# json-schema unset (emits schema 1)".to_string(),
-        }
-    )?;
-    writeln!(
-        toml,
-        "timeout-ms = {}",
-        config
-            .list
-            .timeout()
-            .map_or_else(|| "0".to_string(), |d| d.as_millis().to_string())
-    )?;
+    let json_schema = match config.list.json_schema {
+        Some(v) => format!("json-schema = {v}"),
+        None => "# json-schema unset (emits schema 1)".to_string(),
+    };
+    writeln!(toml, "{json_schema}")?;
+    let timeout = config
+        .list
+        .timeout()
+        .map_or_else(|| "0".to_string(), |d| d.as_millis().to_string());
+    writeln!(toml, "timeout-ms = {timeout}")?;
     writeln!(toml)?;
     writeln!(toml, "[merge]")?;
     writeln!(toml, "squash = {}", config.merge.squash())?;
@@ -1151,11 +1131,8 @@ fn render_effective_config(out: &mut String, repo: &Repository) -> anyhow::Resul
     writeln!(toml, "cd = {}", config.switch.cd())?;
     writeln!(toml)?;
     writeln!(toml, "[switch.picker]")?;
-    writeln!(
-        toml,
-        "{}",
-        optional_row("pager", config.switch_picker.pager())
-    )?;
+    let pager = optional_row("pager", config.switch_picker.pager());
+    writeln!(toml, "{pager}")?;
 
     writeln!(out, "{}", format_toml(toml.trim_end()))?;
     Ok(())
@@ -1207,18 +1184,12 @@ fn render_pending_approvals(out: &mut String, repo: &Repository) -> anyhow::Resu
         return Ok(());
     }
     let plural = if pending == 1 { "command" } else { "commands" };
-    writeln!(
-        out,
-        "{}",
-        info_message(format!("{pending} project {plural} awaiting approval"))
-    )?;
-    writeln!(
-        out,
-        "{}",
-        hint_message(cformat!(
-            "To review, run <underline>wt config approvals list</>"
-        ))
-    )?;
+    let status = info_message(format!("{pending} project {plural} awaiting approval"));
+    writeln!(out, "{status}")?;
+    let hint = hint_message(cformat!(
+        "To review, run <underline>wt config approvals list</>"
+    ));
+    writeln!(out, "{hint}")?;
     Ok(())
 }
 

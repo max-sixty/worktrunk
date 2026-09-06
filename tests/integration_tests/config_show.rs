@@ -81,6 +81,56 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// A repository whose path is not UTF-8 has no usable project identifier. The
+/// EFFECTIVE section still renders and uses the global worktree-path, while
+/// the pending approvals check remains a no-op.
+#[test]
+#[cfg(target_os = "linux")]
+fn test_config_show_without_project_identifier_uses_global_worktree_path() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let repo = TestRepo::with_initial_commit();
+    fs::write(
+        repo.test_config_path(),
+        "worktree-path = \"../global/{{ branch }}\"\n\n[list]\njson-schema = 2\n",
+    )
+    .unwrap();
+    let mut path_bytes = repo.root_path().as_os_str().as_bytes().to_vec();
+    path_bytes.extend_from_slice(b"-\xff");
+    let non_utf8_path = std::ffi::OsString::from_vec(path_bytes);
+    fs::rename(repo.root_path(), &non_utf8_path).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show"])
+        .current_dir(&non_utf8_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(stdout.contains("EFFECTIVE"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains(r#"worktree-path = "../global/{{ branch }}""#),
+        "stdout:\n{stdout}"
+    );
+    assert!(!stdout.contains("awaiting approval"), "stdout:\n{stdout}");
+}
+
+/// An unreadable approvals state must not make `config show` itself fail; the
+/// approvals command owns diagnostics for that separate file.
+#[rstest]
+fn test_config_show_ignores_invalid_approvals_file(repo: TestRepo) {
+    repo.write_project_config("pre-start = \"npm install\"\n");
+    fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
+
+    let output = repo.wt_command().args(["config", "show"]).output().unwrap();
+
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("awaiting approval"));
+}
+
 // ==================== System Config Tests ====================
 
 #[rstest]
@@ -3537,6 +3587,9 @@ json-schema = 1
 
 [projects."github.com/user/repo"]
 approved-commands = ["npm ci", "npm test"]
+
+[projects."github.com/other/repo"]
+approved-commands = ["cargo test"]
 "#,
     )
     .unwrap();
@@ -3549,8 +3602,12 @@ approved-commands = ["npm ci", "npm test"]
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("approved-commands") && stderr.contains("github.com/user/repo"),
+        stderr.contains("approved-commands")
+            && stderr.contains("github.com/user/repo")
+            && stderr.contains("github.com/other/repo")
+            && stderr.contains("from 2 [projects] entries"),
         "stderr should name the dropped approvals, got: {stderr}"
     );
     assert!(
