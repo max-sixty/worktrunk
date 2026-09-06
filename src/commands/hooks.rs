@@ -546,12 +546,7 @@ fn spawn_hook_chain(repo: &Repository, chain: Vec<PendingPipeline>) -> anyhow::R
         })
         .collect();
 
-    // Already guaranteed non-empty by `flush`, which returns before reaching
-    // here with nothing registered.
-    let Some((head, rest)) = queue.split_first() else {
-        return Ok(());
-    };
-    spawn_pipeline_queue(repo, head, rest)
+    spawn_pipeline_queue(repo, &queue)
 }
 
 /// Convert source-tagged steps into foreground steps with pipeline-kind policy.

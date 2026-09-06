@@ -142,10 +142,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
     let ran = run_spec(&spec, &repo);
-    let handed_on = match queued.split_first() {
-        Some((next, rest)) => spawn_pipeline_queue(&repo, next, rest),
-        None => Ok(()),
-    };
+    let handed_on = spawn_pipeline_queue(&repo, &queued);
     ran.and(handed_on)
 }
 
@@ -185,18 +182,25 @@ fn run_spec(spec: &PipelineSpec, repo: &Repository) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Spawn a detached `wt hook run-pipeline` process to run `head`, then `rest`.
+/// Spawn a detached `wt hook run-pipeline` process for the head of `queue`,
+/// handing it the rest.
 ///
-/// Both are piped to the child on stdin; the child runs `head` and calls back
-/// here with the first of `rest` (see the module spec for why the batch is a
-/// queue rather than one process per pipeline). The child's own stdout/stderr
-/// land in `head`'s `runner.log`, so a spawn failure is reported by the process
-/// that owns the *previous* log — the last place a reader can still see it.
+/// The whole queue is piped to the child on stdin; the child runs the head and
+/// calls back here with what's left (see the module spec for why the batch is a
+/// queue rather than one process per pipeline). An exhausted queue is a no-op,
+/// which is how a chain ends — the last runner calls here with nothing left,
+/// and so does every single-source batch.
+///
+/// The child's own stdout/stderr land in the head's `runner.log`, so a spawn
+/// failure is reported by the process that owns the *previous* log — the last
+/// place a reader can still see it.
 pub(super) fn spawn_pipeline_queue(
     repo: &Repository,
-    head: &PipelineSpec,
-    rest: &[PipelineSpec],
+    queue: &[PipelineSpec],
 ) -> anyhow::Result<()> {
+    let Some((head, rest)) = queue.split_first() else {
+        return Ok(());
+    };
     let payload =
         serde_json::to_vec(&(head, rest)).context("failed to serialize pipeline queue")?;
     let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
