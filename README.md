@@ -90,7 +90,7 @@ git branch -d feat</code></pre></td>
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees, with copy-on-write
+- **[Share build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — `target/`, `node_modules/`, etc are copy-on-write clones, so a new worktree starts warm without a second copy on disk
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
