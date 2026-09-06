@@ -75,6 +75,12 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
         render_opencode_status(&mut show_output)?;
     }
 
+    // Render Pi status (only when the Pi CLI is available)
+    if is_pi_available() {
+        show_output.push('\n');
+        render_pi_status(&mut show_output)?;
+    }
+
     // Render Gemini status (only when gemini CLI is available)
     if is_gemini_available() {
         show_output.push('\n');
@@ -327,6 +333,14 @@ fn is_opencode_available() -> bool {
     which::which("opencode").is_ok()
 }
 
+/// Check if the Pi coding agent CLI is available.
+fn is_pi_available() -> bool {
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_PI_INSTALLED") {
+        return val == "1";
+    }
+    which::which("omp").is_ok()
+}
+
 /// Render OPENCODE section (plugin status).
 /// Caller must check `is_opencode_available()` first.
 fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
@@ -351,6 +365,34 @@ fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render PI section (plugin status).
+/// Caller must check `is_pi_available()` first.
+fn render_pi_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("PI", None))?;
+
+    if super::pi::is_plugin_installed() {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else if super::pi::plugin_file_exists() {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin outdated. To update, run <underline>wt config plugins pi install</>"
+            ))
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins pi install</>"
             ))
         )?;
     }
