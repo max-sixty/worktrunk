@@ -611,16 +611,18 @@ Without `.worktreeinclude`, the command is a no-op (it reports that nothing was 
 | Generated assets | Images, ML models, binaries too large for git |
 | Environment files | `.env` (if not generated per-worktree) |
 
-### Performance
+### Copy-on-write
 
-Reflink copies share disk blocks until modified — no data is actually copied. For a 14GB `target/` directory:
+Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XFS (Linux), ReFS (Windows). A reflinked copy shares the source's disk blocks until one side writes. For a 14GB `target/` directory:
 
-| Command | Time |
-|---------|------|
-| `cp -R` (full copy) | 2m |
-| `cp -Rc` / `wt step copy-ignored` | 20s |
+| Command | Time | Disk |
+|---------|------|------|
+| `cp -R` (full copy) | 2m | 14GB |
+| `cp -Rc` / `wt step copy-ignored` | 20s | ~0 |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+On ext4 and NTFS, which have no reflink, every file is copied in full.
+
+Reflinks are per file (like `cp -Rc`), so copy time scales with file count.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
@@ -654,7 +656,6 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://code.claude.com/docs/en/desktop), which copies matching files when creating worktrees. Differences:
 
 - worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`. Pass `--require-include` to match Claude Code (copy nothing without `.worktreeinclude`)
-- worktrunk uses copy-on-write for large directories like `target/` (see Performance above)
 - worktrunk runs as a configurable hook in the worktree lifecycle
 
 ### Command reference

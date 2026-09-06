@@ -6,6 +6,12 @@
 # On other platforms, uses wt directly.
 # Usage: wt.sh [args...]
 
+# Clear WT before the branches below: on Windows they leave it unset when
+# neither git-wt.exe nor wt is on PATH, and a hook is handed the caller's whole
+# environment -- so an inherited WT would be what the final check accepts and
+# runs, Windows Terminal included.
+WT=""
+
 if [[ -n "$WORKTRUNK_BIN" ]]; then
     if ! command -v "$WORKTRUNK_BIN" >/dev/null 2>&1; then
         echo "worktrunk: WORKTRUNK_BIN is set to '$WORKTRUNK_BIN' but it was not found" >&2
