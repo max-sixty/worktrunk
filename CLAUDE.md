@@ -150,6 +150,10 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 **Implementation:** the operation-driven hooks (`pre-merge`, `post-merge`, `pre-remove`, `post-remove`, `post-switch`, `pre-start`, `post-start`) are gated *before* a state mutation and run *after* it, so a second config read could select an unapproved command. `src/commands/hook_plan.rs` closes this structurally: each gate (`wt remove` / `wt merge` / `wt step prune` / `wt switch`) selects the command set once into an immutable `ApprovedHookPlan` (`HookPlan::approve`); the executor consumes only that value via `execute_planned_hook` / `register_planned` and holds no `ProjectConfig` to re-derive from, so re-selection is a compile error, not a review check. An empty plan (`--no-hooks`, declined, or no project config) runs nothing. The adjacent hooks with no gate→exec mutation (`pre-commit`, `post-commit`, `pre-switch`, `wt hook <type>`, aliases) still resolve config at invocation via `execute_hook` / `HookAnnouncer::register`. See `src/commands/hook_plan.rs` and the `commands::hooks` module spec.
 
+### Background Hook Pipelines Run Concurrently, Per Source
+
+A `post-*` batch spawns one detached pipeline per source, and they run at once. Don't serialize them: `post-start` is documented for dev servers and `wt step tether`, so a user hook that never exits would block the project's forever, and `wt merge`'s batch spans two worktrees (`post-commit` anchors on the invoking worktree, the rest on the destination) so chaining also drops hooks behind a head whose worktree is already removed. The cost is that two hooks touching one worktree's git state can collide — two `git pull`s there append to each other's `FETCH_HEAD` and both fail — which `wt hook --help` tells users to avoid by keeping dependent commands in one source.
+
 ## Hook Output Logs
 
 `.git/wt/logs/` layout — per-branch and repo-wide log paths, plus the `sanitize_for_filename` filename rule: the `HookLog` spec in `src/commands/process.rs`. The top-level file-vs-directory split that `wt config state` walks: the "Log layout invariant" in `src/commands/config/state.rs`.
