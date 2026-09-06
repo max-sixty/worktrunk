@@ -3401,10 +3401,10 @@ fn test_config_update_project_config_from_linked_worktree_shows_hint(repo: TestR
     );
 }
 
-/// File and stdout output receive the same labeled artifact when both config
-/// files have migrations, without changing either source config.
+/// Multiple migrated configs can be inspected on stdout but cannot be written
+/// as one config file, which would change TOML table scope between documents.
 #[rstest]
-fn test_config_update_output_destinations_emit_same_artifact(repo: TestRepo) {
+fn test_config_update_output_file_rejects_multiple_configs(repo: TestRepo) {
     let user_config_path = repo.test_config_path();
     let user_original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
@@ -3427,7 +3427,11 @@ fn test_config_update_output_destinations_emit_same_artifact(repo: TestRepo) {
     assert!(stdout.contains("{{ repo }}"));
     assert!(stdout.contains("pre-start"));
 
-    fs::write(repo.root_path().join("migrated.toml"), "stale\n").unwrap();
+    fs::write(
+        repo.root_path().join("migrated.toml"),
+        "important user data\n",
+    )
+    .unwrap();
     let mut file_command = repo.wt_command();
     file_command
         .current_dir(repo.root_path().parent().unwrap())
@@ -3435,19 +3439,53 @@ fn test_config_update_output_destinations_emit_same_artifact(repo: TestRepo) {
         .arg(repo.root_path())
         .args(["config", "update", "--output=migrated.toml"]);
     let file_output = file_command.output().unwrap();
-    assert!(file_output.status.success());
+    assert!(!file_output.status.success());
     assert!(file_output.stdout.is_empty());
-    assert!(file_output.stderr.is_empty());
     assert_eq!(
-        fs::read(repo.root_path().join("migrated.toml")).unwrap(),
-        stdout_output.stdout,
-        "file and stdout destinations must receive the same artifact"
+        fs::read_to_string(repo.root_path().join("migrated.toml")).unwrap(),
+        "important user data\n"
+    );
+    assert!(
+        String::from_utf8_lossy(&file_output.stderr)
+            .contains("Cannot write multiple migrated configs to one file"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&file_output.stderr)
     );
     assert_eq!(fs::read_to_string(user_config_path).unwrap(), user_original);
     assert_eq!(
         fs::read_to_string(repo.root_path().join(".config").join("wt.toml")).unwrap(),
         project_original
     );
+}
+
+/// File and stdout output receive the same bytes for one migrated config.
+#[rstest]
+fn test_config_update_output_destinations_emit_same_config(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+    fs::write(config_path, original).unwrap();
+
+    let stdout_output = repo
+        .wt_command()
+        .args(["config", "update", "--output=-"])
+        .output()
+        .unwrap();
+    assert!(stdout_output.status.success());
+    assert!(stdout_output.stderr.is_empty());
+
+    let destination = repo.root_path().join("migrated.toml");
+    fs::write(&destination, "stale\n").unwrap();
+    let file_output = repo
+        .wt_command()
+        .args(["config", "update", "--output=migrated.toml"])
+        .output()
+        .unwrap();
+    assert!(file_output.status.success());
+    assert!(file_output.stdout.is_empty());
+    assert!(file_output.stderr.is_empty());
+    assert_eq!(fs::read(destination).unwrap(), stdout_output.stdout);
+    assert_eq!(fs::read_to_string(config_path).unwrap(), original);
 }
 
 /// `wt config update --output=-` on a clean config exits silently with empty

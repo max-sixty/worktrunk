@@ -820,8 +820,10 @@ currently `[list] json-schema = 2` — so the switch happens as a reviewed confi
 edit rather than at upgrade. Shows a diff and asks for confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
-command. Set `--output <path>` to write the migration artifact to that
-destination instead of applying it in place. Use `-` for stdout.
+command. Set `--output <path>` to write a migrated config to that destination
+instead of applying it in place. Use `-` for stdout. When both user and project
+config need migration, stdout emits a labeled inspection artifact and file
+output fails rather than combining the configs.
 
 Output artifacts omit deprecated `approved-commands`; only in-place updates
 move those entries to `approvals.toml`.

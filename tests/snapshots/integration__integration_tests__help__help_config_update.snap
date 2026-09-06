@@ -77,8 +77,10 @@ currently [2m[list] json-schema = 2[0m — so the switch happens as a reviewed
 edit rather than at upgrade. Shows a diff and asks for confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
-command. Set [2m--output <path>[0m to write the migration artifact to that
-destination instead of applying it in place. Use [2m-[0m for stdout.
+command. Set [2m--output <path>[0m to write a migrated config to that destination
+instead of applying it in place. Use [2m-[0m for stdout. When both user and project
+config need migration, stdout emits a labeled inspection artifact and file
+output fails rather than combining the configs.
 
 Output artifacts omit deprecated [2mapproved-commands[0m; only in-place updates
 move those entries to [2mapprovals.toml[0m.

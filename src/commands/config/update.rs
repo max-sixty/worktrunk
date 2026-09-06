@@ -8,7 +8,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
     ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
@@ -107,18 +107,24 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
 
 /// Write the migration artifact to a path, or to stdout when the path is `-`.
 fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
-    let artifact = format_migrated_output(candidates);
+    let stdout = output == Path::new("-");
 
-    if output == Path::new("-") {
-        // A clean config produces no output, so stdout composes in a pipe.
-        print!("{artifact}");
+    if candidates.is_empty() {
+        if !stdout {
+            eprintln!("{}", info_message("No deprecated settings found"));
+        }
         return Ok(());
     }
 
-    if candidates.is_empty() {
-        // A clean config has no artifact. Replacing the destination with an
-        // empty file could silently discard user data.
-        eprintln!("{}", info_message("No deprecated settings found"));
+    if !stdout && candidates.len() > 1 {
+        bail!(
+            "Cannot write multiple migrated configs to one file; use --output=- to inspect them or run wt config update to apply them in place"
+        );
+    }
+
+    let artifact = format_migrated_output(candidates);
+    if stdout {
+        print!("{artifact}");
         return Ok(());
     }
 
