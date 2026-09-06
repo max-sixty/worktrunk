@@ -40,7 +40,7 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
     if let Some(candidate) = check_user_config()? {
         candidates.push(candidate);
     }
-    if let Some(candidate) = check_project_config()? {
+    if let Some(candidate) = check_project_config(print)? {
         candidates.push(candidate);
     }
 
@@ -177,7 +177,9 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
     }))
 }
 
-fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
+/// `print` is `--print`, which renders the migrated content to stdout and
+/// writes nothing.
+fn check_project_config(print: bool) -> anyhow::Result<Option<UpdateCandidate>> {
     let repo = match Repository::current() {
         Ok(repo) => repo,
         Err(_) => return Ok(None),
@@ -192,6 +194,14 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
     }
 
     let is_linked = repo.current_worktree().is_linked().unwrap_or(true);
+    // The main-worktree requirement exists to keep the *rewrite* off a linked
+    // checkout, so `--print` — which writes nothing — is actionable from
+    // anywhere. Gating it too made `wt config update --print` emit an empty
+    // stdout plus a stderr hint from a linked worktree, which is where a
+    // worktree tool's users mostly stand: the pipe silently lost the project
+    // config, and the hint named `wt -C <main> config update`, a command that
+    // writes, in answer to a request that only reads.
+    let actionable = print || !is_linked;
 
     let original =
         std::fs::read_to_string(&config_path).context("Failed to read project config")?;
@@ -199,7 +209,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
     let result = worktrunk::config::check_and_migrate(
         &config_path,
         &original,
-        !is_linked, // only actionable from main worktree
+        actionable,
         ConfigFileKind::Project,
         Some(&repo),
         false,
@@ -209,7 +219,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    if is_linked {
+    if !actionable {
         let cmd = suggest_command_in_dir(repo.repo_path()?, "config", &["update"], &[]);
         eprintln!("{}", hint_message("To update project config:"));
         eprintln!("{}", format_bash_with_gutter(&cmd));

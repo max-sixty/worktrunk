@@ -5286,3 +5286,56 @@ fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
         );
     }
 }
+
+/// `wt config update --print` writes nothing, so the main-worktree
+/// requirement that guards the *rewrite* must not gate it. Before the fix,
+/// running it from a linked worktree emitted an empty stdout — silently
+/// dropping the project config from the pipe — plus a stderr hint naming
+/// `wt -C <main> config update`, a writing command, in answer to a read.
+#[rstest]
+fn test_config_update_print_emits_project_config_from_linked_worktree(repo: TestRepo) {
+    repo.write_project_config(
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+    let before = fs::read_to_string(&project_config_path).unwrap();
+
+    let feature_path = repo.root_path().parent().unwrap().join("feature-print");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature-print",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "config update --print should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("{{ repo }}") && !stdout.contains("{{ main_worktree }}"),
+        "--print from a linked worktree should emit the migrated project config, got: {stdout}"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "--print must keep stderr empty for pipe-friendliness, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&project_config_path).unwrap(),
+        before,
+        "--print must not modify the project config file"
+    );
+}
