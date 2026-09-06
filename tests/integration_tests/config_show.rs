@@ -5333,6 +5333,12 @@ fn test_config_update_print_emits_project_config_from_linked_worktree(repo: Test
         "--print must keep stderr empty for pipe-friendliness, got: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        fs::read_to_string(feature_path.join(".config").join("wt.toml"))
+            .unwrap()
+            .contains("{{ main_worktree }}"),
+        "--print must leave the linked worktree's config — the file it actually read — unmigrated"
+    );
     assert_eq!(
         fs::read_to_string(&project_config_path).unwrap(),
         before,
