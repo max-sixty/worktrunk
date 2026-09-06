@@ -2744,9 +2744,11 @@ fn test_pre_remove_hook_branch_expansion_detached_head(mut repo: TestRepo) {
     let branch_file = repo.root_path().join("branch-expansion.txt");
     let branch_path = branch_file.to_slash_lossy();
 
-    // Create project config with hook that writes {{ branch }} to file
+    // Create project config with a hook that writes {{ branch }} to file,
+    // guarded the way the hook docs prescribe for every optional variable —
+    // a detached worktree is on no branch, so `branch` is unset there.
     repo.write_project_config(&format!(
-        r#"pre-remove = "echo 'branch={{{{ branch }}}}' > {branch_path}""#,
+        r#"pre-remove = "echo 'branch={{% if branch %}}{{{{ branch }}}}{{% endif %}}' > {branch_path}""#,
     ));
     repo.commit("Add config");
 
@@ -2754,7 +2756,7 @@ fn test_pre_remove_hook_branch_expansion_detached_head(mut repo: TestRepo) {
     repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
     repo.write_test_approvals(&format!(
         r#"[projects."../origin"]
-approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
+approved-commands = ["echo 'branch={{% if branch %}}{{{{ branch }}}}{{% endif %}}' > {branch_path}"]
 "#,
     ));
 
@@ -2777,13 +2779,15 @@ approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Verify {{ branch }} expanded to "HEAD" (fallback for detached HEAD state)
+    // Verify {{ branch }} is unset — not the literal "HEAD", which git would
+    // resolve as a ref and which every guard written around `branch` passed
+    // (issue #4009).
     let content =
         std::fs::read_to_string(&branch_file).expect("Hook should have created the branch file");
     assert_eq!(
         content.trim(),
-        "branch=HEAD",
-        "{{ branch }} should expand to 'HEAD' for detached HEAD worktrees"
+        "branch=",
+        "{{ branch }} should be unset for detached HEAD worktrees"
     );
 }
 

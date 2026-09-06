@@ -67,8 +67,32 @@ fn test_for_each_with_template(repo: TestRepo) {
     ));
 }
 
+/// A detached worktree leaves `{{ branch }}` unset, so `{% if branch %}` guards
+/// it and the loop visits every worktree (issue #4009).
 #[rstest]
 fn test_for_each_detached_branch_variable(mut repo: TestRepo) {
+    repo.add_worktree("detached-test");
+    repo.detach_head_in_worktree("detached-test");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &[
+            "for-each",
+            "--",
+            "echo",
+            "Branch: [{% if branch %}{{ branch }}{% endif %}]",
+        ],
+        None,
+    ));
+}
+
+/// The unguarded form is an undefined-variable error in the detached worktree,
+/// the same as any other optional variable. Before #4009 it rendered the
+/// literal `HEAD` — a string git resolves as a ref, so the command ran against
+/// the wrong thing instead of saying so.
+#[rstest]
+fn test_for_each_detached_branch_variable_unguarded(mut repo: TestRepo) {
     repo.add_worktree("detached-test");
     repo.detach_head_in_worktree("detached-test");
 
@@ -500,7 +524,7 @@ fn test_for_each_commit_detached_sibling_matches_per_worktree_head(repo: TestRep
             "for-each",
             "--",
             "echo",
-            "{{ branch }} {{ commit }}",
+            "[{% if branch %}{{ branch }}{% endif %}] {{ commit }}",
         ])
         .output()
         .expect("run wt step for-each");
@@ -516,15 +540,16 @@ fn test_for_each_commit_detached_sibling_matches_per_worktree_head(repo: TestRep
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    // Detached HEAD surfaces as `{{ branch }} == "HEAD"`. The sibling's commit
-    // must be its own HEAD, not the running worktree's.
-    let needle = format!("HEAD {feature_b_sha}");
+    // A detached worktree leaves `{{ branch }}` unset, so its row renders the
+    // empty guard. The sibling's commit must be its own HEAD, not the running
+    // worktree's.
+    let needle = format!("[] {feature_b_sha}");
     assert!(
         combined.contains(&needle),
         "expected detached sibling's {{{{ commit }}}} = {feature_b_sha} in output\noutput={combined}",
     );
     assert!(
-        !combined.contains(&format!("HEAD {main_sha}")),
+        !combined.contains(&format!("[] {main_sha}")),
         "detached sibling's {{{{ commit }}}} must not resolve to main's SHA {main_sha}\noutput={combined}",
     );
 }

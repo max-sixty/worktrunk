@@ -26,11 +26,14 @@
 //! anstream's macros don't panic when the consumer closes the pipe, which
 //! [`test_stdout_surfaces_survive_a_closed_consumer`] checks from the outside.
 //!
-//! The stderr counterpart is two tests: [`check_stderr_macros_come_from_styling`]
-//! requires every bare `eprint!`/`eprintln!` under `src/` to resolve to
-//! anstream's, statically and for every site; and
-//! [`test_stderr_narration_strips_ansi_when_piped`] proves from the outside
-//! what that buys — narration redirected to a file carries no escapes.
+//! The stderr counterpart is three tests. Two are static, one per way a write
+//! can miss anstream: [`check_stderr_macros_come_from_styling`] requires every
+//! bare `eprint!`/`eprintln!` under `src/` to resolve to anstream's, and
+//! [`check_raw_stderr_writes_go_through_anstream`] refuses the writes that use
+//! no macro at all — `writeln!(std::io::stderr(), …)` and friends, which the
+//! macro scan cannot see because the name it looks for isn't there. The third,
+//! [`test_stderr_narration_strips_ansi_when_piped`], proves from the outside
+//! what the two buy — narration redirected to a file carries no escapes.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -233,9 +236,22 @@ const STD_STDERR_ALLOWED_PATHS: &[&str] = &[
     "remove_dir.rs",
 ];
 
+/// Paths (relative to `src/`) allowed to write to a raw `std::io::stderr()`
+/// handle, bypassing anstream entirely.
+///
+/// Like [`STD_STDERR_ALLOWED_PATHS`], an entry exempts the **whole file**.
+const RAW_STDERR_ALLOWED_PATHS: &[&str] = &[
+    // The spinner and the watchdog redraw in place. They hold one lock across
+    // a whole frame so a narration line can't land inside a block they are
+    // still drawing, and anstream's `stderr()` has no lock to hold. Every
+    // write is tty-gated (`is_terminal()`), so no escape of theirs ever
+    // reaches a redirected stderr for anstream to strip.
+    "progress.rs",
+];
+
 /// Every allowlist entry names a file that still exists.
 ///
-/// Both allowlists are matched by path string, so a rename leaves a dead entry
+/// Every allowlist is matched by path string, so a rename leaves a dead entry
 /// behind rather than failing. That is worse than clutter: the exemption stays
 /// armed at the old path, so a *new* file arriving there — `src/help.rs` is the
 /// shape, a name a future refactor could plausibly reuse — inherits a
@@ -250,6 +266,7 @@ fn allowlisted_paths_still_exist() {
     let stale: Vec<String> = [
         ("STDOUT_ALLOWED_PATHS", STDOUT_ALLOWED_PATHS),
         ("STD_STDERR_ALLOWED_PATHS", STD_STDERR_ALLOWED_PATHS),
+        ("RAW_STDERR_ALLOWED_PATHS", RAW_STDERR_ALLOWED_PATHS),
     ]
     .iter()
     .flat_map(|(list_name, paths)| {
@@ -264,7 +281,8 @@ fn allowlisted_paths_still_exist() {
         stale.is_empty(),
         "allowlist entries naming files that no longer exist:\n\n{}\n\n\
          The entry exempts whatever file later occupies that path, so a stale one\n\
-         silently pre-approves stdout (or std's stderr macros) for code nobody reviewed.\n\
+         silently pre-approves stdout (or a stderr write that skips anstream) for code\n\
+         nobody reviewed.\n\
          Move the entry to the file's new path, or drop it.",
         stale.join("\n")
     );
@@ -418,6 +436,117 @@ fn styling_imports(contents: &str) -> HashSet<String> {
     imports
 }
 
+/// Stderr writes that use no macro still go out through anstream.
+///
+/// [`check_stderr_macros_come_from_styling`] scans for a name — `eprint!`,
+/// `eprintln!` — so a write that never spells it is invisible to it:
+/// `writeln!(std::io::stderr(), …)` and `std::io::stderr().write_all(…)` reach
+/// the same fd past the same color decision, and a line printed that way keeps
+/// its escapes under `wt … 2>log` and ignores `NO_COLOR` while the line above
+/// it strips. That is not hypothetical shape-matching — it is how the
+/// delayed-stream progress message (`◎ Creating worktree for …`) came to be
+/// the one colored line in a redirected `wt switch --create` log.
+///
+/// A raw handle is fine as long as nothing is written through it, which is
+/// most of what `src/` does with one: `is_terminal()` and `terminal_size_of()`
+/// query it, `flush()` pushes bytes anstream already wrote, `Stdio::from(…)`
+/// hands the fd to a child, and `AutoStream::auto(…)` is anstream itself. So
+/// the scan looks for the five shapes that write rather than for the handle:
+/// the destination of a `write!`/`writeln!`, a `.write*` call on it, a
+/// `.lock()` (taken only to write through), a binding (which writes later,
+/// under another name), and a bare handle followed by `,` — a
+/// `write!`/`writeln!` destination whose arguments rustfmt moved onto their
+/// own lines.
+#[test]
+fn check_raw_stderr_writes_go_through_anstream() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+    let scanned = visit_files(&src_dir, "rs", "raw-stderr scan", &mut |path, contents| {
+        check_raw_stderr_writes_in_file(path, contents, &src_dir, &mut violations)
+    });
+    assert!(
+        scanned > 0,
+        "scanned no files under {} — this test asserts absence, so it would have \
+         passed over nothing",
+        src_dir.display()
+    );
+    violations.sort();
+
+    assert!(
+        violations.is_empty(),
+        "stderr writes through a raw handle, bypassing anstream:\n\n{}\n\n\
+         A raw `std::io::stderr()` keeps ANSI escapes when stderr is redirected and\n\
+         ignores NO_COLOR, so one line of a log disagrees with every line around it.\n\
+         Print through `styling`'s `eprintln!`, or write into its `stderr()` handle.\n\
+         Spell the path for the crate the file belongs to: {STYLING_PATH_BY_CRATE}.\n\
+         Or add the file to RAW_STDERR_ALLOWED_PATHS with a comment explaining why\n\
+         the raw handle is the right one there.",
+        violations.join("\n")
+    );
+}
+
+/// The raw-handle token, matching both `std::io::stderr()` and a `use
+/// std::io`-qualified `io::stderr()`.
+const RAW_STDERR_HANDLE: &str = "io::stderr()";
+
+fn check_raw_stderr_writes_in_file(
+    path: &Path,
+    contents: &str,
+    src_dir: &Path,
+    violations: &mut Vec<String>,
+) {
+    let relative_path = path
+        .strip_prefix(src_dir)
+        .map(|p| p.to_slash_lossy())
+        .unwrap_or_default();
+    if RAW_STDERR_ALLOWED_PATHS.contains(&relative_path.as_ref()) {
+        return;
+    }
+
+    for (line_num, line) in contents.lines().enumerate() {
+        // A doc comment quoting the handle is prose, not a write. `///` starts
+        // with `//`, so doc comments drop out here too.
+        let code = match line.find("//") {
+            Some(pos) => &line[..pos],
+            None => line,
+        };
+
+        for (pos, _) in code.match_indices(RAW_STDERR_HANDLE) {
+            // `std::io::stderr()` and `io::stderr()` are the same handle, so
+            // the qualifier is not part of what precedes the expression.
+            let before = code[..pos].strip_suffix("std::").unwrap_or(&code[..pos]);
+            let after = &code[pos + RAW_STDERR_HANDLE.len()..];
+
+            let is_write = before.contains("write!(")
+                || before.contains("writeln!(")
+                // The handle is the whole right-hand side of a binding: the
+                // write happens later, through the name. Requiring the
+                // statement to end there is what separates it from
+                // `let is_tty = io::stderr().is_terminal();`, where the
+                // binding holds the answer to a query and not the handle.
+                // Nothing compares against a `Stderr`, so a trailing `=` is
+                // never half of `==`.
+                || (before.trim_end().ends_with('=') && after.trim_start().starts_with(';'))
+                || after.starts_with(".lock()")
+                || after.starts_with(".write")
+                // rustfmt puts a long `writeln!`'s arguments on their own
+                // lines, leaving `before` blank on the line the handle sits
+                // on. Argument position is not a write by itself — the
+                // docstring names `terminal_size_of(…)` and `Stdio::from(…)`,
+                // both live in `src/` — but each of those fits on one line, so
+                // none of them leaves the handle in front of a `,`.
+                || after.trim_start().starts_with(',');
+            if is_write {
+                violations.push(format!(
+                    "src/{relative_path}:{}: {}",
+                    line_num + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+}
+
 /// Every stdout surface exits cleanly when its consumer stops reading.
 ///
 /// std's `print!`/`println!` panic on a `BrokenPipe`, so a command whose
@@ -509,6 +638,49 @@ fn test_stderr_narration_strips_ansi_when_piped(repo: TestRepo) {
     assert!(
         !stderr.contains('\x1b'),
         "wt narration redirected to a file must not contain ANSI escapes; got: {stderr:?}"
+    );
+}
+
+/// The delayed-stream progress line strips with the narration around it.
+///
+/// It is the one line of `wt switch --create` that the command composes but
+/// does not print: `progress_message` is rendered up front and handed to
+/// `Cmd::delayed_stream`, which prints it from inside `shell_exec` at the
+/// moment streaming starts. A printer that far from the message is where a raw
+/// `writeln!(std::io::stderr(), …)` both looks harmless and escapes notice —
+/// the line kept its color under `2>log` while the success message directly
+/// beneath it stripped.
+///
+/// `WORKTRUNK_TEST_DELAYED_STREAM_MS=0` opens that branch on demand; it
+/// otherwise waits for a `git worktree add` slow enough to cross 400 ms, which
+/// this repo's never is. The fixture's own value is `-1` (never stream), so
+/// the whole suite runs with the branch shut.
+#[rstest]
+fn test_delayed_stream_progress_strips_ansi_when_piped(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "ansi-check"])
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .env("WORKTRUNK_TEST_DELAYED_STREAM_MS", "0")
+        .output()
+        .expect("failed to run wt switch --create ansi-check");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt switch --create exited {:?}; stderr: {stderr}",
+        output.status.code()
+    );
+    // Without this the assertion below would also pass on a run that never
+    // reached the streaming branch and printed no progress line at all.
+    assert!(
+        stderr.contains("Creating worktree for"),
+        "expected the delayed-stream progress line on stderr; got: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains('\x1b'),
+        "the progress line must strip like the rest of the narration; got: {stderr:?}"
     );
 }
 

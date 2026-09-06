@@ -81,6 +81,17 @@ color and a snapshot agrees whichever macro is in scope. Its
 `STD_STDERR_ALLOWED_PATHS` exempts whole files, not calls, so an entry is only
 right where std's macro is right throughout.
 
+A write that names no macro misses that scan entirely, since the scan looks for
+the name: `writeln!(std::io::stderr(), …)`, `std::io::stderr().write_all(…)`, a
+locked handle, a bound one. `check_raw_stderr_writes_go_through_anstream`
+refuses those shapes too, with its own `RAW_STDERR_ALLOWED_PATHS` — currently
+just `progress.rs`, whose spinner holds one lock across a frame (anstream's
+`stderr()` has none) and is tty-gated, so nothing of its output ever reaches a
+redirected stderr. The shape to watch for is a message rendered in one place
+and printed several layers below, where the printer has no idea it is handling
+narration: `Cmd::delayed_stream`'s progress line is the example, and a raw
+handle there made it the only colored line in a redirected `wt switch` log.
+
 **Output whose ANSI is already decided** declares that once at the top of the
 command with `worktrunk::styling::ColorChoice::Always.write_global()` and then
 prints through the same anstream macros — the statusline a shell prompt or
