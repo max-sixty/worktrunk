@@ -1,4 +1,4 @@
-//! Codex plugin marketplace management.
+//! Codex plugin and marketplace management.
 
 use anyhow::{Result, bail};
 use color_print::cformat;

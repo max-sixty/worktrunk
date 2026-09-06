@@ -308,7 +308,7 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Render CODEX section (marketplace install hint).
+/// Render CODEX section (plugin install hint).
 /// Caller must check `is_codex_available()` first.
 fn render_codex_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("CODEX", None))?;
