@@ -235,6 +235,43 @@ fn custom_subcommand_alias_outside_repo_names_the_alias() {
 }
 
 #[test]
+fn custom_subcommand_alias_outside_repo_omits_gutter_when_git_says_nothing() {
+    // The gutter quotes git's explanation, so a fatal exit that carries no
+    // output leaves the alias error and its hint alone — not a blank gutter
+    // line where the explanation would have gone.
+    let config_dir = tempfile::tempdir().unwrap();
+    let config_path = config_dir.path().join("config.toml");
+    std::fs::write(&config_path, "[aliases]\nco = \"echo hi\"\n").unwrap();
+
+    let git_dir = TempDir::new().unwrap();
+    MockConfig::new("git")
+        .version("git version 2.43.0")
+        .command("rev-parse", MockResponse::exit(128))
+        .write(git_dir.path());
+
+    let mut cmd = wt_command();
+    cmd.env("PATH", git_dir.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", git_dir.path())
+        .env("WORKTRUNK_CONFIG_PATH", &config_path)
+        .arg("co");
+
+    let output = cmd.output().expect("failed to run wt");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "✗ co is an alias, but aliases only run inside a git repository",
+            "↳ Run wt inside a repository, or to target one, run wt -C <path> co",
+        ],
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn custom_subcommand_alias_propagates_non_fatal_git_failure() {
     // Only a fatal git exit (128) reaches the alias message. A git that fails
     // any other way surfaces as itself, the way it does for every other
