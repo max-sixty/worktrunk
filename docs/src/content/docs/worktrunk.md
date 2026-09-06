@@ -100,7 +100,7 @@ git branch -d feat</code></pre></td>
 - **[LLM commit messages](/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](/merge/)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](/switch/#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[Copy build caches](/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees, with copy-on-write
 - **[`wt list --full`](/list/#full-mode)** — [CI status](/list/#ci-status) and [AI-generated summaries](/list/#llm-summaries) per branch
 - **[PR checkout](/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](/tips-patterns/#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
