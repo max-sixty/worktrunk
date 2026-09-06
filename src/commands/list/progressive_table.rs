@@ -187,19 +187,25 @@ impl ProgressiveTable {
     /// Fit a content string to the table's width and, when color is off, strip
     /// the escapes the render code baked into it.
     ///
-    /// Truncation runs first because the width math is escape-aware, and a cut
-    /// through styled content appends its own reset; stripping afterwards removes
-    /// that reset along with the rest.
+    /// Each physical row gets its own width budget. Truncation runs first because
+    /// the width math is escape-aware, and a cut through styled content appends
+    /// its own reset; stripping afterwards removes that reset along with the rest.
     /// Every content line — header, rows, footer, on both the in-place and
     /// overflow paths — goes through here, so no other content path calls
     /// [`truncate_visible`] directly.
     fn prepare(&self, content: &str) -> String {
-        let truncated = truncate_visible(content, self.max_width);
-        if self.strip_content {
-            anstream::adapter::strip_str(&truncated).to_string()
-        } else {
-            truncated
-        }
+        content
+            .split('\n')
+            .map(|row| {
+                let truncated = truncate_visible(row, self.max_width);
+                if self.strip_content {
+                    anstream::adapter::strip_str(&truncated).to_string()
+                } else {
+                    truncated
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Print the skeleton table to stdout.
@@ -334,6 +340,23 @@ impl ProgressiveTable {
         stdout.flush()
     }
 
+    /// Replace the final footer after every data row has settled.
+    ///
+    /// The summary is the only content that can span physical rows. Nothing is
+    /// redrawn after it, so the renderer can clear through the prompt reserve,
+    /// write the complete footer, and establish a fresh reserve below it.
+    fn redraw_final_footer(&self) -> std::io::Result<()> {
+        let mut stdout = stdout();
+        let footer_idx = self.lines.len() - 1;
+
+        stdout.execute(MoveUp(1))?;
+        stdout.execute(MoveToColumn(0))?;
+        stdout.execute(Clear(ClearType::FromCursorDown))?;
+        writeln!(stdout, "{}", self.lines[footer_idx])?;
+        write_prompt_reserve(&mut stdout)?;
+        stdout.flush()
+    }
+
     /// Finalize the table with final row content and footer.
     ///
     /// For the normal case, updates rows in-place and redraws the footer.
@@ -371,12 +394,22 @@ impl ProgressiveTable {
             write_prompt_reserve(&mut stdout)?;
             stdout.flush()
         } else {
-            // Normal: update rows in-place + footer
+            // Redraw rows while the on-screen footer still occupies one physical
+            // row, then replace it with the final summary, which may wrap.
             for (idx, row) in final_rows.into_iter().enumerate() {
                 self.update_row(idx, row);
             }
-            self.update_footer(final_footer);
-            self.flush()
+            self.flush()?;
+
+            let footer_idx = self.lines.len() - 1;
+            let final_footer = self.prepare(&final_footer);
+            if self.lines[footer_idx] != final_footer {
+                self.lines[footer_idx] = final_footer;
+                if self.rendered {
+                    self.redraw_final_footer()?;
+                }
+            }
+            Ok(())
         }
     }
 }

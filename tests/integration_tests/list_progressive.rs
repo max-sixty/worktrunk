@@ -146,6 +146,34 @@ fn test_list_progressive_overflow(mut repo: TestRepo) {
     );
 }
 
+/// A wrapped final footer occupies several physical rows. The progressive
+/// renderer must preserve every row instead of applying one width budget to
+/// the whole string and replacing the continuation with an ellipsis.
+#[rstest]
+fn test_list_progressive_wraps_final_footer(mut repo: TestRepo) {
+    for branch in ["feature-alpha", "feature-beta", "feature-gamma"] {
+        repo.add_worktree(branch);
+    }
+
+    let mut opts = ProgressiveCaptureOptions::with_byte_interval(500);
+    opts.terminal_size = (24, 40);
+
+    let output = capture_progressive_output(&repo, "list", &[], opts);
+    assert_eq!(output.exit_code, 0);
+
+    let final_text = output.final_output();
+    let footer = final_text
+        .split_once("Showing")
+        .map(|(_, footer)| footer)
+        .expect("final output should contain the summary footer");
+    assert!(footer.contains("hidden:"), "footer:\n{footer}");
+    assert!(footer.contains("Path"), "footer:\n{footer}");
+    assert!(
+        !footer.lines().any(|line| line.trim() == "…"),
+        "footer:\n{footer}"
+    );
+}
+
 /// Tests progressive rendering with no worktrees (fast path).
 #[rstest]
 fn test_list_progressive_fast_command(repo: TestRepo) {
