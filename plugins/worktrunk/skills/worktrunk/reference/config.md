@@ -1156,6 +1156,7 @@ Install and manage Worktrunk plugins for AI coding tools.
 - **claude** — Claude Code plugin (activity tracking + statusline)
 - **codex** — Codex plugin (Worktrunk configuration skill)
 - **opencode** — OpenCode plugin (activity tracking)
+- **pi** — Pi / oh-my-pi plugin (activity tracking)
 
 ### Examples
 
@@ -1163,6 +1164,7 @@ Install and manage Worktrunk plugins for AI coding tools.
 $ wt config plugins claude install
 $ wt config plugins codex install
 $ wt config plugins opencode install
+$ wt config plugins pi install
 ```
 
 ### Command reference
@@ -1176,6 +1178,7 @@ Commands:
   claude    Claude Code plugin
   codex     Codex plugin
   opencode  OpenCode plugin
+  pi        Pi / oh-my-pi activity hook
 
 Options:
   -h, --help
