@@ -1,60 +1,58 @@
 @echo off
-rem Windows counterpart of wt.sh: resolves the worktrunk CLI for plugin hooks.
+rem Windows counterpart of the `bash "$PLUGIN_ROOT/hooks/wt.sh"` that the Unix
+rem hook commands lead with: it finds Git Bash by path, then runs wt.sh through
+rem it, so every integration resolves the worktrunk binary through that one
+rem script.
 rem
 rem Codex runs hook commands through `cmd.exe /C` on Windows, where a bare
 rem `bash` resolves through PATH to System32\bash.exe -- the WSL launcher, not
-rem Git Bash -- and refuses to start in a sandboxed session (#4007). The Codex
-rem hooks therefore reach worktrunk through this shim rather than wt.sh.
-rem
-rem If WORKTRUNK_BIN is set, uses that path exclusively. Otherwise prefers
-rem git-wt.exe over wt, and rejects wt when PATH resolves it to Windows
-rem Terminal (...\WindowsApps\wt.exe), which owns that name on Windows.
+rem Git Bash -- and in a sandboxed session refuses to start at all (#4007). Only
+rem the bare name is the problem, so this resolves bash.exe the way find_git_bash
+rem does in src/shell_exec.rs and changes nothing else.
 rem Usage: wt.cmd [args...]
 rem
-rem Every branch here is a bare `goto`: `if <cond> <cmd1> & <cmd2>` runs cmd2
-rem unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if` rather than
-rem cmd1, so neither connector can carry the control flow.
+rem Every branch here is a bare `goto` or `call`: `if <cond> <cmd1> & <cmd2>`
+rem runs cmd2 unconditionally, and `if <cond> <cmd1> || <cmd2>` tests the `if`
+rem rather than cmd1, so neither connector can carry the control flow.
 setlocal EnableExtensions
-rem Clear the locals: `setlocal` inherits the caller's environment, and an
-rem inherited WT would short-circuit the PATH scan below onto whatever it names.
-set "WT="
-set "WT_SEEN="
+rem Clear the local: `setlocal` inherits the caller's environment, and Codex
+rem hands each hook the session env snapshot, so an inherited BASH would name
+rem what every event runs.
+set "BASH="
 
-if defined WORKTRUNK_BIN goto :override
+rem git.exe installs at Git\cmd\git.exe or Git\bin\git.exe, and bash.exe at
+rem Git\bin\bash.exe or Git\usr\bin\bash.exe. The lookup uses `where`'s `$var:`
+rem prefix, which searches the directories named in that variable and nowhere
+rem else: a bare `where git.exe` searches the current directory first, as cmd's
+rem own bare-name lookup does, and a hook's current directory is the user's
+rem project -- so a `git.exe` committed to a repo would otherwise choose the
+rem bash every event runs.
+for /f "delims=" %%I in ('where "$PATH:git.exe" 2^>nul') do if not defined BASH call :derive "%%~dpI"
 
-rem Both PATH lookups use `where`'s `$var:` prefix, which searches the
-rem directories named in that variable and nowhere else, and :run executes the
-rem absolute path they return. A bare `where git-wt.exe` searches the current
-rem directory first, as cmd's own bare-name lookup does, and a hook's current
-rem directory is the user's project -- so a `git-wt.exe` or `wt.exe` committed
-rem to a repo would otherwise be what every event executes. wt.sh has no such
-rem surface: `command -v` consults PATH only.
-for /f "delims=" %%I in ('where "$PATH:git-wt.exe" 2^>nul') do if not defined WT set "WT=%%I"
-if defined WT goto :run
+rem A git.exe PATH doesn't name, or names through a shim outside its install:
+rem the system-wide default, then the per-user one an install without admin
+rem rights writes (#1259).
+if not defined BASH call :accept "%ProgramFiles%\Git\bin\bash.exe"
+if not defined BASH call :accept "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
 
-rem A cargo install builds no git-wt (that binary is behind a non-default
-rem feature), so fall back to whichever `wt` PATH resolves -- unless that is
-rem Windows Terminal, which would open a window instead of setting a marker.
-for /f "delims=" %%I in ('where "$PATH:wt.exe" 2^>nul') do (
-    set "WT_SEEN=1"
-    if not defined WT call :accept "%%I"
-)
-if defined WT goto :run
+if not defined BASH goto :missing
 
-if defined WT_SEEN echo worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or remove the Windows Terminal alias. See https://worktrunk.dev/worktrunk/#install 1>&2
-if not defined WT_SEEN echo worktrunk: could not find 'wt' in PATH 1>&2
-exit /b 1
+"%BASH%" "%~dp0wt.sh" %*
+exit /b %ERRORLEVEL%
 
-rem Take this PATH entry unless it is Windows Terminal's app-execution alias.
-:accept
-echo %1 | findstr /i /c:"WindowsApps" >nul
-if errorlevel 1 set "WT=%~1"
+rem %1 is a Git install's cmd\ or bin\ directory, with the trailing separator
+rem `%~dpI` leaves on. Git\bin\bash.exe first, as find_git_bash does: it is the
+rem wrapper that sets up the MSYS environment for a caller outside Git Bash,
+rem which is what puts `uname` and friends within reach of wt.sh.
+:derive
+call :accept "%~1..\bin\bash.exe"
+if not defined BASH call :accept "%~1..\usr\bin\bash.exe"
 goto :eof
 
-:override
-set "WT=%WORKTRUNK_BIN%"
-goto :run
+:accept
+if exist "%~1" set "BASH=%~f1"
+goto :eof
 
-:run
-"%WT%" %*
-exit /b %ERRORLEVEL%
+:missing
+echo worktrunk: Git for Windows is required but bash.exe was not found. Install from https://git-scm.com/download/win 1>&2
+exit /b 1

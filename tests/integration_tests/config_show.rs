@@ -4202,8 +4202,9 @@ fn test_plugin_layout_is_consolidated() {
 /// Codex's fix for this is the per-handler `commandWindows` override, which
 /// *replaces* `command` on Windows (`command_windows.unwrap_or(command)` in
 /// `codex-rs/hooks/src/engine/discovery.rs`). Every Codex command hook must
-/// carry one, and it must reach worktrunk without `bash` and without bare `wt`
-/// — that name belongs to Windows Terminal on Windows.
+/// carry one, and it must name neither `bash` — the WSL launcher, under cmd.exe
+/// — nor bare `wt`, which belongs to Windows Terminal on Windows. It calls
+/// `hooks/wt.cmd`, which finds Git Bash *by path* and runs the same `wt.sh`.
 ///
 /// Codex substitutes only the braced `${PLUGIN_ROOT}` form textually, before
 /// the shell runs; the unbraced `$PLUGIN_ROOT` survives to the shell and is
@@ -4248,8 +4249,8 @@ fn test_codex_hooks_carry_windows_commands() {
         });
         assert!(
             !windows.split_whitespace().any(|word| word == "bash"),
-            "`commandWindows` must not invoke bash — cmd.exe resolves it to the WSL \
-             launcher (#4007). commandWindows:\n{windows}"
+            "`commandWindows` must not name bash — cmd.exe resolves that name to the WSL \
+             launcher (#4007); the shim finds Git Bash by path instead. commandWindows:\n{windows}"
         );
         assert!(
             !windows
@@ -4278,6 +4279,56 @@ fn test_codex_hooks_carry_windows_commands() {
     }
 }
 
+/// The directory PATH names `git.exe` in — `Git\cmd` for a default Git for
+/// Windows install, which is the only directory of that install the installer
+/// puts on PATH. The Windows tests below pin a PATH built from it: narrow
+/// enough that no ambient `wt.exe` can stand in for the worktrunk under test,
+/// while still holding what a real user's PATH holds, so the shim has to derive
+/// Git Bash the way it will on their machine.
+#[cfg(windows)]
+fn git_dir_on_path() -> std::path::PathBuf {
+    let path = std::env::var_os("PATH").expect("a Windows test runner must set PATH");
+    std::env::split_paths(&path)
+        .find(|dir| dir.join("git.exe").is_file())
+        .expect("a Windows test runner must have git.exe on PATH")
+}
+
+/// `extra` first, then Git and System32 — the latter because the shim runs
+/// `where` from there.
+#[cfg(windows)]
+fn pinned_windows_path(extra: &[std::path::PathBuf]) -> std::ffi::OsString {
+    let system32 = std::path::PathBuf::from(
+        std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into()),
+    )
+    .join("System32");
+    let dirs: Vec<std::path::PathBuf> = extra
+        .iter()
+        .cloned()
+        .chain([git_dir_on_path(), system32])
+        .collect();
+    std::env::join_paths(dirs).unwrap()
+}
+
+/// `C:\a\b` as Git Bash sees it, `/c/a/b`. Only for handing a path to something
+/// that will run *inside* bash: `command -v` takes an argument with no `/` as a
+/// command name and searches PATH for it, so a Windows-spelled path there is
+/// never found, and a test that spelled it that way would pass for that reason
+/// rather than the one it means to pin.
+#[cfg(windows)]
+fn msys_path(path: &std::path::Path) -> String {
+    let text = path.display().to_string();
+    let (drive, rest) = text.split_at(2);
+    assert!(
+        drive.ends_with(':'),
+        "expected a drive-qualified path, got {text}"
+    );
+    format!(
+        "/{}{}",
+        drive[..1].to_ascii_lowercase(),
+        rest.replace('\\', "/")
+    )
+}
+
 /// The structural guard above pins that a `commandWindows` exists and avoids
 /// `bash`; this one runs the real one the way Codex does and checks it lands the
 /// marker. Codex spawns `cmd.exe /C "<command>"` with the command line wrapped
@@ -4287,11 +4338,12 @@ fn test_codex_hooks_carry_windows_commands() {
 /// this reproduces both steps rather than approximating them.
 ///
 /// What that covers beyond the manifest text: cmd.exe's quote handling across
-/// the nested quoting around the shim path, the shim's own `goto`-based binary
-/// resolution, the emoji argument surviving cmd.exe and reaching worktrunk
-/// intact, and the `|| exit /b 0` tail keeping a failed marker best-effort — a
-/// hook that exits nonzero is what raises the repeated "Hook failed" banner
-/// #4007 reports.
+/// the nested quoting around the shim path, the shim's `goto`-based search for
+/// Git Bash, `wt.sh` running under the bash it picks (which is what needs
+/// `Git\bin\bash.exe`, the wrapper that puts `uname` and friends on PATH for a
+/// caller outside Git Bash), the emoji argument surviving both hops intact, and
+/// the `|| exit /b 0` tail keeping a failed marker best-effort — a hook that
+/// exits nonzero is what raises the repeated "Hook failed" banner #4007 reports.
 #[cfg(windows)]
 #[rstest]
 fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
@@ -4310,14 +4362,20 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
             .replace("${PLUGIN_ROOT}", &plugin_root.display().to_string())
     };
 
-    // `bin` is what the shim resolves to; an absent one exercises the
-    // best-effort tail.
-    let run_hook = |event: &str, bin: &std::path::Path| -> std::process::Output {
+    // The worktrunk wt.sh is meant to find, under the name it prefers.
+    let path_dir = repo.root_path().join("path-dir");
+    fs::create_dir_all(&path_dir).unwrap();
+    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
+    let with_worktrunk = pinned_windows_path(&[path_dir]);
+    let without_worktrunk = pinned_windows_path(&[]);
+
+    let run_hook = |event: &str, path: &std::ffi::OsString| -> std::process::Output {
         let mut cmd = std::process::Command::new("cmd.exe");
         repo.configure_wt_cmd(&mut cmd);
         cmd.arg("/C")
             .raw_arg(format!("\"{}\"", command_for(event)))
-            .env("WORKTRUNK_BIN", bin)
+            .env("PATH", path)
+            .env_remove("WORKTRUNK_BIN")
             .current_dir(repo.root_path())
             .output()
             .unwrap()
@@ -4342,8 +4400,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         )
     };
 
-    let wt = crate::common::wt_bin();
-    let output = run_hook("UserPromptSubmit", &wt);
+    let output = run_hook("UserPromptSubmit", &with_worktrunk);
     assert!(
         output.status.success(),
         "UserPromptSubmit hook must succeed; {}",
@@ -4356,7 +4413,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         marker()
     );
 
-    let output = run_hook("Stop", &wt);
+    let output = run_hook("Stop", &with_worktrunk);
     assert!(
         output.status.success(),
         "Stop hook must succeed; {}",
@@ -4368,7 +4425,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
         marker()
     );
 
-    let output = run_hook("SessionEnd", &wt);
+    let output = run_hook("SessionEnd", &with_worktrunk);
     assert!(
         output.status.success(),
         "SessionEnd hook must succeed; {}",
@@ -4382,7 +4439,7 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
 
     // Worktrunk not installed: the marker is optional decoration, so the hook
     // must stay silent rather than fail every prompt (#4007).
-    let output = run_hook("UserPromptSubmit", &repo.root_path().join("no-such-wt.exe"));
+    let output = run_hook("UserPromptSubmit", &without_worktrunk);
     assert!(
         output.status.success(),
         "a hook that cannot find worktrunk must still exit 0 — a nonzero exit is what \
@@ -4396,31 +4453,84 @@ fn test_codex_windows_hook_commands_set_the_marker(repo: TestRepo) {
     );
 }
 
-/// `setlocal` scopes the shim's own writes but still inherits the caller's
-/// environment, and Codex hands each hook the session env snapshot
+/// `wt.sh` assigns `WT` in each of its branches, but on Windows every branch can
+/// be skipped: with neither `git-wt.exe` nor `wt` on PATH it falls out of the
+/// `elif` with `WT` untouched. A hook is handed the caller's whole environment
 /// (`command.env_clear(); command.envs(environment)` in
-/// `codex-rs/hooks/src/engine/command_runner.rs`), so a user's own `WT` arrives
-/// already defined. Unless the shim clears it, the PATH scan it exists to
-/// perform is skipped: `if not defined WT` is false on every iteration, so
-/// `:accept` never runs, `if defined WT goto :run` fires, and the shim executes
-/// whatever the inherited value names — Windows Terminal included, which is the
-/// one binary that block is there to reject.
+/// `codex-rs/hooks/src/engine/command_runner.rs` hands Codex's session snapshot
+/// to each one), so a user's own `WT` arrives already set — and the final
+/// `command -v "$WT"` check then accepts it and runs it, in place of the
+/// worktrunk the script exists to resolve. Windows Terminal is spelled `wt`,
+/// which is exactly the binary the branch above rejects by name.
 #[cfg(windows)]
 #[rstest]
-fn test_shim_ignores_an_inherited_wt(repo: TestRepo) {
+fn test_wt_sh_ignores_an_inherited_wt(repo: TestRepo) {
     use std::os::windows::process::CommandExt;
 
     let shim =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
 
-    // Running the sentinel is the failure this pins, so it records the fact
-    // rather than being detected by its output — the shim's own resolution may
-    // legitimately find a `wt` on the runner's PATH and run that instead.
-    let sentinel = repo.root_path().join("sentinel.cmd");
-    let ran = repo.root_path().join("sentinel-ran.txt");
+    // A PATH with Git on it (so the shim finds bash) and no worktrunk under
+    // either name — the case that leaves `WT` unassigned. The inherited value
+    // names a *real* worktrunk, spelled the way bash can run it, so honoring it
+    // would look exactly like success.
+    let mut cmd = std::process::Command::new("cmd.exe");
+    repo.configure_wt_cmd(&mut cmd);
+    let output = cmd
+        .arg("/C")
+        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
+        .env("PATH", pinned_windows_path(&[]))
+        .env("WT", msys_path(&crate::common::wt_bin()))
+        .env_remove("WORKTRUNK_BIN")
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !output.status.success() && !stdout.contains("wt "),
+        "wt.sh must clear WT and resolve worktrunk itself, not run an inherited one; \
+         got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// `where git.exe` searches the current directory before it searches PATH, and
+/// cmd resolves a bare `git.exe` the same way — so with the lookup unscoped, a
+/// `git.exe` committed to a repo decides which `bash.exe` every prompt,
+/// permission request, stop, and session end runs, since the hook runs with the
+/// user's project as its current directory. `wt.sh` carries no such surface:
+/// `command -v` consults PATH only.
+///
+/// Neither decoy planted here is a valid executable, which is what makes the
+/// shim's choice observable: the version line can only be printed by the real
+/// bash the pinned PATH leads to. Taking the decoy `git.exe` would derive the
+/// `bash.exe` beside it — planted so that the wrong branch *resolves* rather
+/// than falling through to the standard install locations and passing anyway.
+#[cfg(windows)]
+#[rstest]
+fn test_shim_ignores_a_git_in_the_current_directory(repo: TestRepo) {
+    use std::os::windows::process::CommandExt;
+
+    let shim =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
+
+    // The only worktrunk the shim is allowed to find: a real one, in a
+    // directory on the PATH this test pins.
+    let path_dir = repo.root_path().join("path-dir");
+    fs::create_dir_all(&path_dir).unwrap();
+    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
+
+    // ...and the decoys: a `git.exe` in the directory the hook runs from, plus
+    // the `bash.exe` the shim would derive from it (`<cwd>\..\bin\bash.exe`).
+    let project = repo.root_path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("git.exe"), b"not an executable").unwrap();
+    fs::create_dir_all(repo.root_path().join("bin")).unwrap();
     fs::write(
-        &sentinel,
-        format!("@echo off\r\necho ran > \"{}\"\r\n", ran.display()),
+        repo.root_path().join("bin").join("bash.exe"),
+        b"not an executable",
     )
     .unwrap();
 
@@ -4429,69 +4539,9 @@ fn test_shim_ignores_an_inherited_wt(repo: TestRepo) {
     let output = cmd
         .arg("/C")
         .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
-        .env("WT", &sentinel)
-        .env("WT_SEEN", "1")
+        .env("PATH", pinned_windows_path(&[path_dir]))
         .env_remove("WORKTRUNK_BIN")
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    assert!(
-        !ran.exists(),
-        "the shim must clear its own locals and resolve worktrunk itself, not run an \
-         inherited WT; got {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// `where git-wt.exe` searches the current directory before it searches PATH,
-/// and cmd resolves a bare `git-wt.exe` the same way — so with the lookup
-/// unscoped, a `git-wt.exe` (or a `wt.exe`, through the scan below it) committed
-/// to a repo is what every prompt, permission request, stop, and session end
-/// executes, since the hook runs with the user's project as its current
-/// directory. `wt.sh` carries no such surface: `command -v` consults PATH only.
-///
-/// The decoys planted here are not valid executables, which is what makes the
-/// shim's choice observable: had it taken one, cmd could not have run it, so a
-/// version line pins that it resolved through PATH instead. That also exercises
-/// `where`'s `$var:` prefix — a syntax error there would leave `git-wt.exe`
-/// unfound and fall through to the `wt.exe` scan, which finds nothing on the
-/// PATH this test pins.
-#[cfg(windows)]
-#[rstest]
-fn test_shim_ignores_a_binary_in_the_current_directory(repo: TestRepo) {
-    use std::os::windows::process::CommandExt;
-
-    let shim =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
-
-    // The only worktrunk the shim is allowed to find: a real one, in a directory
-    // on the PATH this test pins.
-    let path_dir = repo.root_path().join("path-dir");
-    fs::create_dir_all(&path_dir).unwrap();
-    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
-
-    // ...and the decoys, in the directory the hook runs from.
-    fs::write(repo.root_path().join("git-wt.exe"), b"not an executable").unwrap();
-    fs::write(repo.root_path().join("wt.exe"), b"not an executable").unwrap();
-
-    // System32 stays on PATH: the shim runs `where` and `findstr` from there.
-    let system32 = std::path::PathBuf::from(
-        std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into()),
-    )
-    .join("System32");
-    let path_value = std::env::join_paths([path_dir, system32]).unwrap();
-
-    let mut cmd = std::process::Command::new("cmd.exe");
-    repo.configure_wt_cmd(&mut cmd);
-    let output = cmd
-        .arg("/C")
-        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
-        .env("PATH", &path_value)
-        .env_remove("WORKTRUNK_BIN")
-        .current_dir(repo.root_path())
+        .current_dir(&project)
         .output()
         .unwrap();
 
@@ -4501,8 +4551,8 @@ fn test_shim_ignores_a_binary_in_the_current_directory(repo: TestRepo) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.trim_start().starts_with("wt "),
-        "the shim must resolve worktrunk through PATH, not through the current \
-         directory; got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        "the shim must find git through PATH, not through the current directory; \
+         got {}\nstdout:\n{stdout}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
