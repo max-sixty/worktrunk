@@ -133,24 +133,20 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         .read_to_string(&mut contents)
         .context("failed to read pipeline queue from stdin")?;
 
-    let mut queue: Vec<PipelineSpec> =
+    // Head and tail rather than one list: the head is the spec this process
+    // runs, so the payload can't arrive empty.
+    let (spec, queued): (PipelineSpec, Vec<PipelineSpec>) =
         serde_json::from_str(&contents).context("failed to deserialize pipeline queue")?;
-
-    if queue.is_empty() {
-        return Ok(());
-    }
-    let spec = queue.remove(0);
 
     let repo =
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
-    let head = run_spec(&spec, &repo);
-    let tail = if queue.is_empty() {
-        Ok(())
-    } else {
-        spawn_pipeline_queue(&repo, &queue)
+    let ran = run_spec(&spec, &repo);
+    let handed_on = match queued.split_first() {
+        Some((next, rest)) => spawn_pipeline_queue(&repo, next, rest),
+        None => Ok(()),
     };
-    head.and(tail)
+    ran.and(handed_on)
 }
 
 /// Run one pipeline's steps to completion in `repo`.
@@ -189,22 +185,20 @@ fn run_spec(spec: &PipelineSpec, repo: &Repository) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Spawn a detached `wt hook run-pipeline` process for `queue`.
+/// Spawn a detached `wt hook run-pipeline` process to run `head`, then `rest`.
 ///
-/// The whole queue is piped to the child on stdin; the child runs `queue[0]`
-/// and calls back here with the rest (see the module spec for why the batch is
-/// a queue rather than one process per pipeline). The child's own
-/// stdout/stderr land in `queue[0]`'s `runner.log`, so a spawn failure is
-/// reported by the process that owns the *previous* log — the last place a
-/// reader can still see it.
-///
-/// Callers pass a non-empty queue.
+/// Both are piped to the child on stdin; the child runs `head` and calls back
+/// here with the first of `rest` (see the module spec for why the batch is a
+/// queue rather than one process per pipeline). The child's own stdout/stderr
+/// land in `head`'s `runner.log`, so a spawn failure is reported by the process
+/// that owns the *previous* log — the last place a reader can still see it.
 pub(super) fn spawn_pipeline_queue(
     repo: &Repository,
-    queue: &[PipelineSpec],
+    head: &PipelineSpec,
+    rest: &[PipelineSpec],
 ) -> anyhow::Result<()> {
-    let head = &queue[0];
-    let payload = serde_json::to_vec(queue).context("failed to serialize pipeline queue")?;
+    let payload =
+        serde_json::to_vec(&(head, rest)).context("failed to serialize pipeline queue")?;
     let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
 
     let hook_log = HookLog::hook(head.source, head.hook_type, "runner");
