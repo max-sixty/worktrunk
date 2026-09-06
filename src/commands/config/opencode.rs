@@ -4,6 +4,8 @@
 //! The plugin source (`dev/opencode-plugin.ts`) is embedded in the binary via
 //! `include_str!()` and written under the OpenCode global-config directory (see
 //! `opencode_plugins_dir` for the precedence rules) at `…/plugins/worktrunk.ts`.
+//! That one file exports both plugin shapes OpenCode has shipped, so the same
+//! install works on OpenCode 1 and OpenCode 2.
 
 use std::path::PathBuf;
 
