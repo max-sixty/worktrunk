@@ -5377,6 +5377,26 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
     assert_eq!(json["system"]["exists"], true);
 }
 
+/// A system-config path that exists but cannot be read as a file still leaves
+/// JSON stdout intact and fails the health check.
+#[rstest]
+fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_home: TempDir) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_dir.path());
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["system"]["exists"], true);
+}
+
 /// An unreadable user-level approvals file fails the JSON health-check surface
 /// independently of the current repository.
 #[rstest]
