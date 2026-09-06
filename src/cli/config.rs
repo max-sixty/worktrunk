@@ -599,6 +599,9 @@ Migrations are computed in memory on demand; nothing is written outside this
 command. Set `--output <path>` to write the migration artifact to that
 destination instead of applying it in place. Use `-` for stdout.
 
+Output artifacts omit deprecated `approved-commands`; only in-place updates
+move those entries to `approvals.toml`.
+
 ## Examples
 
 Preview and apply updates:

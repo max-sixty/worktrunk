@@ -3476,6 +3476,40 @@ json-schema = 1
     );
 }
 
+/// File output with no migrations leaves an existing destination untouched.
+#[rstest]
+fn test_config_update_output_file_on_clean_config_preserves_destination(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    let original = r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
+"#;
+    fs::write(config_path, original).unwrap();
+
+    let destination = repo.root_path().join("migrated.toml");
+    fs::write(&destination, "important user data\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output=migrated.toml"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(destination).unwrap(),
+        "important user data\n"
+    );
+    assert_eq!(fs::read_to_string(config_path).unwrap(), original);
+}
+
 /// `wt config update --output=-` emits the migrated TOML to stdout without
 /// touching the config file. Stderr stays empty so the output is pipeable.
 #[rstest]

@@ -115,6 +115,13 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
         return Ok(());
     }
 
+    if candidates.is_empty() {
+        // A clean config has no artifact. Replacing the destination with an
+        // empty file could silently discard user data.
+        eprintln!("{}", info_message("No deprecated settings found"));
+        return Ok(());
+    }
+
     let output = resolve_input_path(output);
     worktrunk::utils::write_atomically(&output, &artifact).with_context(|| {
         format!(
