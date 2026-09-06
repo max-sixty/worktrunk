@@ -2,14 +2,14 @@
 
 Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-| Capability | Claude Code | Codex | OpenCode | Gemini CLI |
-|---|:-:|:-:|:-:|:-:|
-| Configuration skill | ✓ | ✓ |  | ✓ |
-| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ |
-| Worktree isolation | ✓ |  |  |  |
-| `/wt-switch-create` command | ✓ |  |  |  |
+| Capability | Claude Code | Codex | OpenCode | Pi | Gemini CLI |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Configuration skill | ✓ | ✓ |  |  | ✓ |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Worktree isolation | ✓ |  |  |  |  |
+| `/wt-switch-create` command | ✓ |  |  |  |  |
 
-The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks and `/wt-switch-create` needs session working-directory switching — both Claude Code-only, so Codex, OpenCode, Pi, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
 
 ## Installation
 
@@ -46,7 +46,15 @@ To remove the marketplace entry, run `wt config plugins codex uninstall`. Alread
 wt config plugins opencode install
 ```
 
-This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
+This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it. The one file covers both plugin runtimes — OpenCode 2 loads its `setup` export, OpenCode 1.16 and later its `server` export.
+
+### Pi
+
+```bash
+wt config plugins pi install
+```
+
+This writes the activity hook to `~/.omp/agent/hooks/pre/worktrunk.ts`. Named `$OMP_PROFILE` or `$PI_PROFILE` profiles use `~/.omp/profiles/<profile>/agent`, `$PI_CONFIG_DIR` changes the `.omp` config root, and `$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile. `wt config plugins pi uninstall` removes the hook.
 
 ### Gemini CLI
 
@@ -69,7 +77,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The Claude Code, Codex, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
+The Claude Code, Codex, OpenCode, Pi, and Gemini plugins track agent sessions with status markers in `wt list`:
 
 ```console
 $ wt list
@@ -109,8 +117,8 @@ Activity tracking is not plugin-specific. The plugins above only call `wt` on th
 
 Three things to get right:
 
-- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository fails. Where the host pins the working directory elsewhere, pass the global `-C <worktree>`, which moves both the repository lookup and the branch resolution. `--branch <branch>` names the branch on its own, but the repository lookup still comes from the working directory — that, not a missing worktree argument, is why a caller pinned outside the repository needs `-C`. Elsewhere, a command that names a branch ([`wt switch`](https://worktrunk.dev/switch/), [`wt remove`](https://worktrunk.dev/remove/), `wt step diff --branch`) already names the worktree it acts on, and `-C` is for reaching a different repository rather than a different worktree.
-- **Don't let a failed marker call fail the session.** Both `set` and `clear` exit non-zero outside a repository, and hosts differ on what a non-zero hook does. Append `|| true` (or the host's equivalent) to every call unless you want that surfaced.
+- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository silently does nothing. Where the host pins the working directory elsewhere, pass the global `-C <worktree>`, which moves both the repository lookup and the branch resolution. `--branch <branch>` names the branch on its own, but the repository lookup still comes from the working directory — that, not a missing worktree argument, is why a caller pinned outside the repository needs `-C`. Elsewhere, a command that names a branch ([`wt switch`](https://worktrunk.dev/switch/), [`wt remove`](https://worktrunk.dev/remove/), `wt step diff --branch`) already names the worktree it acts on, and `-C` is for reaching a different repository rather than a different worktree.
+- **Don't let a failed marker call fail the session.** Outside a repository both `set` and `clear` do nothing and exit 0, but an invalid `--branch` or a failed git config write still exits non-zero, and hosts differ on what a non-zero hook does. Append `|| true` (or the host's equivalent) to every call unless you want that surfaced.
 - **Clear on exit.** A marker set on session start persists until something clears it, so pair every set with a clear on the host's session-end event — and expect the same stale marker as above if the process is killed first.
 
 ## Worktree isolation (Claude Code only)
