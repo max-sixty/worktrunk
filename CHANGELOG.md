@@ -4,6 +4,8 @@
 
 ### Improved
 
+- **Config migration output names its destination**: `wt config update --output <path>` writes the migration artifact to that file instead of applying it in place, and `--output=-` writes it to stdout. Output mode includes project config when run from a linked worktree. (Breaking: `--print` was removed.)
+
 - **`wt switch --execute` takes a program, not a shell string**: `-x` names one program, with everything after `--` passed as literal argv. Worktrunk spawns it as a child rather than running it in your interactive shell, so shell functions and its `cd` no longer reach you. `-x sh -- -c '…'` recovers shell syntax, not functions. (Breaking: existing `-x` strings, plus `WORKTRUNK_DIRECTIVE_EXEC_FILE` and `WORKTRUNK_SHELL`.) ([#3977](https://github.com/max-sixty/worktrunk/pull/3977), closes [#2860](https://github.com/max-sixty/worktrunk/issues/2860), fixes [#3944](https://github.com/max-sixty/worktrunk/issues/3944), thanks @omgreenfield for testing the migration path)
 
 - **Worktrunk decides tracking for the branches it creates**: a new branch gets an upstream only when its name matches the remote branch it starts from, whatever `branch.autoSetupMerge` says: `--create release --base origin/release` tracks, `--create feature --base origin/release` does not. Under `autoSetupMerge = false` this previously exited 128 after creating the worktree. ([#3913](https://github.com/max-sixty/worktrunk/pull/3913), [#3950](https://github.com/max-sixty/worktrunk/pull/3950), fixes [#3937](https://github.com/max-sixty/worktrunk/issues/3937), thanks @mjakl for reporting and diagnosing)
