@@ -36,13 +36,14 @@ claude plugin install worktrunk@worktrunk
 wt config plugins codex install
 ```
 
-This configures the Worktrunk marketplace in Codex. Then run `/plugins` in Codex and install Worktrunk from the marketplace. Manual equivalent:
+Manual equivalent:
 
 ```bash
 codex plugin marketplace add max-sixty/worktrunk
+codex plugin add worktrunk@worktrunk
 ```
 
-To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins are left unchanged.
+`wt config plugins codex uninstall` removes the plugin and its marketplace entry.
 
 ### OpenCode
 

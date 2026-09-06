@@ -241,27 +241,29 @@ $ wt config plugins pi uninstall
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsCodexCommand {
-    /// Configure the Worktrunk marketplace in Codex
+    /// Install the Worktrunk plugin
     #[command(
-        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
 
 ```console
 $ codex plugin marketplace add max-sixty/worktrunk
+$ codex plugin add worktrunk@worktrunk
 ```
 
-This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#
+Requires `codex` CLI."#
     )]
     Install,
 
-    /// Remove the Worktrunk marketplace from Codex
+    /// Remove the Worktrunk plugin
     #[command(
-        after_long_help = r#"Removes the Worktrunk plugin marketplace from Codex. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Codex and removes its marketplace. Equivalent to:
 
 ```console
+$ codex plugin remove worktrunk@worktrunk
 $ codex plugin marketplace remove worktrunk
 ```
 
-This leaves any already-installed Worktrunk plugin unchanged."#
+Removing the plugin is best-effort — where Codex has no Worktrunk plugin installed, the marketplace is still removed."#
     )]
     Uninstall,
 }

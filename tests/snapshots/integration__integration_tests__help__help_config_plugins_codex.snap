@@ -49,8 +49,8 @@ wt config plugins codex - Codex plugin
 Usage: [1m[36mwt config plugins codex[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36minstall[0m    Configure the Worktrunk marketplace in Codex
-  [1m[36muninstall[0m  Remove the Worktrunk marketplace from Codex
+  [1m[36minstall[0m    Install the Worktrunk plugin
+  [1m[36muninstall[0m  Remove the Worktrunk plugin
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m

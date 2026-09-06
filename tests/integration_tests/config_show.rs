@@ -3907,6 +3907,43 @@ fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempD
     });
 }
 
+/// The marketplace registers but `codex plugin add` fails: the install stops
+/// there rather than reporting a plugin it never installed.
+#[rstest]
+fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugin_not_installed();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Codex has the marketplace but no installed plugin — the state an install
+/// that stopped at the marketplace leaves behind. `codex plugin remove` fails,
+/// and the marketplace removal still happens.
+#[rstest]
+fn test_plugins_codex_uninstall_plugin_not_installed(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugin_not_installed();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[test]
 fn test_codex_plugin_metadata_is_valid_json() {
     let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

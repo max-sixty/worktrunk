@@ -6,7 +6,7 @@ info:
     - config
     - plugins
     - codex
-    - uninstall
+    - install
     - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -57,11 +57,12 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mUninstalling plugin...[39m
-[36m◎[39m [36mRemoving Codex plugin marketplace...[39m
-[32m✓[39m [32mCodex plugin & marketplace removed[39m
+[36m◎[39m [36mAdding Codex plugin marketplace...[39m
+[36m◎[39m [36mInstalling plugin...[39m
+[31m✗[39m [31mcodex plugin add worktrunk@worktrunk failed (exit 1)[39m
+[107m [0m error: plugin add failed

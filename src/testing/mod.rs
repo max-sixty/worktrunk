@@ -2341,9 +2341,9 @@ impl TestRepo {
     /// Setup mock `codex` CLI with plugin marketplace support
     ///
     /// Creates a mock codex binary that handles `plugin marketplace add`,
-    /// and `plugin marketplace remove` commands. Must call
-    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin
-    /// directory.
+    /// `plugin marketplace remove`, `plugin add`, and `plugin remove`
+    /// commands. Must call `setup_mock_ci_tools_unauthenticated()` first to
+    /// create the mock bin directory.
     pub fn setup_mock_codex_with_plugins(&mut self) {
         let mock_bin = self
             .mock_bin_path
@@ -2353,6 +2353,36 @@ impl TestRepo {
         MockConfig::new("codex")
             .command("plugin marketplace add", MockResponse::exit(0))
             .command("plugin marketplace remove", MockResponse::exit(0))
+            .command("plugin add", MockResponse::exit(0))
+            .command("plugin remove", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.codex_installed = true;
+    }
+
+    /// Setup mock `codex` CLI whose marketplace commands succeed and whose
+    /// plugin commands fail
+    ///
+    /// Reproduces a Codex that has the Worktrunk marketplace configured but no
+    /// Worktrunk plugin installed. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_codex_with_plugin_not_installed(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("codex")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command("plugin marketplace remove", MockResponse::exit(0))
+            .command(
+                "plugin add",
+                MockResponse::exit(1).with_stderr("error: plugin add failed\n"),
+            )
+            .command(
+                "plugin remove",
+                MockResponse::exit(1).with_stderr("error: plugin `worktrunk` is not installed\n"),
+            )
             .write(mock_bin);
 
         self.codex_installed = true;
@@ -2387,7 +2417,7 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
-    /// Setup mock `codex` CLI where marketplace commands fail
+    /// Setup mock `codex` CLI where marketplace and plugin commands fail
     ///
     /// Must call `setup_mock_ci_tools_unauthenticated()` first.
     pub fn setup_mock_codex_with_plugins_failing(&mut self) {
@@ -2404,6 +2434,14 @@ impl TestRepo {
             .command(
                 "plugin marketplace remove",
                 MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+            )
+            .command(
+                "plugin add",
+                MockResponse::exit(1).with_stderr("error: plugin add failed\n"),
+            )
+            .command(
+                "plugin remove",
+                MockResponse::exit(1).with_stderr("error: plugin remove failed\n"),
             )
             .write(mock_bin);
 
