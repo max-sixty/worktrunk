@@ -3926,14 +3926,20 @@ fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: Te
 }
 
 /// The `?` preview lists exactly the commands each Codex plugin subcommand
-/// runs, so the confirmation the user answers matches what follows it.
+/// runs, so the confirmation the user answers matches what follows it — and
+/// declining runs none of them.
 #[rstest]
 fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::mock_calls;
     use std::io::Write as _;
     use std::process::Stdio;
 
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_codex_with_plugins();
+
+    // Outside the repo: a call log in the working tree would leave an
+    // untracked file behind the command under test.
+    let call_log = TempDir::new().unwrap();
 
     for (action, expected) in [
         (
@@ -3954,6 +3960,7 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
         let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "codex", action])
             .current_dir(repo.root_path())
+            .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -3978,6 +3985,12 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
             .filter_map(|line| line.find("codex ").map(|i| line[i..].trim_end()))
             .collect();
         assert_eq!(previewed, expected, "{action} preview: {stderr}");
+        // The preview is only a preview: declining must leave codex unspawned.
+        let calls = mock_calls(call_log.path(), "codex");
+        assert!(
+            calls.is_empty(),
+            "declining {action} must spawn no codex: {calls:#?}"
+        );
     }
 }
 
@@ -4585,6 +4598,7 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
             .env("WORKTRUNK_BIN", crate::common::wt_bin())
             .env("CLAUDE_PLUGIN_ROOT", root.join("plugins/worktrunk"))
             .current_dir(repo.root_path())
+            .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
