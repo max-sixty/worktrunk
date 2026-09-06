@@ -3510,6 +3510,35 @@ json-schema = 1
     assert_eq!(fs::read_to_string(config_path).unwrap(), original);
 }
 
+/// File output reports the destination when its parent directory is missing.
+#[rstest]
+fn test_config_update_output_file_surfaces_write_failure(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "config",
+            "update",
+            "--output=missing-directory/migrated.toml",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to write output @")
+            && stderr.contains("missing-directory/migrated.toml"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
 /// `wt config update --output=-` emits the migrated TOML to stdout without
 /// touching the config file. Stderr stays empty so the output is pipeable.
 #[rstest]
