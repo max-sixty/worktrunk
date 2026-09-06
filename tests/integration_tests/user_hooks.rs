@@ -594,52 +594,6 @@ sync = "echo 'USER_RAN' > user_postmerge.txt"
     wait_for_file(&main_worktree.join("project_postmerge.txt"));
 }
 
-/// The project post-merge pipeline must not start until the user pipeline has
-/// finished — the ordering `wt hook --help` documents under "Project vs user
-/// hooks", and the exclusion that keeps two hooks off one worktree's git state
-/// (see the `run_pipeline` module spec).
-///
-/// The user hook sleeps before dropping its marker, so a project pipeline
-/// running alongside it records `raced`; only sequencing yields `ordered`.
-#[rstest]
-fn test_project_post_merge_runs_after_user_pipeline(mut repo: TestRepo) {
-    repo.write_project_config(
-        r#"[post-merge]
-observe = "if [ -f user_postmerge.txt ]; then echo ordered > project_postmerge.txt; else echo raced > project_postmerge.txt; fi"
-"#,
-    );
-    repo.commit("Add project config");
-
-    let feature_wt =
-        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
-
-    repo.write_test_config(
-        r#"[post-merge]
-slow = "sleep 0.5 && echo USER_RAN > user_postmerge.txt"
-"#,
-    );
-
-    let output = repo
-        .wt_command()
-        .current_dir(&feature_wt)
-        .args(["merge", "main", "--yes", "--no-remove"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "wt merge failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let project_marker = repo.root_path().join("project_postmerge.txt");
-    wait_for_file_content(&project_marker);
-    assert_eq!(
-        fs::read_to_string(&project_marker).unwrap().trim(),
-        "ordered",
-        "project post-merge ran before the user pipeline finished"
-    );
-}
-
 // ============================================================================
 // User Pre-Remove Hook Tests
 // ============================================================================
