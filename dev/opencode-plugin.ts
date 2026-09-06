@@ -9,8 +9,10 @@
 //
 // One file, two plugin runtimes. OpenCode 2 decodes the default export as
 // `{ id, setup }` and loads nothing else — the bare default-exported function
-// this file used to be is rejected without a message. OpenCode 1 (1.17+) reads
-// `{ id, server }` and never looks at `setup`. Both ignore the other's key, so
+// this file used to be is rejected without a message. OpenCode 1 reads
+// `{ id, server }` and never looks at `setup`; 1.16 is the floor that matters,
+// where the host began filtering events per plugin instance (the object shape
+// itself loads as far back as 1.14.19). Both ignore the other's key, so
 // a single installed file works either side of the version boundary.
 //
 // The types below are declared locally rather than imported from
@@ -98,15 +100,17 @@ function setup(context: SetupContext) {
   };
 }
 
-// --- OpenCode 1 (1.17+) -----------------------------------------------------
+// --- OpenCode 1 (1.16+) -----------------------------------------------------
 
 type ServerInput = { directory: string };
 type HookInput = { event: { type: string } };
 
 function server({ directory }: ServerInput) {
   return {
-    // OpenCode 1 filters events to this plugin's directory before calling the
-    // hook, so there is nothing to match on here.
+    // OpenCode 1.16+ filters events to this plugin's directory before calling
+    // the hook, so there is nothing to match on here. 1.15.x does not — it fans
+    // every bus event to every plugin instance — so the marker there follows the
+    // worktree the instance was created for, whichever session is active.
     event: async ({ event }: HookInput) => {
       switch (event.type) {
         case "session.status":

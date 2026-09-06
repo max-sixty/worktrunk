@@ -50,7 +50,7 @@ To remove the marketplace entry, run `wt config plugins codex uninstall`. Alread
 wt config plugins opencode install
 ```
 
-This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it. The one file covers both plugin runtimes — OpenCode 2 loads its `setup` export, OpenCode 1.17 and later its `server` export.
+This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it. The one file covers both plugin runtimes — OpenCode 2 loads its `setup` export, OpenCode 1.16 and later its `server` export.
 
 ### Gemini CLI
 
