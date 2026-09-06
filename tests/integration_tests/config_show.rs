@@ -4648,6 +4648,63 @@ fn test_shim_ignores_a_where_in_the_current_directory(repo: TestRepo) {
     );
 }
 
+/// The two scoping tests above see only the *wrong* bash: they go red because
+/// the shim picks a decoy. Neither sees a lookup that finds nothing at all — a
+/// mis-quoted `for /f`, a `where` spelling cmd cannot run — because the shim
+/// then falls through to `%ProgramFiles%\Git\bin\bash.exe`, which resolves on
+/// any Windows box, and every assertion still holds. So the derive branch is
+/// the one route to a bash that nothing observes.
+///
+/// This takes the fallbacks away: `ProgramFiles` and `LOCALAPPDATA` point at an
+/// empty directory, leaving `:derive` as the only way to a bash, so the
+/// `%SystemRoot%\System32\where.exe` line has to return the Git install — under
+/// the quoting `for /f` wraps it in — for the shim to reach `wt.sh` at all.
+///
+/// Both variables reach a real hook: Codex's strictest `inherit = "core"`
+/// policy keeps `SYSTEMROOT`, `PROGRAMFILES` and `LOCALAPPDATA`
+/// (`WINDOWS_CORE_ENV_VARS` in `codex-rs/protocol/src/shell_environment.rs`),
+/// and `scrub_non_inheritable_env_vars` drops only auth-token names.
+#[cfg(windows)]
+#[rstest]
+fn test_shim_derives_bash_from_the_git_on_path(repo: TestRepo) {
+    use std::os::windows::process::CommandExt;
+
+    let shim =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugins/worktrunk/hooks/wt.cmd");
+
+    // The only worktrunk the shim is allowed to find: a real one, in a
+    // directory on the PATH this test pins.
+    let path_dir = repo.root_path().join("path-dir");
+    fs::create_dir_all(&path_dir).unwrap();
+    fs::copy(crate::common::wt_bin(), path_dir.join("git-wt.exe")).unwrap();
+
+    // Where the two standard-install fallbacks now point: no Git under either.
+    let no_git = repo.root_path().join("no-git");
+    fs::create_dir_all(&no_git).unwrap();
+
+    let mut cmd = std::process::Command::new("cmd.exe");
+    repo.configure_wt_cmd(&mut cmd);
+    let output = cmd
+        .arg("/C")
+        .raw_arg(format!("\"\"{}\" --version\"", shim.display()))
+        .env("PATH", pinned_windows_path(&[path_dir]))
+        .env("ProgramFiles", &no_git)
+        .env("LOCALAPPDATA", &no_git)
+        .env_remove("WORKTRUNK_BIN")
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.trim_start().starts_with("wt "),
+        "the shim must derive Git Bash from the git.exe PATH names, with no install \
+         default left to fall back on; got {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Claude hands each hook `command` to the user's LOGIN shell, which parses the
 /// whole line before the leading `bash …` ever launches. The command must
 /// therefore parse cleanly under fish, zsh, and bash — fish in particular
