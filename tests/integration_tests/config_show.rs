@@ -134,6 +134,28 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
     assert!(stdout.contains("approvals.toml"), "stdout:\n{stdout}");
 }
 
+/// A valid approvals file with every configured command approved is healthy
+/// and does not need an APPROVALS section in the text report.
+#[rstest]
+fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
+    repo.write_project_config("pre-start = \"npm install\"\n");
+    let project = repo.repo.project_identifier().unwrap();
+    let project = toml::Value::String(project).to_string();
+    fs::write(
+        repo.test_approvals_path(),
+        format!("[projects.{project}]\napproved-commands = [\"npm install\"]\n"),
+    )
+    .unwrap();
+
+    let output = repo.wt_command().args(["config", "show"]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(!stdout.contains("APPROVALS"), "stdout:\n{stdout}");
+    assert!(!stdout.contains("awaiting approval"), "stdout:\n{stdout}");
+}
+
 // ==================== System Config Tests ====================
 
 #[rstest]
