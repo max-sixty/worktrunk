@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
+use serde::de::DeserializeOwned;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
@@ -168,6 +169,16 @@ fn handle_config_show_json() -> anyhow::Result<()> {
 
     let system_path = system_config_path().or_else(default_system_config_path);
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
+    let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
+        let contents =
+            std::fs::read_to_string(path).context("Failed to read system config file")?;
+        config_parse_error::<UserConfig>(&contents).is_some()
+    } else {
+        false
+    };
+    let approvals_invalid = repo
+        .as_ref()
+        .is_some_and(|repo| matches!(pending_approvals(repo), PendingApprovals::Invalid(_)));
 
     let output = serde_json::json!({
         "user": {
@@ -191,9 +202,11 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "exists": system_exists,
         },
     });
-    let invalid = repo
-        .as_ref()
-        .is_some_and(|repo| validate_column_selection(repo).is_err());
+    let invalid = system_invalid
+        || approvals_invalid
+        || repo
+            .as_ref()
+            .is_some_and(|repo| validate_column_selection(repo).is_err());
     print_json(&output)?;
 
     if invalid {
@@ -677,7 +690,7 @@ fn render_system_config(out: &mut String, project: Option<&str>) -> anyhow::Resu
 
     // Validate config (syntax + schema) and warn if invalid
     let mut invalid = false;
-    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
+    if let Some(e) = config_parse_error::<UserConfig>(&contents) {
         invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
@@ -765,7 +778,7 @@ fn render_user_config(
     }
 
     // Validate config (syntax + schema) and warn if invalid
-    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
+    if let Some(e) = config_parse_error::<UserConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
@@ -825,14 +838,17 @@ fn validate_column_selection(repo: &Repository) -> anyhow::Result<()> {
         &config.list.custom_columns,
         repo,
     )?;
-    if !config.list.columns.is_empty() {
-        let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
-        crate::commands::list::columns::parse_selected_columns(
-            &config.list.columns,
-            &custom_names,
-        )?;
-    }
+    let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
+    crate::commands::list::columns::parse_selected_columns(&config.list.columns, &custom_names)?;
     Ok(())
+}
+
+/// Return the schema or syntax error for one raw config source.
+///
+/// Text and JSON diagnostics share this predicate so both formats answer the
+/// same question when a source file cannot be deserialized.
+fn config_parse_error<C: DeserializeOwned>(contents: &str) -> Option<toml::de::Error> {
+    toml::from_str::<C>(contents).err()
 }
 
 /// Format warnings for unknown config keys in `raw_contents`.
@@ -1024,7 +1040,7 @@ fn render_project_config(
     };
 
     // Validate config (syntax + schema) and warn if invalid
-    if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
+    if let Some(e) = config_parse_error::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
@@ -1043,7 +1059,7 @@ fn render_project_config(
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
-    render_pending_approvals(out, repo)?;
+    invalid |= render_pending_approvals(out, repo)?;
 
     Ok(invalid)
 }
@@ -1159,38 +1175,66 @@ fn optional_row(key: &str, value: Option<&str>) -> String {
     }
 }
 
-/// Report project commands the approval gate has yet to clear.
+/// Report project commands the approval gate has yet to clear, or an approval
+/// file the gate cannot read. Returns true when the approval state is invalid.
 ///
 /// The commands above are listed as configuration, which reads as "these
 /// run" — but a freshly cloned repository's hooks stop at the approval prompt
 /// the first time one fires, and until then nothing in `config show` said so.
 /// State, not an action, so `○`; the count alone, since `wt config approvals
 /// list` is the surface that itemizes them.
-fn render_pending_approvals(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let Ok(project_id) = repo.project_identifier() else {
-        return Ok(());
-    };
-    let Ok(approvals) = worktrunk::config::Approvals::load() else {
-        return Ok(());
-    };
+fn render_pending_approvals(out: &mut String, repo: &Repository) -> anyhow::Result<bool> {
+    match pending_approvals(repo) {
+        PendingApprovals::NotApplicable => Ok(false),
+        PendingApprovals::Invalid(err) => {
+            writeln!(out, "{}", error_message("Invalid approvals"))?;
+            writeln!(out, "{}", format_with_gutter(&err, None))?;
+            Ok(true)
+        }
+        PendingApprovals::Pending(pending) => {
+            let plural = if pending == 1 { "command" } else { "commands" };
+            let status = info_message(format!("{pending} project {plural} awaiting approval"));
+            writeln!(out, "{status}")?;
+            let hint = hint_message(cformat!(
+                "To review, run <underline>wt config approvals list</>"
+            ));
+            writeln!(out, "{hint}")?;
+            Ok(false)
+        }
+    }
+}
+
+enum PendingApprovals {
+    NotApplicable,
+    Invalid(String),
+    Pending(usize),
+}
+
+/// Resolve the approval state used by both text and JSON diagnostics.
+fn pending_approvals(repo: &Repository) -> PendingApprovals {
     let Ok(Some(project_config)) = repo.load_project_config() else {
-        return Ok(());
+        return PendingApprovals::NotApplicable;
     };
-    let pending = super::approvals::collect_approvable_commands(&project_config)
+    let commands = super::approvals::collect_approvable_commands(&project_config);
+    if commands.is_empty() {
+        return PendingApprovals::NotApplicable;
+    }
+    let Ok(project_id) = repo.project_identifier() else {
+        return PendingApprovals::NotApplicable;
+    };
+    let approvals = match worktrunk::config::Approvals::load() {
+        Ok(approvals) => approvals,
+        Err(err) => return PendingApprovals::Invalid(err.to_string()),
+    };
+    let pending = commands
         .into_iter()
         .filter(|cmd| !approvals.is_command_approved(&project_id, &cmd.command.template))
         .count();
     if pending == 0 {
-        return Ok(());
+        PendingApprovals::NotApplicable
+    } else {
+        PendingApprovals::Pending(pending)
     }
-    let plural = if pending == 1 { "command" } else { "commands" };
-    let status = info_message(format!("{pending} project {plural} awaiting approval"));
-    writeln!(out, "{status}")?;
-    let hint = hint_message(cformat!(
-        "To review, run <underline>wt config approvals list</>"
-    ));
-    writeln!(out, "{hint}")?;
-    Ok(())
 }
 
 /// Emit the "fish integration found in deprecated location" notice plus the

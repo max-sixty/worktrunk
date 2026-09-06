@@ -119,17 +119,20 @@ fn test_config_show_without_project_identifier_uses_global_worktree_path() {
     assert!(!stdout.contains("awaiting approval"), "stdout:\n{stdout}");
 }
 
-/// An unreadable approvals state must not make `config show` itself fail; the
-/// approvals command owns diagnostics for that separate file.
+/// An unreadable approvals state makes project commands unsafe to run, so the
+/// diagnostic reports it and exits non-zero.
 #[rstest]
-fn test_config_show_ignores_invalid_approvals_file(repo: TestRepo) {
+fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
     repo.write_project_config("pre-start = \"npm install\"\n");
     fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
 
     let output = repo.wt_command().args(["config", "show"]).output().unwrap();
 
-    assert!(output.status.success());
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("awaiting approval"));
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(stdout.contains("Invalid approvals"), "stdout:\n{stdout}");
+    assert!(stdout.contains("approvals.toml"), "stdout:\n{stdout}");
 }
 
 // ==================== System Config Tests ====================
@@ -5351,6 +5354,45 @@ fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert!(output.stderr.is_empty());
+}
+
+/// JSON keeps its machine-readable report but fails the same health check as
+/// text when the organization-wide config cannot be parsed.
+#[rstest]
+fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "invalid = [toml\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["system"]["exists"], true);
+}
+
+/// An unreadable approvals file also fails the JSON health-check surface when
+/// the current project has commands whose approval state is required.
+#[rstest]
+fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
+    repo.write_project_config("pre-start = \"npm install\"\n");
+    fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
 }
 
 #[rstest]
