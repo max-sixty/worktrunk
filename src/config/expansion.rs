@@ -297,6 +297,12 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
+/// Cheap vars `build_hook_context` computes regardless of [`VarScope`] but
+/// which can still come out absent, so their absence is `(unset)` — a fact
+/// about the worktree — rather than `(unused)`, which claims the scope gate
+/// skipped the work. `branch` is absent in a detached worktree.
+const ALWAYS_COMPUTED_VARS: &[&str] = &["branch"];
+
 /// Shared formatter for [`format_hook_variables`] and [`format_alias_variables`].
 ///
 /// Renders `vars` as an aligned `name = value` block — no heading, no indent,
@@ -307,14 +313,18 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// When `referenced` is `Some`, vars absent from `ctx` *and* not in the set
 /// render as dim `(unused)` — `build_hook_context` only skips computation for
 /// expensive vars, so this fires precisely when the gate saved real work.
-/// Cheap vars are populated unconditionally and always show their value, even
-/// when the body doesn't reference them. `(unset)` is reserved for the
-/// distinct case of a referenced var the operation couldn't supply.
+/// Cheap vars are populated unconditionally, so they show their value even
+/// when the body doesn't reference them — though a cheap var can still come
+/// out absent. `(unset)` is reserved for the distinct case of a var the
+/// operation couldn't supply — including [`ALWAYS_COMPUTED_VARS`], the cheap
+/// vars that are computed whatever the scope but can still be genuinely
+/// absent.
 ///
-/// `(unset)` relies on an invariant in `build_hook_context`: optional vars
-/// are omitted from the map rather than inserted as empty strings. If a
-/// future caller starts inserting `""`, revisit the empty-vs-absent
-/// distinction here.
+/// `(unset)` relies on an invariant in `build_hook_context` that the
+/// `extra_vars` layered on top must hold too (see
+/// `PostRemoveContext::extra_vars`): optional vars are omitted from the map
+/// rather than inserted as empty strings. If a future caller starts inserting
+/// `""`, revisit the empty-vs-absent distinction here.
 fn format_variables_table(
     vars: &[&'static str],
     ctx: &TemplateContext,
@@ -324,7 +334,9 @@ fn format_variables_table(
     vars.iter()
         .map(|var| match ctx.get(var) {
             Some(value) => format!("{var:<max_name$} = {value}"),
-            None if !scope.wants(var) => cformat!("<dim>{var:<max_name$} = (unused)</>"),
+            None if !scope.wants(var) && !ALWAYS_COMPUTED_VARS.contains(var) => {
+                cformat!("<dim>{var:<max_name$} = (unused)</>")
+            }
             None => format!("{var:<max_name$} = (unset)"),
         })
         .collect::<Vec<_>>()
@@ -1185,8 +1197,8 @@ pub fn expand_template_with(
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
 
     // Inject vars data as a nested object: {{ vars.env }}, {{ vars["env"] }},
-    // {{ vars.config.port }}. When branch is present, always inject (even if
-    // empty map) so {{ vars.key | default(...) }} works in SemiStrict mode.
+    // {{ vars.config.port }}. Always inject (even as an empty map) so
+    // {{ vars.key | default(...) }} works in SemiStrict mode.
     // Only look up vars data if the parsed template references the top-level
     // `vars` object (avoids a git process spawn per expansion while supporting
     // every MiniJinja access form without false positives from literal text).
@@ -1201,12 +1213,18 @@ pub fn expand_template_with(
                 );
             }
             VarsMode::Resolve => {
-                if let Some(branch) = vars.get("branch") {
-                    context.insert(
-                        "vars".to_string(),
-                        vars_map_to_value(&repo.vars_entries(branch)),
-                    );
-                }
+                // A detached worktree leaves `branch` unset, and per-branch
+                // vars are keyed by branch — so there are none. Insert the
+                // empty map rather than nothing, so `{{ vars.key |
+                // default(…) }}` still renders under SemiStrict instead of
+                // erroring on an undefined `vars` (same reason
+                // `list::custom_columns` injects an empty map for a
+                // branchless row).
+                let entries = vars
+                    .get("branch")
+                    .map(|branch| repo.vars_entries(branch))
+                    .unwrap_or_default();
+                context.insert("vars".to_string(), vars_map_to_value(&entries));
             }
         }
     }
@@ -2734,17 +2752,20 @@ mod tests {
         let test = test_repo();
         let vars = HashMap::new(); // No branch var
 
-        // vars should be undefined (no branch to look up)
+        // A detached worktree leaves `branch` unset, and per-branch vars are
+        // keyed by branch — so there are none. `vars` is still the empty map
+        // rather than undefined, so `default` fires on the missing key instead
+        // of erroring on the missing object under SemiStrict.
         assert_eq!(
             expand_template(
-                "{{ vars | default('none') }}",
+                "{{ vars.env | default('dev') }}",
                 &vars,
                 ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
             .unwrap(),
-            "none"
+            "dev"
         );
     }
 

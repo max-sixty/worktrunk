@@ -543,6 +543,75 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+/// A user config that doesn't parse must fail these commands *legibly*.
+///
+/// `UserConfig::load()`'s error is `LoadError::File`'s multi-line Display —
+/// the header plus the TOML parser's caret diagram — flattened into a
+/// `ConfigError` string. Propagated bare with `?`, it reaches anyhow with no
+/// context and no cause chain, which is the one shape `main.rs`'s renderer
+/// has no arm for: it trips that function's `debug_assert!`, so a debug build
+/// panics with exit 101 instead of erroring. A release build still prints the
+/// parse detail in the gutter — what it loses is the header, which becomes a
+/// bare `✗ Command failed` naming neither the config nor the file.
+/// `.context("Failed to load config")` — what 7 of the 22 `UserConfig::load()`
+/// call sites already did, and what all 13 propagating ones do after this —
+/// gives the renderer that header back.
+///
+/// One case per fixed call site, because the `debug_assert!` only fires on a
+/// path something exercises: an uncovered site is one where a future bare `?`
+/// regresses silently. `config show --format json` is the sharpest of them —
+/// the text form of that same command renders a full diagnosis of this exact
+/// file.
+#[rstest]
+#[case::config_show_json(&["config", "show", "--format=json"])]
+#[case::step_prune(&["step", "prune", "--dry-run"])]
+#[case::step_relocate(&["step", "relocate", "--dry-run"])]
+#[case::step_eval(&["step", "eval", "{{ branch }}"])]
+#[case::step_for_each(&["step", "for-each", "--", "true"])]
+#[case::config_show_full(&["config", "show", "--full"])]
+fn test_unparsable_user_config_errors_legibly(
+    repo: TestRepo,
+    temp_home: TempDir,
+    #[case] args: &[&str],
+) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "invalid = [toml\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(args).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    // `config show --full` reaches its `UserConfig::load()` after the version
+    // check, so inject the version the way the other `--full` tests do rather
+    // than letting the case call GitHub. The other cases ignore it.
+    cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // 101 is the debug_assert panic; 1 is the error this should be.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{args:?} should fail cleanly, not panic; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "{args:?} panicked; stderr:\n{stderr}"
+    );
+    // The header the renderer needs, and the parse detail it would otherwise
+    // have replaced with "Command failed".
+    assert!(
+        stderr.contains("Failed to load config"),
+        "{args:?} should name what failed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("unclosed array"),
+        "{args:?} should carry the parser's own diagnosis; stderr:\n{stderr}"
+    );
+}
+
 /// Test that `config show` displays invalid system config with error details
 #[rstest]
 fn test_config_show_invalid_system_config(mut repo: TestRepo, temp_home: TempDir) {
@@ -2284,6 +2353,43 @@ fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: Temp
 }
 
 #[rstest]
+#[case(None, "Plugin not installed")]
+#[case(Some("// outdated plugin content\n"), "Plugin outdated")]
+#[case(Some(include_str!("../../dev/pi-plugin.ts")), "Plugin installed")]
+fn test_config_show_pi_plugin_status(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] plugin_content: Option<&str>,
+    #[case] expected_status: &str,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    if let Some(content) = plugin_content {
+        fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+        fs::write(&plugin_path, content).unwrap();
+    }
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "show"]).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+
+    let output = cmd.output().expect("config show should run");
+    assert!(output.status.success(), "config show failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PI"), "missing Pi section: {stdout}");
+    assert!(
+        stdout.contains(expected_status),
+        "missing Pi status: {stdout}"
+    );
+}
+
+#[rstest]
 fn test_config_show_gemini_available_extension_not_installed(
     mut repo: TestRepo,
     temp_home: TempDir,
@@ -2378,7 +2484,7 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
 /// override the harness sets, so the production `which::which` PATH lookup is
 /// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
 /// and prepends real mock executables, so this single run covers the
-/// PATH-detection path for all four AI CLIs at once.
+/// PATH-detection path for all five AI CLIs at once.
 #[rstest]
 fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -2630,6 +2736,165 @@ fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
         plugin_path.exists(),
         "Plugin should still exist when uninstall prompt is declined"
     );
+}
+
+// =============================================================================
+// Pi plugin install/uninstall
+// =============================================================================
+
+#[rstest]
+fn test_pi_install_creates_profile_aware_hook(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("OMP_PROFILE", "research");
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join(".omp/profiles/research/agent/hooks/pre/worktrunk.ts");
+    let content = fs::read_to_string(&plugin_path).expect("Pi hook should be installed");
+    assert!(content.contains("agent_start"));
+    assert!(content.contains("agent_end"));
+    assert!(content.contains("session_shutdown"));
+}
+
+#[rstest]
+fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-pi-agent");
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(agent_dir.join("hooks/pre/worktrunk.ts").exists());
+}
+
+#[rstest]
+fn test_pi_named_profile_ignores_agent_dir_override(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join("custom-pi-agent");
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("OMP_PROFILE", "research");
+    cmd.env("PI_CODING_AGENT_DIR", &agent_dir);
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(!agent_dir.join("hooks/pre/worktrunk.ts").exists());
+    assert!(
+        temp_home
+            .path()
+            .join(".omp/profiles/research/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_pi_install_honors_pi_profile_and_config_dir(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env_remove("OMP_PROFILE");
+    cmd.env("PI_PROFILE", "research");
+    cmd.env("PI_CONFIG_DIR", ".pi-config");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        temp_home
+            .path()
+            .join(".pi-config/profiles/research/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_pi_install_is_idempotent(temp_home: TempDir) {
+    for _ in 0..2 {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+        let output = cmd.output().expect("install command should run");
+        assert!(output.status.success(), "install failed: {output:?}");
+    }
+
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    assert_eq!(
+        fs::read_to_string(plugin_path).unwrap(),
+        include_str!("../../dev/pi-plugin.ts")
+    );
+}
+
+#[rstest]
+fn test_pi_install_prompt_declined(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "pi", "install"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        !temp_home
+            .path()
+            .join(".omp/agent/hooks/pre/worktrunk.ts")
+            .exists()
+    );
+}
+
+#[rstest]
+fn test_pi_uninstall_removes_hook(temp_home: TempDir) {
+    let agent_dir = temp_home.path().join(".omp/agent");
+    let plugin_path = agent_dir.join("hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(!plugin_path.exists());
+}
+
+#[rstest]
+fn test_pi_uninstall_missing_is_a_no_op(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+    let output = cmd.output().expect("uninstall command should run");
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+}
+
+#[rstest]
+fn test_pi_uninstall_prompt_declined(temp_home: TempDir) {
+    let plugin_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+    fs::write(&plugin_path, include_str!("../../dev/pi-plugin.ts")).unwrap();
+
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "plugins", "pi", "uninstall"]);
+
+    let output = cmd.output().expect("uninstall command should run");
+    assert!(output.status.success(), "uninstall failed: {output:?}");
+    assert!(plugin_path.exists());
 }
 
 /// When $SHELL is not set but PSModulePath is, config show should display
