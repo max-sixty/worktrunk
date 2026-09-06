@@ -3445,11 +3445,12 @@ fn test_config_update_output_file_rejects_multiple_configs(repo: TestRepo) {
         fs::read_to_string(repo.root_path().join("migrated.toml")).unwrap(),
         "important user data\n"
     );
+    let stderr = String::from_utf8_lossy(&file_output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
-        String::from_utf8_lossy(&file_output.stderr)
-            .contains("Cannot write multiple migrated configs to one file"),
-        "unexpected stderr: {}",
-        String::from_utf8_lossy(&file_output.stderr)
+        stderr.contains("Cannot write user config and project config migrations to one file"),
+        "unexpected stderr: {stderr}"
     );
     assert_eq!(fs::read_to_string(user_config_path).unwrap(), user_original);
     assert_eq!(

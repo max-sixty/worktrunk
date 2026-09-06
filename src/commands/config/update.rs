@@ -117,9 +117,9 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
     }
 
     if !stdout && candidates.len() > 1 {
-        bail!(
-            "Cannot write multiple migrated configs to one file; use --output=- to inspect them or run wt config update to apply them in place"
-        );
+        bail!(cformat!(
+            "Cannot write <bold>user config</> and <bold>project config</> migrations to one file; use <bold>--output=-</> to inspect both or run <bold>wt config update</> to apply them in place"
+        ));
     }
 
     let artifact = format_migrated_output(candidates);
