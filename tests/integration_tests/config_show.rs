@@ -5453,11 +5453,48 @@ fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     assert!(json["user"]["config"].is_null());
 }
 
+/// A user source that exists but is not readable as UTF-8 cannot be silently
+/// skipped by the merged loader.
+#[rstest]
+fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
+    fs::write(repo.test_config_path(), [0xff]).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["exists"], true);
+    assert!(json["user"]["config"].is_null());
+}
+
 /// Invalid project config likewise keeps the JSON envelope and reports that
 /// the source exists even though it could not be deserialized.
 #[rstest]
 fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     repo.write_project_config("invalid = [toml\n");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["project"]["exists"], true);
+    assert!(json["project"]["config"].is_null());
+}
+
+/// An unreadable on-disk project source is also invalid even if the resolved
+/// config loader degrades it to an absent layer.
+#[rstest]
+fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
+    repo.write_project_config("");
+    fs::write(repo.root_path().join(".config/wt.toml"), [0xff]).unwrap();
 
     let output = repo
         .wt_command()

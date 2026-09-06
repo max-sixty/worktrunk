@@ -149,11 +149,16 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
-        match UserConfig::load() {
-            Ok(config) => Some(serde_json::to_value(&config)?),
-            Err(_) => {
-                invalid = true;
-                None
+        if std::fs::read_to_string(&user_path).is_err() {
+            invalid = true;
+            None
+        } else {
+            match UserConfig::load() {
+                Ok(config) => Some(serde_json::to_value(&config)?),
+                Err(_) => {
+                    invalid = true;
+                    None
+                }
             }
         }
     } else {
@@ -162,14 +167,23 @@ fn handle_config_show_json() -> anyhow::Result<()> {
 
     let (project_path, project_exists, project_config, project_identifier) =
         if let Some(repo) = repo.as_ref() {
-            let config = match repo.load_project_config() {
-                Ok(config) => config,
-                Err(_) => {
-                    invalid = true;
-                    None
+            let on_disk = repo.project_config_path()?;
+            let on_disk_unreadable = on_disk
+                .as_ref()
+                .filter(|path| path.exists())
+                .is_some_and(|path| std::fs::read_to_string(path).is_err());
+            let config = if on_disk_unreadable {
+                invalid = true;
+                None
+            } else {
+                match repo.load_project_config() {
+                    Ok(config) => config,
+                    Err(_) => {
+                        invalid = true;
+                        None
+                    }
                 }
             };
-            let on_disk = repo.project_config_path()?;
             let object_store = match &on_disk {
                 Some(path) if path.exists() => None,
                 _ => repo.default_branch_project_config_content(),
