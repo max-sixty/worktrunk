@@ -74,7 +74,7 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "commands/configure_shell.rs",
     // JSON output for wt switch --format=json
     "commands/worktree/switch.rs",
-    // Migrated TOML output for wt config update --print (pipeable)
+    // Migrated TOML output for wt config update --output=- (pipeable)
     "commands/config/update.rs",
     // Hook listing for wt hook show (paged), and the wt hook --dry-run preview
     "commands/hook_commands.rs",
@@ -574,7 +574,7 @@ fn test_stdout_surfaces_survive_a_closed_consumer(repo: TestRepo) {
         &["list", "--full"][..],
         &["list", "statusline"][..],
         &["list", "--format=json"][..],
-        &["config", "update", "--print"][..],
+        &["config", "update", "--output=-"][..],
     ] {
         let mut command = repo.wt_command();
         let mut child = command

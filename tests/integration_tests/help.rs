@@ -103,6 +103,7 @@ fn test_merge_help_describes_exact_shape_no_rebase() {
 #[case("help_config_shell", "config shell --help")]
 #[case("help_config_create", "config create --help")]
 #[case("help_config_show", "config show --help")]
+#[case("help_config_update", "config update --help")]
 #[case("help_config_plugins", "config plugins --help")]
 #[case("help_config_plugins_codex", "config plugins codex --help")]
 #[case(

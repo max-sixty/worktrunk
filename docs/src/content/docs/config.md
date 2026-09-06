@@ -921,12 +921,14 @@ currently `[list] json-schema = 2` — so the switch happens as a reviewed confi
 edit rather than at upgrade. Shows a diff and asks for confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
-command. Use `--print` to see the migrated TOML without touching any file.
+command. Set `--output <path>` to write a migrated config to that destination
+instead of applying it in place. Use `-` for stdout. When both user and project
+config need migration, stdout emits a labeled inspection artifact and file
+output fails rather than combining the configs.
 
-`--print` writes no `approvals.toml` either, so the `[projects]`
-`approved-commands` arrays the migration moves there are dropped from the
-printed config. It names them on stderr first, leaving stdout pipeable —
-redirecting it over the config file would lose those approvals.
+Output artifacts omit deprecated `approved-commands` and name the affected
+projects on stderr; only in-place updates move those entries to
+`approvals.toml`.
 
 ### Examples
 
@@ -940,9 +942,14 @@ Apply without confirmation:
 $ wt config update --yes
 ```
 
-Print the migrated config to stdout (no changes written):
+Write the migration artifact to a file:
 ```console
-$ wt config update --print
+$ wt config update --output migrated.toml
+```
+
+Write the migration artifact to stdout:
+```console
+$ wt config update --output=-
 ```
 
 ### Command reference
@@ -953,8 +960,8 @@ wt config update - Update deprecated config settings
 Usage: wt config update [OPTIONS]
 
 Options:
-      --print
-          Print the migrated config to stdout instead of writing it
+      --output <PATH>
+          Output migrated config (- for stdout)
 
   -h, --help
           Print help (see a summary with '-h')

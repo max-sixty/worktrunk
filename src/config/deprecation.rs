@@ -26,7 +26,7 @@
 //! content (for serde) and a `DeprecationInfo` describing what needs fixing.
 //! Users materialize migrations explicitly via `wt config update` (which
 //! overwrites the config file and copies approved-commands to `approvals.toml`)
-//! or inspect them via `wt config show` / `wt config update --print`.
+//! or export them via `wt config update --output <path>` (`-` for stdout).
 //!
 //! Per-path warning dedup still applies within a process so `wt list` doesn't
 //! spam the same deprecation message from multiple config layers.
@@ -1584,12 +1584,13 @@ pub struct CheckAndMigrateResult {
 ///
 /// Pure with respect to the filesystem — never rewrites config or copies
 /// approvals. The user materializes migrations by running `wt config update`
-/// (or `wt config update --print`). Deprecation warnings still go to stderr
+/// or exports the result instead of applying it in place via
+/// `wt config update --output <path>`. Deprecation warnings still go to stderr
 /// when `emit_inline_warnings` is set.
 ///
-/// Set `warn_and_migrate` to false for project config on feature worktrees —
-/// the warning is only actionable from the main worktree where the user would
-/// run `wt config update`.
+/// Set `warn_and_migrate` to false when project config is not actionable. A
+/// linked worktree cannot update the file, but read-only output remains
+/// actionable and passes true.
 ///
 /// `kind` names the config file being checked; it derives the warning label
 /// and scopes kind-specific rules (`DeprecationRule::PendingDefault`).
