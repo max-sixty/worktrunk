@@ -51,6 +51,12 @@ These tools can be used together—run git-machete or git-town inside individual
 
 Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, runs automation hooks, and aggregates status across branches. TUIs work inside each worktree directory.
 
+## How much disk do worktrees use?
+
+Worktrees share one `.git`. Each adds a checkout of the tracked files, plus whatever gitignored build output you copy in.
+
+On APFS, btrfs, and XFS (not ext4 or NTFS), [`wt step copy-ignored`](https://worktrunk.dev/step/#copy-on-write) reflinks that output, so a new worktree shares the primary worktree's disk blocks. A later build rewrites only what changed, and the rest stays shared. On one machine, 56 worktrees of a Rust repository with a 40GB `target/` came to 2.6TB by `du` and 0.7TB on disk.
+
 ## Does Worktrunk support stacked branches?
 
 Not natively — stacked-branch workflows are a large design space, so Worktrunk treats them as an extension rather than a built-in. [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync) is a community tool that auto-detects the branch dependency tree from git history and rebases each branch onto its parent in topological order. Install with `cargo install worktrunk-sync` and run as `wt sync` (via [custom subcommands](https://worktrunk.dev/extending/#custom-subcommands)).
