@@ -5247,6 +5247,31 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     assert!(!json["project"]["exists"].as_bool().unwrap());
 }
 
+/// JSON preserves its machine-readable report while returning the same
+/// non-zero status as the text form for semantic list-column errors.
+#[rstest]
+fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home: TempDir) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list.custom-columns.ticket]\ntemplate = \"{{ branch }}\"\nwidth = 0\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert!(output.stderr.is_empty());
+}
+
 #[rstest]
 fn test_config_show_json_with_project_config(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");

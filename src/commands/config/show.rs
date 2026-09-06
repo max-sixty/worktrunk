@@ -131,6 +131,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 
 /// JSON output for config show: paths, existence, and parsed config contents.
 fn handle_config_show_json() -> anyhow::Result<()> {
+    let repo = Repository::current().ok();
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
@@ -140,8 +141,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_config, project_identifier) = if let Ok(repo) = Repository::current()
-    {
+    let (project_path, project_config, project_identifier) = if let Some(repo) = repo.as_ref() {
         let config = repo.load_project_config()?;
         let on_disk = repo.project_config_path()?;
         // When config resolved but not from an existing on-disk file, it came
@@ -191,7 +191,15 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "exists": system_exists,
         },
     });
+    let invalid = repo
+        .as_ref()
+        .is_some_and(|repo| validate_column_selection(repo).is_err());
     print_json(&output)?;
+
+    if invalid {
+        return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
+    }
+
     Ok(())
 }
 
@@ -808,28 +816,28 @@ fn render_column_selection(out: &mut String, repo: Option<&Repository>) -> anyho
     let Some(repo) = repo else {
         return Ok(false);
     };
-    let config = repo.config();
-    let custom = match crate::commands::list::custom_columns::resolve_custom_columns(
-        &config.list.custom_columns,
-        repo,
-    ) {
-        Ok(custom) => custom,
-        Err(e) => {
-            writeln!(out, "{}", error_message(e.to_string()))?;
-            return Ok(true);
-        }
-    };
-    if config.list.columns.is_empty() {
-        return Ok(false);
-    }
-    let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
-    if let Err(e) =
-        crate::commands::list::columns::parse_selected_columns(&config.list.columns, &custom_names)
-    {
+    if let Err(e) = validate_column_selection(repo) {
         writeln!(out, "{}", error_message(e.to_string()))?;
         return Ok(true);
     }
     Ok(false)
+}
+
+/// Validate the resolved list-column config exactly as `wt list` does.
+fn validate_column_selection(repo: &Repository) -> anyhow::Result<()> {
+    let config = repo.config();
+    let custom = crate::commands::list::custom_columns::resolve_custom_columns(
+        &config.list.custom_columns,
+        repo,
+    )?;
+    if !config.list.columns.is_empty() {
+        let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
+        crate::commands::list::columns::parse_selected_columns(
+            &config.list.columns,
+            &custom_names,
+        )?;
+    }
+    Ok(())
 }
 
 /// Format warnings for unknown config keys in `raw_contents`.
