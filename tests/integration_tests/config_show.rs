@@ -3925,6 +3925,57 @@ fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// The `?` preview lists exactly the commands each Codex plugin subcommand
+/// runs, so the confirmation the user answers matches what follows it.
+#[rstest]
+fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: TempDir) {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins();
+
+    for (action, expected) in [
+        (
+            "install",
+            [
+                "codex plugin marketplace add max-sixty/worktrunk",
+                "codex plugin add worktrunk@worktrunk",
+            ],
+        ),
+        (
+            "uninstall",
+            [
+                "codex plugin remove worktrunk@worktrunk",
+                "codex plugin marketplace remove worktrunk",
+            ],
+        ),
+    ] {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", action])
+            .current_dir(repo.root_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        let mut child = cmd.spawn().unwrap();
+        // `?` renders the preview; `n` then declines, so nothing runs.
+        child.stdin.take().unwrap().write_all(b"?\nn\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .to_string();
+        for command in expected {
+            assert!(
+                stderr.contains(command),
+                "{action} preview is missing {command:?}: {stderr}"
+            );
+        }
+    }
+}
+
 /// Codex has the marketplace but no installed plugin — the state an install
 /// that stopped at the marketplace leaves behind. `codex plugin remove` fails,
 /// and the marketplace removal still happens.
