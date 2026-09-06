@@ -3912,7 +3912,7 @@ fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempD
 #[rstest]
 fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_codex_with_plugin_not_installed();
+    repo.setup_mock_codex_with_plugin_ops_failing();
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -3976,13 +3976,12 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
     }
 }
 
-/// Codex has the marketplace but no installed plugin — the state an install
-/// that stopped at the marketplace leaves behind. `codex plugin remove` fails,
-/// and the marketplace removal still happens.
+/// `codex plugin remove` fails: the uninstall surfaces codex's error and stops
+/// rather than removing the marketplace out from under an installed plugin.
 #[rstest]
-fn test_plugins_codex_uninstall_plugin_not_installed(mut repo: TestRepo, temp_home: TempDir) {
+fn test_plugins_codex_uninstall_plugin_remove_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_codex_with_plugin_not_installed();
+    repo.setup_mock_codex_with_plugin_ops_failing();
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {

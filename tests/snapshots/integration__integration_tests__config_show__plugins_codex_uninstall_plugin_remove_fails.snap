@@ -57,13 +57,11 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
 [36m◎[39m [36mUninstalling plugin...[39m
-[33m▲[39m [33mWorktrunk plugin not removed from Codex; removing the marketplace anyway[39m
-[2m↳[22m [2mTo see the error, run [4mcodex plugin remove worktrunk@worktrunk[24m[22m
-[36m◎[39m [36mRemoving Codex plugin marketplace...[39m
-[32m✓[39m [32mCodex marketplace removed[39m
+[31m✗[39m [31mcodex plugin remove worktrunk@worktrunk failed (exit 1)[39m
+[107m [0m error: plugin remove failed

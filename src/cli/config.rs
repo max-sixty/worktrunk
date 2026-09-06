@@ -263,7 +263,7 @@ $ codex plugin remove worktrunk@worktrunk
 $ codex plugin marketplace remove worktrunk
 ```
 
-Removing the plugin is best-effort — where Codex has no Worktrunk plugin installed, the marketplace is still removed."#
+Requires `codex` CLI."#
     )]
     Uninstall,
 }

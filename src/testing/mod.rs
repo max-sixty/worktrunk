@@ -2363,10 +2363,10 @@ impl TestRepo {
     /// Setup mock `codex` CLI whose marketplace commands succeed and whose
     /// plugin commands fail
     ///
-    /// Reproduces a Codex that has the Worktrunk marketplace configured but no
-    /// Worktrunk plugin installed. Must call
+    /// Isolates a `codex plugin add` / `codex plugin remove` failure from the
+    /// marketplace step that runs beside it. Must call
     /// `setup_mock_ci_tools_unauthenticated()` first.
-    pub fn setup_mock_codex_with_plugin_not_installed(&mut self) {
+    pub fn setup_mock_codex_with_plugin_ops_failing(&mut self) {
         let mock_bin = self
             .mock_bin_path
             .as_ref()
@@ -2381,7 +2381,7 @@ impl TestRepo {
             )
             .command(
                 "plugin remove",
-                MockResponse::exit(1).with_stderr("error: plugin `worktrunk` is not installed\n"),
+                MockResponse::exit(1).with_stderr("error: plugin remove failed\n"),
             )
             .write(mock_bin);
 

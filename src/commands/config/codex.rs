@@ -2,9 +2,7 @@
 
 use anyhow::{Result, bail};
 use color_print::cformat;
-use worktrunk::styling::{
-    eprintln, hint_message, progress_message, success_message, warning_message,
-};
+use worktrunk::styling::{eprintln, hint_message, progress_message, success_message};
 
 use super::show::is_codex_available;
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -77,31 +75,7 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
     }
 
     eprintln!("{}", progress_message("Uninstalling plugin..."));
-    // `codex plugin remove` fails when no Worktrunk plugin is installed — the
-    // state an install that stopped at the marketplace leaves behind, which is
-    // what this command did before it installed the plugin too. Removing the
-    // marketplace is what uninstall has always done, so a failed plugin
-    // removal warns rather than aborting before that happens.
-    let plugin_removed =
-        match super::run_plugin_cli("codex", &["plugin", "remove", PLUGIN_SELECTOR]) {
-            Ok(()) => true,
-            Err(err) => {
-                log::debug!("codex plugin remove failed: {err:#}");
-                eprintln!(
-                    "{}",
-                    warning_message(
-                        "Worktrunk plugin not removed from Codex; removing the marketplace anyway"
-                    )
-                );
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To see the error, run <underline>codex plugin remove {PLUGIN_SELECTOR}</>"
-                    ))
-                );
-                false
-            }
-        };
+    super::run_plugin_cli("codex", &["plugin", "remove", PLUGIN_SELECTOR])?;
 
     eprintln!(
         "{}",
@@ -112,14 +86,7 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
     )?;
 
-    eprintln!(
-        "{}",
-        success_message(if plugin_removed {
-            "Codex plugin & marketplace removed"
-        } else {
-            "Codex marketplace removed"
-        })
-    );
+    eprintln!("{}", success_message("Codex plugin & marketplace removed"));
 
     Ok(())
 }
