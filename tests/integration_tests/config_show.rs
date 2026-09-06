@@ -3401,40 +3401,98 @@ fn test_config_update_project_config_from_linked_worktree_shows_hint(repo: TestR
     );
 }
 
-/// `wt config update --print` with both user- and project-config deprecations
-/// emits both, separated by labeled headers on stdout.
+/// Multiple migrated configs can be inspected on stdout but cannot be written
+/// as one config file, which would change TOML table scope between documents.
 #[rstest]
-fn test_config_update_print_emits_both_configs(repo: TestRepo) {
+fn test_config_update_output_file_rejects_multiple_configs(repo: TestRepo) {
     let user_config_path = repo.test_config_path();
-    fs::write(
-        user_config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-    repo.write_project_config(
-        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
-"#,
-    );
+    let user_original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+    fs::write(user_config_path, user_original).unwrap();
+    let project_original = r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
+"#;
+    repo.write_project_config(project_original);
     repo.commit("Add deprecated project config");
 
-    let output = repo
+    let stdout_output = repo
         .wt_command()
-        .args(["config", "update", "--print"])
+        .args(["config", "update", "--output=-"])
         .output()
         .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout_output.status.success());
+    assert!(stdout_output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&stdout_output.stdout);
     assert!(stdout.contains("# User config"));
     assert!(stdout.contains("# Project config"));
     assert!(stdout.contains("{{ repo }}"));
     assert!(stdout.contains("pre-start"));
+
+    fs::write(
+        repo.root_path().join("migrated.toml"),
+        "important user data\n",
+    )
+    .unwrap();
+    let mut file_command = repo.wt_command();
+    file_command
+        .current_dir(repo.root_path().parent().unwrap())
+        .arg("-C")
+        .arg(repo.root_path())
+        .args(["config", "update", "--output=migrated.toml"]);
+    let file_output = file_command.output().unwrap();
+    assert!(!file_output.status.success());
+    assert!(file_output.stdout.is_empty());
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("migrated.toml")).unwrap(),
+        "important user data\n"
+    );
+    let stderr = String::from_utf8_lossy(&file_output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("Cannot write user config and project config migrations to one file"),
+        "unexpected stderr: {stderr}"
+    );
+    assert_eq!(fs::read_to_string(user_config_path).unwrap(), user_original);
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join(".config").join("wt.toml")).unwrap(),
+        project_original
+    );
 }
 
-/// `wt config update --print` on a clean config exits silently with empty
+/// File and stdout output receive the same bytes for one migrated config.
+#[rstest]
+fn test_config_update_output_destinations_emit_same_config(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+    fs::write(config_path, original).unwrap();
+
+    let stdout_output = repo
+        .wt_command()
+        .args(["config", "update", "--output=-"])
+        .output()
+        .unwrap();
+    assert!(stdout_output.status.success());
+    assert!(stdout_output.stderr.is_empty());
+
+    let destination = repo.root_path().join("migrated.toml");
+    fs::write(&destination, "stale\n").unwrap();
+    let file_output = repo
+        .wt_command()
+        .args(["config", "update", "--output=migrated.toml"])
+        .output()
+        .unwrap();
+    assert!(file_output.status.success());
+    assert!(file_output.stdout.is_empty());
+    assert!(file_output.stderr.is_empty());
+    assert_eq!(fs::read(destination).unwrap(), stdout_output.stdout);
+    assert_eq!(fs::read_to_string(config_path).unwrap(), original);
+}
+
+/// `wt config update --output=-` on a clean config exits silently with empty
 /// stdout — no "nothing to do" noise to corrupt a pipe.
 #[rstest]
-fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
+fn test_config_update_output_stdout_on_clean_config_is_silent(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
@@ -3447,7 +3505,7 @@ json-schema = 1
 
     let output = repo
         .wt_command()
-        .args(["config", "update", "--print"])
+        .args(["config", "update", "--output", "-"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -3457,10 +3515,73 @@ json-schema = 1
     );
 }
 
-/// `wt config update --print` emits the migrated TOML to stdout without
+/// File output with no migrations leaves an existing destination untouched.
+#[rstest]
+fn test_config_update_output_file_on_clean_config_preserves_destination(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    let original = r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+json-schema = 1
+"#;
+    fs::write(config_path, original).unwrap();
+
+    let destination = repo.root_path().join("migrated.toml");
+    fs::write(&destination, "important user data\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output=migrated.toml"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(destination).unwrap(),
+        "important user data\n"
+    );
+    assert_eq!(fs::read_to_string(config_path).unwrap(), original);
+}
+
+/// File output reports the destination when its parent directory is missing.
+#[rstest]
+fn test_config_update_output_file_surfaces_write_failure(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "config",
+            "update",
+            "--output=missing-directory/migrated.toml",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to write output @")
+            && stderr.contains("missing-directory/migrated.toml"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+/// `wt config update --output=-` emits the migrated TOML to stdout without
 /// touching the config file. Stderr stays empty so the output is pipeable.
 #[rstest]
-fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
+fn test_config_update_output_stdout_emits_migrated_without_writing(repo: TestRepo) {
     let config_path = repo.test_config_path();
     let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
@@ -3468,18 +3589,18 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
 
     let output = repo
         .wt_command()
-        .args(["config", "update", "--print"])
+        .args(["config", "update", "--output=-"])
         .output()
         .unwrap();
 
     assert!(
         output.status.success(),
-        "config update --print should succeed: {}",
+        "config update --output=- should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
         output.stderr.is_empty(),
-        "--print must keep stderr empty for pipe-friendliness, got: {}",
+        "--output=- must keep stderr empty for pipe-friendliness, got: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3490,11 +3611,74 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     assert_eq!(
         fs::read_to_string(config_path).unwrap(),
         original,
-        "--print must not modify the config file"
+        "--output=- must not modify the config file"
     );
     assert!(
         !config_path.with_extension("toml.new").exists(),
-        "--print must not write a .new file"
+        "--output=- must not write a .new file"
+    );
+}
+
+/// Read-only output includes project config from a linked worktree without
+/// changing either checkout's copy.
+#[rstest]
+fn test_config_update_output_stdout_from_linked_worktree(repo: TestRepo) {
+    repo.write_project_config(
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+    let before = fs::read_to_string(&project_config_path).unwrap();
+    let feature_path = repo.root_path().parent().unwrap().join("feature-output");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature-output",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output=-"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("{{ repo }}"));
+    assert!(!stdout.contains("{{ main_worktree }}"));
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".config").join("wt.toml")).unwrap(),
+        before,
+        "linked-worktree project config must remain unchanged"
+    );
+    assert_eq!(
+        fs::read_to_string(project_config_path).unwrap(),
+        before,
+        "main-worktree project config must remain unchanged"
+    );
+}
+
+/// The former output flag is no longer accepted.
+#[rstest]
+fn test_config_update_rejects_print(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("unexpected argument '--print'"),
+        "unexpected error: {stderr}"
     );
 }
 

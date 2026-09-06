@@ -639,7 +639,7 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Shell { action } => handle_config_shell_command(action, yes),
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
-        ConfigCommand::Update { print } => handle_config_update(yes, print),
+        ConfigCommand::Update { output } => handle_config_update(yes, output),
         ConfigCommand::Approvals { action } => match action {
             ApprovalsCommand::List { format } => list_approvals(format),
             ApprovalsCommand::Add { all } => add_approvals(all, yes),

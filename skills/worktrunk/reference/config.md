@@ -801,6 +801,80 @@ Global Options:
           Skip approval prompts
 ```
 
+## wt config update
+
+Update deprecated config settings.
+
+Updates deprecated settings in user and project config files
+to their current equivalents, removes deprecated keys that have no equivalent
+and reports each one, and adopts defaults that a future release switches —
+currently `[list] json-schema = 2` — so the switch happens as a reviewed config
+edit rather than at upgrade. Shows a diff and asks for confirmation.
+
+Migrations are computed in memory on demand; nothing is written outside this
+command. Set `--output <path>` to write a migrated config to that destination
+instead of applying it in place. Use `-` for stdout. When both user and project
+config need migration, stdout emits a labeled inspection artifact and file
+output fails rather than combining the configs.
+
+Output artifacts omit deprecated `approved-commands`; only in-place updates
+move those entries to `approvals.toml`.
+
+### Examples
+
+Preview and apply updates:
+```console
+$ wt config update
+```
+
+Apply without confirmation:
+```console
+$ wt config update --yes
+```
+
+Write the migration artifact to a file:
+```console
+$ wt config update --output migrated.toml
+```
+
+Write the migration artifact to stdout:
+```console
+$ wt config update --output=-
+```
+
+### Command reference
+
+```
+wt config update - Update deprecated config settings
+
+Usage: wt config update [OPTIONS]
+
+Options:
+      --output <PATH>
+          Output migrated config (- for stdout)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+      --config-set <toml>
+          Override config with inline TOML, e.g. --config-set list.full=true (repeatable)
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/). Set WORKTRUNK_VERBOSE=0|1|2 to
+          apply the same level everywhere — including shell completion, which no flag can reach
+
+  -y, --yes
+          Skip approval prompts
+```
+
 ## wt config approvals
 
 Manage command approvals.
