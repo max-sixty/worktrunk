@@ -44,7 +44,8 @@ fn mock_bin_dir(name: &str, response: MockResponse) -> TempDir {
 /// answers the way real git does outside a repository — exit 128 with the
 /// fatal message — so repo-discovery tests exercise "no repository" rather
 /// than "git failed" (mock_stub's fallback for an unmatched command is
-/// exit 1 with no output).
+/// exit 1 with no output), and that fatal line is the one the alias error
+/// quotes back.
 fn set_git_only_path(cmd: &mut Command) -> TempDir {
     let dir = TempDir::new().unwrap();
     MockConfig::new("git")
@@ -231,6 +232,44 @@ fn custom_subcommand_alias_outside_repo_names_the_alias() {
     let _guard = settings.bind_to_scope();
 
     assert_cmd_snapshot!(cmd);
+}
+
+#[test]
+fn custom_subcommand_alias_propagates_non_fatal_git_failure() {
+    // Only a fatal git exit (128) reaches the alias message. A git that fails
+    // any other way surfaces as itself, the way it does for every other
+    // command, rather than being reported as a repository verdict git never
+    // gave.
+    let config_dir = tempfile::tempdir().unwrap();
+    let config_path = config_dir.path().join("config.toml");
+    std::fs::write(&config_path, "[aliases]\nco = \"echo hi\"\n").unwrap();
+
+    // No `rev-parse` response, so it falls through to mock_stub's default:
+    // exit 1 with no output, unlike `set_git_only_path`'s fatal 128.
+    let git_dir = TempDir::new().unwrap();
+    MockConfig::new("git")
+        .version("git version 2.43.0")
+        .write(git_dir.path());
+
+    let mut cmd = wt_command();
+    cmd.env("PATH", git_dir.path())
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", git_dir.path())
+        .env("WORKTRUNK_CONFIG_PATH", &config_path)
+        .arg("co");
+
+    let output = cmd.output().expect("failed to run wt");
+    assert!(!output.status.success(), "expected failure");
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("git rev-parse --git-common-dir failed (exit 1)"),
+        "git's own failure should surface: {stderr}"
+    );
+    assert!(
+        !stderr.contains("is an alias"),
+        "a non-fatal git failure must not be reported as a missing repository: {stderr}"
+    );
 }
 
 #[test]

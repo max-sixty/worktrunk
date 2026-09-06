@@ -45,5 +45,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31m[1mco[22m is an alias, but there's no git repository here[39m
+[31m✗[39m [31m[1mco[22m is an alias, but aliases only run inside a git repository[39m
+[107m [0m fatal: not a git repository [GIT_DISCOVERY_MSG]
 [2m↳[22m [2mRun wt inside a repository, or to target one, run [4mwt -C <path> co[24m[22m

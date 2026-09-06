@@ -51,7 +51,7 @@ use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, VarScope, alias_context_filter,
     format_alias_variables, referenced_vars_for_config,
 };
-use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::git::{CommandError, Repository, WorktrunkError};
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, progress_message,
     verbosity, warning_message,
@@ -437,8 +437,9 @@ fn referenced_vars_for_entry(name: &str, entry: &AliasEntry) -> anyhow::Result<B
 /// for names that aren't user-config aliases, so the caller falls through to
 /// PATH lookup; a name that IS a user-config alias ends here with the
 /// alias-needs-repository error (see [`alias_needs_repo_error`]) — dispatch
-/// never reaches the `wt-<name>` PATH lookup for it. Discovery failures that
-/// aren't "not a repository" propagate, and config load errors propagate —
+/// never reaches the `wt-<name>` PATH lookup for it. Discovery failures git
+/// didn't answer for (a spawn error) propagate, and config load errors
+/// propagate —
 /// a broken `wt.toml` should fail loudly here just as it does for `wt list`,
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
@@ -564,19 +565,22 @@ pub fn alias_names_for_suggestions() -> Vec<String> {
 /// Outside a git repository an alias cannot run (execution resolves the
 /// current worktree), yet `wt --help` still lists user-config aliases and
 /// the typo suggestions still include them. When `name` is one of those and
-/// `err` says the failure is genuinely "not a repository", print the
-/// alias-needs-repository error and return it — a configured alias isn't
-/// "unrecognized", and the caller's clap-style fallback would suggest the
-/// very name the user typed as its own "did you mean". Otherwise `Ok(None)`:
-/// not an alias here, the caller falls through to the `wt-<name>` PATH
-/// lookup — whatever git did. Best-effort — a config that fails to load
-/// reads as no aliases.
+/// repository discovery died in git, print the alias-needs-repository error
+/// and return it — a configured alias isn't "unrecognized", and the caller's
+/// clap-style fallback would suggest the very name the user typed as its own
+/// "did you mean". Otherwise `Ok(None)`: not an alias here, the caller falls
+/// through to the `wt-<name>` PATH lookup — whatever git did. Best-effort —
+/// a config that fails to load reads as no aliases.
 ///
-/// Only "not a repository" earns the alias message; any other discovery
-/// failure (a spawn error from a bad `-C` path, a git that errors for its
-/// own reasons) propagates as itself, the way it does for every other
-/// command — asserting "there's no git repository here" without the 128
-/// would misreport those.
+/// A 128 exit is the closest structured signal git offers, not a dedicated
+/// "not a repository" code: `git rev-parse` dies with 128 for any fatal
+/// error, so a `safe.directory` violation or an unsupported
+/// `core.repositoryformatversion` reaches this message too, inside a real
+/// repository. That is why the message states what aliases require and
+/// quotes git's own line for what went wrong, instead of asserting a cause
+/// the exit code doesn't carry. Failures that exit some other way (a spawn
+/// error from a bad `-C` path) propagate as themselves, the way they do for
+/// every other command.
 fn alias_needs_repo_error(name: &str, err: anyhow::Error) -> anyhow::Result<Option<()>> {
     worktrunk::config::suppress_warnings();
     let is_alias = UserConfig::load()
@@ -585,21 +589,25 @@ fn alias_needs_repo_error(name: &str, err: anyhow::Error) -> anyhow::Result<Opti
     if !is_alias {
         return Ok(None);
     }
-    // `git rev-parse` exits 128 outside a repository — the structured
-    // "not a repository" channel, per "Structured Output Over
-    // Error-Message Parsing".
-    if !err
-        .downcast_ref::<worktrunk::git::CommandError>()
-        .is_some_and(|e| e.exit_code == Some(128))
-    {
+    // `git rev-parse` exits 128 when discovery fails fatally — the structured
+    // channel, per "Structured Output Over Error-Message Parsing", though not
+    // one specific to "not a repository"; see the docstring.
+    let Some(git_err) = CommandError::find_in(&err).filter(|e| e.exit_code == Some(128)) else {
         return Err(err);
-    }
+    };
     eprintln!(
         "{}",
         error_message(cformat!(
-            "<bold>{name}</> is an alias, but there's no git repository here"
+            "<bold>{name}</> is an alias, but aliases only run inside a git repository"
         ))
     );
+    // git's own line says which fatal error this was — "not a git repository"
+    // in the common case, dubious ownership or an unreadable config in the
+    // others, where the alias message alone would misreport the cause.
+    let git_output = git_err.combined_output();
+    if !git_output.is_empty() {
+        eprintln!("{}", format_with_gutter(&git_output, None));
+    }
     // Built with `format!` so `-C <path>` stays out of the `cformat!`
     // literal, which is what color-print's tag parser reads.
     let targeted = format!("wt -C <path> {name}");
