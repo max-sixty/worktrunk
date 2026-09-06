@@ -69,6 +69,16 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     invalid |= render_project_config(&mut show_output, repo.as_ref(), project)?;
     show_output.push('\n');
 
+    // Approval state is user-level even though its entries are keyed by
+    // project. Keep its diagnostics independent of which repository happens
+    // to be current.
+    let mut approvals_output = String::new();
+    invalid |= render_approvals(&mut approvals_output, repo.as_ref())?;
+    if !approvals_output.is_empty() {
+        show_output.push_str(&approvals_output);
+        show_output.push('\n');
+    }
+
     // Render the values the layers above resolve to
     if let Some(repo) = repo.as_ref() {
         render_effective_config(&mut show_output, repo)?;
@@ -133,52 +143,69 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 /// JSON output for config show: paths, existence, and parsed config contents.
 fn handle_config_show_json() -> anyhow::Result<()> {
     let repo = Repository::current().ok();
+    let mut invalid = false;
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
-        let config = UserConfig::load().context("Failed to load config")?;
-        Some(serde_json::to_value(&config)?)
+        match UserConfig::load() {
+            Ok(config) => Some(serde_json::to_value(&config)?),
+            Err(_) => {
+                invalid = true;
+                None
+            }
+        }
     } else {
         None
     };
 
-    let (project_path, project_config, project_identifier) = if let Some(repo) = repo.as_ref() {
-        let config = repo.load_project_config()?;
-        let on_disk = repo.project_config_path()?;
-        // When config resolved but not from an existing on-disk file, it came
-        // from the object-store fallback (bare repo, default branch checked out
-        // in no worktree — #3461). Surface that revision spec as the source so
-        // `path`/`exists`/`config` agree, instead of pointing `path` at a
-        // missing file while `config` is populated.
-        let path = match &on_disk {
-            Some(p) if p.exists() => on_disk.clone(),
-            _ if config.is_some() => repo
-                .default_branch_project_config_content()
-                .map(|(_, spec)| spec),
-            _ => on_disk.clone(),
+    let (project_path, project_exists, project_config, project_identifier) =
+        if let Some(repo) = repo.as_ref() {
+            let config = match repo.load_project_config() {
+                Ok(config) => config,
+                Err(_) => {
+                    invalid = true;
+                    None
+                }
+            };
+            let on_disk = repo.project_config_path()?;
+            // When config resolved but not from an existing on-disk file, it came
+            // from the object-store fallback (bare repo, default branch checked out
+            // in no worktree — #3461). Surface that revision spec as the source so
+            // `path`/`exists`/`config` agree, instead of pointing `path` at a
+            // missing file while `config` is populated.
+            let path = match &on_disk {
+                Some(p) if p.exists() => on_disk.clone(),
+                _ if config.is_some() => repo
+                    .default_branch_project_config_content()
+                    .map(|(_, spec)| spec),
+                _ => on_disk.clone(),
+            };
+            let identifier = repo.project_identifier().ok();
+            let exists = config.is_some() || on_disk.as_ref().is_some_and(|path| path.exists());
+            (
+                path,
+                exists,
+                config.map(|c| serde_json::to_value(&c)).transpose()?,
+                identifier,
+            )
+        } else {
+            (None, false, None, None)
         };
-        let identifier = repo.project_identifier().ok();
-        (
-            path,
-            config.map(|c| serde_json::to_value(&c)).transpose()?,
-            identifier,
-        )
-    } else {
-        (None, None, None)
-    };
 
     let system_path = system_config_path().or_else(default_system_config_path);
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
     let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
-        let contents =
-            std::fs::read_to_string(path).context("Failed to read system config file")?;
-        config_parse_error::<UserConfig>(&contents).is_some()
+        match std::fs::read_to_string(path) {
+            Ok(contents) => config_parse_error::<UserConfig>(&contents).is_some(),
+            Err(_) => true,
+        }
     } else {
         false
     };
-    let approvals_invalid = repo
-        .as_ref()
-        .is_some_and(|repo| matches!(pending_approvals(repo), PendingApprovals::Invalid(_)));
+    let approvals_invalid = matches!(
+        approvals_diagnostic(repo.as_ref()),
+        ApprovalsDiagnostic::Invalid(_)
+    );
 
     let output = serde_json::json!({
         "user": {
@@ -188,12 +215,10 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         },
         "project": {
             "path": project_path,
-            // Config source resolved — an on-disk file or the object-store
-            // fallback — iff `config` is populated. Keying `exists` off the
-            // loaded config (not `path.exists()`) keeps it consistent with
-            // `config` in the object-store case, where `path` is a revision
-            // spec with no file on disk.
-            "exists": project_config.is_some(),
+            // An invalid on-disk source still exists even though `config` is
+            // null. The object-store fallback counts as existing when it
+            // deserializes, though its revision spec is not a filesystem path.
+            "exists": project_exists,
             "identifier": project_identifier,
             "config": project_config,
         },
@@ -202,7 +227,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "exists": system_exists,
         },
     });
-    let invalid = system_invalid
+    invalid |= system_invalid
         || approvals_invalid
         || repo
             .as_ref()
@@ -1059,8 +1084,6 @@ fn render_project_config(
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
-    invalid |= render_pending_approvals(out, repo)?;
-
     Ok(invalid)
 }
 
@@ -1183,15 +1206,17 @@ fn optional_row(key: &str, value: Option<&str>) -> String {
 /// the first time one fires, and until then nothing in `config show` said so.
 /// State, not an action, so `○`; the count alone, since `wt config approvals
 /// list` is the surface that itemizes them.
-fn render_pending_approvals(out: &mut String, repo: &Repository) -> anyhow::Result<bool> {
-    match pending_approvals(repo) {
-        PendingApprovals::NotApplicable => Ok(false),
-        PendingApprovals::Invalid(err) => {
+fn render_approvals(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
+    match approvals_diagnostic(repo) {
+        ApprovalsDiagnostic::Valid => Ok(false),
+        ApprovalsDiagnostic::Invalid(err) => {
+            render_approvals_heading(out)?;
             writeln!(out, "{}", error_message("Invalid approvals"))?;
             writeln!(out, "{}", format_with_gutter(&err, None))?;
             Ok(true)
         }
-        PendingApprovals::Pending(pending) => {
+        ApprovalsDiagnostic::Pending(pending) => {
+            render_approvals_heading(out)?;
             let plural = if pending == 1 { "command" } else { "commands" };
             let status = info_message(format!("{pending} project {plural} awaiting approval"));
             writeln!(out, "{status}")?;
@@ -1204,36 +1229,59 @@ fn render_pending_approvals(out: &mut String, repo: &Repository) -> anyhow::Resu
     }
 }
 
-enum PendingApprovals {
-    NotApplicable,
+fn render_approvals_heading(out: &mut String) -> anyhow::Result<()> {
+    let source = worktrunk::config::approvals_path()
+        .map(|path| format!("@ {}", format_path_for_display(&path)));
+    writeln!(out, "{}", format_heading("APPROVALS", source.as_deref()))?;
+    Ok(())
+}
+
+enum ApprovalsDiagnostic {
+    Valid,
     Invalid(String),
     Pending(usize),
 }
 
-/// Resolve the approval state used by both text and JSON diagnostics.
-fn pending_approvals(repo: &Repository) -> PendingApprovals {
+/// Resolve the user-level approval state used by text and JSON diagnostics.
+///
+/// Loading precedes every repository-specific check: a broken global file is
+/// broken regardless of which repository happens to be current. The current
+/// project matters only when counting commands that still need approval.
+fn approvals_diagnostic(repo: Option<&Repository>) -> ApprovalsDiagnostic {
+    let approvals_file_exists = worktrunk::config::approvals_path()
+        .as_ref()
+        .is_some_and(|path| path.exists());
+    let approvals = match worktrunk::config::Approvals::load() {
+        Ok(approvals) => approvals,
+        Err(err) if approvals_file_exists => {
+            return ApprovalsDiagnostic::Invalid(err.to_string());
+        }
+        // With no approvals file, `Approvals::load` falls back to the user
+        // config. Its error belongs to that section, which already reports the
+        // same broken source and marks the whole diagnostic invalid.
+        Err(_) => return ApprovalsDiagnostic::Valid,
+    };
+    let Some(repo) = repo else {
+        return ApprovalsDiagnostic::Valid;
+    };
     let Ok(Some(project_config)) = repo.load_project_config() else {
-        return PendingApprovals::NotApplicable;
+        return ApprovalsDiagnostic::Valid;
     };
     let commands = super::approvals::collect_approvable_commands(&project_config);
     if commands.is_empty() {
-        return PendingApprovals::NotApplicable;
+        return ApprovalsDiagnostic::Valid;
     }
     let Ok(project_id) = repo.project_identifier() else {
-        return PendingApprovals::NotApplicable;
-    };
-    let approvals = match worktrunk::config::Approvals::load() {
-        Ok(approvals) => approvals,
-        Err(err) => return PendingApprovals::Invalid(err.to_string()),
+        return ApprovalsDiagnostic::Valid;
     };
     let pending = commands
         .into_iter()
         .filter(|cmd| !approvals.is_command_approved(&project_id, &cmd.command.template))
         .count();
     if pending == 0 {
-        PendingApprovals::NotApplicable
+        ApprovalsDiagnostic::Valid
     } else {
-        PendingApprovals::Pending(pending)
+        ApprovalsDiagnostic::Pending(pending)
     }
 }
 

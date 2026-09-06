@@ -82,6 +82,8 @@ exit_code: 0
 [107m [0m 
 [107m [0m [2m[36m[post-start][0m
 [107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
+
+[36mAPPROVALS[39m @ [TEST_APPROVALS]
 [2m○[22m 2 project commands awaiting approval
 [2m↳[22m [2mTo review, run [4mwt config approvals list[24m[22m
 

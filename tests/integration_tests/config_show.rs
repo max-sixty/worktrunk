@@ -119,11 +119,10 @@ fn test_config_show_without_project_identifier_uses_global_worktree_path() {
     assert!(!stdout.contains("awaiting approval"), "stdout:\n{stdout}");
 }
 
-/// An unreadable approvals state makes project commands unsafe to run, so the
-/// diagnostic reports it and exits non-zero.
+/// An unreadable user-level approvals state is invalid in every repository, so
+/// the diagnostic reports it and exits non-zero even without project config.
 #[rstest]
 fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
-    repo.write_project_config("pre-start = \"npm install\"\n");
     fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
 
     let output = repo.wt_command().args(["config", "show"]).output().unwrap();
@@ -607,17 +606,14 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 /// panics with exit 101 instead of erroring. A release build still prints the
 /// parse detail in the gutter — what it loses is the header, which becomes a
 /// bare `✗ Command failed` naming neither the config nor the file.
-/// `.context("Failed to load config")` — what 7 of the 22 `UserConfig::load()`
-/// call sites already did, and what all 13 propagating ones do after this —
-/// gives the renderer that header back.
+/// `.context("Failed to load config")` gives the renderer that header back.
 ///
 /// One case per fixed call site, because the `debug_assert!` only fires on a
 /// path something exercises: an uncovered site is one where a future bare `?`
-/// regresses silently. `config show --format json` is the sharpest of them —
-/// the text form of that same command renders a full diagnosis of this exact
-/// file.
+/// regresses silently. `config show --format json` handles invalid files
+/// in-band instead: stdout stays machine-readable and the exit code carries
+/// the failure.
 #[rstest]
-#[case::config_show_json(&["config", "show", "--format=json"])]
 #[case::step_prune(&["step", "prune", "--dry-run"])]
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
 #[case::step_eval(&["step", "eval", "{{ branch }}"])]
@@ -5363,6 +5359,9 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
     let system_config_dir = tempfile::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "invalid = [toml\n").unwrap();
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -5378,11 +5377,10 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
     assert_eq!(json["system"]["exists"], true);
 }
 
-/// An unreadable approvals file also fails the JSON health-check surface when
-/// the current project has commands whose approval state is required.
+/// An unreadable user-level approvals file fails the JSON health-check surface
+/// independently of the current repository.
 #[rstest]
 fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
-    repo.write_project_config("pre-start = \"npm install\"\n");
     fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
 
     let output = repo
@@ -5393,6 +5391,42 @@ fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
 
     assert_eq!(output.status.code(), Some(1));
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+}
+
+/// Invalid user config remains a JSON report: the path and existence are
+/// usable, while the config value is null and the exit code carries failure.
+#[rstest]
+fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "invalid = [toml\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["exists"], true);
+    assert!(json["user"]["config"].is_null());
+}
+
+/// Invalid project config likewise keeps the JSON envelope and reports that
+/// the source exists even though it could not be deserialized.
+#[rstest]
+fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
+    repo.write_project_config("invalid = [toml\n");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["project"]["exists"], true);
+    assert!(json["project"]["config"].is_null());
 }
 
 #[rstest]
