@@ -1042,6 +1042,29 @@ mod tests {
         );
     }
 
+    /// Git failures while constructing a configured prompt surface directly;
+    /// they must not be mislabeled as a failure of the configured LLM command.
+    #[test]
+    fn test_generate_commit_message_propagates_prompt_error() {
+        let test_repo = worktrunk::testing::TestRepo::with_initial_commit();
+        let missing_path = test_repo.path().join("missing-worktree");
+        let wt = test_repo.repo.worktree_at(missing_path);
+        let config = CommitGenerationConfig {
+            command: Some("exit 99".to_string()),
+            ..Default::default()
+        };
+
+        let err = generate_commit_message(&config, &wt, None, None).unwrap_err();
+
+        assert!(
+            !matches!(
+                err.downcast_ref::<worktrunk::git::GitError>(),
+                Some(worktrunk::git::GitError::LlmCommandFailed { .. })
+            ),
+            "prompt-construction error was mislabeled as an LLM command failure: {err:#}"
+        );
+    }
+
     /// A failing LLM command must surface as a typed [`CommandError`] carrying
     /// the exit code and captured output — `LlmCommandFailed` and the summary
     /// pane read the detail via `display_message`.

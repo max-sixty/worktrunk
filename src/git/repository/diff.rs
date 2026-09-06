@@ -622,6 +622,16 @@ impl Repository {
 
 #[cfg(test)]
 mod tests {
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn recent_commit_subjects_with_zero_count_is_none() {
+        let test_repo = TestRepo::with_initial_commit();
+        let wt = test_repo.repo.current_worktree();
+
+        assert_eq!(wt.recent_commit_subjects(None, 0), None);
+    }
+
     #[test]
     fn parse_commit_message_details_output_rejects_odd_field_count() {
         let err =
