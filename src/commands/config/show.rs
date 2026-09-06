@@ -168,20 +168,11 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let (project_path, project_exists, project_config, project_identifier) =
         if let Some(repo) = repo.as_ref() {
             let on_disk = repo.project_config_path()?;
-            let on_disk_unreadable = on_disk
-                .as_ref()
-                .filter(|path| path.exists())
-                .is_some_and(|path| std::fs::read_to_string(path).is_err());
-            let config = if on_disk_unreadable {
-                invalid = true;
-                None
-            } else {
-                match repo.load_project_config() {
-                    Ok(config) => config,
-                    Err(_) => {
-                        invalid = true;
-                        None
-                    }
+            let config = match repo.load_project_config() {
+                Ok(config) => config,
+                Err(_) => {
+                    invalid = true;
+                    None
                 }
             };
             let object_store = match &on_disk {
