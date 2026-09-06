@@ -172,6 +172,19 @@ fn test_list_progressive_wraps_final_footer(mut repo: TestRepo) {
         !footer.lines().any(|line| line.trim() == "…"),
         "footer:\n{footer}"
     );
+
+    // The footer redraw moves up exactly one row before clearing. An
+    // off-by-one there would swallow the spacer and every assertion above
+    // would still pass, since they only look below "Showing".
+    let rows: Vec<_> = final_text.lines().collect();
+    let footer_start = rows
+        .iter()
+        .position(|row| row.contains("Showing"))
+        .expect("final output should contain the summary footer");
+    assert!(
+        rows[footer_start - 1].trim().is_empty(),
+        "spacer row should survive the footer redraw.\nFinal output:\n{final_text}"
+    );
 }
 
 /// Tests progressive rendering with no worktrees (fast path).
