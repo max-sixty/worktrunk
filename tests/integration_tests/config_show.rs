@@ -5215,7 +5215,7 @@ mod plugin_prompt_pty {
             "Should show prompt. Output:\n{output}"
         );
         assert!(
-            output.contains("Plugin uninstalled"),
+            output.contains("Plugin & marketplace removed"),
             "Should confirm uninstallation. Output:\n{output}"
         );
     }
@@ -5242,7 +5242,7 @@ mod plugin_prompt_pty {
             "Should show prompt. Output:\n{output}"
         );
         assert!(
-            !output.contains("Plugin uninstalled"),
+            !output.contains("Plugin & marketplace removed"),
             "Should NOT uninstall when declined. Output:\n{output}"
         );
     }
