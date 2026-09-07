@@ -322,6 +322,21 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // (from auto-commit or squash), post-remove + post-switch (from worktree
     // removal), and post-merge share a single `◎ Running …` line flushed at
     // the end.
+    //
+    // Every background hook runs in the worktree it is anchored on, and only
+    // post-commit is anchored on the feature worktree (the other three anchor
+    // on the destination). Flushing after `finish_after_merge` therefore spawns
+    // post-commit into a directory the removal has just deleted, and its runner
+    // logs `failed to open repository for pipeline` to
+    // `.git/wt/logs/<branch>/user|project/post-commit/runner.log`, which
+    // nothing reads back — the `◎ Running post-commit` line is the only trace.
+    // Accepted rather than fixed: the commit it would fire on is squashed and
+    // rebased before the merge lands, `pre-remove` already covers work that
+    // must finish in the feature worktree, and spawning early only narrows the
+    // window (removal succeeds against a live cwd). post-commit still runs where
+    // the worktree survives — `--no-remove`, merging on the target branch,
+    // merging from the primary worktree — and on `wt step commit` /
+    // `wt step squash`.
     let mut announcer = HookAnnouncer::new(repo, false);
 
     // The project commit-append is gated independently of hook approval:
