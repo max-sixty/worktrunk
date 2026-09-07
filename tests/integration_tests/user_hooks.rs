@@ -1049,9 +1049,9 @@ sync = "echo merged"
 /// one combined announce line — the non-squash sibling of
 /// [`test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge`].
 ///
-/// The announce line is all this pins. post-commit is announced but never
-/// runs on a merge that removes the worktree, which `handle_merge`'s announcer
-/// comment covers.
+/// The announce line is all this pins. post-commit is announced but can't be
+/// relied on to run on a merge that removes the worktree, which
+/// `handle_merge`'s announcer comment covers.
 #[rstest]
 fn test_merge_auto_commit_combines_post_commit_post_remove_post_switch_post_merge(
     mut repo: TestRepo,
@@ -1090,9 +1090,9 @@ sync = "echo merged"
 /// should share one `Running …` announce line so the user sees a single status
 /// line for the whole command, not four.
 ///
-/// That line is all this pins. post-commit is announced but never runs on a
-/// merge that removes the worktree, which `handle_merge`'s announcer comment
-/// covers.
+/// That line is all this pins. post-commit is announced but can't be relied on
+/// to run on a merge that removes the worktree, which `handle_merge`'s
+/// announcer comment covers.
 #[rstest]
 fn test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge(mut repo: TestRepo) {
     // Squash needs >1 commit ahead of main to actually run.

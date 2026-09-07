@@ -326,10 +326,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Every background hook runs in the worktree it is anchored on, and only
     // post-commit is anchored on the feature worktree (the other three anchor
     // on the destination). Flushing after `finish_after_merge` therefore spawns
-    // post-commit into a directory the removal has just deleted, and its runner
-    // logs `failed to open repository for pipeline` to
+    // post-commit into a path the removal has already emptied — the fast path
+    // renames the worktree into `.git/wt/trash/` and leaves an empty
+    // placeholder there (torn down by the detached `sleep 1 && rmdir`). Where
+    // nothing above that placeholder is a git repository, the runner logs
+    // `failed to open repository for pipeline` to
     // `.git/wt/logs/<branch>/user|project/post-commit/runner.log`, which
-    // nothing reads back — the `◎ Running post-commit` line is the only trace.
+    // nothing reads back; where the worktree is nested inside the repo,
+    // discovery walks up to the primary worktree instead and the steps run
+    // there, in a directory about to vanish. Either way the
+    // `◎ Running post-commit` line is the only trace.
     // Accepted rather than fixed: the commit it would fire on is squashed and
     // rebased before the merge lands, `pre-remove` already covers work that
     // must finish in the feature worktree, and spawning early only narrows the
