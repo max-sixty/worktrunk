@@ -1703,6 +1703,38 @@ fn test_copy_ignored_dry_run_json(mut repo: TestRepo) {
     assert_eq!(entries[0]["path"], ".env");
     assert_eq!(entries[0]["kind"], "file");
 
+    // A plan says what would be copied, so it carries none of the four result
+    // counts — the same shape whether or not anything matched. Two early
+    // returns reach `planned` with an empty entry list and this path reaches it
+    // with a full one, so both are checked; a count appearing in either would
+    // make `jq '.reflinked + .written'` null on one plan and a number on
+    // another.
+    for key in ["files", "bytes", "reflinked", "written"] {
+        assert!(parsed[key].is_null(), "populated plan carries {key}");
+    }
+
+    fs::remove_file(repo.root_path().join(".worktreeinclude")).unwrap();
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "copy-ignored",
+            "--dry-run",
+            "--require-include",
+            "--format=json",
+        ])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let empty: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
+    assert_eq!(empty["outcome"], "planned");
+    assert_eq!(empty["entries"].as_array().expect("entries array").len(), 0);
+    for key in ["files", "bytes", "reflinked", "written"] {
+        assert!(empty[key].is_null(), "empty plan carries {key}");
+    }
+
     // Dry run did not copy
     assert!(!feature_path.join(".env").exists());
 }

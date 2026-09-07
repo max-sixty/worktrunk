@@ -17,6 +17,23 @@ use crate::output::print_json;
 
 use super::shared::{list_and_filter_ignored_entries, resolve_copy_ignored_config};
 
+/// Add the four counts a result payload reports, all zero, to an exit that
+/// copied nothing.
+///
+/// A `--dry-run` payload takes none of them. It reports what *would* be
+/// copied, so a file count and a reflink split have nothing to describe, and
+/// leaving them out is what keeps `outcome: "planned"` one shape whether or
+/// not anything matched — the two early returns below reach it with an empty
+/// entry list, the main path with a full one.
+fn insert_empty_counts(payload: &mut serde_json::Value) {
+    let obj = payload
+        .as_object_mut()
+        .expect("the json! macro above produced an object");
+    for key in ["files", "bytes", "reflinked", "written"] {
+        obj.insert(key.to_string(), serde_json::json!(0));
+    }
+}
+
 /// Handle `wt step copy-ignored` command
 ///
 /// Copies gitignored files from a source worktree to a destination worktree.
@@ -70,16 +87,13 @@ pub fn step_copy_ignored(
 
     if source_path == dest_path {
         if json_mode {
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "outcome": "same_worktree",
                 "from": source_path,
                 "to": dest_path,
                 "entries": Vec::<serde_json::Value>::new(),
-                "files": 0,
-                "bytes": 0,
-                "reflinked": 0,
-                "written": 0,
             });
+            insert_empty_counts(&mut payload);
             print_json(&payload)?;
         } else {
             eprintln!(
@@ -102,18 +116,17 @@ pub fn step_copy_ignored(
     // when nothing copies.
     if require_include && !source_path.join(".worktreeinclude").exists() {
         if json_mode {
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "outcome": if dry_run { "planned" } else { "copied" },
                 "dry_run": dry_run,
                 "from": source_path,
                 "to": dest_path,
                 "reason": "require-include-no-worktreeinclude",
                 "entries": Vec::<serde_json::Value>::new(),
-                "files": 0,
-                "bytes": 0,
-                "reflinked": 0,
-                "written": 0,
             });
+            if !dry_run {
+                insert_empty_counts(&mut payload);
+            }
             print_json(&payload)?;
         } else {
             eprintln!(
@@ -141,17 +154,16 @@ pub fn step_copy_ignored(
 
     if entries_to_copy.is_empty() {
         if json_mode {
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "outcome": if dry_run { "planned" } else { "copied" },
                 "dry_run": dry_run,
                 "from": source_path,
                 "to": dest_path,
                 "entries": Vec::<serde_json::Value>::new(),
-                "files": 0,
-                "bytes": 0,
-                "reflinked": 0,
-                "written": 0,
             });
+            if !dry_run {
+                insert_empty_counts(&mut payload);
+            }
             print_json(&payload)?;
         } else {
             eprintln!("{}", info_message("No matching files to copy"));
@@ -278,11 +290,9 @@ pub fn step_copy_ignored(
         // (files and dirs). `files` counts the actual leaves written
         // (recursive + skipping pre-existing files), `bytes` sums their size,
         // and `reflinked`/`written` split those leaves by whether the
-        // filesystem shared the source's extents. Every payload that reports a
-        // result carries all four, zeroed where nothing was copied, so a
-        // consumer never branches on a key's presence; the dry-run plan carries
-        // none of them, since it reports what would be copied rather than what
-        // was.
+        // filesystem shared the source's extents. `insert_empty_counts` carries
+        // all four through the exits that copy nothing, so a consumer never
+        // branches on a key's presence.
         let entries: Vec<_> = entries_to_copy
             .iter()
             .map(|(src_entry, is_dir)| {
