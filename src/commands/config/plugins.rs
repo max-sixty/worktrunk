@@ -60,12 +60,8 @@ pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
         match prompt_yes_no_preview(
             &cformat!("Uninstall Worktrunk plugin from <bold>Claude Code</>?"),
             || {
-                eprintln!(
-                    "{}",
-                    worktrunk::styling::format_bash_with_gutter(
-                        "claude plugin uninstall worktrunk@worktrunk"
-                    )
-                );
+                let commands = "claude plugin uninstall worktrunk@worktrunk\nclaude plugin marketplace remove worktrunk";
+                eprintln!("{}", worktrunk::styling::format_bash_with_gutter(commands));
             },
         )? {
             PromptResponse::Accepted => {}
@@ -76,7 +72,13 @@ pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
     eprintln!("{}", progress_message("Uninstalling plugin..."));
     super::run_plugin_cli("claude", &["plugin", "uninstall", "worktrunk@worktrunk"])?;
 
-    eprintln!("{}", success_message("Plugin uninstalled"));
+    eprintln!(
+        "{}",
+        progress_message("Removing Claude Code plugin marketplace...")
+    );
+    super::run_plugin_cli("claude", &["plugin", "marketplace", "remove", "worktrunk"])?;
+
+    eprintln!("{}", success_message("Plugin & marketplace removed"));
 
     Ok(())
 }

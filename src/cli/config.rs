@@ -440,10 +440,11 @@ Requires `claude` CLI. Skips gracefully if already installed."#
 
     /// Remove the Worktrunk plugin
     #[command(
-        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code and removes its marketplace. Equivalent to:
 
 ```console
 $ claude plugin uninstall worktrunk@worktrunk
+$ claude plugin marketplace remove worktrunk
 ```"#
     )]
     Uninstall,

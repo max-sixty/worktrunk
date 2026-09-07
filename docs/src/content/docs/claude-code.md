@@ -30,6 +30,8 @@ claude plugin marketplace add max-sixty/worktrunk
 claude plugin install worktrunk@worktrunk
 ```
 
+`wt config plugins claude uninstall` removes the plugin and its marketplace entry.
+
 ### Codex
 
 ```bash
