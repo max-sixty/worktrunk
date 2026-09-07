@@ -146,8 +146,8 @@ test('build preserves the public route contract', async () => {
     homepage,
     /<div\b[^>]*class="wt-home"[^>]*>[\s\S]*?<p>Worktrunk is a CLI for Git worktree management, designed for <strong>parallel AI agent\s+workflows<\/strong>\.<\/p>/,
   );
-  assert.match(homepage, /<button\b[^>]*aria-label="Menu"[^>]*aria-controls="starlight__sidebar"/);
-  assert.match(homepage, /<div id="starlight__sidebar" class="sidebar-pane\b/);
+  assert.match(homepage, /<button\b[^>]*popovertarget="starlight__sidebar"[^>]*class="[^"]*\bsl-menu-button\b[^"]*"[^>]*>[\s\S]*?<span class="sr-only[^"]*">Menu<\/span><\/button>/);
+  assert.match(homepage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"[^>]*class="sidebar-pane\b/);
   assert.match(homepage, /<a\b[^>]*href="\/switch\/"[^>]*><span\b[^>]*>wt switch<\/span><\/a>/);
   assert.match(homepage, /<a\b[^>]*href="\/faq\/"[^>]*><span\b[^>]*>FAQ<\/span><\/a>/);
   assert.doesNotMatch(homepage, /data-has-toc/);
@@ -560,13 +560,13 @@ test('short wide tables become labeled records without capturing dense tables', 
   );
 });
 
-test('mobile menu control is hidden until its script is available', async () => {
+test('mobile menu control works without JavaScript', async () => {
   const faqPage = await readFile(routeFile('/faq/'), 'utf8');
-  assert.match(faqPage, /<starlight-menu-button\b/);
-  assert.match(
-    faqPage,
-    /<style>\s*starlight-menu-button:not\(:defined\)\s*\{\s*display:\s*none;\s*\}\s*<\/style>/,
-  );
+  assert.match(faqPage, /<button\b[^>]*popovertarget="starlight__sidebar"/);
+  assert.match(faqPage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"/);
+  // Starlight 0.42 drives the menu from the popover API, so nothing hydrates
+  // first and the pre-hydration hiding this page used to carry is obsolete.
+  assert.doesNotMatch(faqPage, /starlight-menu-button/);
 });
 
 test('built pages have unique IDs and valid internal page links', async () => {
