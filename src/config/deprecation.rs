@@ -4732,10 +4732,10 @@ approved-commands = ["npm test"]
             migrated,
             "migration must be idempotent"
         );
+        let remaining = detect_deprecations(&migrated);
         assert!(
-            detect_deprecations(&migrated).is_empty(),
-            "applying the update must silence every warning; got {:?}",
-            detect_deprecations(&migrated)
+            remaining.is_empty(),
+            "applying the update must silence every warning; got {remaining:?}"
         );
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }
