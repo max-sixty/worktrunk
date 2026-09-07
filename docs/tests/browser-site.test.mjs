@@ -196,6 +196,39 @@ test('mobile pages stay viewport-bound while code remains readable', { timeout: 
   }
 });
 
+test('desktop terminal examples fit without horizontal scrolling', { timeout: 60_000 }, async () => {
+  const browser = await webkit.launch();
+  try {
+    for (const width of [1152, 1376]) {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      for (const route of await sitemapRoutes()) {
+        await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
+        const terminals = await page.evaluate(() => (
+          [...document.querySelectorAll('.frame.is-terminal')]
+            .filter((frame) => frame.querySelector('.wt-output'))
+            .map((frame) => {
+              const pre = frame.querySelector('pre');
+              return {
+                command: frame.querySelector('.wt-command')?.textContent.trim(),
+                clientWidth: pre.clientWidth,
+                scrollWidth: pre.scrollWidth,
+              };
+            })
+        ));
+        for (const terminal of terminals) {
+          assert.ok(
+            terminal.scrollWidth <= terminal.clientWidth + 1,
+            `${route} ${terminal.command} scrolls horizontally at ${width}px`,
+          );
+        }
+      }
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
 test('code artifacts keep their visual hierarchy in both themes', async () => {
   const browser = await webkit.launch();
   try {

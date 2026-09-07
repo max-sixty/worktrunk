@@ -42,28 +42,28 @@ Include CI status and LLM summaries:
 
 ```console
 $ wt list --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
-^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68
-+ fix-typos        _|                                                                                              |     #410  41ee083
+  Branch       Status        HEAD±    main↕     main…±  Summary                      Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
+^ main             ^⇅                                                                 ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
++ fix-typos        _|                                                                   |     #410
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 4 columns hidden
 ```
 
 Include branches that don't have worktrees:
 
 ```console
 $ wt list --branches --full
-  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
-^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68
-+ fix-typos        _|                                                                                              |     #410  41ee083
-/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                   9637922
-/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                                b40716d
+  Branch       Status        HEAD±    main↕     main…±  Summary                      Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
+^ main             ^⇅                                                                 ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
++ fix-typos        _|                                                                   |     #410
+/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…
+/ wip             /↕                 ↑1  ↓1   +33       Start API documentation
 
-○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
+○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 4 columns hidden
 ```
 
 Output as JSON for scripting:

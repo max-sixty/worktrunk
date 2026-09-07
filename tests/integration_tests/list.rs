@@ -1160,7 +1160,7 @@ fn setup_user_marker_example(repo: &mut TestRepo) {
 #[rstest]
 fn test_list_with_user_marker(mut repo: TestRepo) {
     setup_user_marker_example(&mut repo);
-    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+    assert_cmd_snapshot!(list_snapshots::command_readme(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -2662,7 +2662,7 @@ fn test_readme_example_list(mut repo: TestRepo) {
 /// Generate README example: `wt list --full` output
 ///
 /// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
-/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
+/// Uses the documentation width (98 cols) so the sample fits the site content column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2670,7 +2670,6 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
-        cmd.env("COLUMNS", "134");
         cmd
     });
 }
@@ -2678,7 +2677,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses wider terminal (134 cols) than the base example to fit the Summary column.
+/// Uses the documentation width (98 cols) so the sample fits the site content column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -2686,7 +2685,6 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
-        cmd.env("COLUMNS", "134");
         cmd
     });
 }

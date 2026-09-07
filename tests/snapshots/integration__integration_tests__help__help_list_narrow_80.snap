@@ -131,7 +131,7 @@ Include CI status and LLM summaries:
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with cons[22m[2m…[0m
 [107m [0m [2m[0m[2m[34m+[0m[2m fix-typos        _[0m[2m[36m|[0m[2m                                                        [22m[2m…[0m
 [107m [0m [0m
-[107m [0m [2m[0m[2m[34m○[0m[2m Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden[0m
+[107m [0m [2m[0m[2m[34m○[0m[2m Showing 4 worktrees, 1 with changes, 2 ahead, 4 columns hidden[0m
 
 Include branches that don't have worktrees:
 
@@ -144,7 +144,7 @@ Include branches that don't have worktrees:
 [107m [0m [2m[0m[2m[34m/[0m[2m exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schem[22m[2m…[0m
 [107m [0m [2m[0m[2m[34m/[0m[2m wip             /↕                 ↑1  ↓1   +33       Start API documentati[22m[2m…[0m
 [107m [0m [0m
-[107m [0m [2m[0m[2m[34m○[0m[2m Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden[0m
+[107m [0m [2m[0m[2m[34m○[0m[2m Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 4 columns hidden[0m
 
 Output as JSON for scripting:
 
