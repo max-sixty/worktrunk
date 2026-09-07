@@ -5,6 +5,37 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Pin the reflink half of the copy summary, which is otherwise a property of
+/// the filesystem under the test's temp directory — APFS reflinks, the ext4 and
+/// NTFS runners cannot, and no one snapshot holds on all three.
+///
+/// Every snapshot command in this file goes through [`snapshot_cmd`] or
+/// [`snapshot_cmd_with_global_flags`] so a new test cannot forget; the copy
+/// itself still attempts a reflink either way, and only the reported label is
+/// fixed. `copy_ignored_reports_a_full_copy` pins the opposite branch.
+fn pin_reflink(mut cmd: Command, reflinked: bool) -> Command {
+    cmd.env("WORKTRUNK_TEST_REFLINK", if reflinked { "1" } else { "0" });
+    cmd
+}
+
+fn snapshot_cmd(repo: &TestRepo, subcommand: &str, args: &[&str], cwd: Option<&Path>) -> Command {
+    pin_reflink(make_snapshot_cmd(repo, subcommand, args, cwd), true)
+}
+
+fn snapshot_cmd_with_global_flags(
+    repo: &TestRepo,
+    subcommand: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    global_flags: &[&str],
+) -> Command {
+    pin_reflink(
+        make_snapshot_cmd_with_global_flags(repo, subcommand, args, cwd, global_flags),
+        true,
+    )
+}
 const CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG: &str = r#"[step.copy-ignored]
 exclude = [".custom-cache/"]
 "#;
@@ -78,11 +109,28 @@ fn setup_copy_ignored_exclude_fixture(repo: &mut TestRepo) -> PathBuf {
 fn test_copy_ignored_no_worktreeinclude(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
     // No .worktreeinclude file and no gitignored files → nothing to copy
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
         Some(&feature_path),
+    ));
+}
+
+/// What an ext4 or NTFS user sees: no reflink, so every byte is written out and
+/// the summary says so instead of repeating the line it would print on APFS.
+///
+/// Every other snapshot in this file pins the reflinked branch, so the two
+/// together cover both wordings on all three CI platforms.
+#[rstest]
+fn test_copy_ignored_reports_a_full_copy(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    assert_cmd_snapshot!(pin_reflink(
+        make_snapshot_cmd(&repo, "step", &["copy-ignored"], Some(&feature_path)),
+        false,
     ));
 }
 
@@ -97,7 +145,7 @@ fn test_copy_ignored_default_copies_all(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".gitignore"), ".env\ncache.db\n").unwrap();
 
     // Without .worktreeinclude, all gitignored files should be copied
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
@@ -167,7 +215,7 @@ fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), "{unclosed\n").unwrap();
 
     // Should fail with parse error
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
@@ -183,7 +231,7 @@ fn test_copy_ignored_empty_intersection(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
     // But don't create .gitignore or .env file
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
@@ -204,7 +252,7 @@ fn test_copy_ignored_not_ignored_file(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run from feature worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
@@ -313,7 +361,7 @@ fn test_copy_ignored_dry_run(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run with --dry-run
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--dry-run"],
@@ -394,7 +442,7 @@ fn test_copy_ignored_same_worktree(repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run from main worktree (source = dest = main)
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["copy-ignored"], None,));
+    assert_cmd_snapshot!(snapshot_cmd(&repo, "step", &["copy-ignored"], None,));
 }
 
 /// Test --from flag to specify source worktree
@@ -414,7 +462,7 @@ fn test_copy_ignored_from_flag(mut repo: TestRepo) {
     fs::write(feature_a.join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run from feature-b, copying from feature-a
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--from", "feature-a"],
@@ -540,7 +588,7 @@ fn test_copy_ignored_to_flag(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run from feature-a, copying from main (default) to feature-b (explicit)
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--to", "feature-b"],
@@ -566,7 +614,7 @@ fn test_copy_ignored_from_nonexistent_worktree(repo: TestRepo) {
         .unwrap();
 
     // Try to copy from a branch with no worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--from", "orphan-branch"],
@@ -588,7 +636,7 @@ fn test_copy_ignored_to_nonexistent_worktree(repo: TestRepo) {
     fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
 
     // Try to copy to a branch with no worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--to", "orphan-branch"],
@@ -692,7 +740,7 @@ fn test_copy_ignored_force_overwrites(mut repo: TestRepo) {
     );
 
     // With --force: existing file SHOULD be overwritten
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--force"],
@@ -716,7 +764,7 @@ fn test_copy_ignored_force_no_existing(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // --force on a fresh worktree should still copy successfully
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored", "--force"],
@@ -870,7 +918,7 @@ fn test_copy_ignored_verbose(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
 
     // Run with -v (global verbose flag)
-    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+    assert_cmd_snapshot!(snapshot_cmd_with_global_flags(
         &repo,
         "step",
         &["copy-ignored"],
@@ -893,7 +941,7 @@ fn test_copy_ignored_verbose_directory(mut repo: TestRepo) {
     fs::write(target_dir.join("debug").join("output"), "binary").unwrap();
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+    assert_cmd_snapshot!(snapshot_cmd_with_global_flags(
         &repo,
         "step",
         &["copy-ignored"],
@@ -923,7 +971,7 @@ fn test_copy_ignored_counts_files_not_entries(mut repo: TestRepo) {
     fs::write(target_dir.join("debug/deps/libbar.rlib"), "lib").unwrap();
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
@@ -1547,7 +1595,7 @@ fn test_copy_ignored_skips_nested_worktrees(mut repo: TestRepo) {
     let dest_path = repo.add_worktree("destination");
 
     // Run copy-ignored
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(snapshot_cmd(
         &repo,
         "step",
         &["copy-ignored"],
@@ -1673,6 +1721,13 @@ fn test_copy_ignored_json_summary(mut repo: TestRepo) {
     assert_eq!(parsed["files"], 1);
     // .env content "SECRET=value" is 12 bytes
     assert_eq!(parsed["bytes"], 12);
+    // The disk-cost split. Which side the file lands on is the runner's
+    // filesystem talking, so the assertion is the invariant that holds on all
+    // of them: the two halves account for every copied file, since this tree
+    // has no symlinks.
+    let reflinked = parsed["reflinked"].as_u64().expect("reflinked count");
+    let written = parsed["written"].as_u64().expect("written count");
+    assert_eq!(reflinked + written, 1);
     let entries = parsed["entries"].as_array().expect("entries array");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["path"], ".env");

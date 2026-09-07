@@ -8,7 +8,7 @@ use color_print::cformat;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::progress::{Progress, format_bytes};
+use worktrunk::progress::{Progress, format_bytes, format_reflink_paren};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, success_message, verbosity,
 };
@@ -257,12 +257,14 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)? {
-                progress.record(bytes);
+            if let Some((bytes, data)) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)?
+            {
+                progress.record(bytes, data);
             }
         }
     }
     let (copied_count, copied_bytes) = progress.totals();
+    let (reflinked, written) = progress.copy_split();
     progress.finish();
 
     if json_mode {
@@ -289,6 +291,8 @@ pub fn step_copy_ignored(
             "entries": entries,
             "files": copied_count,
             "bytes": copied_bytes,
+            "reflinked": reflinked,
+            "written": written,
         });
         print_json(&payload)?;
     } else {
@@ -300,6 +304,7 @@ pub fn step_copy_ignored(
                 "Copied {copied_count} {file_word} · {}",
                 format_bytes(copied_bytes)
             ))
+            .append(&format_reflink_paren(reflinked, written))
         );
     }
 

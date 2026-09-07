@@ -50,4 +50,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✓ Copied 1 file · 12 B
+✓ Copied 1 file · 12 B (reflinked, no extra disk)

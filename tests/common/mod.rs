@@ -1286,9 +1286,9 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// total is sensitive to the temp-dir prefix (macOS `/var/folders/...` vs
 /// Linux `/tmp/...` vs Windows). The literal `(...files · X UNIT)` shape is
 /// unique enough to leave the deterministic copy-ignored summary
-/// (`Copied N files · X B` — no surrounding parens) untouched, so the regex
-/// doesn't depend on ANSI styling and works in both colored and `NO_COLOR`
-/// test environments.
+/// (`Copied N files · X B`, whose own parenthetical carries the reflink split
+/// rather than a byte count) untouched, so the regex doesn't depend on ANSI
+/// styling and works in both colored and `NO_COLOR` test environments.
 fn add_remove_stats_byte_filter(settings: &mut insta::Settings) {
     settings.add_filter(
         r"(\(\d+ files? · )\d+(?:\.\d+)? (B|KiB|MiB|GiB|TiB)",

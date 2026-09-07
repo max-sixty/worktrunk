@@ -20,6 +20,10 @@
 //! Counts accumulate for the lifetime of the reporter, so each counted
 //! operation (or batch reported as one) gets its own `Progress`.
 //!
+//! Every [`Progress::record`] also classifies the file by [`DataCopy`], so a
+//! copy can report how much of it shared the source's extents rather than
+//! costing disk. [`Progress::copy_split`] reads that pair back.
+//!
 //! `start` is named deliberately (not `new`) because it spawns a ticker thread
 //! as a side effect — `Default`-style semantics would be misleading. The verb
 //! (`"Copying"`, `"Removing"`) is fixed for the lifetime of the spinner.
@@ -30,13 +34,32 @@
 //! The spinner machinery (crossterm, the ticker thread, the render loop) is
 //! gated on the `cli` feature. Without `cli`, [`Progress`] keeps the counters
 //! but never renders. Pure formatting helpers ([`format_bytes`],
-//! [`format_stats_paren`]) are always available since callers in both modes
-//! want them.
+//! [`format_stats_paren`], [`format_reflink_paren`]) are always available since
+//! callers in both modes want them.
 
 use color_print::cformat;
 
 pub use imp::Progress;
 pub use imp::Watchdog;
+
+/// How a recorded file's data reached its destination, which is what decides
+/// whether the file cost disk.
+///
+/// [`Progress`] counts [`Self::Reflinked`] and [`Self::Written`] separately so
+/// `wt step copy-ignored` can report the split; [`Self::Neither`] contributes
+/// to the file and byte totals only. Only a filesystem clone distinguishes the
+/// first two, so everything that moves no file extents — a symlink, whose
+/// content is a path, and a removal, which frees them — records `Neither`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DataCopy {
+    /// The filesystem cloned the source's extents. The destination shares them
+    /// until one side writes, so the copy costs no data blocks.
+    Reflinked,
+    /// The bytes were written out, costing the file's full size on disk.
+    Written,
+    /// Neither — the record moved no file extents.
+    Neither,
+}
 
 #[cfg(feature = "cli")]
 mod imp {
@@ -91,6 +114,8 @@ mod imp {
     struct Shared {
         files: AtomicUsize,
         bytes: AtomicU64,
+        reflinked: AtomicUsize,
+        written: AtomicUsize,
         done: AtomicBool,
         rendered: AtomicBool,
     }
@@ -100,6 +125,8 @@ mod imp {
             Self {
                 files: AtomicUsize::new(0),
                 bytes: AtomicU64::new(0),
+                reflinked: AtomicUsize::new(0),
+                written: AtomicUsize::new(0),
                 done: AtomicBool::new(false),
                 rendered: AtomicBool::new(false),
             }
@@ -174,10 +201,17 @@ mod imp {
             }
         }
 
-        /// Record that a file (or symlink) was processed. Safe to call from any thread.
-        pub fn record(&self, bytes: u64) {
+        /// Record that a file (or symlink) was processed, classified by whether
+        /// its data cost disk. Safe to call from any thread.
+        pub fn record(&self, bytes: u64, data: super::DataCopy) {
             self.shared.files.fetch_add(1, Ordering::Relaxed);
             self.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
+            let counter = match data {
+                super::DataCopy::Reflinked => &self.shared.reflinked,
+                super::DataCopy::Written => &self.shared.written,
+                super::DataCopy::Neither => return,
+            };
+            counter.fetch_add(1, Ordering::Relaxed);
         }
 
         /// Running `(files, bytes)` totals recorded so far.
@@ -188,6 +222,15 @@ mod imp {
             (
                 self.shared.files.load(Ordering::Relaxed),
                 self.shared.bytes.load(Ordering::Relaxed),
+            )
+        }
+
+        /// Running `(reflinked, written)` file counts. Their sum is at most
+        /// `totals().0` — the gap is the files that moved no extents.
+        pub fn copy_split(&self) -> (usize, usize) {
+            (
+                self.shared.reflinked.load(Ordering::Relaxed),
+                self.shared.written.load(Ordering::Relaxed),
             )
         }
 
@@ -592,8 +635,8 @@ mod imp {
         #[test]
         fn test_enabled_lifecycle_counters_propagate() {
             let p = Progress::enabled("Copying");
-            p.record(1024);
-            p.record(2048);
+            p.record(1024, super::super::DataCopy::Reflinked);
+            p.record(2048, super::super::DataCopy::Written);
             assert_eq!(p.totals(), (2, 3072));
             p.finish();
         }
@@ -621,7 +664,7 @@ mod imp {
             // be starved past under load: `rendered` is the background work we're
             // verifying, so wait on it directly.
             let p = Progress::enabled_with_delays("Removing", Duration::from_millis(10));
-            p.record(100);
+            p.record(100, super::super::DataCopy::Neither);
             let timeout = Duration::from_secs(5);
             let start = Instant::now();
             while start.elapsed() < timeout {
@@ -818,6 +861,8 @@ mod imp {
     pub struct Progress {
         files: AtomicUsize,
         bytes: AtomicU64,
+        reflinked: AtomicUsize,
+        written: AtomicUsize,
     }
 
     impl Progress {
@@ -829,18 +874,33 @@ mod imp {
             Self {
                 files: AtomicUsize::new(0),
                 bytes: AtomicU64::new(0),
+                reflinked: AtomicUsize::new(0),
+                written: AtomicUsize::new(0),
             }
         }
 
-        pub fn record(&self, bytes: u64) {
+        pub fn record(&self, bytes: u64, data: super::DataCopy) {
             self.files.fetch_add(1, Ordering::Relaxed);
             self.bytes.fetch_add(bytes, Ordering::Relaxed);
+            let counter = match data {
+                super::DataCopy::Reflinked => &self.reflinked,
+                super::DataCopy::Written => &self.written,
+                super::DataCopy::Neither => return,
+            };
+            counter.fetch_add(1, Ordering::Relaxed);
         }
 
         pub fn totals(&self) -> (usize, u64) {
             (
                 self.files.load(Ordering::Relaxed),
                 self.bytes.load(Ordering::Relaxed),
+            )
+        }
+
+        pub fn copy_split(&self) -> (usize, usize) {
+            (
+                self.reflinked.load(Ordering::Relaxed),
+                self.written.load(Ordering::Relaxed),
             )
         }
 
@@ -914,6 +974,33 @@ pub fn format_stats_paren(files: usize, bytes: u64) -> String {
     )
 }
 
+/// Format the reflink split as a gray parenthetical, for a copy summary that
+/// has already reported its file and byte counts.
+///
+/// Takes the two halves of [`Progress::copy_split`]. Only the reflinked wording
+/// carries a gloss, since that is the term a reader won't know; the contrast
+/// then tells them what a full copy cost, without repeating the byte count the
+/// summary just gave.
+///
+/// A mixed result is real, since a tree can span two filesystems, so it reports
+/// the count rather than collapsing to whichever side is larger.
+///
+/// Returns an empty string when neither half has anything in it, so a caller
+/// can concatenate it unconditionally. That covers an empty run and one that
+/// only created symlinks, neither of which has a split to report.
+pub fn format_reflink_paren(reflinked: usize, written: usize) -> String {
+    match (reflinked, written) {
+        (0, 0) => String::new(),
+        (_, 0) => cformat!(" <bright-black>(reflinked, no extra disk)</>"),
+        (0, _) => cformat!(" <bright-black>(full copy)</>"),
+        _ => cformat!(
+            " <bright-black>({} of {} reflinked)</>",
+            format_count(reflinked),
+            format_count(reflinked + written),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -957,14 +1044,40 @@ mod tests {
         assert!(s.contains("5.0 MiB"));
     }
 
+    // Which half is zero picks the wording, and the mixed case is the one no
+    // integration test can stage — it needs two filesystems under one tree.
+    #[test]
+    fn test_format_reflink_paren_wording() {
+        assert_eq!(format_reflink_paren(0, 0), "");
+        assert!(format_reflink_paren(3, 0).contains("(reflinked, no extra disk)"));
+        assert!(format_reflink_paren(0, 3).contains("(full copy)"));
+        assert!(format_reflink_paren(2, 1).contains("(2 of 3 reflinked)"));
+        assert!(format_reflink_paren(1_500, 500).contains("(1,500 of 2,000 reflinked)"));
+    }
+
     // Not cfg-gated: covers the disabled-state counting contract in both the
     // `cli` implementation and the no-`cli` stub.
     #[test]
     fn test_disabled_still_counts() {
         let p = Progress::disabled();
-        p.record(1_000_000);
-        p.record(2_000_000);
+        p.record(1_000_000, DataCopy::Reflinked);
+        p.record(2_000_000, DataCopy::Written);
         assert_eq!(p.totals(), (2, 3_000_000));
+        p.finish();
+    }
+
+    // The split counts only what moved extents, so `Neither` lands in the
+    // file/byte totals and in neither half — the property that keeps a tree of
+    // symlinks from reading as a partial reflink failure.
+    #[test]
+    fn test_copy_split_excludes_extentless_records() {
+        let p = Progress::disabled();
+        p.record(10, DataCopy::Reflinked);
+        p.record(20, DataCopy::Reflinked);
+        p.record(30, DataCopy::Written);
+        p.record(40, DataCopy::Neither);
+        assert_eq!(p.totals(), (4, 100));
+        assert_eq!(p.copy_split(), (2, 1));
         p.finish();
     }
 }

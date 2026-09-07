@@ -608,7 +608,7 @@ Files are reflinked where the filesystem supports it: APFS (macOS), btrfs and XF
 | `cp -R` (full copy) | 2m | 14GB |
 | `cp -Rc` / `wt step copy-ignored` | 20s | ~0 |
 
-On ext4 and NTFS, which have no reflink, every file is copied in full.
+On ext4 and NTFS, which have no reflink, every file is copied in full. The same byte count therefore costs nothing on one filesystem and 14GB on the other, so the summary says which happened: `Copied 4,812 files · 14.0 GB (reflinked, no extra disk)`, against `(full copy)` where those bytes were written out.
 
 Reflinks are per file (like `cp -Rc`), so copy time scales with file count.
 
