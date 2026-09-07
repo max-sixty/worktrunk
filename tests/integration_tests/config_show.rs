@@ -5137,6 +5137,41 @@ fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// `claude plugin uninstall` succeeds and the marketplace removal that follows
+/// it fails: the uninstall surfaces claude's error rather than reporting a
+/// marketplace it never removed.
+#[rstest]
+fn test_plugins_claude_uninstall_second_step_fails(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::{MockConfig, MockResponse};
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_installed();
+    TestRepo::setup_plugin_installed(temp_home.path());
+
+    // Plugin uninstall succeeds and only the marketplace removal that follows
+    // it fails, so the error the command surfaces can come from nothing else.
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
+    MockConfig::new("claude")
+        .command("plugin uninstall", MockResponse::exit(0))
+        .command(
+            "plugin marketplace remove",
+            MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+        )
+        .write(mock_bin);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 // ==================== Plugin Prompt PTY Tests ====================
 
 #[cfg(all(unix, feature = "shell-integration-tests"))]
