@@ -2259,10 +2259,10 @@ impl TestRepo {
     /// Record the worktrunk marketplace as configured in Codex
     ///
     /// Codex keeps each one as a `[marketplaces.<name>]` table in
-    /// `config.toml`.
-    pub fn setup_codex_marketplace_configured(temp_home: &std::path::Path) {
-        let codex_dir = temp_home.join(".codex");
-        std::fs::create_dir_all(&codex_dir).unwrap();
+    /// `config.toml`. Takes the config root rather than the home directory,
+    /// since `CODEX_HOME` can move it off `~/.codex`.
+    pub fn setup_codex_marketplace_configured(codex_dir: &std::path::Path) {
+        std::fs::create_dir_all(codex_dir).unwrap();
         std::fs::write(
             codex_dir.join("config.toml"),
             "[marketplaces.worktrunk]\nsource_type = \"git\"\nsource = \"https://github.com/max-sixty/worktrunk.git\"\n",

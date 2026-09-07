@@ -4396,7 +4396,7 @@ fn test_plugins_codex_uninstall_surfaces_marketplace_remove_failure(
 ) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_codex_with_marketplace_remove_failing();
-    TestRepo::setup_codex_marketplace_configured(temp_home.path());
+    TestRepo::setup_codex_marketplace_configured(&temp_home.path().join(".codex"));
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4407,6 +4407,35 @@ fn test_plugins_codex_uninstall_surfaces_marketplace_remove_failure(
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// `CODEX_HOME` moves the config Codex reads, so the marketplace lookup has to
+/// follow it rather than the home directory. Asserted directly rather than by
+/// snapshot, which would put the variable's temp path in the snapshot's env
+/// block and trip the host-path guard.
+#[rstest]
+fn test_plugins_codex_uninstall_reads_codex_home(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing();
+
+    // The marketplace is recorded under CODEX_HOME and nowhere else, so a
+    // lookup that ignored the variable would find no config and read the
+    // failed removal as "already gone".
+    let codex_home = TempDir::new().unwrap();
+    TestRepo::setup_codex_marketplace_configured(codex_home.path());
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("CODEX_HOME", codex_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "a marketplace still configured under CODEX_HOME must surface the removal failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

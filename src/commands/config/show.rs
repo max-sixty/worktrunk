@@ -247,20 +247,14 @@ pub(super) fn is_plugin_installed() -> bool {
 /// that genuinely failed. `known_marketplaces.json` is keyed by marketplace
 /// name.
 pub(super) fn is_marketplace_configured() -> bool {
-    let Some(config_dir) = claude_config_dir() else {
+    let Some(content) = claude_config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("plugins/known_marketplaces.json")).ok())
+    else {
         return false;
     };
 
-    let marketplaces_file = config_dir.join("plugins/known_marketplaces.json");
-    let Ok(content) = std::fs::read_to_string(&marketplaces_file) else {
-        return false;
-    };
-
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-
-    json.get("worktrunk").is_some()
+    serde_json::from_str::<serde_json::Value>(&content)
+        .is_ok_and(|json| json.get("worktrunk").is_some())
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.
