@@ -601,7 +601,7 @@ impl UserConfig {
     /// - Bad env vars → ignored, file-based config preserved
     /// - Validation failure → warning emitted, defaults used (invalid config
     ///   causes bad behavior if applied, e.g. empty worktree-path template)
-    pub(crate) fn load_with_warnings() -> (Self, Vec<LoadError>) {
+    pub fn load_with_warnings() -> (Self, Vec<LoadError>) {
         let mut warnings = Vec::new();
         let mut merged_table = toml::Table::new();
 

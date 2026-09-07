@@ -6643,6 +6643,9 @@ fn test_config_show_json_allows_invalid_runtime_override(
     temp_home: TempDir,
     #[case] inline: bool,
 ) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "[list]\nbranches = true\n").unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -6655,6 +6658,7 @@ fn test_config_show_json_allows_invalid_runtime_override(
     repo.configure_wt_cmd(&mut cmd);
     set_xdg_config_path(&mut cmd, temp_home.path());
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path);
     if inline {
         cmd.args(["--config-set", "list.timeout-ms=\"invalid\""]);
     } else {
@@ -6670,6 +6674,7 @@ fn test_config_show_json_allows_invalid_runtime_override(
         String::from_utf8_lossy(&output.stderr)
     );
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["config"]["list"]["branches"], true);
     assert_eq!(json["user"]["config"]["list"]["full"], true);
 }
 

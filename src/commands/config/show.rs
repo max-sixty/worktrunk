@@ -128,10 +128,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let user_exists = user_path.exists();
     let user_config = if user_exists {
         match read_json_config::<UserConfig>(&user_path)? {
-            Some(source_config) => match UserConfig::load() {
-                Ok(config) => Some(serde_json::to_value(config)?),
-                Err(_) => Some(source_config),
-            },
+            Some(_) => Some(serde_json::to_value(UserConfig::load_with_warnings().0)?),
             None => {
                 invalid = true;
                 None
