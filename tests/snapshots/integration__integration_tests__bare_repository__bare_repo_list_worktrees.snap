@@ -47,9 +47,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  Branch   Status        HEAD±    main↕     main…±  Remote⇅  Path        Commit   Age   Message
-@ main         ^                                             .           6c3da84  1d    Initial commit on main
-+ feature      ↑                 ↑1        +1   -1           ../feature  72413a3  1d    Work on feature
+  Branch   Status      HEAD±     main↕    main…±    Remote⇅  Path        Commit    Age  Message
+@ main         ^                                             .           6c3da84    1d  Initial commit on main
++ feature      ↑                 ↑1        +1   -1           ../feature  72413a3    1d  Work on feature
 
 ----- stderr -----
 

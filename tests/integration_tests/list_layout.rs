@@ -41,3 +41,44 @@ fn representative_widths_render_useful_tables(mut repo: TestRepo) {
         snapshot_list(&repo, &format!("width_{width}"), width);
     }
 }
+
+/// With no remote configured, `Remote⇅` is blank on every row, so it ranks
+/// below every populated column and drops first. At this width it used to
+/// hold its blank seven columns open while Message — which has something to
+/// say on every row — was dropped for want of them.
+#[rstest]
+fn empty_remote_column_drops_before_populated_ones(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("feature-with-a-longer-name");
+
+    snapshot_list(&repo, "no_remote_width_100", 100);
+}
+
+/// Two rows that aren't on a branch in the ordinary way. A detached worktree
+/// puts a hash in the Branch column, so `⊘` and the Path cell are what say
+/// which directory it is; a prunable one has no directory to read, so its
+/// data cells stay blank rather than showing a loading dot that can never
+/// resolve.
+#[rstest]
+fn detached_and_prunable_rows_say_what_they_are(mut repo: TestRepo) {
+    let detached = repo.add_worktree("feature-detached");
+    repo.run_git_in(&detached, &["checkout", "--detach"]);
+
+    let gone = repo.add_worktree("feature-gone");
+    std::fs::remove_dir_all(&gone).unwrap();
+
+    snapshot_list(&repo, "detached_and_prunable_width_120", 120);
+}
+
+/// One very long branch must not size the Branch column for every row: past
+/// the cap the name is elided, so the columns that answer "what is going on
+/// here" still fit. Without it, 60 columns degenerates into a branch list and
+/// 200 still loses Message.
+#[rstest]
+fn one_long_branch_does_not_size_the_table(mut repo: TestRepo) {
+    repo.add_worktree("a-very-long-branch-name-that-is-fifty-eight-chars-long-ok");
+
+    for width in [60, 100, 200] {
+        snapshot_list(&repo, &format!("long_branch_width_{width}"), width);
+    }
+}

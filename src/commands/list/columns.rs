@@ -25,6 +25,7 @@ pub enum ColumnKind {
 }
 
 impl ColumnKind {
+    /// This column's header text.
     pub const fn header(self) -> &'static str {
         match self {
             ColumnKind::Gutter => "",
