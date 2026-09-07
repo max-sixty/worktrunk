@@ -4341,6 +4341,74 @@ fn test_plugins_codex_uninstall_plugin_remove_fails(mut repo: TestRepo, temp_hom
     });
 }
 
+/// The marketplace removal's goal is that the marketplace is gone, so the
+/// harness reporting it was never configured is that goal already met. Running
+/// `uninstall` a second time hits exactly this, and used to fail with nothing
+/// left to do.
+#[rstest]
+fn test_plugins_claude_uninstall_tolerates_absent_marketplace(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing();
+    TestRepo::setup_plugin_installed(temp_home.path());
+    // No `known_marketplaces.json`, so the marketplace the removal failed on
+    // is already gone.
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The Codex counterpart: a second `uninstall` succeeds.
+#[rstest]
+fn test_plugins_codex_uninstall_tolerates_absent_marketplace(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing();
+    // No `config.toml`, so codex has no marketplace left to remove.
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The Codex counterpart: a marketplace that survives the removal still errors.
+#[rstest]
+fn test_plugins_codex_uninstall_surfaces_marketplace_remove_failure(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing();
+    TestRepo::setup_codex_marketplace_configured(temp_home.path());
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[test]
 fn test_codex_plugin_metadata_is_valid_json() {
     let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -5846,6 +5914,10 @@ fn test_plugins_claude_uninstall_second_step_fails(mut repo: TestRepo, temp_home
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_installed();
     TestRepo::setup_plugin_installed(temp_home.path());
+    // The marketplace is still configured after the removal fails, which is
+    // what makes this a genuine failure rather than the already-gone state
+    // `test_plugins_claude_uninstall_tolerates_absent_marketplace` covers.
+    TestRepo::setup_claude_marketplace_configured(temp_home.path());
 
     // Plugin uninstall succeeds and only the marketplace removal that follows
     // it fails, so the error the command surfaces can come from nothing else.

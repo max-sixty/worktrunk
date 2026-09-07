@@ -1192,6 +1192,11 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
         "PI_PROFILE",
         "PI_CONFIG_DIR",
         "PI_CODING_AGENT_DIR",
+        // Codex resolves its config root from CODEX_HOME, falling back to
+        // `$HOME/.codex` — which the temp home already pins. Dropping an
+        // ambient value is all hermeticity needs, and unlike setting one it
+        // keeps the variable out of every snapshot's env block.
+        "CODEX_HOME",
     ] {
         cmd.env_remove(var);
     }
@@ -2237,6 +2242,34 @@ impl TestRepo {
         .unwrap();
     }
 
+    /// Record the worktrunk marketplace as configured in Claude Code
+    ///
+    /// `known_marketplaces.json` is keyed by marketplace name, which is what
+    /// `is_marketplace_configured` reads.
+    pub fn setup_claude_marketplace_configured(temp_home: &std::path::Path) {
+        let plugins_dir = temp_home.join(".claude/plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        std::fs::write(
+            plugins_dir.join("known_marketplaces.json"),
+            r#"{"worktrunk":{"source":{"source":"github","repo":"max-sixty/worktrunk"}}}"#,
+        )
+        .unwrap();
+    }
+
+    /// Record the worktrunk marketplace as configured in Codex
+    ///
+    /// Codex keeps each one as a `[marketplaces.<name>]` table in
+    /// `config.toml`.
+    pub fn setup_codex_marketplace_configured(temp_home: &std::path::Path) {
+        let codex_dir = temp_home.join(".codex");
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        std::fs::write(
+            codex_dir.join("config.toml"),
+            "[marketplaces.worktrunk]\nsource_type = \"git\"\nsource = \"https://github.com/max-sixty/worktrunk.git\"\n",
+        )
+        .unwrap();
+    }
+
     /// Setup the statusline as configured in Claude Code settings
     ///
     /// Creates the settings.json file with the wt statusline command.
@@ -2353,6 +2386,56 @@ impl TestRepo {
         MockConfig::new("codex")
             .command("plugin marketplace add", MockResponse::exit(0))
             .command("plugin marketplace remove", MockResponse::exit(0))
+            .command("plugin add", MockResponse::exit(0))
+            .command("plugin remove", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.codex_installed = true;
+    }
+
+    /// Setup mock `claude` CLI whose only failing command is the marketplace
+    /// removal
+    ///
+    /// Uninstall reads the config to tell "the marketplace was already gone"
+    /// from a removal that genuinely failed, so the two cases need a mock that
+    /// fails the removal and leaves every other step alone. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_claude_with_marketplace_remove_failing(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command(
+                "plugin marketplace remove",
+                MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+            )
+            .command("plugin install", MockResponse::exit(0))
+            .command("plugin uninstall", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.claude_installed = true;
+    }
+
+    /// Setup mock `codex` CLI whose only failing command is the marketplace
+    /// removal
+    ///
+    /// The Codex counterpart of
+    /// `setup_mock_claude_with_marketplace_remove_failing`.
+    pub fn setup_mock_codex_with_marketplace_remove_failing(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("codex")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command(
+                "plugin marketplace remove",
+                MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+            )
             .command("plugin add", MockResponse::exit(0))
             .command("plugin remove", MockResponse::exit(0))
             .write(mock_bin);

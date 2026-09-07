@@ -1,5 +1,7 @@
 //! Codex plugin and marketplace management.
 
+use std::path::PathBuf;
+
 use anyhow::{Result, bail};
 use color_print::cformat;
 use worktrunk::styling::{eprintln, hint_message, progress_message, success_message};
@@ -81,9 +83,10 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         "{}",
         progress_message("Removing Codex plugin marketplace...")
     );
-    super::run_plugin_cli(
+    super::run_plugin_removal(
         "codex",
         &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
+        is_marketplace_configured,
     )?;
 
     eprintln!("{}", success_message("Codex plugin & marketplace removed"));
@@ -97,4 +100,47 @@ fn require_codex_cli() -> Result<()> {
     }
 
     bail!("codex CLI not found. Install Codex first: https://developers.openai.com/codex/cli/");
+}
+
+/// Codex's config root.
+///
+/// Honors `CODEX_HOME`, which relocates the whole tree away from `~/.codex`,
+/// the same way `claude_config_dir` honors `CLAUDE_CONFIG_DIR`. A leading
+/// `~/` is expanded against the home directory, since a variable set outside
+/// a shell reaches us unexpanded.
+fn codex_config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CODEX_HOME")
+        && !dir.is_empty()
+    {
+        if let Some(rest) = dir.strip_prefix("~/") {
+            return worktrunk::path::home_dir().map(|home| home.join(rest));
+        }
+        return Some(PathBuf::from(dir));
+    }
+    worktrunk::path::home_dir().map(|home| home.join(".codex"))
+}
+
+/// Whether the worktrunk marketplace is configured in Codex.
+///
+/// `codex plugin marketplace remove` exits non-zero when the marketplace is
+/// not configured, so uninstall needs to tell that from a removal that
+/// genuinely failed. Codex records each one as a `[marketplaces.<name>]`
+/// table in `config.toml`.
+pub(super) fn is_marketplace_configured() -> bool {
+    let Some(config_dir) = codex_config_dir() else {
+        return false;
+    };
+
+    let Ok(content) = std::fs::read_to_string(config_dir.join("config.toml")) else {
+        return false;
+    };
+
+    let Ok(config) = content.parse::<toml::Table>() else {
+        return false;
+    };
+
+    config
+        .get("marketplaces")
+        .and_then(|m| m.get(MARKETPLACE_NAME))
+        .is_some()
 }

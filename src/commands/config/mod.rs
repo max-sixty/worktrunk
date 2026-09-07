@@ -143,6 +143,29 @@ fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Run a removal whose goal is that the target is gone.
+///
+/// Both harnesses' `plugin marketplace remove` exits non-zero when the
+/// marketplace is not configured, which is the state the removal is trying to
+/// reach, so running `uninstall` twice would otherwise fail with nothing left
+/// to do. Asking `still_configured` after the attempt tells that apart from a
+/// removal that genuinely failed, which still surfaces the harness's own
+/// stderr in the gutter.
+///
+/// The command runs either way, so the `?` preview lists what the uninstall
+/// actually invokes.
+fn run_plugin_removal(
+    program: &str,
+    args: &[&str],
+    still_configured: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    match run_plugin_cli(program, args) {
+        Ok(()) => Ok(()),
+        Err(err) if still_configured() => Err(err),
+        Err(_) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;

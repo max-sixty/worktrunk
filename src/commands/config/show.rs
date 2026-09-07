@@ -239,6 +239,30 @@ pub(super) fn is_plugin_installed() -> bool {
         .is_some()
 }
 
+/// Check if the worktrunk marketplace is configured in Claude Code
+///
+/// Read from the same config tree as `is_plugin_installed`, and asked for the
+/// same reason: `claude plugin marketplace remove` exits non-zero when the
+/// marketplace is not there, so uninstall needs to tell that from a removal
+/// that genuinely failed. `known_marketplaces.json` is keyed by marketplace
+/// name.
+pub(super) fn is_marketplace_configured() -> bool {
+    let Some(config_dir) = claude_config_dir() else {
+        return false;
+    };
+
+    let marketplaces_file = config_dir.join("plugins/known_marketplaces.json");
+    let Ok(content) = std::fs::read_to_string(&marketplaces_file) else {
+        return false;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("worktrunk").is_some()
+}
+
 /// Whether Claude Code's statusline runs worktrunk's.
 ///
 /// The question is which subcommand the configured command invokes, so it's
