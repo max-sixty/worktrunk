@@ -11,15 +11,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    Approvals, ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content,
-    config_path, copy_approved_commands_to_approvals_file, format_deprecation_warnings,
-    format_migration_diff,
+    ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
+    copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
 };
 use worktrunk::git::{Repository, resolve_input_path};
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
-    eprint, eprintln, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
-    print, success_message, suggest_command_in_dir, warning_message,
+    eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
+    suggest_command_in_dir, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -123,6 +122,19 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
         ));
     }
 
+    let output = resolve_input_path(output);
+    if !stdout
+        && let Some(candidate) = candidates
+            .iter()
+            .filter(|candidate| drops_approved_commands(candidate))
+            .find(|candidate| paths_match(&output, &candidate.config_path))
+    {
+        bail!(cformat!(
+            "Cannot overwrite <bold>{}</> with <bold>--output</>; run <bold>wt config update</> to apply the migration in place",
+            candidate.info.label().to_lowercase()
+        ));
+    }
+
     for candidate in candidates {
         eprint!("{}", format_dropped_approvals_warning(candidate));
     }
@@ -133,7 +145,6 @@ fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyho
         return Ok(());
     }
 
-    let output = resolve_input_path(output);
     worktrunk::utils::write_atomically(&output, &artifact).with_context(|| {
         format!(
             "Failed to write output @ {}",
@@ -166,51 +177,24 @@ fn format_migrated_output(candidates: &[UpdateCandidate]) -> String {
     artifact
 }
 
-/// Warn that output artifacts drop `approved-commands` without preserving them.
-///
-/// The migration moves those arrays to `approvals.toml`, and the in-place path
-/// copies them there before rewriting the config. Output mode writes no
-/// `approvals.toml`, so replacing a config with its artifact would silently
-/// lose every approval it named. Goes to stderr so stdout stays pipeable.
 fn format_dropped_approvals_warning(candidate: &UpdateCandidate) -> String {
-    if !candidate
+    if !drops_approved_commands(candidate) {
+        return String::new();
+    }
+    format!(
+        "{}\n",
+        warning_message(cformat!(
+            "Output omits deprecated <bold>approved-commands</>; run <underline>wt config update</> to migrate them to approvals.toml"
+        ))
+    )
+}
+
+fn drops_approved_commands(candidate: &UpdateCandidate) -> bool {
+    candidate
         .info
         .deprecations
         .iter()
-        .any(|k| matches!(k, DeprecationKind::ApprovedCommands))
-    {
-        return String::new();
-    }
-    let Ok(approvals) = Approvals::load_from_config_file(&candidate.config_path) else {
-        return String::new();
-    };
-    let entries: Vec<&str> = approvals.projects().map(|(id, _)| id).collect();
-    if entries.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-    let plural = if entries.len() == 1 {
-        "entry"
-    } else {
-        "entries"
-    };
-    let _ = writeln!(
-        out,
-        "{}",
-        warning_message(cformat!(
-            "Output config drops <bold>approved-commands</> from {} <bold>[projects]</> {plural}; --output writes no approvals.toml",
-            entries.len()
-        ))
-    );
-    let _ = writeln!(out, "{}", format_with_gutter(&entries.join("\n"), None));
-    let _ = writeln!(
-        out,
-        "{}",
-        hint_message(cformat!(
-            "To migrate them to approvals.toml, run <underline>wt config update</>"
-        ))
-    );
-    out
+        .any(|kind| matches!(kind, DeprecationKind::ApprovedCommands))
 }
 
 /// Format update preview for display.

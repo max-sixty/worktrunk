@@ -82,9 +82,8 @@ instead of applying it in place. Use [2m-[0m for stdout. When both user and pr
 config need migration, stdout emits a labeled inspection artifact and file
 output fails rather than combining the configs.
 
-Output artifacts omit deprecated [2mapproved-commands[0m and name the affected
-projects on stderr; only in-place updates move those entries to
-[2mapprovals.toml[0m.
+[2m--output[0m omits deprecated [2mapproved-commands[0m with a stderr warning; only an
+in-place update migrates them to [2mapprovals.toml[0m.
 
 [1m[32mExamples[0m
 

@@ -81,46 +81,6 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// A repository whose path is not UTF-8 has no usable project identifier. The
-/// EFFECTIVE section still renders and uses the global worktree-path, while
-/// the pending approvals check remains a no-op.
-#[test]
-#[cfg(target_os = "linux")]
-fn test_config_show_without_project_identifier_uses_global_worktree_path() {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-    let repo = TestRepo::with_initial_commit();
-    fs::write(
-        repo.test_config_path(),
-        "worktree-path = \"../global/{{ branch }}\"\n\n[list]\njson-schema = 2\n",
-    )
-    .unwrap();
-    repo.write_project_config("pre-start = \"npm install\"\n");
-    let mut path_bytes = repo.root_path().as_os_str().as_bytes().to_vec();
-    path_bytes.extend_from_slice(b"-\xff");
-    let non_utf8_path = std::ffi::OsString::from_vec(path_bytes);
-    fs::rename(repo.root_path(), &non_utf8_path).unwrap();
-
-    let output = repo
-        .wt_command()
-        .args(["config", "show"])
-        .current_dir(&non_utf8_path)
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stdout = stdout.ansi_strip();
-    assert!(stdout.contains("EFFECTIVE"), "stdout:\n{stdout}");
-    assert!(
-        stdout.contains(r#"worktree-path = "../global/{{ branch }}""#),
-        "stdout:\n{stdout}"
-    );
-    assert!(!stdout.contains("awaiting approval"), "stdout:\n{stdout}");
-}
-
-/// An unreadable user-level approvals state is invalid in every repository, so
-/// the diagnostic reports it and exits non-zero even without project config.
 #[rstest]
 fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
     fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
@@ -134,8 +94,6 @@ fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
     assert!(stdout.contains("approvals.toml"), "stdout:\n{stdout}");
 }
 
-/// A valid approvals file with every configured command approved is healthy
-/// and does not need an APPROVALS section in the text report.
 #[rstest]
 fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
     repo.write_project_config("pre-start = \"npm install\"\n");
@@ -486,10 +444,7 @@ deps = "post-create-tool"
 }
 
 #[rstest]
-fn test_config_show_absent_system_config_still_gets_a_section(repo: TestRepo, temp_home: TempDir) {
-    // With no system config file, the SYSTEM CONFIG section still renders,
-    // naming the platform-specific default path — "no organization-wide
-    // defaults are in force" is an answer the diagnostic owes the reader.
+fn test_config_show_absent_system_config_is_a_user_config_hint(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -509,12 +464,10 @@ fn test_config_show_absent_system_config_still_gets_a_section(repo: TestRepo, te
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
-        stdout.contains("SYSTEM CONFIG") && stdout.contains("worktrunk/config.toml"),
-        "Expected a SYSTEM CONFIG section naming the default path, got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("Not found; optional"),
-        "Expected the absent system config to be marked optional, got:\n{stdout}"
+        !stdout.contains("SYSTEM CONFIG")
+            && stdout.contains("Optional system config not found")
+            && stdout.contains("worktrunk/config.toml"),
+        "Expected a compact system config hint, got:\n{stdout}"
     );
 }
 
@@ -618,6 +571,40 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+#[rstest]
+#[case::system("system")]
+#[case::user("user")]
+#[case::project("project")]
+fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[case] source: &str) {
+    let mut cmd = repo.wt_command();
+    let system_dir = if source == "system" {
+        let dir = tempfile::tempdir().unwrap();
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", dir.path());
+        Some(dir)
+    } else {
+        None
+    };
+
+    match source {
+        "user" => fs::write(repo.test_config_path(), [0xff]).unwrap(),
+        "project" => {
+            repo.write_project_config("");
+            fs::write(repo.root_path().join(".config/wt.toml"), [0xff]).unwrap();
+        }
+        "system" => {}
+        _ => unreachable!(),
+    }
+
+    let output = cmd.args(["config", "show"]).output().unwrap();
+    drop(system_dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(stdout.contains("Cannot read config"), "stdout:\n{stdout}");
+    assert!(stdout.contains("OTHER"), "report was truncated:\n{stdout}");
+}
+
 /// A user config that doesn't parse must fail these commands *legibly*.
 ///
 /// `UserConfig::load()`'s error is `LoadError::File`'s multi-line Display —
@@ -628,13 +615,13 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 /// panics with exit 101 instead of erroring. A release build still prints the
 /// parse detail in the gutter — what it loses is the header, which becomes a
 /// bare `✗ Command failed` naming neither the config nor the file.
-/// `.context("Failed to load config")` gives the renderer that header back.
+/// `.context("Failed to load config")` — what 7 of the 22 `UserConfig::load()`
+/// call sites already did, and what all 13 propagating ones do after this —
+/// gives the renderer that header back.
 ///
 /// One case per fixed call site, because the `debug_assert!` only fires on a
 /// path something exercises: an uncovered site is one where a future bare `?`
-/// regresses silently. `config show --format json` handles invalid files
-/// in-band instead: stdout stays machine-readable and the exit code carries
-/// the failure.
+/// regresses silently. The JSON form has a separate in-band error test below.
 #[rstest]
 #[case::step_prune(&["step", "prune", "--dry-run"])]
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
@@ -1424,9 +1411,6 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// A `[list] columns` name no column answers to is reported here rather than
-/// waiting for `wt list` to abort on it, with the same message and a non-zero
-/// exit.
 #[rstest]
 fn test_config_show_unknown_list_column(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -3778,11 +3762,6 @@ fn test_config_update_rejects_print(repo: TestRepo) {
     );
 }
 
-/// `wt config update --output` names the `approved-commands` arrays it drops.
-///
-/// The in-place path copies them to `approvals.toml` first; output mode writes
-/// no approvals file, so replacing the source with its artifact would lose
-/// them without a word. The warning goes to stderr, leaving stdout pipeable.
 #[rstest]
 fn test_config_update_output_warns_about_dropped_approvals(repo: TestRepo) {
     fs::write(
@@ -3809,44 +3788,65 @@ approved-commands = ["cargo test"]
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("approved-commands")
-            && stderr.contains("github.com/user/repo")
-            && stderr.contains("github.com/other/repo")
-            && stderr.contains("from 2 [projects] entries"),
-        "stderr should name the dropped approvals, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("wt config update"),
-        "stderr should say how to keep them, got: {stderr}"
+        stderr.contains("approved-commands") && stderr.contains("wt config update"),
+        "stderr should explain how to preserve approvals, got: {stderr}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains("approved-commands"),
         "the printed config drops them, got: {stdout}"
     );
+}
 
-    fs::write(
-        repo.test_config_path(),
-        r#"[list]
+#[rstest]
+fn test_config_update_output_rejects_source_path(repo: TestRepo) {
+    let original = r#"[list]
 json-schema = 1
 
 [projects."github.com/user/repo"]
 approved-commands = ["npm test"]
-"#,
-    )
-    .unwrap();
+"#;
+    fs::write(repo.test_config_path(), original).unwrap();
+
     let output = repo
         .wt_command()
-        .args(["config", "update", "--output=migrated.toml"])
+        .args(["config", "update", "--output"])
+        .arg(repo.test_config_path())
         .output()
         .unwrap();
-    assert!(output.status.success());
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        original
+    );
+    assert!(!repo.test_approvals_path().exists());
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("from 1 [projects] entry"),
-        "singular warning should say entry, got: {stderr}"
+        stderr.contains("Cannot overwrite user config") && stderr.contains("wt config update"),
+        "stderr:\n{stderr}"
     );
+}
+
+#[rstest]
+fn test_config_update_output_can_replace_source_without_approvals(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output"])
+        .arg(repo.test_config_path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let updated = fs::read_to_string(repo.test_config_path()).unwrap();
+    assert!(updated.contains("{{ repo }}"), "config:\n{updated}");
 }
 
 /// `wt config update` with no deprecated settings reports nothing to do
@@ -6047,8 +6047,6 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     assert!(!json["project"]["exists"].as_bool().unwrap());
 }
 
-/// JSON preserves its machine-readable report while returning the same
-/// non-zero status as the text form for semantic list-column errors.
 #[rstest]
 fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -6072,8 +6070,6 @@ fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home
     assert!(output.stderr.is_empty());
 }
 
-/// JSON keeps its machine-readable report but fails the same health check as
-/// text when the organization-wide config cannot be parsed.
 #[rstest]
 fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
     let system_config_dir = tempfile::tempdir().unwrap();
@@ -6095,10 +6091,12 @@ fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home
     assert_eq!(output.status.code(), Some(1));
     let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
     assert_eq!(json["system"]["exists"], true);
+    assert!(
+        json["user"]["config"].is_object(),
+        "a broken system source must not erase valid user config"
+    );
 }
 
-/// A system-config path that exists but cannot be read as a file still leaves
-/// JSON stdout intact and fails the health check.
 #[rstest]
 fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_home: TempDir) {
     let system_config_dir = tempfile::tempdir().unwrap();
@@ -6117,8 +6115,6 @@ fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_h
     assert_eq!(json["system"]["exists"], true);
 }
 
-/// An unreadable user-level approvals file fails the JSON health-check surface
-/// independently of the current repository.
 #[rstest]
 fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
     fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
@@ -6133,8 +6129,6 @@ fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
     serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
 }
 
-/// Invalid user config remains a JSON report: the path and existence are
-/// usable, while the config value is null and the exit code carries failure.
 #[rstest]
 fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     fs::write(repo.test_config_path(), "invalid = [toml\n").unwrap();
@@ -6151,8 +6145,6 @@ fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
     assert!(json["user"]["config"].is_null());
 }
 
-/// A user source that exists but is not readable as UTF-8 cannot be silently
-/// skipped by the merged loader.
 #[rstest]
 fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
     fs::write(repo.test_config_path(), [0xff]).unwrap();
@@ -6169,8 +6161,6 @@ fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
     assert!(json["user"]["config"].is_null());
 }
 
-/// Invalid project config likewise keeps the JSON envelope and reports that
-/// the source exists even though it could not be deserialized.
 #[rstest]
 fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     repo.write_project_config("invalid = [toml\n");
@@ -6187,8 +6177,6 @@ fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
     assert!(json["project"]["config"].is_null());
 }
 
-/// An unreadable on-disk project source is also invalid even if the resolved
-/// config loader degrades it to an absent layer.
 #[rstest]
 fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
     repo.write_project_config("");
