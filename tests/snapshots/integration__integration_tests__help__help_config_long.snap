@@ -292,7 +292,8 @@ namespaces:
 All standard filters work ([2msanitize[0m, [2mhash_port[0m, [2mcodename[0m, …). A row
 where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
-[2mwt list --format json[0m includes the rendered values under [2mcolumns[0m.
+[2mwt list --format json[0m includes the rendered values under
+[2mitems[].display.columns[0m in schema 2, or under [2mcolumns[0m in schema 1.
 
 A [2mJira[0m column reading a key kept in git config, and a [2mSummary[0m column
 showing just the first line of the git-native branch description:
