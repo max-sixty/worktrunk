@@ -165,7 +165,7 @@ None of this is tracked by git or pushed to remotes.
 
 ### 5. Agent integrations
 
-Created by `wt config plugins <agent> install`. Each writes outside worktrunk's own config directory, into the agent's:
+Created by the `wt config plugins <agent>` install commands. Each writes outside worktrunk's own config directory, into the agent's:
 
 | File | Created by | Purpose |
 |------|------------|---------|
@@ -185,7 +185,7 @@ Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index
 
 ### What Worktrunk does NOT create
 
-- No files outside the five sections above: `.git/`, worktrunk's config directory, worktree directories, the shell startup files and wrapper paths of section 3, the agent config paths of section 5 (only when you run a `wt config plugins` install), and the system temporary directory
+- No files outside the six sections above: `.git/`, worktrunk's config directory, worktree directories, the shell startup files and wrapper paths of section 3, the agent config paths of section 5 (only when you run a `wt config plugins` install), and the system temporary directory
 - No global git hooks
 - No modifications to `~/.gitconfig`
 - No long-running background processes or daemons
