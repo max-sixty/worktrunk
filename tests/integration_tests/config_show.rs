@@ -3994,6 +3994,83 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
     }
 }
 
+/// The `?` preview lists exactly the commands each Claude plugin subcommand
+/// runs, so the confirmation the user answers matches what follows it — and
+/// declining runs none of them.
+#[rstest]
+fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
+    use crate::common::mock_commands::mock_calls;
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+
+    // Outside the repo: a call log in the working tree would leave an
+    // untracked file behind the command under test.
+    let call_log = TempDir::new().unwrap();
+
+    for (action, expected) in [
+        (
+            "install",
+            [
+                "claude plugin marketplace add max-sixty/worktrunk",
+                "claude plugin install worktrunk@worktrunk",
+            ],
+        ),
+        (
+            "uninstall",
+            [
+                "claude plugin uninstall worktrunk@worktrunk",
+                "claude plugin marketplace remove worktrunk",
+            ],
+        ),
+    ] {
+        // Each subcommand prompts only from the state it acts on, so the home
+        // is per-action: install returns early when the plugin is already
+        // installed, uninstall when it isn't.
+        let temp_home = TempDir::new().unwrap();
+        if action == "uninstall" {
+            TestRepo::setup_plugin_installed(temp_home.path());
+        }
+
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", action])
+            .current_dir(repo.root_path())
+            .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        let mut child = cmd.spawn().unwrap();
+        // `?` renders the preview; `n` then declines, so nothing runs.
+        child.stdin.take().unwrap().write_all(b"?\nn\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .to_string();
+        // Compare the whole set of previewed commands, not each one in
+        // isolation: a command the preview lists but never runs is exactly
+        // what a per-command `contains` would let through.
+        // The first gutter line shares a line with the prompt, which `eprint!`
+        // leaves unterminated, so slice from each `claude ` rather than
+        // matching the line start.
+        let previewed: Vec<&str> = stderr
+            .lines()
+            .filter_map(|line| line.find("claude ").map(|i| line[i..].trim_end()))
+            .collect();
+        assert_eq!(previewed, expected, "{action} preview: {stderr}");
+        // The preview is only a preview: declining must leave claude unspawned.
+        let calls = mock_calls(call_log.path(), "claude");
+        assert!(
+            calls.is_empty(),
+            "declining {action} must spawn no claude: {calls:#?}"
+        );
+    }
+}
+
 /// `codex plugin remove` fails: the uninstall surfaces codex's error and stops
 /// rather than removing the marketplace out from under an installed plugin.
 #[rstest]
