@@ -449,7 +449,7 @@ $ claude plugin uninstall worktrunk@worktrunk
 $ claude plugin marketplace remove worktrunk
 ```
 
-Skips gracefully only when both are already gone. An uninstall that removed the plugin and then failed leaves the marketplace behind; running it again removes that half."#
+Requires `claude` CLI. Skips gracefully only when both are already gone. An uninstall that removed the plugin and then failed leaves the marketplace behind; running it again removes that half."#
     )]
     Uninstall,
 
