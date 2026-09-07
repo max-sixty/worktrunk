@@ -1048,6 +1048,10 @@ sync = "echo merged"
 /// post-commit phase should join post-remove + post-switch + post-merge on
 /// one combined announce line — the non-squash sibling of
 /// [`test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge`].
+///
+/// The announce line is all this pins. post-commit is announced but can't be
+/// relied on to run on a merge that removes the worktree, which
+/// `handle_merge`'s announcer comment covers.
 #[rstest]
 fn test_merge_auto_commit_combines_post_commit_post_remove_post_switch_post_merge(
     mut repo: TestRepo,
@@ -1081,10 +1085,14 @@ sync = "echo merged"
     );
 }
 
-/// `wt merge --squash` fires post-commit (from the squash phase), post-remove,
-/// post-switch (from worktree removal), and post-merge. All four should share
-/// one `Running …` announce line so the user sees a single status line for
-/// the whole command, not four.
+/// `wt merge --squash` announces post-commit (from the squash phase),
+/// post-remove, post-switch (from worktree removal), and post-merge. All four
+/// should share one `Running …` announce line so the user sees a single status
+/// line for the whole command, not four.
+///
+/// That line is all this pins. post-commit is announced but can't be relied on
+/// to run on a merge that removes the worktree, which `handle_merge`'s
+/// announcer comment covers.
 #[rstest]
 fn test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge(mut repo: TestRepo) {
     // Squash needs >1 commit ahead of main to actually run.

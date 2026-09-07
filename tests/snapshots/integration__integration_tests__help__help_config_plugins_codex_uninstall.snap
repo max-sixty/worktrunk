@@ -6,7 +6,7 @@ info:
     - config
     - plugins
     - codex
-    - install
+    - uninstall
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -45,9 +45,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config plugins codex install - Install the Worktrunk plugin
+wt config plugins codex uninstall - Remove the Worktrunk plugin
 
-Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
+Usage: [1m[36mwt config plugins codex uninstall[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -69,10 +69,10 @@ Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+Uninstalls the Worktrunk plugin from Codex and removes its marketplace. Equivalent to:
 
-[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace add max-sixty/worktrunk[0m
-[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin add worktrunk@worktrunk[0m
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin remove worktrunk@worktrunk[0m
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace remove worktrunk[0m
 
 Requires [2mcodex[0m CLI.
 

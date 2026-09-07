@@ -5,8 +5,8 @@ info:
   args:
     - config
     - plugins
-    - codex
-    - install
+    - claude
+    - uninstall
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -45,9 +45,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config plugins codex install - Install the Worktrunk plugin
+wt config plugins claude uninstall - Remove the Worktrunk plugin
 
-Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
+Usage: [1m[36mwt config plugins claude uninstall[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -69,11 +69,11 @@ Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+Uninstalls the Worktrunk plugin from Claude Code and removes its marketplace. Equivalent to:
 
-[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace add max-sixty/worktrunk[0m
-[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin add worktrunk@worktrunk[0m
+[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin uninstall worktrunk@worktrunk[0m
+[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin marketplace remove worktrunk[0m
 
-Requires [2mcodex[0m CLI.
+Requires [2mclaude[0m CLI. Skips gracefully only when both are already gone. An uninstall that removed the plugin and then failed leaves the marketplace behind; running it again removes that half.
 
 ----- stderr -----

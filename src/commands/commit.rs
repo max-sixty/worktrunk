@@ -148,9 +148,7 @@ impl<'a> CommitGenerator<'a> {
         }
 
         if show_progress {
-            let stats_parts = wt
-                .repo()
-                .diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+            let stats_parts = wt.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
 
             let changes_type = match stage_mode {
                 StageMode::Tracked => "tracked changes",
@@ -184,8 +182,11 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
+        // `wt` — not the invoking worktree: `--branch <b>` and `step relocate
+        // --commit` both commit elsewhere, and the prompt must describe the
+        // diff that is about to be committed.
         let commit_message =
-            crate::llm::generate_commit_message(self.config, None, self.project_append)?;
+            crate::llm::generate_commit_message(self.config, wt, None, self.project_append)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));

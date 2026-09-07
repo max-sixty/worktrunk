@@ -63,6 +63,6 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mAdding Codex plugin marketplace...[39m
-[32m✓[39m [32mCodex marketplace configured[39m
-[2m↳[22m [2mNext, run /plugins in Codex and install Worktrunk from the marketplace[22m
+[36m◎[39m [36mInstalling plugin...[39m
+[32m✓[39m [32mCodex plugin installed[39m
 [2m↳[22m [2mActivity markers appear in [4mwt list[24m once a Codex session runs[22m

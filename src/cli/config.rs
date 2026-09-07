@@ -243,27 +243,29 @@ $ wt config plugins pi uninstall
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsCodexCommand {
-    /// Configure the Worktrunk marketplace in Codex
+    /// Install the Worktrunk plugin
     #[command(
-        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
 
 ```console
 $ codex plugin marketplace add max-sixty/worktrunk
+$ codex plugin add worktrunk@worktrunk
 ```
 
-This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#
+Requires `codex` CLI."#
     )]
     Install,
 
-    /// Remove the Worktrunk marketplace from Codex
+    /// Remove the Worktrunk plugin
     #[command(
-        after_long_help = r#"Removes the Worktrunk plugin marketplace from Codex. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Codex and removes its marketplace. Equivalent to:
 
 ```console
+$ codex plugin remove worktrunk@worktrunk
 $ codex plugin marketplace remove worktrunk
 ```
 
-This leaves any already-installed Worktrunk plugin unchanged."#
+Requires `codex` CLI."#
     )]
     Uninstall,
 }
@@ -440,11 +442,14 @@ Requires `claude` CLI. Skips gracefully if already installed."#
 
     /// Remove the Worktrunk plugin
     #[command(
-        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code and removes its marketplace. Equivalent to:
 
 ```console
 $ claude plugin uninstall worktrunk@worktrunk
-```"#
+$ claude plugin marketplace remove worktrunk
+```
+
+Requires `claude` CLI. Skips gracefully only when both are already gone. An uninstall that removed the plugin and then failed leaves the marketplace behind; running it again removes that half."#
     )]
     Uninstall,
 
