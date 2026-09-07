@@ -185,7 +185,7 @@ Worktrunk creates temporary Git index copies named `$TMPDIR/worktrunk-temp-index
 
 ### What Worktrunk does NOT create
 
-- No files outside `.git/`, worktrunk's config directory, worktree directories, the system temporary directory, and — only when you run `wt config plugins <agent> install` — the agent config paths listed above
+- No files outside the five sections above: `.git/`, worktrunk's config directory, worktree directories, the shell startup files and wrapper paths of section 3, the agent config paths of section 5 (only when you run a `wt config plugins` install), and the system temporary directory
 - No global git hooks
 - No modifications to `~/.gitconfig`
 - No long-running background processes or daemons
