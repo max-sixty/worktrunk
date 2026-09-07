@@ -4367,6 +4367,58 @@ fn test_plugins_claude_uninstall_tolerates_absent_marketplace(
     });
 }
 
+/// The Claude counterpart of the key-absent case: `known_marketplaces.json`
+/// exists because the user has other marketplaces, and worktrunk's entry is
+/// gone.
+#[rstest]
+fn test_plugins_claude_uninstall_tolerates_marketplace_removed_from_config(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing();
+    TestRepo::setup_plugin_installed(temp_home.path());
+    TestRepo::setup_claude_marketplaces(
+        temp_home.path(),
+        TestRepo::CLAUDE_MARKETPLACES_WITHOUT_WORKTRUNK,
+    );
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A `known_marketplaces.json` that will not parse cannot say the marketplace
+/// is gone, so the removal's failure stands. This is the shape-drift guard: if
+/// the file ever grows a wrapper the way `installed_plugins.json` has one,
+/// uninstall reports the harness's error rather than a silent success.
+#[rstest]
+fn test_plugins_claude_uninstall_surfaces_failure_when_config_unreadable(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing();
+    TestRepo::setup_plugin_installed(temp_home.path());
+    TestRepo::setup_claude_marketplaces(temp_home.path(), "{\"worktrunk\":");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// The Codex counterpart: a second `uninstall` succeeds.
 #[rstest]
 fn test_plugins_codex_uninstall_tolerates_absent_marketplace(
@@ -4396,7 +4448,62 @@ fn test_plugins_codex_uninstall_surfaces_marketplace_remove_failure(
 ) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_codex_with_marketplace_remove_failing();
-    TestRepo::setup_codex_marketplace_configured(&temp_home.path().join(".codex"));
+    TestRepo::setup_codex_config(
+        &temp_home.path().join(".codex"),
+        TestRepo::CODEX_CONFIG_WITH_WORKTRUNK,
+    );
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The state a second `uninstall` actually lands in: `config.toml` is still
+/// there, holding the settings Codex keeps beside its marketplaces, and only
+/// worktrunk's table is gone. That is the key-absent answer rather than the
+/// missing-file one the test above covers.
+#[rstest]
+fn test_plugins_codex_uninstall_tolerates_marketplace_removed_from_config(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing();
+    TestRepo::setup_codex_config(
+        &temp_home.path().join(".codex"),
+        TestRepo::CODEX_CONFIG_WITHOUT_WORKTRUNK,
+    );
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// A `config.toml` that will not parse cannot say the marketplace is gone, so
+/// the removal's failure stands rather than being reported as success.
+#[rstest]
+fn test_plugins_codex_uninstall_surfaces_failure_when_config_unreadable(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing();
+    TestRepo::setup_codex_config(
+        &temp_home.path().join(".codex"),
+        "[marketplaces.worktrunk\n",
+    );
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4422,7 +4529,7 @@ fn test_plugins_codex_uninstall_reads_codex_home(mut repo: TestRepo, temp_home: 
     // lookup that ignored the variable would find no config and read the
     // failed removal as "already gone".
     let codex_home = TempDir::new().unwrap();
-    TestRepo::setup_codex_marketplace_configured(codex_home.path());
+    TestRepo::setup_codex_config(codex_home.path(), TestRepo::CODEX_CONFIG_WITH_WORKTRUNK);
 
     let mut cmd = repo.wt_command();
     cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
@@ -5946,7 +6053,10 @@ fn test_plugins_claude_uninstall_second_step_fails(mut repo: TestRepo, temp_home
     // The marketplace is still configured after the removal fails, which is
     // what makes this a genuine failure rather than the already-gone state
     // `test_plugins_claude_uninstall_tolerates_absent_marketplace` covers.
-    TestRepo::setup_claude_marketplace_configured(temp_home.path());
+    TestRepo::setup_claude_marketplaces(
+        temp_home.path(),
+        TestRepo::CLAUDE_MARKETPLACES_WITH_WORKTRUNK,
+    );
 
     // Plugin uninstall succeeds and only the marketplace removal that follows
     // it fails, so the error the command surfaces can come from nothing else.

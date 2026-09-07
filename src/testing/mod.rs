@@ -2242,33 +2242,49 @@ impl TestRepo {
         .unwrap();
     }
 
-    /// Record the worktrunk marketplace as configured in Claude Code
+    /// Write Claude Code's marketplace record verbatim
     ///
     /// `known_marketplaces.json` is keyed by marketplace name, which is what
-    /// `is_marketplace_configured` reads.
-    pub fn setup_claude_marketplace_configured(temp_home: &std::path::Path) {
+    /// `is_marketplace_configured` reads. The body is the caller's, since the
+    /// three states that reader distinguishes — worktrunk present, a different
+    /// marketplace present, and a file that will not parse — differ only in
+    /// what this file holds.
+    pub fn setup_claude_marketplaces(temp_home: &std::path::Path, body: &str) {
         let plugins_dir = temp_home.join(".claude/plugins");
         std::fs::create_dir_all(&plugins_dir).unwrap();
-        std::fs::write(
-            plugins_dir.join("known_marketplaces.json"),
-            r#"{"worktrunk":{"source":{"source":"github","repo":"max-sixty/worktrunk"}}}"#,
-        )
-        .unwrap();
+        std::fs::write(plugins_dir.join("known_marketplaces.json"), body).unwrap();
     }
 
-    /// Record the worktrunk marketplace as configured in Codex
+    /// `known_marketplaces.json` holding the worktrunk marketplace
+    pub const CLAUDE_MARKETPLACES_WITH_WORKTRUNK: &'static str =
+        r#"{"worktrunk":{"source":{"source":"github","repo":"max-sixty/worktrunk"}}}"#;
+
+    /// `known_marketplaces.json` holding some other marketplace
     ///
-    /// Codex keeps each one as a `[marketplaces.<name>]` table in
-    /// `config.toml`. Takes the config root rather than the home directory,
-    /// since `CODEX_HOME` can move it off `~/.codex`.
-    pub fn setup_codex_marketplace_configured(codex_dir: &std::path::Path) {
+    /// The state a second `uninstall` lands in: the file exists because the
+    /// user has other marketplaces, and worktrunk's entry is simply gone.
+    pub const CLAUDE_MARKETPLACES_WITHOUT_WORKTRUNK: &'static str =
+        r#"{"other":{"source":{"source":"github","repo":"someone/other"}}}"#;
+
+    /// Write Codex's `config.toml` verbatim
+    ///
+    /// Codex keeps each marketplace as a `[marketplaces.<name>]` table there.
+    /// Takes the config root rather than the home directory, since
+    /// `CODEX_HOME` can move it off `~/.codex`.
+    pub fn setup_codex_config(codex_dir: &std::path::Path, body: &str) {
         std::fs::create_dir_all(codex_dir).unwrap();
-        std::fs::write(
-            codex_dir.join("config.toml"),
-            "[marketplaces.worktrunk]\nsource_type = \"git\"\nsource = \"https://github.com/max-sixty/worktrunk.git\"\n",
-        )
-        .unwrap();
+        std::fs::write(codex_dir.join("config.toml"), body).unwrap();
     }
+
+    /// `config.toml` holding the worktrunk marketplace
+    pub const CODEX_CONFIG_WITH_WORKTRUNK: &'static str = "[marketplaces.worktrunk]\nsource_type = \"git\"\nsource = \"https://github.com/max-sixty/worktrunk.git\"\n";
+
+    /// `config.toml` a Codex user has after the marketplace is removed
+    ///
+    /// Codex keeps its model and other settings in this file, so it outlives
+    /// the marketplace table — which is why a second `uninstall` reads a
+    /// present config with no worktrunk entry rather than no config at all.
+    pub const CODEX_CONFIG_WITHOUT_WORKTRUNK: &'static str = "model = \"gpt-5.5\"\n\n[marketplaces.other]\nsource_type = \"git\"\nsource = \"https://github.com/someone/other.git\"\n";
 
     /// Setup the statusline as configured in Claude Code settings
     ///

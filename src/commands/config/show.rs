@@ -239,22 +239,32 @@ pub(super) fn is_plugin_installed() -> bool {
         .is_some()
 }
 
-/// Check if the worktrunk marketplace is configured in Claude Code
+/// Whether the worktrunk marketplace is configured in Claude Code, or `None`
+/// where the config cannot answer
 ///
 /// Read from the same config tree as `is_plugin_installed`, and asked for the
 /// same reason: `claude plugin marketplace remove` exits non-zero when the
 /// marketplace is not there, so uninstall needs to tell that from a removal
 /// that genuinely failed. `known_marketplaces.json` is keyed by marketplace
 /// name.
-pub(super) fn is_marketplace_configured() -> bool {
-    let Some(content) = claude_config_dir()
-        .and_then(|dir| std::fs::read_to_string(dir.join("plugins/known_marketplaces.json")).ok())
-    else {
-        return false;
-    };
+///
+/// The three-way answer is what keeps that safe. A file Claude Code has never
+/// written records no marketplaces, so its absence is a confident no. A file
+/// that exists and cannot be read or parsed leaves the question open, and
+/// `run_plugin_removal` keeps the harness's error rather than reporting a
+/// removal it cannot confirm — the case that matters if this file's shape ever
+/// changes, the way the `installed_plugins.json` beside it wraps its map in a
+/// `version` key.
+pub(super) fn is_marketplace_configured() -> Option<bool> {
+    let path = claude_config_dir()?.join("plugins/known_marketplaces.json");
+    if !path.exists() {
+        return Some(false);
+    }
 
+    let content = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str::<serde_json::Value>(&content)
-        .is_ok_and(|json| json.get("worktrunk").is_some())
+        .ok()
+        .map(|json| json.get("worktrunk").is_some())
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.

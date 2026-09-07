@@ -116,20 +116,25 @@ fn codex_config_dir() -> Option<PathBuf> {
     }
 }
 
-/// Whether the worktrunk marketplace is configured in Codex.
+/// Whether the worktrunk marketplace is configured in Codex, or `None` where
+/// the config cannot answer.
 ///
 /// `codex plugin marketplace remove` exits non-zero when the marketplace is
 /// not configured, so uninstall needs to tell that from a removal that
 /// genuinely failed. Codex records each one as a `[marketplaces.<name>]`
 /// table in `config.toml`.
-pub(super) fn is_marketplace_configured() -> bool {
-    let Some(content) =
-        codex_config_dir().and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok())
-    else {
-        return false;
-    };
+///
+/// `None` is the same "cannot tell" the Claude reader returns, and for the
+/// same reason: a `config.toml` that exists and will not parse must not be
+/// read as the marketplace being gone.
+pub(super) fn is_marketplace_configured() -> Option<bool> {
+    let path = codex_config_dir()?.join("config.toml");
+    if !path.exists() {
+        return Some(false);
+    }
 
-    content.parse::<toml::Table>().is_ok_and(|config| {
+    let content = std::fs::read_to_string(&path).ok()?;
+    content.parse::<toml::Table>().ok().map(|config| {
         config
             .get("marketplaces")
             .and_then(|m| m.get(MARKETPLACE_NAME))
