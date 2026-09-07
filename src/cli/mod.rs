@@ -2202,7 +2202,8 @@ namespaces:
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
 where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
-`wt list --format json` includes the rendered values under `columns`.
+`wt list --format json` includes the rendered values under
+`items[].display.columns` in schema 2, or under `columns` in schema 1.
 
 A `Jira` column reading a key kept in git config, and a `Summary` column
 showing just the first line of the git-native branch description:
