@@ -77,6 +77,8 @@ pub fn step_copy_ignored(
                 "entries": Vec::<serde_json::Value>::new(),
                 "files": 0,
                 "bytes": 0,
+                "reflinked": 0,
+                "written": 0,
             });
             print_json(&payload)?;
         } else {
@@ -109,6 +111,8 @@ pub fn step_copy_ignored(
                 "entries": Vec::<serde_json::Value>::new(),
                 "files": 0,
                 "bytes": 0,
+                "reflinked": 0,
+                "written": 0,
             });
             print_json(&payload)?;
         } else {
@@ -145,6 +149,8 @@ pub fn step_copy_ignored(
                 "entries": Vec::<serde_json::Value>::new(),
                 "files": 0,
                 "bytes": 0,
+                "reflinked": 0,
+                "written": 0,
             });
             print_json(&payload)?;
         } else {
@@ -270,7 +276,13 @@ pub fn step_copy_ignored(
     if json_mode {
         // `entries` mirrors dry-run: the top-level units selected for copy
         // (files and dirs). `files` counts the actual leaves written
-        // (recursive + skipping pre-existing files), `bytes` sums their size.
+        // (recursive + skipping pre-existing files), `bytes` sums their size,
+        // and `reflinked`/`written` split those leaves by whether the
+        // filesystem shared the source's extents. Every payload that reports a
+        // result carries all four, zeroed where nothing was copied, so a
+        // consumer never branches on a key's presence; the dry-run plan carries
+        // none of them, since it reports what would be copied rather than what
+        // was.
         let entries: Vec<_> = entries_to_copy
             .iter()
             .map(|(src_entry, is_dir)| {

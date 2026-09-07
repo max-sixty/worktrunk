@@ -1772,6 +1772,10 @@ fn test_copy_ignored_same_worktree_json(mut repo: TestRepo) {
     assert_eq!(parsed["outcome"], "same_worktree");
     assert_eq!(parsed["files"], 0);
     assert_eq!(parsed["bytes"], 0);
+    // Every payload reporting a result carries all four counts, so a consumer
+    // never has to branch on a key's presence.
+    assert_eq!(parsed["reflinked"], 0);
+    assert_eq!(parsed["written"], 0);
     assert_eq!(
         parsed["entries"].as_array().expect("entries array").len(),
         0
@@ -1803,6 +1807,8 @@ fn test_copy_ignored_no_matches_json(mut repo: TestRepo) {
     assert_eq!(parsed["dry_run"], false);
     assert_eq!(parsed["files"], 0);
     assert_eq!(parsed["bytes"], 0);
+    assert_eq!(parsed["reflinked"], 0);
+    assert_eq!(parsed["written"], 0);
     assert_eq!(
         parsed["entries"].as_array().expect("entries array").len(),
         0
@@ -1861,6 +1867,8 @@ fn test_copy_ignored_require_include_json_reason(mut repo: TestRepo) {
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid JSON");
     assert_eq!(parsed["reason"], "require-include-no-worktreeinclude");
     assert_eq!(parsed["files"], 0);
+    assert_eq!(parsed["reflinked"], 0);
+    assert_eq!(parsed["written"], 0);
     assert!(!feature_path.join(".env").exists());
 }
 
