@@ -2417,7 +2417,7 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
-    /// Setup mock `codex` CLI where marketplace and plugin commands fail
+    /// Setup mock `codex` CLI where marketplace commands fail
     ///
     /// Must call `setup_mock_ci_tools_unauthenticated()` first.
     pub fn setup_mock_codex_with_plugins_failing(&mut self) {
@@ -2434,14 +2434,6 @@ impl TestRepo {
             .command(
                 "plugin marketplace remove",
                 MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
-            )
-            .command(
-                "plugin add",
-                MockResponse::exit(1).with_stderr("error: plugin add failed\n"),
-            )
-            .command(
-                "plugin remove",
-                MockResponse::exit(1).with_stderr("error: plugin remove failed\n"),
             )
             .write(mock_bin);
 
