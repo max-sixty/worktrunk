@@ -44,7 +44,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     let repo = Repository::current().ok();
 
     let mut invalid = false;
-    let has_system_config = if let Some(system_invalid) = render_system_config(&mut show_output)? {
+    let has_system_config = if let Some(system_invalid) = render_system_config(&mut show_output) {
         invalid |= system_invalid;
         show_output.push('\n');
         true
@@ -61,7 +61,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     show_output.push('\n');
 
     let mut approvals_output = String::new();
-    invalid |= render_approvals(&mut approvals_output, repo.as_ref())?;
+    invalid |= render_approvals(&mut approvals_output, repo.as_ref());
     if !approvals_output.is_empty() {
         show_output.push_str(&approvals_output);
         show_output.push('\n');
@@ -181,7 +181,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
     let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
         match std::fs::read_to_string(path) {
-            Ok(contents) => config_parse_error::<UserConfig>(&contents).is_some(),
+            Ok(contents) => toml::from_str::<UserConfig>(&contents).is_err(),
             Err(_) => true,
         }
     } else {
@@ -683,47 +683,45 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 }
 
 /// Render system config when present, returning whether it is invalid.
-fn render_system_config(out: &mut String) -> anyhow::Result<Option<bool>> {
-    let Some(system_path) = system_config_path() else {
-        return Ok(None);
-    };
+fn render_system_config(out: &mut String) -> Option<bool> {
+    let system_path = system_config_path()?;
 
-    writeln!(
+    let _ = writeln!(
         out,
         "{}",
         format_heading(
             "SYSTEM CONFIG",
             Some(&format!("@ {}", format_path_for_display(&system_path)))
         )
-    )?;
+    );
 
     let contents = match std::fs::read_to_string(&system_path) {
         Ok(contents) => contents,
         Err(err) => {
-            render_config_read_error(out, &err)?;
-            return Ok(Some(true));
+            render_config_read_error(out, &err);
+            return Some(true);
         }
     };
 
     if contents.trim().is_empty() {
-        writeln!(out, "{}", hint_message("Empty file (no system defaults)"))?;
-        return Ok(Some(false));
+        let _ = writeln!(out, "{}", hint_message("Empty file (no system defaults)"));
+        return Some(false);
     }
 
     // Validate config (syntax + schema) and warn if invalid
     let mut invalid = false;
-    if let Some(e) = config_parse_error::<UserConfig>(&contents) {
+    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
         invalid = true;
-        writeln!(out, "{}", error_message("Invalid config"))?;
-        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+        let _ = writeln!(out, "{}", error_message("Invalid config"));
+        let _ = writeln!(out, "{}", format_with_gutter(&e.to_string(), None));
     } else {
         out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
     }
 
     // Display TOML with syntax highlighting
-    writeln!(out, "{}", format_toml(&contents))?;
+    let _ = writeln!(out, "{}", format_toml(&contents));
 
-    Ok(Some(invalid))
+    Some(invalid)
 }
 
 /// Render the USER CONFIG section. Returns true if the config is invalid.
@@ -760,7 +758,7 @@ fn render_user_config(
     let contents = match std::fs::read_to_string(&config_path) {
         Ok(contents) => contents,
         Err(err) => {
-            render_config_read_error(out, &err)?;
+            render_config_read_error(out, &err);
             render_column_selection(out, repo)?;
             return Ok(true);
         }
@@ -806,7 +804,7 @@ fn render_user_config(
     }
 
     // Validate config (syntax + schema) and warn if invalid
-    if let Some(e) = config_parse_error::<UserConfig>(&contents) {
+    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
@@ -846,10 +844,9 @@ fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn render_config_read_error(out: &mut String, err: &std::io::Error) -> anyhow::Result<()> {
-    writeln!(out, "{}", error_message("Cannot read config"))?;
-    writeln!(out, "{}", format_with_gutter(&err.to_string(), None))?;
-    Ok(())
+fn render_config_read_error(out: &mut String, err: &std::io::Error) {
+    let _ = writeln!(out, "{}", error_message("Cannot read config"));
+    let _ = writeln!(out, "{}", format_with_gutter(&err.to_string(), None));
 }
 
 /// Report list-column settings that `wt list` would reject.
@@ -874,10 +871,6 @@ fn validate_column_selection(repo: &Repository) -> anyhow::Result<()> {
     let custom_names: Vec<&str> = custom.iter().map(|c| c.name.as_str()).collect();
     crate::commands::list::columns::parse_selected_columns(&config.list.columns, &custom_names)?;
     Ok(())
-}
-
-fn config_parse_error<C: DeserializeOwned>(contents: &str) -> Option<toml::de::Error> {
-    toml::from_str::<C>(contents).err()
 }
 
 /// Format warnings for unknown config keys in `raw_contents`.
@@ -968,7 +961,7 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
             let contents = match std::fs::read_to_string(path) {
                 Ok(contents) => contents,
                 Err(err) => {
-                    render_config_read_error(out, &err)?;
+                    render_config_read_error(out, &err);
                     return Ok(true);
                 }
             };
@@ -1030,7 +1023,7 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
     };
 
     // Validate config (syntax + schema) and warn if invalid
-    if let Some(e) = config_parse_error::<ProjectConfig>(&contents) {
+    if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
         // Use gutter for error details to avoid markup interpretation of user content
         invalid = true;
         writeln!(out, "{}", error_message("Invalid config"))?;
@@ -1053,34 +1046,33 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
 }
 
 /// Report an invalid approvals file or project commands awaiting approval.
-fn render_approvals(out: &mut String, repo: Option<&Repository>) -> anyhow::Result<bool> {
+fn render_approvals(out: &mut String, repo: Option<&Repository>) -> bool {
     match approvals_diagnostic(repo) {
-        ApprovalsDiagnostic::Valid => Ok(false),
+        ApprovalsDiagnostic::Valid => false,
         ApprovalsDiagnostic::Invalid(err) => {
-            render_approvals_heading(out)?;
-            writeln!(out, "{}", error_message("Invalid approvals"))?;
-            writeln!(out, "{}", format_with_gutter(&err, None))?;
-            Ok(true)
+            render_approvals_heading(out);
+            let _ = writeln!(out, "{}", error_message("Invalid approvals"));
+            let _ = writeln!(out, "{}", format_with_gutter(&err, None));
+            true
         }
         ApprovalsDiagnostic::Pending(pending) => {
-            render_approvals_heading(out)?;
+            render_approvals_heading(out);
             let plural = if pending == 1 { "command" } else { "commands" };
             let status = info_message(format!("{pending} project {plural} awaiting approval"));
-            writeln!(out, "{status}")?;
+            let _ = writeln!(out, "{status}");
             let hint = hint_message(cformat!(
                 "To review, run <underline>wt config approvals list</>"
             ));
-            writeln!(out, "{hint}")?;
-            Ok(false)
+            let _ = writeln!(out, "{hint}");
+            false
         }
     }
 }
 
-fn render_approvals_heading(out: &mut String) -> anyhow::Result<()> {
+fn render_approvals_heading(out: &mut String) {
     let source = worktrunk::config::approvals_path()
         .map(|path| format!("@ {}", format_path_for_display(&path)));
-    writeln!(out, "{}", format_heading("APPROVALS", source.as_deref()))?;
-    Ok(())
+    let _ = writeln!(out, "{}", format_heading("APPROVALS", source.as_deref()));
 }
 
 enum ApprovalsDiagnostic {
