@@ -1159,6 +1159,7 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_json_with_user_marker(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     repo.commit_with_age("Initial commit", DAY);
 
     // Worktree with user marker (emoji only)
@@ -1168,6 +1169,25 @@ fn test_list_json_with_user_marker(mut repo: TestRepo) {
     repo.set_marker("with-status", "🔧");
 
     // Worktree without user marker
+    repo.add_worktree("without-status");
+
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
+}
+
+/// Schema 2 reports the branch marker as its own `marker` field, and folds
+/// it into `display.symbols` the way the table folds it into the Status
+/// column. A branch with no marker set omits the field entirely.
+#[rstest]
+fn test_list_json_schema_2_with_user_marker(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 2\n");
+    repo.commit_with_age("Initial commit", DAY);
+
+    repo.add_worktree("with-status");
+    repo.set_marker("with-status", "🔧");
     repo.add_worktree("without-status");
 
     assert_cmd_snapshot!({

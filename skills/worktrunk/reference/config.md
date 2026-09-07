@@ -257,8 +257,7 @@ namespaces:
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
 where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
-`wt list --format json` includes the rendered values under
-`items[].display.columns` in schema 2, or under `columns` in schema 1.
+`wt list --format json` includes the rendered values under `columns`.
 
 A `Jira` column reading a key kept in git config, and a `Summary` column
 showing just the first line of the git-native branch description:
@@ -1446,13 +1445,13 @@ Markers appear at the end of the Status column, after git symbols:
 
 ```console
 $ wt list
-  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
-@ main             ^⇡                                    ⇡1      33323bc  1d    Initial commit
-+ feature-api      ↑ 🤖              ↑1        +1                70343f0  1d    Add REST API endp…
-+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e  1d    Add dashboard com…
-+ wip-docs       ? –       +1                                    33323bc  1d    Initial commit
+  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endp…
++ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard com…
++ wip-docs       ? –       +1                                    33323bc    1d  Initial commit
 
-○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
+○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path
 ```
 
 ### Use cases

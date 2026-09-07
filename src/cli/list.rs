@@ -12,7 +12,7 @@ pub enum ListSubcommand {
 ## Output formats
 
 - `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
-- `json`: A one-item envelope in the `wt list --format=json` schema
+- `json`: the current [`wt list --format=json`](/list/#json-output) schema — a one-item envelope by default, or a one-item array with `[list] json-schema = 1`
 - `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
 
 A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.
