@@ -3925,9 +3925,50 @@ fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// Run `wt config plugins <tool> <action>` and accept the prompt, returning the
+/// argv of every `<tool>` the run spawned — argv\[0\] excluded, as `mock_calls`
+/// records it.
+///
+/// The call log is the helper's own directory, so a caller looping over
+/// install and uninstall can't carry install's calls into uninstall's
+/// assertion. It lives outside the repo under test for the reason `mock_calls`
+/// documents: a log in the working tree would leave an untracked file behind
+/// the command being measured.
+fn plugin_calls_when_accepted(
+    repo: &TestRepo,
+    tool: &str,
+    action: &str,
+    home: &std::path::Path,
+) -> Vec<String> {
+    use crate::common::mock_commands::mock_calls;
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "plugins", tool, action])
+        .current_dir(repo.root_path())
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    set_temp_home_env(&mut cmd, home);
+
+    let mut child = cmd.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "accepting {tool} {action}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    mock_calls(call_log.path(), tool)
+}
+
 /// The `?` preview lists exactly the commands each Codex plugin subcommand
-/// runs, so the confirmation the user answers matches what follows it — and
-/// declining runs none of them.
+/// runs: declining spawns none of them, and accepting spawns exactly those,
+/// so the confirmation the user answers matches what follows it.
 #[rstest]
 fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: TempDir) {
     use crate::common::mock_commands::mock_calls;
@@ -3991,12 +4032,24 @@ fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: Te
             calls.is_empty(),
             "declining {action} must spawn no codex: {calls:#?}"
         );
+
+        // Both sides of the comparison above are the preview text, so nothing
+        // there observes the argv. Accepting the same prompt and reading the
+        // call log is what pins the preview to the spawn.
+        let ran = plugin_calls_when_accepted(&repo, "codex", action, temp_home.path());
+        // `mock_calls` records argv without argv[0]; `expected` carries the
+        // binary name because that is how the preview renders it.
+        let want: Vec<String> = expected
+            .iter()
+            .map(|c| c.strip_prefix("codex ").unwrap().to_string())
+            .collect();
+        assert_eq!(ran, want, "{action} ran: {ran:#?}");
     }
 }
 
 /// The `?` preview lists exactly the commands each Claude plugin subcommand
-/// runs, so the confirmation the user answers matches what follows it — and
-/// declining runs none of them.
+/// runs: declining spawns none of them, and accepting spawns exactly those,
+/// so the confirmation the user answers matches what follows it.
 #[rstest]
 fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
     use crate::common::mock_commands::mock_calls;
@@ -4068,6 +4121,21 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
             calls.is_empty(),
             "declining {action} must spawn no claude: {calls:#?}"
         );
+
+        // Both sides of the comparison above are the preview text, so nothing
+        // there observes the argv. Accepting the same prompt and reading the
+        // call log is what pins the preview to the spawn — and it is the only
+        // thing that can here: `setup_mock_claude_with_plugins` registers the
+        // `plugin marketplace` prefix, which matches `add` and `remove` alike,
+        // so a wrong marketplace name still reaches the mock's exit 0.
+        let ran = plugin_calls_when_accepted(&repo, "claude", action, temp_home.path());
+        // `mock_calls` records argv without argv[0]; `expected` carries the
+        // binary name because that is how the preview renders it.
+        let want: Vec<String> = expected
+            .iter()
+            .map(|c| c.strip_prefix("claude ").unwrap().to_string())
+            .collect();
+        assert_eq!(ran, want, "{action} ran: {ran:#?}");
     }
 }
 
