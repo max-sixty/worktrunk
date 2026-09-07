@@ -39,6 +39,20 @@ pub(super) fn comment_out_config(content: &str) -> String {
     }
 }
 
+/// Activate pending defaults in their existing entries in the commented template.
+fn config_file_content(content: &str, kind: ConfigFileKind) -> String {
+    let mut content = comment_out_config(content);
+
+    for default in worktrunk::config::compute_migrated_content("", kind)
+        .lines()
+        .filter(|line| !line.is_empty())
+    {
+        content = content.replacen(&format!("# {default}"), default, 1);
+    }
+
+    content
+}
+
 /// Handle the config create command
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
@@ -124,11 +138,7 @@ fn create_config_file(
         std::fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
 
-    let mut generated = worktrunk::config::compute_migrated_content("", kind);
-    if !generated.is_empty() {
-        generated.push('\n');
-    }
-    generated.push_str(&comment_out_config(content));
+    let generated = config_file_content(content, kind);
     worktrunk::utils::write_atomically(&path, &generated).context("Failed to write config file")?;
 
     // Success message

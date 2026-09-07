@@ -6057,6 +6057,44 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+#[case::environment(false)]
+#[case::inline(true)]
+fn test_config_show_json_allows_invalid_runtime_override(
+    repo: TestRepo,
+    temp_home: TempDir,
+    #[case] inline: bool,
+) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list]\nfull = true\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    if inline {
+        cmd.args(["--config-set", "list.timeout-ms=\"invalid\""]);
+    } else {
+        cmd.env("WORKTRUNK_LIST__TIMEOUT_MS", "invalid");
+    }
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "runtime overrides should warn without invalidating the source config: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["config"]["list"]["full"], true);
+}
+
+#[rstest]
 fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
