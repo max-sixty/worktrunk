@@ -190,6 +190,12 @@ pub struct JsonItemV2 {
     #[serde(skip_serializing_if = "Tri::is_absent")]
     pub summary: Tri<String>,
 
+    /// Branch marker stored via `wt config state marker`; absent when none
+    /// is set, null while the lookup is unresolved. The same string is the
+    /// last glyph in `display.symbols`.
+    #[serde(skip_serializing_if = "Tri::is_absent")]
+    pub marker: Tri<String>,
+
     /// Custom variables stored via `wt config state vars`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, String>,
@@ -683,6 +689,13 @@ impl JsonItemV2 {
             }
         };
 
+        // Marker: gate 5 unresolved → null; resolved with none set → absent.
+        let marker = match &item.user_marker {
+            None => Tri::Unknown,
+            Some(None) => Tri::Absent,
+            Some(Some(value)) => Tri::Known(value.clone()),
+        };
+
         let vars = take_vars(item.branch(), all_vars);
         let columns = columns_map(custom_columns, &item.custom_values);
 
@@ -707,6 +720,7 @@ impl JsonItemV2 {
             checks,
             dev_server,
             summary,
+            marker,
             vars,
             display,
         }

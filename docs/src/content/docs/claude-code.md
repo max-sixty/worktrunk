@@ -30,19 +30,22 @@ claude plugin marketplace add max-sixty/worktrunk
 claude plugin install worktrunk@worktrunk
 ```
 
+`wt config plugins claude uninstall` removes the plugin and its marketplace entry.
+
 ### Codex
 
 ```bash
 wt config plugins codex install
 ```
 
-This configures the Worktrunk marketplace in Codex. Then run `/plugins` in Codex and install Worktrunk from the marketplace. Manual equivalent:
+Manual equivalent:
 
 ```bash
 codex plugin marketplace add max-sixty/worktrunk
+codex plugin add worktrunk@worktrunk
 ```
 
-To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins are left unchanged.
+`wt config plugins codex uninstall` removes the plugin and its marketplace entry.
 
 ### OpenCode
 
@@ -87,11 +90,11 @@ The Claude Code, Codex, OpenCode, Pi, and Gemini plugins track agent sessions wi
 
 ```console
 $ wt list
-  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Path                 Commit   Age   Message
-@ main             ^⇡                                    ⇡1      .                    33323bc  1d    Initial commit
-+ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0  1d    Add REST API endpoints
-+ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e  1d    Add dashboard component
-+ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc  1d    Initial commit
+  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Path                 Commit    Age  Message
+@ main             ^⇡                                    ⇡1      .                    33323bc    1d  Initial commit
++ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0    1d  Add REST API endpoints
++ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e    1d  Add dashboard component
++ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc    1d  Initial commit
 
 ○ Showing 4 worktrees, 2 with changes, 2 ahead
 ```

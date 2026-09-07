@@ -12,7 +12,7 @@ pub enum ListSubcommand {
 ## Output formats
 
 - `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
-- `json`: A one-entry array in the `wt list --format=json` schema
+- `json`: the current [`wt list --format=json`](/list/#json-output) schema — a one-item array under schema 1, the envelope object under schema 2. A prompt consumer can't act on a warning printed over its own line, so this surface stays silent: an unset `[list] json-schema` resolves to schema 1 here without the deprecation notice plain `wt list --format=json` prints.
 - `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
 
 A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.

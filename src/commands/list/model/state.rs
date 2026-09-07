@@ -74,8 +74,8 @@ impl Divergence {
 /// - For worktrees: whether the path matches the template, or has issues
 /// - For branches (without worktree): shows / to distinguish from worktrees
 ///
-/// Priority order for worktrees: Prunable > Locked > DuplicateBranch >
-/// BranchWorktreeMismatch
+/// Priority order for worktrees: Prunable > Locked > Detached >
+/// DuplicateBranch > BranchWorktreeMismatch
 ///
 /// `DuplicateBranch` and `BranchWorktreeMismatch` share the `⚑` glyph: both
 /// say this worktree's place in the branch ⇔ worktree map is irregular, and
@@ -83,6 +83,10 @@ impl Divergence {
 /// duplicate, an off-template Path cell the mismatch. The variants stay
 /// separate because the JSON `worktree.state` names the cause, where there
 /// is no glyph budget to spend.
+///
+/// `Detached` gets a glyph of its own because nothing else in the row says
+/// so: the Branch cell holds a short hash, which reads as a branch named
+/// like one until the column tells you otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum WorktreeState {
     #[strum(serialize = "")]
@@ -93,6 +97,8 @@ pub enum WorktreeState {
     BranchWorktreeMismatch,
     /// The branch is checked out in more than one worktree
     DuplicateBranch,
+    /// Detached HEAD: the worktree is on a commit, not a branch
+    Detached,
     /// Prunable (worktree directory missing)
     Prunable,
     /// Locked (protected from removal)
@@ -106,6 +112,7 @@ impl std::fmt::Display for WorktreeState {
         match self {
             Self::None => Ok(()),
             Self::BranchWorktreeMismatch | Self::DuplicateBranch => write!(f, "⚑"),
+            Self::Detached => write!(f, "⊘"),
             Self::Prunable => write!(f, "⊟"),
             Self::Locked => write!(f, "⊞"),
             Self::Branch => write!(f, "/"),
