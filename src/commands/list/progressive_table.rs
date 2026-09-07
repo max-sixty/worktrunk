@@ -27,6 +27,14 @@
 //! Stripping uses [`anstream::adapter::strip_str`], the exact transform an anstream
 //! stream in `Never` mode applies, so progressive output matches the buffered path
 //! by construction rather than by approximation.
+//!
+//! # Row-count invariant
+//!
+//! Incremental redraw addresses entries by physical row, so the header, every
+//! data row, and the loading footer must each remain single-line. Only the final
+//! summary may span rows: [`ProgressiveTable::finalize`] installs it after all
+//! incremental redraws are complete, through a redraw path that clears and
+//! rebuilds the region below the last data row.
 
 use crossterm::{
     ExecutableCommand,
@@ -84,8 +92,10 @@ fn write_prompt_reserve(stdout: &mut std::io::Stdout) -> std::io::Result<()> {
 /// in. The crossterm cursor-control sequences written alongside them are never
 /// stripped; see the module docs for that split.
 pub struct ProgressiveTable {
-    /// Previously rendered content for each line (header + rows + spacer + footer),
-    /// each already passed through [`ProgressiveTable::prepare`]
+    /// Previously rendered single-line entries (header + rows + spacer + loading
+    /// footer), each already passed through [`ProgressiveTable::prepare`]. The
+    /// final footer may replace the last entry with multiline content only after
+    /// incremental redraw is finished.
     lines: Vec<String>,
     /// Maximum width for content (terminal width - safety margin)
     max_width: usize,
@@ -245,6 +255,10 @@ impl ProgressiveTable {
         }
 
         let prepared = self.prepare(&content);
+        debug_assert!(
+            !prepared.contains('\n'),
+            "incrementally redrawn table rows must occupy one physical line"
+        );
 
         // Line index: header (0) + row_idx
         let line_idx = row_idx + 1;
@@ -270,6 +284,10 @@ impl ProgressiveTable {
     /// `true` if the content changed, `false` if unchanged.
     pub fn update_footer(&mut self, content: String) -> bool {
         let prepared = self.prepare(&content);
+        debug_assert!(
+            !prepared.contains('\n'),
+            "incrementally redrawn table footers must occupy one physical line"
+        );
 
         // Footer is the last line
         let footer_idx = self.lines.len() - 1;

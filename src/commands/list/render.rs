@@ -426,16 +426,15 @@ impl ColumnLayout {
         }
     }
 
-    /// Render a cell's content against the column's own edge.
+    /// Render a whole-cell state according to the column's value shape.
     fn aligned_cell(&self, content: StyledLine) -> StyledLine {
         let leading = match self.alignment() {
             CellAlignment::Left => return content,
-            // A split column's own renderer places the halves; only a
-            // single-glyph stand-in reaches here, and it goes to the right
-            // edge the way the whole field does.
-            CellAlignment::Right | CellAlignment::Split => {
-                self.width.saturating_sub(content.width())
-            }
+            CellAlignment::Right => self.width.saturating_sub(content.width()),
+            // A split column's value renderer owns the two halves. A loading
+            // or skipped marker describes the whole field, so it sits between
+            // them just like the header and the in-sync marker do.
+            CellAlignment::Split => self.width.saturating_sub(content.width()) / 2,
         };
         if leading == 0 {
             return content;
@@ -693,6 +692,7 @@ mod tests {
     use super::*;
     use crate::commands::list::layout::DiffDisplayConfig;
     use ansi_str::AnsiStr;
+    use insta::assert_snapshot;
     use std::path::PathBuf;
     use worktrunk::styling::{ADDITION, DELETION};
 
@@ -715,6 +715,75 @@ mod tests {
             status_position_mask: PositionMask::FULL,
             link_style: LinkStyle::Expanded,
         }
+    }
+
+    /// Alignment follows the shape of the value: text starts at the left,
+    /// scalar values end at the right, and labels or states for a split value
+    /// sit over its centre.
+    #[test]
+    fn test_alignment_policy_by_column_shape() {
+        let columns = [
+            ColumnLayout {
+                kind: ColumnKind::Branch,
+                header: std::borrow::Cow::Borrowed("Branch"),
+                start: 0,
+                width: 8,
+                format: ColumnFormat::Text,
+            },
+            ColumnLayout {
+                kind: ColumnKind::Time,
+                header: std::borrow::Cow::Borrowed("Age"),
+                start: 0,
+                width: 4,
+                format: ColumnFormat::Text,
+            },
+            ColumnLayout {
+                kind: ColumnKind::WorkingDiff,
+                header: std::borrow::Cow::Borrowed("HEAD±"),
+                start: 0,
+                width: 9,
+                format: ColumnFormat::Diff(DiffColumnConfig {
+                    positive_digits: 3,
+                    negative_digits: 3,
+                    total_width: 9,
+                    display: DiffDisplayConfig {
+                        variant: super::super::columns::DiffVariant::Signs,
+                        positive_style: ADDITION,
+                        negative_style: DELETION,
+                    },
+                }),
+            },
+        ];
+
+        let headers = columns
+            .iter()
+            .cloned()
+            .map(cell_layout)
+            .map(|layout| {
+                layout
+                    .render_header_line()
+                    .render()
+                    .ansi_strip()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let placeholders = columns
+            .iter()
+            .map(|column| {
+                column
+                    .placeholder_cell(PLACEHOLDER)
+                    .render()
+                    .ansi_strip()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+
+        assert_snapshot!(format!("{headers}\n{placeholders}"), @"
+        Branch| Age|  HEAD±
+        ·|   ·|    ·
+        ");
     }
 
     #[test]
@@ -1628,11 +1697,11 @@ mod tests {
             Default::default(),
         );
         let cell = col.render_cell(&wt_item, &cell_layout(col.clone()), PLACEHOLDER);
-        insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
+        insta::assert_snapshot!(cell.render(), @"    [2m·[0m");
 
         // Stale placeholder
         let cell = col.render_cell(&wt_item, &cell_layout(col.clone()), "·");
-        insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
+        insta::assert_snapshot!(cell.render(), @"    [2m·[0m");
     }
 
     #[test]
@@ -1662,7 +1731,7 @@ mod tests {
         let item = ListItem::new_branch("abc123".into(), "feat".into());
         assert!(item.upstream.is_none());
         let cell = col.render_cell(&item, &cell_layout(col.clone()), PLACEHOLDER);
-        insta::assert_snapshot!(cell.render(), @"      [2m·[0m");
+        insta::assert_snapshot!(cell.render(), @"   [2m·[0m");
 
         // upstream: Some(default) (loaded, no active upstream) → blank
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());

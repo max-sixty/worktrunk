@@ -1110,7 +1110,8 @@ eprintln!("{}", success_message(format!(
 - **Single-value numeric columns** (Age): right-aligned, so `now` and `4m` line
   up on the unit
 - **Diff columns** (HEAD±, main↕): two right-aligned halves either side of a
-  separator (`+999 -999`)
+  separator (`+999 -999`); a state for the whole field, such as a loading or
+  in-sync marker, is centered
 
 A header follows its content, except over a diff column, where it centres:
 pushed to either edge it stands over one half and reads as that half's label,

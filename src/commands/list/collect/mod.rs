@@ -1390,7 +1390,6 @@ pub fn collect(
             has_remote: repo.primary_remote().is_ok(),
             url_template: url_template.as_deref(),
             max_pr_number,
-            default_branch: default_branch.as_deref(),
         },
     );
 
@@ -2630,7 +2629,6 @@ remove the file manually to continue.";
                 has_remote: true,
                 url_template: None,
                 max_pr_number: None,
-                default_branch: None,
             },
         );
         let placeholder = super::super::render::PLACEHOLDER;

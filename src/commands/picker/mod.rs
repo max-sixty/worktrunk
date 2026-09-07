@@ -3255,7 +3255,6 @@ pub mod tests {
                     has_remote: true,
                     url_template: None,
                     max_pr_number: None,
-                    default_branch: None,
                 },
             ));
         (row, token, rendered, morphed)
@@ -4239,7 +4238,6 @@ pub mod tests {
                 has_remote: true,
                 url_template: None,
                 max_pr_number: None,
-                default_branch: None,
             },
         );
 
