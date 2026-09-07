@@ -983,11 +983,8 @@ These appear across all columns while the table is loading:
 
 ## JSON output
 
-`--format=json` emits structured data in one of two schemas while the format
-migrates: `[list] json-schema = 2` selects the envelope format below, `= 1`
-the original bare-array format. Unset emits schema 1 with a warning
-(`wt config update` adopts `= 2`); a future release flips the default to
-schema 2 and later removes schema 1.
+`--format=json` emits schema 2 by default: the envelope format below. Set
+`[list] json-schema = 1` to retain the original bare-array format.
 
 ### Schema 2
 
@@ -2090,7 +2087,7 @@ full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
-json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
+json-schema = 2    # JSON output schema: 2 (envelope, default) or 1 (bare array)
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 

@@ -472,7 +472,7 @@ fn test_system_config_found_via_xdg_config_dirs(repo: TestRepo) {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let worktrees = json.as_array().unwrap();
+    let worktrees = json["items"].as_array().unwrap();
 
     for wt in worktrees {
         if wt["is_primary"].as_bool() == Some(false) {
@@ -505,7 +505,7 @@ fn test_system_config_xdg_dirs_set_but_no_config_found(repo: TestRepo) {
     // Without system config, worktree paths should use the default template
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let worktrees = json.as_array().unwrap();
+    let worktrees = json["items"].as_array().unwrap();
 
     for wt in worktrees {
         if wt["is_primary"].as_bool() == Some(false) {
@@ -3762,11 +3762,10 @@ json-schema = 1
     );
 }
 
-/// `wt config update` writes `[list] json-schema = 2` when the key is unset,
-/// adopting the upcoming default, and a second run has nothing left to do —
-/// the pending-default loop closes.
+/// `wt config update` leaves `[list] json-schema` unset now that schema 2 is
+/// the default.
 #[rstest]
-fn test_config_update_adopts_json_schema(repo: TestRepo) {
+fn test_config_update_leaves_json_schema_unset(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
@@ -3778,41 +3777,23 @@ fn test_config_update_adopts_json_schema(repo: TestRepo) {
         let mut cmd = repo.wt_command();
         cmd.args(["config", "update", "--yes"]);
 
-        assert_cmd_snapshot!(cmd);
+        assert_cmd_snapshot!("config_update_adopts_json_schema", cmd);
     });
 
     assert_eq!(
         fs::read_to_string(repo.test_config_path()).unwrap(),
-        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 2\n"
-    );
-
-    let output = repo
-        .wt_command()
-        .args(["config", "update", "--yes"])
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
-        "second run should have nothing to update"
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n"
     );
 }
 
-/// A system config that sets `[list] json-schema` makes the resolved value
-/// explicit, so `wt config update` must not write the user file — a user-file
-/// value would override the deliberate system-level choice.
+/// Updating another deprecated setting does not materialize the default JSON
+/// schema in the user config.
 #[rstest]
-fn test_config_update_json_schema_adopt_defers_to_system_config(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
-    fs::write(&system_config_path, "[list]\njson-schema = 1\n").unwrap();
-
-    // A user config with an unrelated deprecation: update applies that
-    // rewrite but must not insert json-schema alongside it.
+fn test_config_update_does_not_materialize_json_schema(repo: TestRepo) {
     fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
 
     let mut cmd = repo.wt_command();
     cmd.args(["config", "update", "--yes"]);
-    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
     let output = cmd.output().unwrap();
     assert!(output.status.success());
 
@@ -3898,7 +3879,9 @@ fn test_explicit_config_path_honors_directory_flag(repo: TestRepo) {
     .current_dir(&outside);
     let output = cmd.output().unwrap();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stdout.contains("full = true"),
         "config show should report the config named relative to -C:\n{stdout}"

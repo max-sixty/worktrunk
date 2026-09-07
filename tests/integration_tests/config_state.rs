@@ -2779,6 +2779,7 @@ fn test_vars_overwrite(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_in_json_output(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Set vars data
     repo.git_command()
         .args(["config", "worktrunk.state.main.vars.env", "staging"])
@@ -2806,6 +2807,7 @@ fn test_vars_in_json_output(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_absent_in_json_when_empty(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // No vars data set — vars field should be absent from JSON
     let output = repo
         .wt_command()
@@ -2913,6 +2915,7 @@ fn test_vars_branch_with_dots_in_name(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Regression: branch names containing ".vars." must not confuse the
     // all_vars_entries parser (which splits on ".vars." to find the separator).
     let wt_path = repo.root_path().join("..").join("fix-vars-cleanup-wt");

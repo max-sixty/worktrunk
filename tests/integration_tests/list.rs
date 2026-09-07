@@ -150,6 +150,7 @@ fn test_list_detached_head_in_worktree(mut repo: TestRepo) {
 fn test_list_abbreviated_sha_follows_git(mut repo: TestRepo) {
     use ansi_str::AnsiStr;
 
+    repo.write_test_config("[list]\njson-schema = 1\n");
     repo.add_worktree("feature");
     repo.detach_head_in_worktree("feature");
 
@@ -347,6 +348,8 @@ fn test_list_many_worktrees_with_varied_stats(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_json_with_metadata(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // Create worktree with detached head
     repo.add_worktree("feature-detached");
 
@@ -361,13 +364,11 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
     });
 }
 
-/// Schema 2 (`[list] json-schema = 2`): envelope with repo facts and
-/// per-item orthogonal facts. Pins the full shape, including the absence
-/// rule (locked reason present, integration null vs absent).
+/// Schema 2 is the default: an envelope with repo facts and per-item
+/// orthogonal facts. Pins the full shape, including the absence rule (locked
+/// reason present, integration null vs absent).
 #[rstest]
 fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
-    repo.write_test_config("[list]\njson-schema = 2\n");
-
     repo.add_worktree("feature-detached");
     repo.add_worktree("locked-feature");
     repo.lock_worktree("locked-feature", Some("Testing"));
@@ -379,47 +380,28 @@ fn test_list_json_schema_2_envelope(mut repo: TestRepo) {
     });
 }
 
-/// `[list] json-schema` selects the output schema: unset emits schema 1
-/// plus a one-time nag, an explicit value is silent, and anything except
-/// 1 or 2 is an error.
+/// `[list] json-schema` selects the output schema: unset emits schema 2,
+/// explicit schema 1 preserves the bare array, and invalid values warn before
+/// falling back to schema 2.
 #[rstest]
 fn test_list_json_schema_selection(repo: TestRepo) {
-    // Unset with no user config file → nag names both settings to write by
-    // hand; there is no file for `wt config update` to rewrite.
+    // Unset → schema 2 with no migration warning.
     let output = repo
         .wt_command()
         .args(["list", "--format=json"])
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(!json.is_empty(), "schema 1 root is a bare array");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema"], 2);
+    assert!(json["items"].as_array().is_some_and(|i| !i.is_empty()));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("json-schema = 1") && stderr.contains("json-schema = 2"),
-        "unset key should nag with the manual settings: {stderr}"
-    );
-    assert!(
-        !stderr.contains("config update"),
-        "no update hint without a config file to update: {stderr}"
+        !stderr.contains("json-schema"),
+        "the default should not warn: {stderr}"
     );
 
-    // Unset with a user config file present → the hint offers wt config
-    // update, which writes json-schema = 2.
-    repo.write_test_config("");
-    let output = repo
-        .wt_command()
-        .args(["list", "--format=json"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("wt config update"),
-        "unset key with a config file should offer the update command: {stderr}"
-    );
-
-    // Explicit 1 → schema 1, no nag.
+    // Explicit 1 → schema 1, no warning.
     repo.write_test_config("[list]\njson-schema = 1\n");
     let output = repo
         .wt_command()
@@ -432,10 +414,10 @@ fn test_list_json_schema_selection(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("json-schema"),
-        "explicit value should not nag: {stderr}"
+        "explicit value should not warn: {stderr}"
     );
 
-    // Explicit 2 → envelope, no nag.
+    // Explicit 2 → envelope, no warning.
     repo.write_test_config("[list]\njson-schema = 2\n");
     let output = repo
         .wt_command()
@@ -448,9 +430,12 @@ fn test_list_json_schema_selection(repo: TestRepo) {
     assert_eq!(json["repo"]["default_branch"], "main");
     assert!(json["items"].as_array().is_some_and(|i| !i.is_empty()));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("json-schema"), "no nag with a value set");
+    assert!(
+        !stderr.contains("json-schema"),
+        "no warning with a valid value"
+    );
 
-    // Invalid value → warn and degrade to schema 1, like a config type
+    // Invalid value → warn and degrade to schema 2, like a config type
     // error (config problems never brick a command).
     repo.write_test_config("[list]\njson-schema = 3\n");
     let output = repo
@@ -459,8 +444,8 @@ fn test_list_json_schema_selection(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success(), "invalid value must not fail");
-    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(!json.is_empty(), "degrades to schema 1");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema"], 2, "degrades to schema 2");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("expected 1 or 2"),
@@ -472,6 +457,7 @@ fn test_list_json_schema_selection(repo: TestRepo) {
 /// remote to its HTTPS web URL without shelling out to a forge.
 #[rstest]
 fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // A real forge SSH remote. The local-path remote the fixture configures
     // doesn't parse as a remote URL, so `repo_url` would be absent for it.
     repo.run_git(&[
@@ -515,6 +501,7 @@ fn test_list_json_repo_url_from_ssh_remote(repo: TestRepo) {
 /// provider follows the name with no config. The statusline stays silent.
 #[rstest]
 fn test_list_json_provider_reads_branded_self_hosted_hosts(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     for (remote, host, provider) in [
         (
             "https://github-enterprise.acme.com/owner/repo.git",
@@ -557,6 +544,7 @@ fn test_list_json_provider_reads_branded_self_hosted_hosts(repo: TestRepo) {
 
 #[rstest]
 fn test_list_json_configured_azure_generic_remote_is_unknown(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     repo.run_git(&[
         "remote",
         "set-url",
@@ -844,6 +832,8 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
 fn test_list_remote_row_not_shadowed_by_same_named_local_branch(
     #[from(repo_with_remote)] repo: TestRepo,
 ) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // Remote `foo` = one commit ahead of main.
     repo.create_branch("foo");
     repo.run_git(&["checkout", "foo"]);
@@ -1009,6 +999,8 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
 /// branch reads as ahead by every commit the local default is missing.
 #[rstest]
 fn test_list_branch_stats_use_upstream_when_local_default_lags(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     repo.commit("c0");
     repo.setup_remote("main");
     // Persist the default branch so detection is deterministic.
@@ -1070,6 +1062,8 @@ fn test_list_branch_stats_use_upstream_when_local_default_lags(mut repo: TestRep
 /// superset selection rather than naively preferring the upstream ref.
 #[rstest]
 fn test_list_branch_stats_stay_local_when_default_ahead_of_upstream(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     repo.commit("c0");
     repo.setup_remote("main");
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
@@ -3933,6 +3927,8 @@ fn test_list_nested_worktree_current_indicator(mut repo: TestRepo) {
 /// Tests JSON output for nested worktrees shows is_current on the correct worktree.
 #[rstest]
 fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // Create a worktree nested inside the main repo
     let nested_path = repo.root_path().join(".worktrees").join("feature");
     let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);
@@ -3982,6 +3978,7 @@ fn test_list_empty_repo() {
 #[test]
 fn test_list_empty_repo_json() {
     let repo = TestRepo::empty();
+    repo.write_test_config("[list]\njson-schema = 1\n");
     let output = repo
         .wt_command()
         .args(["list", "--format=json"])
@@ -4074,6 +4071,8 @@ fn test_list_unborn_worktree_no_task_failures(repo: TestRepo) {
 fn test_list_integrated_when_merged_locally_with_upstream_diverged(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     let remote_path = repo.remote_path().unwrap().to_path_buf();
 
     // Advance origin/main with a remote-only commit so local and upstream diverge.
@@ -4168,6 +4167,8 @@ fn test_list_integrated_when_merged_locally_with_upstream_diverged(
 fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
     #[from(repo_with_remote)] repo: TestRepo,
 ) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     let remote_path = repo.remote_path().unwrap().to_path_buf();
 
     // Build, push, and remote-squash-merge a feature branch.
@@ -4437,7 +4438,7 @@ impl Drop for ReadOnlyObjectDirectory {
 #[cfg(unix)]
 #[rstest]
 fn test_list_full_survives_read_only_object_database(mut repo: TestRepo) {
-    // Explicit schema keeps stderr free of the unset-schema nag.
+    // Keep this regression on the schema-1 field vocabulary it asserts below.
     repo.write_test_config("[list]\njson-schema = 1\n");
 
     // Diverged, cleanly-mergeable topology: `feature` adds one file, `main`

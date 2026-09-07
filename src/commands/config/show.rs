@@ -708,10 +708,8 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
 
     // Check for deprecations with emit_inline_warnings=false (silent mode)
     // User config is global, not tied to any repository
-    // Deprecated patterns supersede the TOML dump below (their diff covers
-    // the file); a pending-default pin is additive, so the dump stays. An
-    // empty file still gets the pending-pin details — `wt config update`
-    // would rewrite it — just no dump.
+    // Deprecated patterns supersede the TOML dump below because their diff
+    // covers the file.
     let mut details_shown = false;
     let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
@@ -727,7 +725,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
                     &info, &contents,
                 ));
                 details_shown = true;
-                info.has_deprecated_patterns()
+                true
             } else {
                 false
             }
@@ -913,10 +911,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
 
     // Check for deprecations with emit_inline_warnings=false (silent mode)
     // Only write migration file in main worktree, not linked worktrees.
-    // Deprecated patterns supersede the TOML dump below (their diff covers
-    // the file); a pending-default pin would be additive, so the dump stays —
-    // no pending-default rule targets project config today, but the shape
-    // mirrors render_user_config so the two stay interchangeable.
+    // Deprecated patterns supersede the TOML dump below because their diff
+    // covers the file.
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
     let mut details_shown = false;
     let skip_dump = match worktrunk::config::check_and_migrate(
@@ -933,7 +929,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
                     &info, &contents,
                 ));
                 details_shown = true;
-                info.has_deprecated_patterns()
+                true
             } else {
                 false
             }

@@ -186,7 +186,7 @@ full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
-json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
+json-schema = 2    # JSON output schema: 2 (envelope, default) or 1 (bare array)
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
@@ -806,10 +806,8 @@ Global Options:
 Update deprecated config settings.
 
 Updates deprecated settings in user and project config files
-to their current equivalents, removes deprecated keys that have no equivalent
-and reports each one, and adopts defaults that a future release switches —
-currently `[list] json-schema = 2` — so the switch happens as a reviewed config
-edit rather than at upgrade. Shows a diff and asks for confirmation.
+to their current equivalents, removes deprecated keys that have no equivalent,
+and reports each one. Shows a diff and asks for confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
 command. Set `--output <path>` to write a migrated config to that destination

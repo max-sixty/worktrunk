@@ -270,9 +270,8 @@ that forbids it. Nothing exercises that today — no bin-crate test creates a
 config under a scratch `$HOME` — so it's a live requirement on new tests, not a
 known leak.
 
-`system_config_path()` is deliberately unguarded: it resolves a machine-wide
-file rather than the developer's own, and `config::deprecation`'s
-`PendingDefault` rules need the lookup.
+`system_config_path()` is deliberately unguarded because it resolves a
+machine-wide file rather than the developer's own.
 
 ## Timing Tests: Polling and Absence Windows
 

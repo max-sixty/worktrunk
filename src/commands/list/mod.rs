@@ -175,8 +175,8 @@ pub fn handle_list(
     // above the rows instead of between them.
     repo.warn_if_project_config_unloadable();
 
-    // Resolve the JSON schema before collecting, so the unset-nag lands
-    // above the output rather than after a long collection.
+    // Resolve the JSON schema before collecting, so an invalid-value warning
+    // lands above the output rather than after a long collection.
     let json_schema =
         matches!(render_target, RenderTarget::Json).then(|| resolve_json_schema(&repo));
 
@@ -216,27 +216,16 @@ pub fn handle_list(
 
 /// Resolve `[list] json-schema` (per-project resolved config) to 1 or 2.
 ///
-/// Unset defaults to schema 1 and nags once per process; an out-of-range
-/// value warns and defaults to schema 1, matching how config load treats a
+/// Unset defaults to schema 2; an out-of-range value warns and defaults to
+/// schema 2, matching how config load treats a
 /// type error in the same key (warn and degrade, never brick a command).
-/// Both messages honor warning suppression — on the statusline, stderr
-/// would corrupt the consumer's prompt, and the same user sees the nag on
-/// their next interactive run.
-///
-/// The unset state is the `PendingDefault` row in `DEPRECATION_RULES`, but
-/// its warning fires here rather than at config load: the setting only
-/// matters to JSON consumers, so a load-time warning would nag every command
-/// for every user without the key. `wt config update` writes the upcoming
-/// `json-schema = 2` (adopting the new schema is the migration; staying on
-/// schema 1 is the deliberate manual edit), so the nag's hint offers that
-/// command exactly when running it would write the key — decided by the same
-/// detection update runs, so a missing, unreadable, or malformed user config
-/// falls back to naming the manual setting instead.
+/// The warning honors warning suppression because stderr would corrupt the
+/// statusline consumer's prompt.
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
     use color_print::cformat;
-    use worktrunk::styling::{hint_message, warning_message};
+    use worktrunk::styling::warning_message;
 
     static WARNED: Once = Once::new();
     match repo.config().list.json_schema {
@@ -249,47 +238,13 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
                 eprintln!(
                     "{}",
                     warning_message(cformat!(
-                        "[list] json-schema is <bold>{other}</>, expected 1 or 2; using schema 1"
+                        "[list] json-schema is <bold>{other}</>, expected 1 or 2; using schema 2"
                     ))
                 );
             });
-            1
+            2
         }
-        None => {
-            WARNED.call_once(|| {
-                if worktrunk::config::warnings_suppressed() {
-                    return;
-                }
-                eprintln!(
-                    "{}",
-                    warning_message(
-                        "JSON output is schema 1; a future release switches the default to schema 2"
-                    )
-                );
-                let update_would_adopt = worktrunk::config::config_path()
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                    .is_some_and(|content| {
-                        worktrunk::config::detect_deprecations(
-                            &content,
-                            worktrunk::config::ConfigFileKind::User,
-                        )
-                        .iter()
-                        .any(|k| matches!(k, worktrunk::config::DeprecationKind::JsonSchemaUnset))
-                    });
-                let adopt = if update_would_adopt {
-                    cformat!("run <underline>wt config update</>")
-                } else {
-                    cformat!("set <underline>json-schema = 2</>")
-                };
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To keep this format set <underline>[list] json-schema = 1</>; to adopt the new schema, {adopt}"
-                    ))
-                );
-            });
-            1
-        }
+        None => 2,
     }
 }
 

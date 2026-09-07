@@ -2,8 +2,8 @@
 //! `wt list statusline --format=json`.
 //!
 //! One envelope over per-item orthogonal facts, with presentation
-//! quarantined under `display`. Selected by `[list] json-schema = 2`;
-//! schema 1 is the bare-array format in [`super::json_output`].
+//! quarantined under `display`. This is the default; `[list] json-schema = 1`
+//! selects the bare-array format in [`super::json_output`].
 //!
 //! A JSON Schema derived from these types is published at
 //! `https://worktrunk.dev/schema/list-v2.json`, regenerated from
