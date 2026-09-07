@@ -539,13 +539,12 @@ enum DeprecationRule {
 ///
 /// `Load` is the structural rewrite before serde parses — `Structural` and
 /// `Silent` rows only. `Update` is what `wt config update` materializes —
-/// every row, with kind-scoped rows applying only to their config kind.
-/// Detection always runs the `Update` pass against a scratch copy, so a
-/// rule's detection and migration share one predicate and cannot drift.
+/// every row. Detection always runs the `Update` pass against a scratch copy,
+/// so a rule's detection and migration share one predicate and cannot drift.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RulePass {
     Load,
-    Update(ConfigFileKind),
+    Update,
 }
 
 /// Every deprecation, one row each. The table order is the contract:
@@ -632,11 +631,11 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
 ///
 /// Returns the detected deprecation patterns. This is the recommended entry
 /// point for deprecation detection.
-pub fn detect_deprecations(content: &str, kind: ConfigFileKind) -> Deprecations {
+pub fn detect_deprecations(content: &str) -> Deprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return Vec::new();
     };
-    detect_deprecations_from_doc(&doc, kind)
+    detect_deprecations_from_doc(&doc)
 }
 
 /// Detect deprecations from an already-parsed document.
@@ -645,13 +644,10 @@ pub fn detect_deprecations(content: &str, kind: ConfigFileKind) -> Deprecations 
 /// a warning fires exactly when `wt config update` would change the file.
 /// Pushes kinds in [`DEPRECATION_RULES`] order — the warning-emission order —
 /// so iterating the returned `Vec` reproduces the warning text byte-for-byte.
-fn detect_deprecations_from_doc(
-    doc: &toml_edit::DocumentMut,
-    kind: ConfigFileKind,
-) -> Deprecations {
+fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
     let mut scratch = doc.clone();
     let mut kinds = Vec::new();
-    apply_rules(&mut scratch, RulePass::Update(kind), &mut kinds);
+    apply_rules(&mut scratch, RulePass::Update, &mut kinds);
     kinds
 }
 
@@ -671,7 +667,7 @@ fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Dep
                 kinds.extend(new_kinds);
             }
             DeprecationRule::UpdateOnly(migrate) => {
-                if matches!(pass, RulePass::Update(_)) {
+                if matches!(pass, RulePass::Update) {
                     let new_kinds = migrate(doc);
                     modified |= !new_kinds.is_empty();
                     kinds.extend(new_kinds);
@@ -1495,7 +1491,7 @@ pub fn check_and_migrate(
     // `info` is `Some`) can assume the content parses.
     let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
         Ok(doc) => {
-            let deprecations = detect_deprecations_from_doc(&doc, kind);
+            let deprecations = detect_deprecations_from_doc(&doc);
             let migrated_content = migrate_content_from_doc(content, doc);
             (deprecations, migrated_content)
         }
@@ -1577,14 +1573,14 @@ pub fn check_and_migrate(
 /// Pure function — no filesystem access. Idempotent: feeding its own output
 /// back in is a no-op. Callers materialize the result via `wt config update`
 /// or display it via `wt config show`.
-pub fn compute_migrated_content(content: &str, kind: ConfigFileKind) -> String {
+pub fn compute_migrated_content(content: &str) -> String {
     // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
     // all run content through `check_and_migrate` first, so it is known to parse.
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
 
-    if apply_rules(&mut doc, RulePass::Update(kind), &mut Vec::new()) {
+    if apply_rules(&mut doc, RulePass::Update, &mut Vec::new()) {
         doc.to_string()
     } else {
         content.to_string()
@@ -1784,7 +1780,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
         hint_message(cformat!("To apply: <underline>wt config update</>"))
     );
 
-    let migrated = compute_migrated_content(original_content, info.kind);
+    let migrated = compute_migrated_content(original_content);
     let label = info
         .config_path
         .file_name()
@@ -2063,7 +2059,7 @@ mod tests {
     }
 
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
-        detect_deprecations(content, ConfigFileKind::User)
+        detect_deprecations(content)
             .into_iter()
             .filter_map(|k| match k {
                 DeprecationKind::TemplateVar { old, new } => Some((old, new)),
@@ -2080,7 +2076,7 @@ mod tests {
     }
 
     fn find_commit_generation_deprecations(content: &str) -> ScopedSections {
-        detect_deprecations(content, ConfigFileKind::User)
+        detect_deprecations(content)
             .into_iter()
             .find_map(|k| match k {
                 DeprecationKind::CommitGeneration(found) => Some(found),
@@ -2090,13 +2086,13 @@ mod tests {
     }
 
     fn find_approved_commands_deprecation(content: &str) -> bool {
-        has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
+        has_kind(&detect_deprecations(content), |k| {
             matches!(k, DeprecationKind::ApprovedCommands)
         })
     }
 
     fn find_select_deprecation(content: &str) -> bool {
-        has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
+        has_kind(&detect_deprecations(content), |k| {
             matches!(k, DeprecationKind::Select(_))
         })
     }
@@ -2242,7 +2238,7 @@ post-start = "cd {{ worktree_path }} && npm install"
     #[test]
     fn test_compute_migrated_content_escaped_quotes() {
         let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert!(
             !migrated.contains("repo_root"),
             "compute_migrated_content must migrate vars inside escaped strings; got: {migrated}"
@@ -2342,17 +2338,14 @@ timeout = 30
     #[test]
     fn test_compute_migrated_content_noop_returns_input_unchanged() {
         let content = "pre-start = \"echo {{ repo_path }}\"\n";
-        assert_eq!(
-            compute_migrated_content(content, ConfigFileKind::User),
-            content
-        );
+        assert_eq!(compute_migrated_content(content), content);
     }
 
     #[test]
     fn test_compute_migrated_content_does_not_rewrite_literal_text_when_other_template_uses_deprecated_var()
      {
         let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\n";
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert_eq!(
             migrated,
             "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\n"
@@ -2954,7 +2947,7 @@ template = "some template"
         template = "some template"
         "#);
         assert!(has_kind(
-            &detect_deprecations(content, ConfigFileKind::User),
+            &detect_deprecations(content),
             |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
                 if section == "[commit-generation]" && key == "args")
         ));
@@ -3203,7 +3196,7 @@ args = [1, "--ok"]
         command = "echo"
         "#);
         assert!(has_kind(
-            &detect_deprecations(content, ConfigFileKind::User),
+            &detect_deprecations(content),
             |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
                 if section == "[commit-generation]" && key == "args")
         ));
@@ -3273,7 +3266,7 @@ platform = "github"
 json-schema = 1
 "#;
         assert_eq!(migrate_content(content), content);
-        assert!(detect_deprecations(content, ConfigFileKind::User).is_empty());
+        assert!(detect_deprecations(content).is_empty());
     }
 
     /// The framework invariant: a warning fires exactly when `wt config
@@ -3314,11 +3307,11 @@ json-schema = 1
         ];
         for content in untouched {
             assert!(
-                detect_deprecations(content, ConfigFileKind::User).is_empty(),
+                detect_deprecations(content).is_empty(),
                 "no warning expected for:\n{content}"
             );
             assert_eq!(
-                compute_migrated_content(content, ConfigFileKind::User),
+                compute_migrated_content(content),
                 content,
                 "no rewrite expected for:\n{content}"
             );
@@ -3349,15 +3342,15 @@ json-schema = 1
         ];
         for content in rewritten {
             assert!(
-                !detect_deprecations(content, ConfigFileKind::User).is_empty(),
+                !detect_deprecations(content).is_empty(),
                 "warning expected for:\n{content}"
             );
-            let migrated = compute_migrated_content(content, ConfigFileKind::User);
+            let migrated = compute_migrated_content(content);
             assert_ne!(&migrated, content, "rewrite expected for:\n{content}");
             // The user-visible loop closes: applying the update silences the
             // warning.
             assert!(
-                detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
+                detect_deprecations(&migrated).is_empty(),
                 "no warning expected after update for:\n{migrated}"
             );
             // …and closes it for the *other* warning channel too: the update
@@ -3389,7 +3382,7 @@ json-schema = 1
     #[test]
     fn test_select_timeout_ms_removed_alongside_rename() {
         let content = "[select]\npager = \"delta\"\ntimeout-ms = 500\n";
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(matches!(
             deprecations.as_slice(),
             [
@@ -3412,7 +3405,7 @@ json-schema = 1
     #[test]
     fn test_select_with_only_unsupported_keys_leaves_no_section() {
         let content = "[select]\nheight = \"50%\"\n";
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(matches!(
             deprecations.as_slice(),
             [DeprecationKind::UnsupportedKey { section, key }]
@@ -3429,7 +3422,6 @@ json-schema = 1
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             deprecations: detect_deprecations(
                 "[projects.\"github.com/u/r\".select]\npager = \"delta\"\nheight = \"50%\"\n",
-                ConfigFileKind::User,
             ),
             kind: ConfigFileKind::User,
             main_worktree_path: None,
@@ -3449,11 +3441,11 @@ json-schema = 1
     fn test_project_config_keeps_misplaced_user_only_keys() {
         let content = "[commit-generation]\ncommand = \"llm\"\nbogus = 1\n";
         assert!(has_kind(
-            &detect_deprecations(content, ConfigFileKind::Project),
+            &detect_deprecations(content),
             |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
                 if section == "[commit-generation]" && key == "bogus")
         ));
-        let migrated = compute_migrated_content(content, ConfigFileKind::Project);
+        let migrated = compute_migrated_content(content);
         insta::assert_snapshot!(migrated, @r#"
         [commit.generation]
         command = "llm"
@@ -3703,7 +3695,7 @@ approved-commands = ["npm install"]
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ApprovedCommands
@@ -3750,7 +3742,7 @@ approved-commands = ["npm install"]
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert!(!migrated.contains("approved-commands"));
     }
 
@@ -4090,7 +4082,7 @@ full = true
 [select]
 pager = "delta"
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select(_)
@@ -4144,7 +4136,7 @@ pager = "delta --paging=never"
 [select]
 pager = "delta --paging=never"
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert!(
             migrated.contains("[switch.picker]"),
             "Migrated content should have [switch.picker]: {migrated}"
@@ -4229,7 +4221,7 @@ server = "npm run dev"
 [list]
 json-schema = 1
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }
 
@@ -4243,11 +4235,8 @@ timeout-ms = 500
 [list]
 json-schema = 1
 "#;
-        assert!(detect_deprecations(content, ConfigFileKind::User).is_empty());
-        assert_eq!(
-            compute_migrated_content(content, ConfigFileKind::User),
-            content
-        );
+        assert!(detect_deprecations(content).is_empty());
+        assert_eq!(compute_migrated_content(content), content);
     }
 
     #[test]
@@ -4257,7 +4246,7 @@ json-schema = 1
 branches = true
 task-timeout-ms = 500
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ListTaskTimeout
@@ -4270,7 +4259,7 @@ task-timeout-ms = 500
 [projects."github.com/user/repo".list]
 task-timeout-ms = 300
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ListTaskTimeout
@@ -4283,7 +4272,7 @@ task-timeout-ms = 300
 [list]
 timeout-ms = 500
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(!has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ListTaskTimeout
@@ -4382,7 +4371,7 @@ timeout-ms = 500
 
     #[test]
     fn test_detect_no_ff_deprecation() {
-        let deprecations = detect_deprecations("[merge]\nno-ff = true\n", ConfigFileKind::User);
+        let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4396,7 +4385,7 @@ timeout-ms = 500
     #[test]
     fn test_no_ff_warned_and_removed_when_ff_exists() {
         let content = "[merge]\nff = true\nno-ff = true\n";
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4409,7 +4398,7 @@ timeout-ms = 500
 
     #[test]
     fn test_detect_no_cd_deprecation() {
-        let deprecations = detect_deprecations("[switch]\nno-cd = true\n", ConfigFileKind::User);
+        let deprecations = detect_deprecations("[switch]\nno-cd = true\n");
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoCd
@@ -4422,7 +4411,7 @@ timeout-ms = 500
 [projects."github.com/user/repo".merge]
 no-ff = true
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4494,7 +4483,7 @@ no-ff = true
 [projects."github.com/user/repo".select]
 pager = "bat"
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select(_)
@@ -4739,16 +4728,16 @@ server = "npm run dev"
 [projects."github.com/user/repo"]
 approved-commands = ["npm test"]
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert_eq!(
-            compute_migrated_content(&migrated, ConfigFileKind::User),
+            compute_migrated_content(&migrated),
             migrated,
             "migration must be idempotent"
         );
         assert!(
-            detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
+            detect_deprecations(&migrated).is_empty(),
             "applying the update must silence every warning; got {:?}",
-            detect_deprecations(&migrated, ConfigFileKind::User)
+            detect_deprecations(&migrated)
         );
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }

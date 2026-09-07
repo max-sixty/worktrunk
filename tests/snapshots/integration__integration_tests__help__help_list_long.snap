@@ -370,7 +370,7 @@ optional there rather than required-and-null.
 
 [32mSchema 1[0m
 
-The original bare-array format, and the default while unset:
+The original bare-array format, selected by [2m[list] json-schema = 1[0m:
 
 [107m [0m [2m# Current worktree path (for scripts)[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m

@@ -710,7 +710,6 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
     // User config is global, not tied to any repository
     // Deprecated patterns supersede the TOML dump below because their diff
     // covers the file.
-    let mut details_shown = false;
     let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
@@ -724,7 +723,6 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
                 out.push_str(&worktrunk::config::format_deprecation_details(
                     &info, &contents,
                 ));
-                details_shown = true;
                 true
             } else {
                 false
@@ -753,10 +751,6 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
     // Display TOML with syntax highlighting (gutter at column 0).
     // Skip when deprecations were shown — the proposed diff already covers it.
     if !skip_dump {
-        if details_shown {
-            // Pending-pin details above end in their diff; separate phases.
-            out.push('\n');
-        }
         writeln!(out, "{}", format_toml(&contents))?;
     }
 
@@ -914,7 +908,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Deprecated patterns supersede the TOML dump below because their diff
     // covers the file.
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
-    let mut details_shown = false;
     let skip_dump = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
@@ -928,7 +921,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
                 out.push_str(&worktrunk::config::format_deprecation_details(
                     &info, &contents,
                 ));
-                details_shown = true;
                 true
             } else {
                 false
@@ -952,10 +944,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Display TOML with syntax highlighting (gutter at column 0).
     // Skip when deprecations were shown — the proposed diff already covers it.
     if !skip_dump {
-        if details_shown {
-            // Pending-pin details above end in their diff; separate phases.
-            out.push('\n');
-        }
         writeln!(out, "{}", format_toml(&contents))?;
     }
 

@@ -1076,7 +1076,7 @@ optional there rather than required-and-null.
 
 ### Schema 1
 
-The original bare-array format, and the default while unset:
+The original bare-array format, selected by `[list] json-schema = 1`:
 
 ```console
 # Current worktree path (for scripts)

@@ -3777,7 +3777,7 @@ fn test_config_update_leaves_json_schema_unset(repo: TestRepo) {
         let mut cmd = repo.wt_command();
         cmd.args(["config", "update", "--yes"]);
 
-        assert_cmd_snapshot!("config_update_adopts_json_schema", cmd);
+        assert_cmd_snapshot!(cmd);
     });
 
     assert_eq!(

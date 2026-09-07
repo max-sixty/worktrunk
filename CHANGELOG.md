@@ -4,7 +4,7 @@
 
 ### Improved
 
-- **`wt list --format=json` now defaults to schema 2**: callers get the envelope with repository metadata and orthogonal per-item facts without configuring `[list] json-schema`. Set `json-schema = 1` to retain the original bare-array format.
+- **`wt list --format=json` now defaults to schema 2**: callers get the envelope with repository metadata and orthogonal per-item facts without configuring `[list] json-schema`. `wt list statusline --format=json` follows the same key. Set `json-schema = 1` to retain the original bare-array format. (Breaking.)
 
 ### Fixed
 

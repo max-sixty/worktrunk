@@ -310,7 +310,7 @@ optional there rather than required-and-null.
 
 ### Schema 1
 
-The original bare-array format, and the default while unset:
+The original bare-array format, selected by `[list] json-schema = 1`:
 
 ```console
 # Current worktree path (for scripts)
@@ -538,7 +538,7 @@ The line carries the same cells as the worktree's row in `wt list`. A stale CI s
 ### Output formats
 
 - `table` (default): `branch  status  HEAD±  main↕  main…±  Remote⇅  CI  URL`
-- `json`: A one-entry array in the `wt list --format=json` schema
+- `json`: A one-item envelope in the `wt list --format=json` schema
 - `claude-code`: the `table` cells, preceded by `dir` and followed by `model  context  pace`
 
 A cell with nothing to show is left out rather than blanked, so most lines are shorter than that; `claude-code` also drops `branch` where `dir` already ends in `.<branch>`. A line that still overruns the terminal drops whole cells, least important first, starting with the dev server URL.
