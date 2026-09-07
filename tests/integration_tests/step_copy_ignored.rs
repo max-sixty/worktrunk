@@ -9,12 +9,19 @@ use std::process::Command;
 
 /// Pin the reflink half of the copy summary, which is otherwise a property of
 /// the filesystem under the test's temp directory — APFS reflinks, the ext4 and
-/// NTFS runners cannot, and no one snapshot holds on all three.
+/// NTFS runners cannot, and no one snapshot holds on all three. The copy still
+/// attempts a reflink either way; only the reported label is fixed.
 ///
-/// Every snapshot command in this file goes through [`snapshot_cmd`] or
-/// [`snapshot_cmd_with_global_flags`] so a new test cannot forget; the copy
-/// itself still attempts a reflink either way, and only the reported label is
-/// fixed. `copy_ignored_reports_a_full_copy` pins the opposite branch.
+/// **Every snapshot of a copy-ignored run in this file needs this**, via
+/// [`snapshot_cmd`] / [`snapshot_cmd_with_global_flags`] or applied by hand
+/// where a test builds its own command, as `test_copy_ignored_bare_repo` does.
+/// Missing it is not silent — the snapshot passes wherever it was recorded and
+/// fails on the other runners — but it costs a CI round-trip to find out.
+///
+/// The pin lives here rather than in `STATIC_TEST_ENV_VARS`, which would reach
+/// every child and add a line to the `env:` block of all 996 snapshots that
+/// record one, to make deterministic the ~12 that show this summary.
+/// `copy_ignored_reports_a_full_copy` pins the opposite branch.
 fn pin_reflink(mut cmd: Command, reflinked: bool) -> Command {
     cmd.env("WORKTRUNK_TEST_REFLINK", if reflinked { "1" } else { "0" });
     cmd
@@ -704,7 +711,9 @@ fn test_copy_ignored_bare_repo() {
         cmd.args(["step", "copy-ignored"])
             .current_dir(&feature_worktree);
 
-        insta_cmd::assert_cmd_snapshot!(cmd);
+        // Builds its own command rather than going through `snapshot_cmd`, so
+        // the pin has to be applied by hand here.
+        insta_cmd::assert_cmd_snapshot!(pin_reflink(cmd, true));
     });
 
     // Verify file was copied
