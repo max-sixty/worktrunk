@@ -250,21 +250,30 @@ pub(super) fn is_plugin_installed() -> bool {
 ///
 /// The three-way answer is what keeps that safe. A file Claude Code has never
 /// written records no marketplaces, so its absence is a confident no. A file
-/// that exists and cannot be read or parsed leaves the question open, and
-/// `run_plugin_removal` keeps the harness's error rather than reporting a
-/// removal it cannot confirm — the case that matters if this file's shape ever
-/// changes, the way the `installed_plugins.json` beside it wraps its map in a
-/// `version` key.
+/// that exists and cannot be read, parsed, or recognized leaves the question
+/// open, and `run_plugin_removal` keeps the harness's error rather than
+/// reporting a removal it cannot confirm.
+///
+/// Recognizing the shape is the part that earns its keep. A key lookup alone
+/// answers "absent" for any JSON that simply lacks it, so a file reshaped the
+/// way the `installed_plugins.json` beside it wraps its map in a `version` key
+/// would parse, miss, and report a confident no — every genuine failure
+/// silently reported as success. Requiring every value to be a marketplace
+/// object turns that reshape into `None` instead.
 pub(super) fn is_marketplace_configured() -> Option<bool> {
     let path = claude_config_dir()?.join("plugins/known_marketplaces.json");
-    if !path.exists() {
+    // `try_exists` so a directory we lack permission to stat is unknown rather
+    // than the `false` that `exists` reports for it.
+    if !path.try_exists().ok()? {
         return Some(false);
     }
 
     let content = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str::<serde_json::Value>(&content)
-        .ok()
-        .map(|json| json.get("worktrunk").is_some())
+    let json = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let map = json.as_object()?;
+    map.values()
+        .all(serde_json::Value::is_object)
+        .then(|| map.contains_key("worktrunk"))
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.

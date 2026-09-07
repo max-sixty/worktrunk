@@ -152,12 +152,12 @@ fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
 /// removal that genuinely failed, which still surfaces the harness's own
 /// stderr in the gutter.
 ///
-/// Only a confident `Some(false)` drops the error. `None` — the config missing
-/// a home directory, or existing and refusing to read or parse — keeps it,
-/// because a reader that cannot see the marketplace has not established that
-/// the removal worked. Reporting success there would fail open on exactly the
-/// silent case: a config whose shape changed under us would swallow every
-/// genuine failure and print `Plugin & marketplace removed`.
+/// Only a confident `Some(false)` drops the error. `None` — no home directory,
+/// or a config that will not read, parse, or match the shape the reader knows
+/// — keeps it, because a reader that cannot see the marketplace has not
+/// established that the removal worked. Reporting success there would fail open
+/// on exactly the silent case: a config whose shape changed under us would
+/// swallow every genuine failure and print `Plugin & marketplace removed`.
 ///
 /// The command runs either way, so the `?` preview lists what the uninstall
 /// actually invokes.

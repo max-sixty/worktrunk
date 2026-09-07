@@ -4419,6 +4419,60 @@ fn test_plugins_claude_uninstall_surfaces_failure_when_config_unreadable(
     });
 }
 
+/// A reshaped `known_marketplaces.json` parses cleanly and simply lacks the
+/// key, so a lookup that only asked for the key would call the marketplace
+/// gone and swallow the removal's failure — silently, for as long as the shape
+/// held. Requiring every value to be a marketplace object makes it unknown.
+#[rstest]
+fn test_plugins_claude_uninstall_surfaces_failure_when_config_reshaped(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing();
+    TestRepo::setup_plugin_installed(temp_home.path());
+    // The shape `installed_plugins.json` already uses, applied to this file.
+    TestRepo::setup_claude_marketplaces(
+        temp_home.path(),
+        r#"{"version":2,"marketplaces":{"worktrunk":{"source":"github"}}}"#,
+    );
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The Codex counterpart, for the one shape it can rule out: `marketplaces`
+/// present but not a table cannot say worktrunk's entry is absent.
+#[rstest]
+fn test_plugins_codex_uninstall_surfaces_failure_when_config_reshaped(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing();
+    TestRepo::setup_codex_config(
+        &temp_home.path().join(".codex"),
+        "model = \"gpt-5.5\"\nmarketplaces = 3\n",
+    );
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// The Codex counterpart: a second `uninstall` succeeds.
 #[rstest]
 fn test_plugins_codex_uninstall_tolerates_absent_marketplace(

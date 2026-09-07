@@ -124,20 +124,28 @@ fn codex_config_dir() -> Option<PathBuf> {
 /// genuinely failed. Codex records each one as a `[marketplaces.<name>]`
 /// table in `config.toml`.
 ///
-/// `None` is the same "cannot tell" the Claude reader returns, and for the
-/// same reason: a `config.toml` that exists and will not parse must not be
-/// read as the marketplace being gone.
+/// `None` is the same "cannot tell" the Claude reader returns: a `config.toml`
+/// that will not read or parse, or whose `marketplaces` is not a table, cannot
+/// say worktrunk's entry is gone.
+///
+/// It claims less than the Claude reader does, because less is available here.
+/// A fresh `config.toml` legitimately has no `marketplaces` key at all, so a
+/// key that was renamed or relocated is indistinguishable from a user who has
+/// configured no marketplaces, and reads as a confident absence.
 pub(super) fn is_marketplace_configured() -> Option<bool> {
     let path = codex_config_dir()?.join("config.toml");
-    if !path.exists() {
+    // `try_exists` so a directory we lack permission to stat is unknown rather
+    // than the `false` that `exists` reports for it.
+    if !path.try_exists().ok()? {
         return Some(false);
     }
 
     let content = std::fs::read_to_string(&path).ok()?;
-    content.parse::<toml::Table>().ok().map(|config| {
-        config
-            .get("marketplaces")
-            .and_then(|m| m.get(MARKETPLACE_NAME))
-            .is_some()
-    })
+    let config = content.parse::<toml::Table>().ok()?;
+    match config.get("marketplaces") {
+        None => Some(false),
+        Some(marketplaces) => marketplaces
+            .as_table()
+            .map(|table| table.contains_key(MARKETPLACE_NAME)),
+    }
 }
