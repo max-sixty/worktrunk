@@ -105,7 +105,10 @@ fn require_codex_cli() -> Result<()> {
 /// Codex's config root.
 ///
 /// Honors `CODEX_HOME`, which relocates the whole tree away from `~/.codex`,
-/// the same way `claude_config_dir` honors `CLAUDE_CONFIG_DIR`.
+/// the same way `claude_config_dir` honors `CLAUDE_CONFIG_DIR`. They diverge
+/// on one point deliberately: a leading `~/` is taken literally here rather
+/// than expanded against the home directory, because a shell expands it before
+/// the variable is set and nothing sets `CODEX_HOME` from a non-shell context.
 fn codex_config_dir() -> Option<PathBuf> {
     match std::env::var("CODEX_HOME") {
         Ok(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
