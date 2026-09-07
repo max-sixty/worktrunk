@@ -1192,6 +1192,15 @@ fn stream_exit_result(
 /// stderr live once `streaming` is set, or buffered (for the quiet-fast and
 /// pre-threshold cases) until then. Both the child's stdout and stderr use
 /// this; everything routes to stderr to keep our stdout clean.
+///
+/// The `buffer` mutex is taken *before* the flag is read, and held across the
+/// write, because the switch to streaming reads the same flag under the same
+/// lock. That makes each line land on one side of the switch or the other: it
+/// is either buffered, and so drained in order behind the progress message, or
+/// written after that drain has finished. Reading the flag outside the lock
+/// instead lets a reader observe the flip and print between the progress
+/// message and the drain — or ahead of the progress message entirely, which is
+/// what a zero delay makes routine, since nothing has to be buffered first.
 fn spawn_delayed_reader<R: Read + Send + 'static>(
     stream: R,
     streaming: Arc<AtomicBool>,
@@ -1200,10 +1209,11 @@ fn spawn_delayed_reader<R: Read + Send + 'static>(
     std::thread::spawn(move || {
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
+            let mut buffered = buffer.lock().unwrap();
             if streaming.load(Ordering::Relaxed) {
                 eprintln!("{}", line);
             } else {
-                buffer.lock().unwrap().push(line);
+                buffered.push(line);
             }
         }
     })
@@ -2165,13 +2175,18 @@ impl Cmd {
                 }
             }
 
-            // Delay threshold exceeded — switch to streaming.
-            streaming.store(true, Ordering::Relaxed);
-            if let Some(ref msg) = progress_message {
-                eprintln!("{}", msg);
-            }
-            for line in buffer.lock().unwrap().drain(..) {
-                eprintln!("{}", line);
+            // Delay threshold exceeded — switch to streaming. The flip, the
+            // progress message, and the drain happen under the buffer lock the
+            // readers take per line, so no reader can print between them.
+            {
+                let mut buffered = buffer.lock().unwrap();
+                streaming.store(true, Ordering::Relaxed);
+                if let Some(ref msg) = progress_message {
+                    eprintln!("{}", msg);
+                }
+                for line in buffered.drain(..) {
+                    eprintln!("{}", line);
+                }
             }
         }
 
