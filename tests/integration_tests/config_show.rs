@@ -6015,6 +6015,13 @@ mod plugin_prompt_pty {
 
 #[rstest]
 fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        "[list]\nfull = true\njson-schema = 2\n",
+    )
+    .unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -6027,6 +6034,7 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     repo.configure_wt_cmd(&mut cmd);
     set_xdg_config_path(&mut cmd, temp_home.path());
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path);
     cmd.args(["config", "show", "--format=json"])
         .current_dir(repo.root_path());
 
@@ -6042,6 +6050,7 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     assert!(json["user"]["exists"].as_bool().unwrap());
     assert!(json["user"]["path"].as_str().is_some());
     assert!(json["user"]["config"].is_object());
+    assert_eq!(json["user"]["config"]["list"]["full"], true);
 
     // Project config doesn't exist in this fixture
     assert!(!json["project"]["exists"].as_bool().unwrap());
