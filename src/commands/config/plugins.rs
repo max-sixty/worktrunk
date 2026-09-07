@@ -52,17 +52,36 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
 pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
     require_claude_cli()?;
 
-    if !is_plugin_installed() {
+    // The marketplace can outlive the plugin: an uninstall that removed the
+    // plugin and then failed on the marketplace leaves exactly that. Asking
+    // only about the plugin would report "not installed" and exit 0 with the
+    // marketplace still there and no way left to finish the job, so the early
+    // return needs both halves gone. Only a confident `Some(false)` counts as
+    // gone, for the reason `run_plugin_removal` gives.
+    let plugin_installed = is_plugin_installed();
+    if !plugin_installed && is_marketplace_configured() == Some(false) {
         eprintln!("{}", info_message("Plugin not installed"));
         return Ok(());
     }
+
+    // The marketplace removal always runs, so its own tolerance decides
+    // whether an absent marketplace is a failure. Only the plugin step is
+    // conditional, and the preview says so rather than naming a command that
+    // will not run.
+    let mut commands = Vec::new();
+    if plugin_installed {
+        commands.push("claude plugin uninstall worktrunk@worktrunk");
+    }
+    commands.push("claude plugin marketplace remove worktrunk");
 
     if !yes {
         match prompt_yes_no_preview(
             &cformat!("Uninstall Worktrunk plugin from <bold>Claude Code</>?"),
             || {
-                let commands = "claude plugin uninstall worktrunk@worktrunk\nclaude plugin marketplace remove worktrunk";
-                eprintln!("{}", worktrunk::styling::format_bash_with_gutter(commands));
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::format_bash_with_gutter(&commands.join("\n"))
+                );
             },
         )? {
             PromptResponse::Accepted => {}
@@ -70,8 +89,10 @@ pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
         }
     }
 
-    eprintln!("{}", progress_message("Uninstalling plugin..."));
-    super::run_plugin_cli("claude", &["plugin", "uninstall", "worktrunk@worktrunk"])?;
+    if plugin_installed {
+        eprintln!("{}", progress_message("Uninstalling plugin..."));
+        super::run_plugin_cli("claude", &["plugin", "uninstall", "worktrunk@worktrunk"])?;
+    }
 
     eprintln!(
         "{}",

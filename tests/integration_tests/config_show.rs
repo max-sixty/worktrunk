@@ -4367,6 +4367,35 @@ fn test_plugins_claude_uninstall_tolerates_absent_marketplace(
     });
 }
 
+/// A first `uninstall` that removed the plugin and then failed on the
+/// marketplace leaves the marketplace behind. Re-running has to finish that
+/// job rather than reporting "Plugin not installed" and exiting 0 with the
+/// marketplace still configured.
+#[rstest]
+fn test_plugins_claude_uninstall_removes_marketplace_left_without_plugin(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+    // No `installed_plugins.json`: the plugin is already gone, and only the
+    // marketplace is left to remove.
+    TestRepo::setup_claude_marketplaces(
+        temp_home.path(),
+        TestRepo::CLAUDE_MARKETPLACES_WITH_WORKTRUNK,
+    );
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// The Claude counterpart of the key-absent case: `known_marketplaces.json`
 /// exists because the user has other marketplaces, and worktrunk's entry is
 /// gone.
