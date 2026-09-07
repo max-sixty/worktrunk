@@ -253,26 +253,9 @@ impl LayoutConfig {
         self.render_line(|column| {
             let mut cell = StyledLine::new();
             if !column.header.is_empty() {
-                let padding = column.width.saturating_sub(column.header.width());
-                // A diff column is two right-aligned halves — `+999` then
-                // `-999` — so a header at either edge stands over one of them
-                // and reads as its label: pushed right, `HEAD±` sits over the
-                // deletions and a lone `+1` lands to its left. Centring
-                // straddles the separator, which is what the header names.
-                // Age is a single right-aligned value, so its header goes
-                // right with it; everything else is text, read from the left.
-                let leading = match column.alignment() {
-                    CellAlignment::Split => padding / 2,
-                    CellAlignment::Right => padding,
-                    CellAlignment::Left => 0,
-                };
-                if leading > 0 {
-                    cell.push_raw(" ".repeat(leading));
-                }
-
                 cell.push_styled(column.header.to_string(), style);
             }
-            cell
+            column.aligned_cell(cell)
         })
     }
 
@@ -426,7 +409,12 @@ impl ColumnLayout {
         }
     }
 
-    /// Render a whole-cell state according to the column's value shape.
+    /// Place whole-cell content according to the column's value shape.
+    ///
+    /// A diff column is two right-aligned halves, so its own value renderer
+    /// places each half. Content that names or describes the whole field — its
+    /// header, loading state, or in-sync marker — sits over their separator.
+    /// Age is a single right-aligned value; everything else reads from the left.
     fn aligned_cell(&self, content: StyledLine) -> StyledLine {
         let leading = match self.alignment() {
             CellAlignment::Left => return content,
@@ -601,11 +589,8 @@ impl ColumnLayout {
                 // checking counts directly is simpler than threading the enum through.
                 if active.ahead == 0 && active.behind == 0 {
                     let mut cell = StyledLine::new();
-                    // Center the symbol in the column width
-                    let padding_left = (self.width.saturating_sub(1)) / 2;
-                    cell.push_raw(" ".repeat(padding_left));
                     cell.push_styled("|", Style::new().dimmed());
-                    return cell;
+                    return self.aligned_cell(cell);
                 }
                 self.render_diff_cell(active.ahead, active.behind)
             }
