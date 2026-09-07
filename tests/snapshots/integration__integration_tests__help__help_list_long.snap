@@ -176,9 +176,10 @@ The leftmost column marks each row by physical presence, from most present to le
 
 [32mCI status[0m
 
-The CI column shows the branch's open PR/MR — [2m#3035[0m on GitHub, Gitea, and Azure DevOps, [2m!3035[0m on GitLab — colored by pipeline status, or a bare [2m#[0m when no number is available (e.g. branch workflows without a PR/MR). One color folds two JSON fields: green/blue/red/yellow/gray are [2mci.status[0m; magenta/cyan are [2mci.review_state[0m. The [2mValue[0m column is the matching JSON string from [2m--format=json[0m:
+The CI column shows the branch's open PR/MR — [2m#3035[0m on GitHub, Gitea, and Azure DevOps, [2m!3035[0m on GitLab — colored by pipeline status, or a bare [2m#[0m when no number is available (e.g. branch workflows without a PR/MR). In the default schema 2 JSON, green/blue/red come from [2mchecks.status[0m; magenta/cyan come from [2mpr.review[0m; conflicts sets [2mpr.mergeable[0m to false and leaves [2mchecks.status[0m null; no CI leaves [2mchecks[0m absent; a fetch error makes [2mchecks[0m and [2mpr[0m null. The State column names the corresponding 
+renderer state:
 
- Indicator        Value                                    Meaning                             
+ Indicator        State                                    Meaning                             
  ───────── ─────────────────── ─────────────────────────────────────────────────────────────── 
  [32m#[0m green   [2m"passed"[0m            All checks passed                                               
  [34m#[0m blue    [2m"running"[0m           Checks in progress                                              
@@ -188,14 +189,14 @@ The CI column shows the branch's open PR/MR — [2m#3035[0m on GitHub, Gitea, 
  [33m⚠[0m yellow  [2m"error"[0m             CI status could not be fetched (rate limit, network, etc.)      
  [35m#[0m magenta [2m"changes_requested"[0m A reviewer requested changes                                    
  [36m#[0m cyan    [2m"pending"[0m           A review is required (e.g. branch protection) but not yet given 
- (blank)   [2mci[0m absent           No upstream, or no PR/MR and no branch workflow                 
+ (blank)   (absent)            No upstream, or no PR/MR and no branch workflow                 
 
-The two remaining [2mci.review_state[0m values have no indicator of their own: [2m"draft"[0m only dims the cell and [2m"approved"[0m leaves the color unchanged.
+The two remaining [2mpr.review[0m values have no indicator of their own: [2m"draft"[0m only dims the cell and [2m"approved"[0m leaves the color unchanged.
 
-Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain [2mci.status[0m color — [2mci.review_state[0m is then [2m"approved"[0m or absent, respectively. GitLab MR data carries only [2m"pending"[0m and [2m"draft"[0m — no 
+Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain [2mchecks.status[0m color — [2mpr.review[0m is then [2m"approved"[0m or absent, respectively. GitLab MR data carries only [2m"pending"[0m and [2m"draft"[0m — no 
 approved or changes-requested signal.
 
-CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR ([2m"draft"[0m) or when unpushed local changes make the status stale ([2mci.stale[0m). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR ([2m"draft"[0m) or when unpushed local changes make the status stale ([2mchecks.stale[0m). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
 [32mLLM summaries[0m
 
@@ -425,7 +426,7 @@ The original bare-array format, selected by [2m[list] json-schema = 1[0m:
  [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                               
  [2mcolumns[0m            object      Rendered custom column values keyed by header; empty cells omitted (absent when none configured) 
 
-[32mCommit object[0m
+[1mCommit object[0m
 
    Field    Type                                      Description                                     
  ───────── ────── ─────────────────────────────────────────────────────────────────────────────────── 
@@ -434,7 +435,7 @@ The original bare-array format, selected by [2m[list] json-schema = 1[0m:
  [2mmessage[0m   string Commit message (first line)                                                         
  [2mtimestamp[0m number Unix timestamp                                                                      
 
-[32mworking_tree object[0m
+[1mworking_tree object[0m
 
 The five change flags map to the Working tree symbols ([2mrenamed[0m and [2mdeleted[0m have none of their own):
 
@@ -447,7 +448,7 @@ The five change flags map to the Working tree symbols ([2mrenamed[0m and [2md
  [2mdeleted[0m   boolean Has deleted files                       
  [2mdiff[0m      object  Lines changed vs HEAD: [2m{added, deleted}[0m 
 
-[32mmain object[0m
+[1mmain object[0m
 
  Field   Type                       Description                      
  ────── ────── ───────────────────────────────────────────────────── 
@@ -455,7 +456,7 @@ The five change flags map to the Working tree symbols ([2mrenamed[0m and [2md
  [2mbehind[0m number Commits behind the default branch                     
  [2mdiff[0m   object Lines changed vs the default branch: [2m{added, deleted}[0m 
 
-[32mremote object[0m
+[1mremote object[0m
 
 [2mahead[0m / [2mbehind[0m drive the Remote divergence symbol:
 
@@ -466,7 +467,7 @@ The five change flags map to the Working tree symbols ([2mrenamed[0m and [2md
  [2mahead[0m  number Commits ahead of remote      
  [2mbehind[0m number Commits behind remote        
 
-[32mworktree object[0m
+[1mworktree object[0m
 
 Present only for worktree-kind items. [2mstate[0m is the worktree-location attribute — see Worktree for its symbols:
 
@@ -476,7 +477,7 @@ Present only for worktree-kind items. [2mstate[0m is the worktree-location att
  [2mreason[0m   string  Reason for locked/prunable state                                                             
  [2mdetached[0m boolean HEAD is detached                                                                             
 
-[32mci object[0m
+[1mci object[0m
 
     Field      Type                                                   Description                                                  
  ──────────── ─────── ──────────────────────────────────────────────────────────────────────────────────────────────────────────── 
@@ -489,7 +490,7 @@ Present only for worktree-kind items. [2mstate[0m is the worktree-location att
  [2mrepo[0m         object  Structured metadata for the repository the PR/MR targets; never includes [2mremote[0m                              
  [2mreview_state[0m string  Review state (see below); absent when the forge reports no review signal                                     
 
-[32mrepo object[0m
+[1mrepo object[0m
 
 Top-level [2mrepo[0m describes the local checkout's repository as derived from the primary remote. [2mci.repo[0m describes the repository targeted by the PR/MR URL in [2mci.url[0m (for fork PRs, this is the upstream target). Existing [2mrepo_url[0m and [2mci.repo_url[0m fields remain available and carry the same URL as [2mrepo.url[0m / [2mci.repo.url[0m.
 
@@ -503,11 +504,11 @@ Top-level [2mrepo[0m describes the local checkout's repository as derived from
  [2mproject[0m  string Azure DevOps project name; absent for other providers                   
  [2mremote[0m   string Local remote name used for top-level repo metadata; absent from [2mci.repo[0m 
 
-[32mmain_state values[0m
+[1mmain_state values[0m
 
 The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see Default branch for the symbol and the full meaning of each value ([2m"is_main"[0m, [2m"orphan"[0m, [2m"empty"[0m, [2m"integrated"[0m, [2m"would_conflict"[0m, [2m"same_commit"[0m, [2m"diverged"[0m, [2m"ahead"[0m, [2m"behind"[0m).
 
-[32mintegration_reason values[0m
+[1mintegration_reason values[0m
 
 Set only when [2mmain_state == "integrated"[0m (the [2m⊂[0m symbol), recording which check matched. Checks run cheapest-first and the first match wins. JSON-only — every reason renders as the same [2m⊂[0m:
 
@@ -519,9 +520,9 @@ Set only when [2mmain_state == "integrated"[0m (the [2m⊂[0m symbol), recor
  [2m"merge-adds-nothing"[0m The branch has changes, but merging them leaves the default branch's tree unchanged (e.g. a squash merge where the target advanced on other files) 
  [2m"patch-id-match"[0m     The branch's squashed diff matches a single commit on the default branch (e.g. a GitHub/GitLab squash merge)                                       
 
-[32mci.status and ci.review_state values[0m
+[1mci.status and ci.review_state values[0m
 
-The CI status section above is the single source for both fields: the table maps each colored value, and the notes below it cover [2m"draft"[0m and [2m"approved"[0m. [2mci.status[0m is one of [2m"passed"[0m, [2m"running"[0m, [2m"failed"[0m, [2m"conflicts"[0m, [2m"no-ci"[0m, [2m"error"[0m; [2mci.review_state[0m is one of [2m"changes_requested"[0m, [2m"pending"[0m, [2m"draft"[0m, [2m"approved"[0m, absent when the forge reports no review signal. The vocabulary matches Claude Code's statusline [2mpr.review_state[0m field.
+The CI status section above maps each value to its colored indicator. [2mci.status[0m is one of [2m"passed"[0m, [2m"running"[0m, [2m"failed"[0m, [2m"conflicts"[0m, [2m"no-ci"[0m, [2m"error"[0m; [2mci.review_state[0m is one of [2m"changes_requested"[0m, [2m"pending"[0m, [2m"draft"[0m, [2m"approved"[0m, absent when the forge reports no review signal. The vocabulary matches Claude Code's statusline [2mpr.review_state[0m field.
 
 Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 

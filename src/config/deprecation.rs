@@ -627,11 +627,9 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     }),
 ];
 
-/// Detect deprecations in config content. Pure function, no I/O.
-///
-/// Returns the detected deprecation patterns. This is the recommended entry
-/// point for deprecation detection.
-pub fn detect_deprecations(content: &str) -> Deprecations {
+/// Test helper: detect deprecations in config content without I/O.
+#[cfg(test)]
+fn detect_deprecations(content: &str) -> Deprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return Vec::new();
     };

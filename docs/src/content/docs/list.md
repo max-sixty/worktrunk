@@ -109,9 +109,9 @@ The leftmost column marks each row by physical presence, from most present to le
 
 ### CI status
 
-The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR). One color folds two JSON fields: green/blue/red/yellow/gray are `ci.status`; magenta/cyan are `ci.review_state`. The `Value` column is the matching JSON string from `--format=json`:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR). In the default schema 2 JSON, green/blue/red come from `checks.status`; magenta/cyan come from `pr.review`; conflicts sets `pr.mergeable` to false and leaves `checks.status` null; no CI leaves `checks` absent; a fetch error makes `checks` and `pr` null. The State column names the corresponding renderer state:
 
-| Indicator | Value | Meaning |
+| Indicator | State | Meaning |
 |-----------|-------|---------|
 | <span style='color:#0a0'>#</span> green | `"passed"` | All checks passed |
 | <span style='color:#00a'>#</span> blue | `"running"` | Checks in progress |
@@ -121,13 +121,13 @@ The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Az
 | <span style='color:#a60'>⚠</span> yellow | `"error"` | CI status could not be fetched (rate limit, network, etc.) |
 | <span style='color:#a0a'>#</span> magenta | `"changes_requested"` | A reviewer requested changes |
 | <span style='color:#0aa'>#</span> cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `ci` absent | No upstream, or no PR/MR and no branch workflow |
+| (blank) | (absent) | No upstream, or no PR/MR and no branch workflow |
 
-The two remaining `ci.review_state` values have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
+The two remaining `pr.review` values have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
 
-Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain `ci.status` color — `ci.review_state` is then `"approved"` or absent, respectively. GitLab MR data carries only `"pending"` and `"draft"` — no approved or changes-requested signal.
+Color precedence resolves the fold: changes-requested (magenta) outranks running checks — waiting can't clear it — while an outstanding required review (cyan) only recolors an otherwise green or quiet branch. Cool colors mean waiting, warm colors mean act. An approved PR, or one with no review signal at all (no required reviewers and no reviews), keeps its plain `checks.status` color — `pr.review` is then `"approved"` or absent, respectively. GitLab MR data carries only `"pending"` and `"draft"` — no approved or changes-requested signal.
 
-CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`ci.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`checks.stale`). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ### LLM summaries
 
@@ -367,7 +367,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `vars` | object | Per-branch variables from [`wt config state vars`](/config/#wt-config-state-vars) (absent when empty) |
 | `columns` | object | Rendered [custom column](#custom-columns) values keyed by header; empty cells omitted (absent when none configured) |
 
-### Commit object
+#### Commit object
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -376,7 +376,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `message` | string | Commit message (first line) |
 | `timestamp` | number | Unix timestamp |
 
-### working_tree object
+#### working_tree object
 
 The five change flags map to the [Working tree](#working-tree) symbols (`renamed` and `deleted` have none of their own):
 
@@ -389,7 +389,7 @@ The five change flags map to the [Working tree](#working-tree) symbols (`renamed
 | `deleted` | boolean | Has deleted files |
 | `diff` | object | Lines changed vs HEAD: `{added, deleted}` |
 
-### main object
+#### main object
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -397,7 +397,7 @@ The five change flags map to the [Working tree](#working-tree) symbols (`renamed
 | `behind` | number | Commits behind the default branch |
 | `diff` | object | Lines changed vs the default branch: `{added, deleted}` |
 
-### remote object
+#### remote object
 
 `ahead` / `behind` drive the [Remote](#remote) divergence symbol:
 
@@ -408,7 +408,7 @@ The five change flags map to the [Working tree](#working-tree) symbols (`renamed
 | `ahead` | number | Commits ahead of remote |
 | `behind` | number | Commits behind remote |
 
-### worktree object
+#### worktree object
 
 Present only for worktree-kind items. `state` is the worktree-location attribute — see [Worktree](#worktree) for its symbols:
 
@@ -418,7 +418,7 @@ Present only for worktree-kind items. `state` is the worktree-location attribute
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 
-### ci object
+#### ci object
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -431,7 +431,7 @@ Present only for worktree-kind items. `state` is the worktree-location attribute
 | `repo` | object | Structured metadata for the repository the PR/MR targets; never includes `remote` |
 | `review_state` | string | Review state (see below); absent when the forge reports no review signal |
 
-### repo object
+#### repo object
 
 Top-level `repo` describes the local checkout's repository as derived from the primary remote. `ci.repo` describes the repository targeted by the PR/MR URL in `ci.url` (for fork PRs, this is the upstream target). Existing `repo_url` and `ci.repo_url` fields remain available and carry the same URL as `repo.url` / `ci.repo.url`.
 
@@ -445,11 +445,11 @@ Top-level `repo` describes the local checkout's repository as derived from the p
 | `project` | string | Azure DevOps project name; absent for other providers |
 | `remote` | string | Local remote name used for top-level repo metadata; absent from `ci.repo` |
 
-### main_state values
+#### main_state values
 
 The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see [Default branch](#default-branch) for the symbol and the full meaning of each value (`"is_main"`, `"orphan"`, `"empty"`, `"integrated"`, `"would_conflict"`, `"same_commit"`, `"diverged"`, `"ahead"`, `"behind"`).
 
-### integration_reason values
+#### integration_reason values
 
 Set only when `main_state == "integrated"` (the `⊂` symbol), recording which check matched. Checks run cheapest-first and the first match wins. JSON-only — every reason renders as the same `⊂`:
 
@@ -461,9 +461,9 @@ Set only when `main_state == "integrated"` (the `⊂` symbol), recording which c
 | `"merge-adds-nothing"` | The branch has changes, but merging them leaves the default branch's tree unchanged (e.g. a squash merge where the target advanced on other files) |
 | `"patch-id-match"` | The branch's squashed diff matches a single commit on the default branch (e.g. a GitHub/GitLab squash merge) |
 
-### ci.status and ci.review_state values
+#### ci.status and ci.review_state values
 
-The [CI status](#ci-status) section above is the single source for both fields: the table maps each colored value, and the notes below it cover `"draft"` and `"approved"`. `ci.status` is one of `"passed"`, `"running"`, `"failed"`, `"conflicts"`, `"no-ci"`, `"error"`; `ci.review_state` is one of `"changes_requested"`, `"pending"`, `"draft"`, `"approved"`, absent when the forge reports no review signal. The vocabulary matches Claude Code's statusline `pr.review_state` field.
+The [CI status](#ci-status) section above maps each value to its colored indicator. `ci.status` is one of `"passed"`, `"running"`, `"failed"`, `"conflicts"`, `"no-ci"`, `"error"`; `ci.review_state` is one of `"changes_requested"`, `"pending"`, `"draft"`, `"approved"`, absent when the forge reports no review signal. The vocabulary matches Claude Code's statusline `pr.review_state` field.
 
 Missing a field that would be generally useful? [Open an issue](https://github.com/max-sixty/worktrunk/issues).
 

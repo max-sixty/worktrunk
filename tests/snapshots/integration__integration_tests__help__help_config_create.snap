@@ -244,7 +244,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row[0m
 [107m [0m [2m# where the template renders empty (e.g. a branch without the key) shows an[0m
 [107m [0m [2m# empty cell; a column that is empty for every row is dropped from the table.[0m
-[107m [0m [2m# `wt list --format json` includes the rendered values under `columns`.[0m
+[107m [0m [2m# `wt list --format json` includes the rendered values under[0m
+[107m [0m [2m# `items[].display.columns` in schema 2, or under `columns` in schema 1.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# A `Jira` column reading a key kept in git config, and a `Summary` column[0m
 [107m [0m [2m# showing just the first line of the git-native branch description:[0m
