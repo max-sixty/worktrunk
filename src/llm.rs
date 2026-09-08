@@ -1980,14 +1980,13 @@ index 111..222 100644
         // setting says. Neither header contains a bare ` b/`, so a parser
         // that only knows the unquoted form found no path and dropped the
         // file's diff from the prompt.
-        let diff = concat!(
-            "diff --git \"a/\\303\\251.txt\" \"b/\\303\\251.txt\"\n",
-            "+accented\n",
-            "diff --git \"a/we\\\"ird.lock\" \"b/we\\\"ird.lock\"\n",
-            "+quoted\n",
-            "diff --git a/plain.rs b/plain.rs\n",
-            "+plain\n",
-        );
+        let diff = r#"diff --git "a/\303\251.txt" "b/\303\251.txt"
++accented
+diff --git "a/we\"ird.lock" "b/we\"ird.lock"
++quoted
+diff --git a/plain.rs b/plain.rs
++plain
+"#;
 
         let sections = parse_diff_sections(diff);
         assert_eq!(sections.len(), 3);
@@ -2021,8 +2020,11 @@ index 111..222 100644
         // A quoted-path section used to vanish from it entirely.
         let big = "x".repeat(DIFF_BUDGET);
         let diff = format!(
-            "diff --git \"a/\\303\\251.rs\" \"b/\\303\\251.rs\"\n+accented\n\
-             diff --git a/plain.rs b/plain.rs\n+{big}\n"
+            r#"diff --git "a/\303\251.rs" "b/\303\251.rs"
++accented
+diff --git a/plain.rs b/plain.rs
++{big}
+"#
         );
 
         let prepared = prepare_diff(diff, "stat".to_string());
