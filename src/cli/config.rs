@@ -547,8 +547,7 @@ pub enum ConfigCommand {
     #[command(
         after_long_help = concat!(
             "## User config\n\n",
-            "Creates `~/.config/worktrunk/config.toml` from the examples below and enables ",
-            "pending defaults.\n\n```\n",
+            "Creates `~/.config/worktrunk/config.toml` with the following content:\n\n```\n",
             include_str!("../../dev/config.example.toml"),
             "```\n\n",
             "## Project config\n\n",
