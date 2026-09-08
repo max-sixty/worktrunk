@@ -6679,6 +6679,23 @@ fn test_config_show_json_allows_invalid_runtime_override(
 }
 
 #[rstest]
+#[case::text(&["config", "show"])]
+#[case::json(&["config", "show", "--format=json"])]
+fn test_config_show_rejects_semantically_invalid_user_config(
+    repo: TestRepo,
+    #[case] args: &[&str],
+) {
+    fs::write(repo.test_config_path(), "worktree-path = \"\"\n").unwrap();
+
+    let output = repo.wt_command().args(args).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    if args.contains(&"--format=json") {
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    }
+}
+
+#[rstest]
 fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();

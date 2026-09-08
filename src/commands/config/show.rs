@@ -11,7 +11,8 @@ use anyhow::Context;
 use color_print::cformat;
 use serde::{Serialize, de::DeserializeOwned};
 use worktrunk::config::{
-    ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
+    LoadError, ProjectConfig, UserConfig, default_system_config_path, require_config_path,
+    system_config_path,
 };
 use worktrunk::git::remote_ref::azure::azure_devops_extension_installed;
 use worktrunk::git::{ErrorExt, ForgeKind, Repository, WorktrunkError};
@@ -43,7 +44,10 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 
     let repo = Repository::current().ok();
 
-    let mut invalid = false;
+    let mut invalid = UserConfig::load_with_warnings()
+        .1
+        .iter()
+        .any(|warning| matches!(warning, LoadError::Validation(_)));
     let has_system_config = if let Some(system_invalid) = render_system_config(&mut show_output) {
         invalid |= system_invalid;
         show_output.push('\n');
@@ -123,12 +127,15 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 /// JSON retains the report on invalid input and signals failure by exit code.
 fn handle_config_show_json() -> anyhow::Result<()> {
     let repo = Repository::current().ok();
-    let mut invalid = false;
+    let (merged_user_config, user_warnings) = UserConfig::load_with_warnings();
+    let mut invalid = user_warnings
+        .iter()
+        .any(|warning| matches!(warning, LoadError::Validation(_)));
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
         match read_json_config::<UserConfig>(&user_path)? {
-            Some(_) => Some(serde_json::to_value(UserConfig::load_with_warnings().0)?),
+            Some(_) => Some(serde_json::to_value(merged_user_config)?),
             None => {
                 invalid = true;
                 None

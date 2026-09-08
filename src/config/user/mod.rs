@@ -73,9 +73,9 @@ pub use sections::{
 /// identifies which layer failed so callers can emit targeted diagnostics
 /// (file errors with line/col vs env-var attribution).
 ///
-/// Used as an error by [`UserConfig::load_with_cause()`] (first issue is
-/// fatal) and as warnings by [`UserConfig::load_with_warnings()`] (issues
-/// are collected, best-effort config returned).
+/// Strict loading treats the first issue as fatal; best-effort
+/// [`UserConfig::load_with_warnings()`] returns all issues alongside the
+/// usable config.
 #[derive(Debug)]
 pub enum LoadError {
     /// A config file failed to parse. The `toml::de::Error` includes
