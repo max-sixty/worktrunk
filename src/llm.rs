@@ -185,6 +185,27 @@ fn is_lock_file(filename: &str) -> bool {
         .any(|pattern| filename.ends_with(pattern))
 }
 
+/// Extract the destination path from a `diff --git` header line.
+///
+/// [`DIFF_PREFIX_OVERRIDES`] pins the prefixes to `a/` and `b/`, so the
+/// destination begins at the last ` b/` — or, when git quotes the pair,
+/// at the last ` "b/`. Quoting is not optional: `core.quotePath` escapes a
+/// non-ASCII name, and a name holding `"` or `\` is quoted whatever that
+/// setting says, so a parser that only knows the bare form fails on both.
+///
+/// The escaped form is what comes back for a quoted name — it feeds
+/// [`is_lock_file`]'s suffix match, not the filesystem — and a path that
+/// itself contains ` b/` stays ambiguous, exactly as it is in git's own
+/// plain-text output.
+fn parse_diff_header_path(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("diff --git ")?;
+    if let Some(index) = rest.rfind(" \"b/") {
+        let path = &rest[index + 4..];
+        return Some(path.strip_suffix('"').unwrap_or(path));
+    }
+    rest.rfind(" b/").map(|index| &rest[index + 3..])
+}
+
 /// Parse a diff into individual file sections
 ///
 /// Returns Vec of (filename, diff_content) pairs
@@ -212,8 +233,10 @@ fn parse_diff_sections(diff: &str) -> Vec<(&str, &str)> {
                 sections.push((file, &diff[section_start_byte..current_byte]));
             }
 
-            // Extract filename from "diff --git a/path b/path"
-            current_file = line.split(" b/").nth(1);
+            // A header opens a section whether or not its path parses: the
+            // name only feeds lock-file filtering, while treating the section
+            // as absent drops the file's diff from the prompt entirely.
+            current_file = Some(parse_diff_header_path(line).unwrap_or(""));
             section_start_byte = current_byte;
         }
         current_byte += full_line.len();
@@ -1948,6 +1971,66 @@ index 111..222 100644
         @@ -1,100 +1,150 @@
          lots of lock content
         ");
+    }
+
+    #[test]
+    fn test_parse_diff_sections_quoted_paths() {
+        // `core.quotePath` (git's default) quotes and octal-escapes a
+        // non-ASCII name, and a name holding `"` is quoted whatever that
+        // setting says. Neither header contains a bare ` b/`, so a parser
+        // that only knows the unquoted form found no path and dropped the
+        // file's diff from the prompt.
+        let diff = concat!(
+            "diff --git \"a/\\303\\251.txt\" \"b/\\303\\251.txt\"\n",
+            "+accented\n",
+            "diff --git \"a/we\\\"ird.lock\" \"b/we\\\"ird.lock\"\n",
+            "+quoted\n",
+            "diff --git a/plain.rs b/plain.rs\n",
+            "+plain\n",
+        );
+
+        let sections = parse_diff_sections(diff);
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0].0, "\\303\\251.txt");
+        assert_eq!(sections[1].0, "we\\\"ird.lock");
+        assert_eq!(sections[2].0, "plain.rs");
+
+        // No bytes dropped: every section's content survives to the prompt.
+        let combined: String = sections.iter().map(|(_, s)| *s).collect();
+        assert_eq!(combined, diff);
+    }
+
+    #[test]
+    fn test_parse_diff_sections_unparsable_header_keeps_content() {
+        // A header we can't read a path out of still opens a section — the
+        // name only drives lock-file filtering, so losing it must not lose
+        // the diff.
+        let diff = "diff --git weird\n+kept\ndiff --git a/plain.rs b/plain.rs\n+plain\n";
+
+        let sections = parse_diff_sections(diff);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].0, "");
+        assert_eq!(sections[1].0, "plain.rs");
+        let combined: String = sections.iter().map(|(_, s)| *s).collect();
+        assert_eq!(combined, diff);
+    }
+
+    #[test]
+    fn test_prepare_diff_keeps_quoted_path_sections() {
+        // Over budget, the truncating path is what the section list feeds.
+        // A quoted-path section used to vanish from it entirely.
+        let big = "x".repeat(DIFF_BUDGET);
+        let diff = format!(
+            "diff --git \"a/\\303\\251.rs\" \"b/\\303\\251.rs\"\n+accented\n\
+             diff --git a/plain.rs b/plain.rs\n+{big}\n"
+        );
+
+        let prepared = prepare_diff(diff, "stat".to_string());
+        assert!(
+            prepared.diff.contains("\\303\\251.rs"),
+            "quoted-path section must survive truncation:\n{}",
+            prepared.diff
+        );
     }
 
     #[test]
