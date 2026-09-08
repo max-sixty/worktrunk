@@ -1939,7 +1939,16 @@ impl SwitchPipeline<'_> {
                 })
                 .collect();
             let argv: Vec<String> = std::iter::once(program).chain(args?).collect();
-            execute_user_command(&argv, hooks_display_path.as_deref())?;
+            // `hooks_display_path` is the worktree the background hooks run
+            // in, which is also where the program runs — but only while the
+            // switch changed directory. `--no-cd` (or `cd = false`) leaves the
+            // program in the invoking directory, so the header would name a
+            // path it never enters (#4042). Nothing to annotate then: the
+            // program starts where the user's shell already stands.
+            let execute_display_path = change_dir
+                .then_some(hooks_display_path.as_deref())
+                .flatten();
+            execute_user_command(&argv, execute_display_path)?;
         }
 
         Ok(())

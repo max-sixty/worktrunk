@@ -939,6 +939,39 @@ fn test_switch_execute_does_not_inherit_git_discovery_vars(mut repo: TestRepo) {
     );
 }
 
+/// `--no-cd` starts the `--execute` program in the invoking directory, so the
+/// "Executing (--execute) @ …" header must not name the new worktree. The path
+/// it renders is the one the background hooks run in; the program never enters
+/// it, and naming it there sent a reporter looking for a broken template
+/// variable instead of the directory the flag moved (issue #4042).
+#[rstest]
+fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature", "--no-cd", "--execute", "pwd"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --no-cd --execute failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let header = stderr
+        .lines()
+        .find(|line| line.contains("Executing (--execute)"))
+        .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
+    assert!(
+        !header.contains('@'),
+        "--no-cd runs the program in the invoking directory, but the header named a path: {header}"
+    );
+}
+
 /// `--execute` computes only the template variables its command names.
 ///
 /// The context map built at that call site feeds `expand_template` and nothing

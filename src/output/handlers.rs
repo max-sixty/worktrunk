@@ -1093,9 +1093,11 @@ pub fn handle_switch_output(
 
 /// Execute the --execute command after hooks have run.
 ///
-/// `display_path` is shown when the user's shell won't be in the worktree
-/// directory (shell integration not active). This helps users understand where
-/// the command runs.
+/// `display_path` names the directory the program starts in, and is shown only
+/// when that differs from where the user's shell stands (shell integration not
+/// active). The caller passes `None` when the switch didn't change directory:
+/// the program then starts in the invoking directory, so there is nothing to
+/// annotate and naming the worktree would be wrong (#4042).
 ///
 pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> anyhow::Result<()> {
     super::global::print_outdated_execute_wrapper_warning();
