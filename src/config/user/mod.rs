@@ -350,11 +350,11 @@ fn merge_layer(merged_table: &mut toml::Table, layer: toml::Table) {
 
     match deserialize_and_validate(&candidate) {
         Ok(()) => *merged_table = candidate,
-        // A partial removal the enumerations above miss — none today, but they
-        // are enumerations, and the next required field would otherwise cost
-        // the user their whole config rather than one project entry. Merging
-        // without the removals preserves the layer so its caller can validate
-        // and attribute the complete candidate.
+        // Reachable when a partial removal the enumerations above miss would
+        // invalidate the candidate, or when the layer itself is invalid (for
+        // example, an empty global `worktree-path` from the environment or
+        // `--config-set`). Keep the layer without the removals so its caller
+        // can validate and attribute the complete candidate.
         Err(err) => {
             log::debug!("keeping project precedence: {err}");
             deep_merge_table(merged_table, layer);

@@ -6665,20 +6665,24 @@ fn test_config_show_json_allows_invalid_runtime_override(
 }
 
 #[rstest]
-#[case::text(&["config", "show"], false)]
-#[case::json(&["config", "show", "--format=json"], false)]
-#[case::json_with_unrelated_env(&["config", "show", "--format=json"], true)]
+#[case::text(&["config", "show"], false, false)]
+#[case::json(&["config", "show", "--format=json"], false, false)]
+#[case::json_with_unrelated_env(&["config", "show", "--format=json"], true, false)]
+#[case::json_with_masking_env(&["config", "show", "--format=json"], false, true)]
 fn test_config_show_rejects_semantically_invalid_user_config(
     repo: TestRepo,
     #[case] args: &[&str],
-    #[case] with_env: bool,
+    #[case] with_unrelated_env: bool,
+    #[case] with_masking_env: bool,
 ) {
     fs::write(repo.test_config_path(), "worktree-path = \"\"\n").unwrap();
 
     let mut cmd = repo.wt_command();
     cmd.args(args);
-    if with_env {
+    if with_unrelated_env {
         cmd.env("WORKTRUNK_LIST__FULL", "true");
+    } else if with_masking_env {
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "../valid");
     }
     let output = cmd.output().unwrap();
 
@@ -6701,19 +6705,29 @@ fn test_config_show_rejects_semantically_invalid_user_config(
 }
 
 #[rstest]
-fn test_config_show_rejects_semantically_invalid_system_config(repo: TestRepo) {
+#[case::text(&["config", "show"])]
+#[case::json(&["config", "show", "--format=json"])]
+fn test_config_show_rejects_semantically_invalid_system_config(
+    repo: TestRepo,
+    #[case] args: &[&str],
+) {
     let system_config_dir = tempfile::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(&system_config_path, "worktree-path = \"\"\n").unwrap();
+    fs::write(repo.test_config_path(), "worktree-path = \"../valid\"\n").unwrap();
 
     let output = repo
         .wt_command()
         .env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path)
-        .args(["config", "show"])
+        .args(args)
         .output()
         .unwrap();
 
     assert_eq!(output.status.code(), Some(1));
+    if args.contains(&"--format=json") {
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        return;
+    }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let system_section = stdout
         .split("SYSTEM CONFIG")

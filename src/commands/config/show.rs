@@ -131,7 +131,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
-        match read_json_config::<UserConfig>(&user_path)? {
+        match read_user_config(&user_path) {
             Some(_) => Some(serde_json::to_value(merged_user_config)?),
             None => {
                 invalid = true;
@@ -179,7 +179,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
     let system_invalid = if let Some(path) = system_path.as_deref().filter(|_| system_exists) {
         match std::fs::read_to_string(path) {
-            Ok(contents) => toml::from_str::<UserConfig>(&contents).is_err(),
+            Ok(contents) => parse_user_config(&contents).is_err(),
             Err(_) => true,
         }
     } else {
@@ -232,6 +232,18 @@ where
         return Ok(None);
     };
     parse_json_config::<C>(&contents)
+}
+
+fn read_user_config(path: &Path) -> Option<UserConfig> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    parse_user_config(&contents).ok()
+}
+
+fn parse_user_config(contents: &str) -> Result<UserConfig, String> {
+    let migrated = worktrunk::config::migrate_content(contents);
+    let config = toml::from_str::<UserConfig>(&migrated).map_err(|err| err.to_string())?;
+    config.validate().map_err(|err| err.to_string())?;
+    Ok(config)
 }
 
 fn parse_json_config<C>(contents: &str) -> anyhow::Result<Option<serde_json::Value>>
@@ -862,11 +874,7 @@ fn render_config_read_error(out: &mut String, err: &std::io::Error) {
 
 /// Render parse, validation, and unknown-key diagnostics for a user-config source.
 fn render_user_config_diagnostics(out: &mut String, contents: &str) -> bool {
-    let error = match toml::from_str::<UserConfig>(contents) {
-        Ok(config) => config.validate().err().map(|err| err.to_string()),
-        Err(err) => Some(err.to_string()),
-    };
-    let Some(error) = error else {
+    let Err(error) = parse_user_config(contents) else {
         out.push_str(&warn_unknown_keys::<UserConfig>(contents));
         return false;
     };
