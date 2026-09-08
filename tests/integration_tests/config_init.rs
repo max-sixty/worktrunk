@@ -65,32 +65,6 @@ fn test_config_init_creates_file(temp_home: TempDir) {
     // Verify file was actually created
     let config_path = global_config_dir.join("config.toml");
     assert!(config_path.exists());
-
-    // New files adopt pending defaults immediately.
-    let contents = fs::read_to_string(&config_path).unwrap();
-    assert!(
-        contents.lines().any(|line| line == "[list]"),
-        "created config should adopt the pending default, got:\n{contents}"
-    );
-    assert!(
-        !contents.lines().any(|line| line == "# [list]"),
-        "the template should not retain a duplicate commented [list] section"
-    );
-    assert!(
-        contents
-            .lines()
-            .any(|line| line.starts_with("json-schema = 2")),
-        "created config should adopt the pending JSON schema"
-    );
-    toml::from_str::<toml::Value>(&contents).expect("created config should be valid TOML");
-    assert_eq!(
-        worktrunk::config::compute_migrated_content(
-            &contents,
-            worktrunk::config::ConfigFileKind::User
-        ),
-        contents,
-        "created config should already contain every pending default"
-    );
 }
 
 #[rstest]

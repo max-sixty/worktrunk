@@ -227,6 +227,8 @@ fn test_statusline_claude_code_foreign_repo_on_stdin(repo: TestRepo) {
 
 #[rstest]
 fn test_statusline_json_directory_flag(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     let feature_path = repo.add_worktree("feature");
 
     // cwd is the main worktree; only `-C` points at `feature`
@@ -571,6 +573,8 @@ url = "http://{{ branch }}.localhost:3000"
 
 #[rstest]
 fn test_statusline_json_basic(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     let output = run_statusline(&repo, &["--format=json"], None);
     let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
 
@@ -603,13 +607,10 @@ fn test_statusline_json_basic(repo: TestRepo) {
     );
 }
 
-/// `[list] json-schema = 2` switches the statusline JSON to the envelope,
-/// with the same single-item contract as the schema-1 array. An unset key
-/// stays silent here — the statusline surface suppresses warnings.
+/// The default schema 2 wraps statusline JSON in an envelope with the same
+/// single-item contract as the schema-1 array.
 #[rstest]
 fn test_statusline_json_schema_2(repo: TestRepo) {
-    repo.write_test_config("[list]\njson-schema = 2\n");
-
     let output = run_statusline(&repo, &["--format=json"], None);
     let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
 
@@ -645,10 +646,6 @@ fn test_statusline_json_outside_worktree(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
 
     let output = run_statusline_from_dir(&repo, &["--format=json"], None, &git_dir);
-    assert_eq!(output.trim(), "[]", "schema 1 empty result is a bare array");
-
-    repo.write_test_config("[list]\njson-schema = 2\n");
-    let output = run_statusline_from_dir(&repo, &["--format=json"], None, &git_dir);
     let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
     assert_eq!(parsed["schema"], 2);
     assert_eq!(parsed["items"], serde_json::json!([]));
@@ -656,9 +653,13 @@ fn test_statusline_json_outside_worktree(repo: TestRepo) {
         parsed["repo"].get("default_branch").is_none(),
         "item-less path must not attempt default-branch detection"
     );
+
+    repo.write_test_config("[list]\njson-schema = 1\n");
+    let output = run_statusline_from_dir(&repo, &["--format=json"], None, &git_dir);
+    assert_eq!(output.trim(), "[]", "schema 1 empty result is a bare array");
 }
 
-/// An invalid `[list] json-schema` degrades to schema 1 silently here —
+/// An invalid `[list] json-schema` degrades to schema 2 silently here —
 /// the statusline surface suppresses warnings, so a config typo must not
 /// corrupt the prompt.
 #[rstest]
@@ -666,11 +667,13 @@ fn test_statusline_json_invalid_schema_degrades_silently(repo: TestRepo) {
     repo.write_test_config("[list]\njson-schema = 7\n");
     let output = run_statusline(&repo, &["--format=json"], None);
     let parsed: Value = serde_json::from_str(&output).expect("should be valid JSON");
-    assert!(parsed.is_array(), "degrades to the schema 1 array");
+    assert_eq!(parsed["schema"], 2, "degrades to the schema 2 envelope");
 }
 
 #[rstest]
 fn test_statusline_json_with_changes(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // Create uncommitted changes
     std::fs::write(repo.root_path().join("modified.txt"), "modified content").unwrap();
 
@@ -690,6 +693,8 @@ fn test_statusline_json_with_changes(repo: TestRepo) {
 
 #[rstest]
 fn test_statusline_json_feature_branch(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // Create feature worktree with commits
     let feature_path = repo.add_worktree("feature");
 
@@ -722,6 +727,8 @@ fn test_statusline_json_feature_branch(mut repo: TestRepo) {
 
 #[rstest]
 fn test_statusline_json_ignores_claude_code(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // When --format=json is used, --claude-code should be ignored
     let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(
@@ -814,6 +821,8 @@ fn test_statusline_nested_worktree(mut repo: TestRepo) {
 /// Tests that JSON output correctly identifies nested worktrees.
 #[rstest]
 fn test_statusline_json_nested_worktree(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
     // Create a worktree nested inside the main repo
     let nested_path = repo.root_path().join(".worktrees").join("feature");
     let nested_worktree = repo.add_worktree_at_path("feature", &nested_path);

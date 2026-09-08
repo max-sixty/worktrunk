@@ -176,7 +176,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m from the examples below and enab
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning[0m
+[107m [0m [2m# json-schema = 2    # JSON output schema: 2 (envelope, default) or 1 (bare array)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)[0m
 [107m [0m [2m#[0m
@@ -244,7 +244,8 @@ Creates [2m~/.config/worktrunk/config.toml[0m from the examples below and enab
 [107m [0m [2m# All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row[0m
 [107m [0m [2m# where the template renders empty (e.g. a branch without the key) shows an[0m
 [107m [0m [2m# empty cell; a column that is empty for every row is dropped from the table.[0m
-[107m [0m [2m# `wt list --format json` includes the rendered values under `columns`.[0m
+[107m [0m [2m# `wt list --format json` includes the rendered values under[0m
+[107m [0m [2m# `items[].display.columns` in schema 2, or under `columns` in schema 1.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# A `Jira` column reading a key kept in git config, and a `Summary` column[0m
 [107m [0m [2m# showing just the first line of the git-native branch description:[0m

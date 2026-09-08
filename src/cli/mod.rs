@@ -809,13 +809,13 @@ Include CI status and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                                                 Remote⇅  CI    Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
-^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68
-+ fix-typos        _|                                                                                              |     #410  41ee083
+  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
+^ main             ^⇅                                                                 ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
++ fix-typos        _|                                                                   |     #410
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Age, Message
+○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message
 ```
 
 Include branches that don't have worktrees:
@@ -823,15 +823,15 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
-  Branch       Status      HEAD±     main↕    main…±    Summary                                                 Remote⇅  CI    Commit
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02
-^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68
-+ fix-typos        _|                                                                                              |     #410  41ee083
-/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                   9637922
-/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                                b40716d
+  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412
+^ main             ^⇅                                                                 ⇡1  ⇣1  #
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408
++ fix-typos        _|                                                                   |     #410
+/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…
+/ wip             /↕                 ↑1  ↓1   +33       Start API documentation
 
-○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Age, Message
+○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message
 ```
 
 Output as JSON for scripting:
@@ -996,11 +996,8 @@ These appear across all columns while the table is loading:
 
 ## JSON output
 
-`--format=json` emits structured data in one of two schemas while the format
-migrates: `[list] json-schema = 2` selects the envelope format below, `= 1`
-the original bare-array format. Unset emits schema 1 with a warning
-(`wt config update` adopts `= 2`); a future release flips the default to
-schema 2 and later removes schema 1.
+`--format=json` emits schema 2 by default: the envelope format below. Set
+`[list] json-schema = 1` to retain the original bare-array format.
 
 ### Schema 2
 
@@ -1246,10 +1243,8 @@ optional there rather than required-and-null.
 
 ### Schema 1
 
-The original bare-array format — one object per row, no envelope — and the
-default while `[list] json-schema` is unset. It is on its way out: `wt config
-update` adopts `= 2`, a future release flips the default, and a later one
-removes schema 1. Its fields all have a schema-2 home:
+The original bare-array format — one object per row, no envelope — selected by
+`[list] json-schema = 1`. Its fields all have a schema-2 home:
 
 | Schema 1 | Schema 2 |
 |----------|----------|
@@ -2136,7 +2131,7 @@ full = false       # Show CI status and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
 
-json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
+json-schema = 2    # JSON output schema: 2 (envelope, default) or 1 (bare array)
 
 columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 
@@ -2207,7 +2202,8 @@ namespaces:
 All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
 where the template renders empty (e.g. a branch without the key) shows an
 empty cell; a column that is empty for every row is dropped from the table.
-`wt list --format json` includes the rendered values under `columns`.
+`wt list --format json` includes the rendered values under
+`items[].display.columns` in schema 2, or under `columns` in schema 1.
 
 A `Jira` column reading a key kept in git config, and a `Summary` column
 showing just the first line of the git-native branch description:

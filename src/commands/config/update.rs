@@ -243,7 +243,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    let migrated = compute_migrated_content(&original, ConfigFileKind::User);
+    let migrated = compute_migrated_content(&original);
     Ok(Some(UpdateCandidate {
         config_path,
         original,
@@ -292,7 +292,7 @@ fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidat
         return Ok(None);
     }
 
-    let migrated = compute_migrated_content(&original, ConfigFileKind::Project);
+    let migrated = compute_migrated_content(&original);
     Ok(Some(UpdateCandidate {
         config_path,
         original,
