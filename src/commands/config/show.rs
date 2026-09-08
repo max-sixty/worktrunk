@@ -44,10 +44,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 
     let repo = Repository::current().ok();
 
-    let mut invalid = UserConfig::load_with_warnings()
-        .1
-        .iter()
-        .any(|warning| matches!(warning, LoadError::Validation(_)));
+    let mut invalid = false;
     let has_system_config = if let Some(system_invalid) = render_system_config(&mut show_output) {
         invalid |= system_invalid;
         show_output.push('\n');
@@ -746,15 +743,7 @@ fn render_system_config(out: &mut String) -> Option<bool> {
         return Some(false);
     }
 
-    // Validate config (syntax + schema) and warn if invalid
-    let mut invalid = false;
-    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
-        invalid = true;
-        let _ = writeln!(out, "{}", error_message("Invalid config"));
-        let _ = writeln!(out, "{}", format_with_gutter(&e.to_string(), None));
-    } else {
-        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
-    }
+    let invalid = render_user_config_diagnostics(out, &contents);
 
     // Display TOML with syntax highlighting
     let _ = writeln!(out, "{}", format_toml(&contents));
@@ -837,15 +826,7 @@ fn render_user_config(
         return Ok(invalid | render_column_selection(out, repo)?);
     }
 
-    // Validate config (syntax + schema) and warn if invalid
-    if let Err(e) = toml::from_str::<UserConfig>(&contents) {
-        // Use gutter for error details to avoid markup interpretation of user content
-        invalid = true;
-        writeln!(out, "{}", error_message("Invalid config"))?;
-        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
-    } else {
-        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
-    }
+    invalid |= render_user_config_diagnostics(out, &contents);
 
     // Display TOML with syntax highlighting (gutter at column 0).
     // Skip when deprecations were shown — the proposed diff already covers it.
@@ -877,6 +858,23 @@ fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
 fn render_config_read_error(out: &mut String, err: &std::io::Error) {
     let _ = writeln!(out, "{}", error_message("Cannot read config"));
     let _ = writeln!(out, "{}", format_with_gutter(&err.to_string(), None));
+}
+
+/// Render parse, validation, and unknown-key diagnostics for a user-config source.
+fn render_user_config_diagnostics(out: &mut String, contents: &str) -> bool {
+    let error = match toml::from_str::<UserConfig>(contents) {
+        Ok(config) => config.validate().err().map(|err| err.to_string()),
+        Err(err) => Some(err.to_string()),
+    };
+    let Some(error) = error else {
+        out.push_str(&warn_unknown_keys::<UserConfig>(contents));
+        return false;
+    };
+
+    let _ = writeln!(out, "{}", error_message("Invalid config"));
+    // Use a gutter to avoid interpreting user-controlled parser output as markup.
+    let _ = writeln!(out, "{}", format_with_gutter(&error, None));
+    true
 }
 
 /// Report list-column settings that `wt list` would reject.

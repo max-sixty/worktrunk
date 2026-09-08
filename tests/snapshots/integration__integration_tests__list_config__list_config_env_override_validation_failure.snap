@@ -64,6 +64,7 @@ exit_code: 0
 + feature-c      [2m↑[22m                 [32m↑1[0m        [32m+1[0m                ../repo.feature-c  [2m345c7c9[0m   [2m16h[0m  [2mAdd feature-c file[0m
 
 ----- stderr -----
-[33m▲[39m [33mConfig validation warning: worktree-path cannot be empty[39m
+[33m▲[39m [33mIgnoring env var overrides: WORKTRUNK_WORKTREE_PATH=[39m
+[107m [0m worktree-path cannot be empty
 
 [2m○[22m [2mShowing 4 worktrees, 3 ahead[0m

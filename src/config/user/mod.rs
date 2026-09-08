@@ -27,8 +27,9 @@ mod sections;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use super::{ConfigError, ConfigFileKind};
 use schemars::JsonSchema;
@@ -43,6 +44,10 @@ use serde::{Deserialize, Serialize};
 /// TOML fragment (e.g. `list.full = true`); later entries replace earlier ones
 /// for the same key.
 static CONFIG_OVERRIDES: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Explicit config paths already reported missing in this process.
+static WARNED_MISSING_CONFIG_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Record the CLI `--config-set` overrides (called once from the
 /// `--config-set` flag in `main`).
@@ -345,14 +350,11 @@ fn merge_layer(merged_table: &mut toml::Table, layer: toml::Table) {
 
     match deserialize_and_validate(&candidate) {
         Ok(()) => *merged_table = candidate,
-        // Reachable two ways. A partial removal the enumerations above miss —
-        // none today, but they are enumerations, and the next required field
-        // would otherwise cost the user their whole config rather than one
-        // project entry. Or a document that was already invalid before this
-        // layer: step 3's env probe deserializes without validating, so an
-        // empty `worktree-path` from the environment lands here. Merging
-        // without the removals is right for both; `finalize` reports the
-        // second.
+        // A partial removal the enumerations above miss — none today, but they
+        // are enumerations, and the next required field would otherwise cost
+        // the user their whole config rather than one project entry. Merging
+        // without the removals preserves the layer so its caller can validate
+        // and attribute the complete candidate.
         Err(err) => {
             log::debug!("keeping project precedence: {err}");
             deep_merge_table(merged_table, layer);
@@ -676,6 +678,10 @@ impl UserConfig {
             }
         } else if let Some(config_path) = config_path.as_ref()
             && path::is_config_path_explicit()
+            && WARNED_MISSING_CONFIG_PATHS
+                .lock()
+                .unwrap()
+                .insert(config_path.clone())
         {
             crate::styling::eprintln!(
                 "{}",
@@ -697,12 +703,13 @@ impl UserConfig {
             let env_overlay = migrate_env_overlay(resolve_env_overlay(&file_table, &env_vars));
             merge_layer(&mut merged_table, env_overlay);
 
-            // Env overlay broke deserialization — fall back to file-only config.
-            // Each file was individually validated by load_config_file(), so the
-            // merged table should deserialize cleanly.
-            if let Err(err) = toml::Value::Table(merged_table.clone()).try_into::<Self>() {
+            // A bad env layer must not discard valid file layers. Attribute the
+            // failure to env only when the file-only table itself is valid.
+            if let Err(err) = deserialize_and_validate(&merged_table)
+                && deserialize_and_validate(&file_table).is_ok()
+            {
                 warnings.push(LoadError::Env {
-                    err: err.to_string(),
+                    err,
                     vars: env_vars
                         .iter()
                         .map(|v| (v.name.clone(), v.raw_value.clone()))

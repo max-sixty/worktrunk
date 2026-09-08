@@ -6619,12 +6619,15 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
-#[case::environment(false)]
-#[case::inline(true)]
+#[case::environment("WORKTRUNK_LIST__TIMEOUT_MS", "invalid", None)]
+#[case::environment_validation("WORKTRUNK_WORKTREE_PATH", "", None)]
+#[case::inline("", "", Some("list.timeout-ms=\"invalid\""))]
 fn test_config_show_json_allows_invalid_runtime_override(
     repo: TestRepo,
     temp_home: TempDir,
-    #[case] inline: bool,
+    #[case] env_name: &str,
+    #[case] env_value: &str,
+    #[case] inline: Option<&str>,
 ) {
     let system_config_dir = tempfile::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
@@ -6642,10 +6645,10 @@ fn test_config_show_json_allows_invalid_runtime_override(
     set_xdg_config_path(&mut cmd, temp_home.path());
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path);
-    if inline {
-        cmd.args(["--config-set", "list.timeout-ms=\"invalid\""]);
+    if let Some(inline) = inline {
+        cmd.args(["--config-set", inline]);
     } else {
-        cmd.env("WORKTRUNK_LIST__TIMEOUT_MS", "invalid");
+        cmd.env(env_name, env_value);
     }
     cmd.args(["config", "show", "--format=json"])
         .current_dir(repo.root_path());
@@ -6662,20 +6665,86 @@ fn test_config_show_json_allows_invalid_runtime_override(
 }
 
 #[rstest]
-#[case::text(&["config", "show"])]
-#[case::json(&["config", "show", "--format=json"])]
+#[case::text(&["config", "show"], false)]
+#[case::json(&["config", "show", "--format=json"], false)]
+#[case::json_with_unrelated_env(&["config", "show", "--format=json"], true)]
 fn test_config_show_rejects_semantically_invalid_user_config(
     repo: TestRepo,
     #[case] args: &[&str],
+    #[case] with_env: bool,
 ) {
     fs::write(repo.test_config_path(), "worktree-path = \"\"\n").unwrap();
 
-    let output = repo.wt_command().args(args).output().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(args);
+    if with_env {
+        cmd.env("WORKTRUNK_LIST__FULL", "true");
+    }
+    let output = cmd.output().unwrap();
 
     assert_eq!(output.status.code(), Some(1));
     if args.contains(&"--format=json") {
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let user_section = stdout
+            .split("USER CONFIG")
+            .nth(1)
+            .and_then(|rest| rest.split("PROJECT CONFIG").next())
+            .unwrap();
+        assert!(user_section.contains("Invalid config"), "{stdout}");
+        assert!(
+            user_section.contains("worktree-path cannot be empty"),
+            "{stdout}"
+        );
     }
+}
+
+#[rstest]
+fn test_config_show_rejects_semantically_invalid_system_config(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "worktree-path = \"\"\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path)
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let system_section = stdout
+        .split("SYSTEM CONFIG")
+        .nth(1)
+        .and_then(|rest| rest.split("USER CONFIG").next())
+        .unwrap();
+    assert!(system_section.contains("Invalid config"), "{stdout}");
+    assert!(
+        system_section.contains("worktree-path cannot be empty"),
+        "{stdout}"
+    );
+}
+
+#[rstest]
+#[case::text(&["config", "show"])]
+#[case::json(&["config", "show", "--format=json"])]
+fn test_config_show_warns_once_for_missing_explicit_config(repo: TestRepo, #[case] args: &[&str]) {
+    let output = repo
+        .wt_command()
+        .args(["--config", "/nonexistent/worktrunk/config.toml"])
+        .args(args)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("Config file not found").count(),
+        1,
+        "{stderr}"
+    );
 }
 
 #[rstest]
