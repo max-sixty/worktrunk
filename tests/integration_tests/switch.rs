@@ -972,6 +972,52 @@ fn test_switch_no_cd_execute_header_omits_worktree_path(mut repo: TestRepo) {
     );
 }
 
+/// A switch from a subdirectory keeps the user's position, so the `--execute`
+/// program starts in `<worktree>/<subdir>` — not at the worktree root the
+/// background hooks run in. The header names the program's own directory
+/// (issue #4042), which is the same claim `--no-cd` breaks one tree over.
+#[rstest]
+fn test_switch_execute_header_names_preserved_subdirectory(mut repo: TestRepo) {
+    // The subdirectory has to exist in both worktrees for the position to
+    // carry over, so commit it before branching.
+    let subdir = repo.root_path().join("apps").join("gateway");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join("main.rs"), "fn main() {}\n").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.commit("Add apps/gateway");
+    let worktree = repo.add_worktree("feature");
+    assert!(worktree.join("apps").join("gateway").is_dir());
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "feature", "--execute", "pwd"])
+        .current_dir(&subdir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --execute from a subdirectory failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\\', "/");
+    assert!(
+        stdout.trim_end().ends_with("apps/gateway"),
+        "the program should have started in the target's subdirectory: {stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let header = stderr
+        .lines()
+        .find(|line| line.contains("Executing (--execute)"))
+        .unwrap_or_else(|| panic!("no --execute header in stderr:\n{stderr}"));
+    assert!(
+        header.contains("apps/gateway"),
+        "the header named the worktree root, not the directory the program ran in: {header}"
+    );
+}
+
 /// `--execute` computes only the template variables its command names.
 ///
 /// The context map built at that call site feeds `expand_template` and nothing

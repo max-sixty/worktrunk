@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- **`wt switch --no-cd --execute` no longer names a directory the program never enters**: the `Executing (--execute) @ …` header rendered the new worktree even though `--no-cd` deliberately starts the program in the invoking directory, so the header now omits the path in that case. ([#4042](https://github.com/max-sixty/worktrunk/issues/4042), thanks @yajo for reporting)
+- **`wt switch --execute` now names the directory the program actually starts in**: the `Executing (--execute) @ …` header rendered the worktree the background hooks run in, which the program need not enter — `--no-cd` starts it in the invoking directory, and a switch from a subdirectory keeps that position, so the header pointed one level out. It now names the program's own directory, and omits the path when that is where the user's shell already stands. ([#4042](https://github.com/max-sixty/worktrunk/issues/4042), thanks @yajo for reporting)
 
 - **Codex on Windows: the activity hooks no longer fail on every event**: each hook led with a bare `bash`, which `cmd.exe` resolves to the WSL launcher rather than Git Bash; in a sandboxed session it refuses to start, so every event raised a `Hook failed` banner. Each hook now carries a Windows-only command that runs the same `wt.sh` through a `cmd.exe` shim, which finds Git Bash by path rather than by name. ([#4008](https://github.com/max-sixty/worktrunk/pull/4008), fixes [#4007](https://github.com/max-sixty/worktrunk/issues/4007), thanks @McNultyyy for reporting and diagnosing)
 

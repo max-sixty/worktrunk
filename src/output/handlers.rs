@@ -1018,6 +1018,23 @@ pub(crate) fn resolve_subdir_in_target(
     target_root.to_path_buf()
 }
 
+/// The "@ path" annotations a switch's follow-on output should carry.
+///
+/// Both are `Some` only when the user's shell won't be where the annotated work
+/// runs; the two paths differ because the work doesn't share one directory.
+/// Background hooks always run at the worktree root, while the `--execute`
+/// program runs wherever the switch cd'd — the root, or the subdirectory
+/// position [`resolve_subdir_in_target`] preserved — and nowhere at all under
+/// `--no-cd`, which leaves it in the invoking directory (#4042).
+pub struct SwitchDisplayPaths {
+    /// Where the background `post-switch` / `post-start` hooks run, when that
+    /// isn't where the user's shell is (or will be).
+    pub hooks: Option<PathBuf>,
+    /// Where the `--execute` program starts, when that isn't where the user's
+    /// shell is (or will be).
+    pub execute: Option<PathBuf>,
+}
+
 /// Handle output for a switch operation
 ///
 /// # Shell Integration Warnings
@@ -1045,27 +1062,25 @@ pub(crate) fn resolve_subdir_in_target(
 ///
 /// # Return Value
 ///
-/// Returns `Some(path)` when post-switch hooks should show "@ path" in their
-/// announcements (because the user's shell won't be in that directory). This happens when:
-/// - Shell integration is not active (user's shell stays in original directory)
-/// - `change_dir` is false (user explicitly requested no directory change)
-///
-/// Returns `None` when the user will be in the worktree directory (shell integration
-/// active or already at the worktree), so no path annotation needed.
+/// See [`SwitchDisplayPaths`] — the two annotations differ, because the hooks
+/// and the `--execute` program don't always run in the same directory.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     change_dir: bool,
     source_worktree_root: Option<&Path>,
     cwd: &Path,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
+) -> anyhow::Result<SwitchDisplayPaths> {
     // Set target directory for command execution, preserving subdirectory position.
     // If the user is in apps/gateway/ in the source worktree and that directory exists
     // in the target, cd to apps/gateway/ in the target instead of the root.
-    if change_dir {
+    let cd_target = if change_dir {
         let cd_target = resolve_subdir_in_target(result.path(), source_worktree_root, cwd);
         super::change_directory(&cd_target)?;
-    }
+        Some(cd_target)
+    } else {
+        None
+    };
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
     // The cd directive (above) handles its own translation internally.
@@ -1087,17 +1102,30 @@ pub fn handle_switch_output(
         ),
     };
 
+    // The `--execute` program runs in `cd_target`, which is the worktree root
+    // only when the user was at the source worktree's root: otherwise
+    // `resolve_subdir_in_target` kept their subdirectory position, and the
+    // hooks' path names a directory one level out from the program's. Annotate
+    // it only when the user's shell won't be there — `--no-cd` leaves the
+    // program where the shell already stands, and shell integration takes the
+    // shell to `cd_target` too (#4042).
+    let display_path_for_execute = cd_target.filter(|target| {
+        !super::is_shell_integration_active()
+            && super::global::compute_hooks_display_path(target, cwd).is_some()
+    });
+
     stderr().flush()?;
-    Ok(display_path_for_hooks)
+    Ok(SwitchDisplayPaths {
+        hooks: display_path_for_hooks,
+        execute: display_path_for_execute.map(|target| super::to_logical_path(&target)),
+    })
 }
 
 /// Execute the --execute command after hooks have run.
 ///
-/// `display_path` names the directory the program starts in, and is shown only
-/// when that differs from where the user's shell stands (shell integration not
-/// active). The caller passes `None` when the switch didn't change directory:
-/// the program then starts in the invoking directory, so there is nothing to
-/// annotate and naming the worktree would be wrong (#4042).
+/// `display_path` names the directory the program starts in
+/// ([`SwitchDisplayPaths::execute`]), and is `Some` only when the user's shell
+/// won't be there — otherwise the header has nothing to annotate.
 ///
 pub fn execute_user_command(argv: &[String], display_path: Option<&Path>) -> anyhow::Result<()> {
     super::global::print_outdated_execute_wrapper_warning();
