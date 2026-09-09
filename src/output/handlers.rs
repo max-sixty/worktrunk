@@ -1388,7 +1388,10 @@ fn handle_branch_only_output(
 /// flushes — multi-phase callers (e.g. `wt merge`) batch with later phases,
 /// standalone callers (e.g. `wt remove`) flush immediately after.
 ///
-/// Only runs if `ctx.verify` is true (hooks approved).
+/// Hook selection is the frozen `ctx.hook_plan`, so an empty plan
+/// (`--no-hooks`, declined approval, or no project config) registers nothing.
+/// The removed-worktree mark below is not part of that: it records what the
+/// removal did, which no approval decision changes.
 fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
