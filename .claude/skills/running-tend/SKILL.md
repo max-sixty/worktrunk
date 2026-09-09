@@ -74,7 +74,18 @@ CI runs on Linux, Windows, and macOS.
 
 ## Session Log Paths
 
-Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
+Claude Code names the artifact's directory after the agent's working directory,
+and from tend 0.2.5 that is a per-run `/tmp/tend-agent-workspace-*/checkout`
+rather than the runner's checkout — so there is no literal to match on any
+more, and the old `-home-runner-work-worktrunk-worktrunk/` prefix appears only
+in runs predating the bump. Find the file instead of constructing its path:
+
+```bash
+find "$DEST" -name '*.jsonl'
+```
+
+Both shapes are one `<session-id>.jsonl` under a single slugified directory, so
+whatever `find` returns is the log.
 
 ## Labels
 
@@ -289,6 +300,14 @@ Commit `flake.lock` alongside the other toolchain changes once both commands
 succeed. A failure is reported in the PR, never worked around: leave the file
 alone if the update fails, `git checkout flake.lock` if the eval does, and
 hand-compute an entry in neither case.
+
+**Expect both commands to fail with a permission error from tend 0.2.5 on.**
+`nix` resolves on the agent's PATH, but the multi-user client reaches the store
+by connecting to `/nix/var/nix/daemon-socket/socket`, and the sandbox blocks
+`socket(AF_UNIX, …)` outright. That is the reported failure above, not a
+problem with the bump: say so in the PR, leave `flake.lock` untouched, and
+carry the rest of the toolchain change as normal. It clears when
+max-sixty/tend#1197 gives the action a lever for it.
 
 After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
 and verify `cargo msrv verify` passes.

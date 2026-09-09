@@ -128,8 +128,6 @@ jobs:
           base_branch: ${{ github.event.repository.default_branch }}
           sandbox_setup: |2
             mkdir -p ~/.local/bin
-            install -m755 /home/runner/.cargo-install/cargo-insta/bin/cargo-insta ~/.local/bin/
-            install -m755 /home/runner/.cargo-install/cargo-nextest/bin/cargo-nextest ~/.local/bin/
             uv tool install --quiet pre-commit
             for t in cargo-insta cargo-nextest pre-commit nu nix; do command -v "$t" >/dev/null || { echo "::error::tend sandbox is missing $t; see Sandbox toolchain in .github/CLAUDE.md"; exit 1; }; done
           prompt: |2
