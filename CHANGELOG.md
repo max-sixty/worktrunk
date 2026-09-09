@@ -4,7 +4,7 @@
 
 ### Improved
 
-- **`wt config update --output <path>` confirms the write**: it now prints `✓ Wrote user config migration @ ~/migrated.toml`, so a command whose only effect is the file it wrote now says where that file is. Writing to stdout with `--output=-` stays silent, since the artifact is right there. ([#PRNUM](https://github.com/max-sixty/worktrunk/pull/PRNUM))
+- **`wt config update --output <path>` confirms the write**: it now prints `✓ Wrote user config migration @ ~/migrated.toml`, so a command whose only effect is the file it wrote now says where that file is. Writing to stdout with `--output=-` stays silent, since the artifact is right there. ([#4053](https://github.com/max-sixty/worktrunk/pull/4053))
 
 ### Fixed
 
