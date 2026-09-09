@@ -36,10 +36,10 @@
 //! "Runs in" is the *anchor* — the executor's plan lookup key and render root,
 //! not a config source. A `pre-start`'s new worktree need not exist when the
 //! gate runs; the config came from the invoking worktree regardless. A
-//! background pipeline whose anchor no longer holds git data by the time the
-//! announcer flushes is dropped and reported rather than spawned (see
-//! [`report_orphaned_pipelines`]); `wt merge` is what reaches that, since it
-//! removes `post-commit`'s anchor before the flush.
+//! background pipeline anchored on a worktree the command removed is dropped
+//! and reported rather than spawned (see [`report_dropped_pipelines`]); only
+//! `wt merge` reaches that, since it removes `post-commit`'s anchor before the
+//! flush.
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
@@ -72,7 +72,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, format_hook_variables};
-use worktrunk::git::{Repository, add_hook_skip_hint, holds_git_data};
+use worktrunk::git::{Repository, add_hook_skip_hint};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, verbosity,
@@ -283,6 +283,7 @@ fn no_matching_commands_error(
 /// emitted at `flush`, not at registration time.
 pub struct HookAnnouncer<'a> {
     pending: Vec<PendingPipeline>,
+    removed_worktrees: Vec<PathBuf>,
     repo: &'a Repository,
     show_branch: bool,
 }
@@ -307,6 +308,7 @@ impl<'a> HookAnnouncer<'a> {
     pub fn new(repo: &'a Repository, show_branch: bool) -> Self {
         Self {
             pending: Vec::new(),
+            removed_worktrees: Vec::new(),
             repo,
             show_branch,
         }
@@ -368,16 +370,36 @@ impl<'a> HookAnnouncer<'a> {
         Ok(())
     }
 
+    /// Record that this command removed the worktree at `path`, so a pipeline
+    /// anchored there is dropped at [`flush`](Self::flush) rather than spawned
+    /// into it — see [`report_dropped_pipelines`].
+    ///
+    /// The removal is the only thing that knows: on the fast path the worktree
+    /// is already renamed into `.git/wt/trash/` by the time `flush` runs, but
+    /// where that rename fails (cross-filesystem, permissions, Windows file
+    /// locks) the fallback `git worktree remove` runs detached and the anchor
+    /// is still on disk, intact, at the flush. Probing the filesystem would
+    /// answer differently in those two cases; the removal's own report doesn't.
+    pub fn mark_worktree_removed(&mut self, path: &Path) {
+        self.removed_worktrees.push(path.to_path_buf());
+    }
+
     /// Emit the combined announce line and spawn all registered pipelines.
     ///
     /// No-op when nothing was registered. Drains `pending` so the announcer
-    /// can be reused (though one-per-command is the intended pattern).
+    /// can be reused (though one-per-command is the intended pattern); the
+    /// removed-worktree marks persist, since a removed worktree stays removed.
     pub fn flush(&mut self) -> anyhow::Result<()> {
         let pending = std::mem::take(&mut self.pending);
         if pending.is_empty() {
             return Ok(());
         }
-        run_hooks_background(self.repo, pending, self.show_branch)
+        run_hooks_background(
+            self.repo,
+            pending,
+            &self.removed_worktrees,
+            self.show_branch,
+        )
     }
 }
 
@@ -417,17 +439,18 @@ impl Drop for HookAnnouncer<'_> {
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
 /// `Running post-remove for feature: docs (user)`.
 ///
-/// Pipelines whose anchor no longer holds git data are dropped first, so the
-/// announce describes only what starts — see [`report_orphaned_pipelines`].
+/// Pipelines anchored on one of `removed_worktrees` are dropped first, so the
+/// announce describes only what starts — see [`report_dropped_pipelines`].
 fn run_hooks_background(
     repo: &Repository,
     pipelines: Vec<PendingPipeline>,
+    removed_worktrees: &[PathBuf],
     show_branch: bool,
 ) -> anyhow::Result<()> {
-    let (pipelines, orphaned): (Vec<_>, Vec<_>) = pipelines
+    let (pipelines, dropped): (Vec<_>, Vec<_>) = pipelines
         .into_iter()
-        .partition(|p| holds_git_data(&p.worktree_path));
-    report_orphaned_pipelines(&orphaned);
+        .partition(|p| !removed_worktrees.contains(&p.worktree_path));
+    report_dropped_pipelines(&dropped);
     if pipelines.is_empty() {
         return Ok(());
     }
@@ -492,24 +515,23 @@ fn run_hooks_background(
     Ok(())
 }
 
-/// Report background hook pipelines dropped because their anchor is gone.
+/// Report background hook pipelines dropped because this command removed the
+/// worktree they are anchored on.
 ///
 /// A pipeline runs with its anchor as cwd, and the runner
 /// ([`run_pipeline`](super::run_pipeline::run_pipeline)) opens the repository
-/// by discovery from there. Once the anchor stops holding git data, discovery
-/// walks up instead of stopping — so a worktree nested inside its repository
-/// resolves to the *primary* worktree, and the steps (arbitrary project code)
-/// would run in a worktree the user never chose. Outside the repository there
-/// is nothing to walk up to and the runner only writes `failed to open
-/// repository for pipeline` to a log nothing reads back. Both are silent, so
-/// the drop is reported here instead.
+/// by discovery from there. Discovery walks up, so once the anchor is emptied
+/// a worktree nested inside its repository resolves to the *primary* worktree
+/// and the steps — arbitrary project code — run in a worktree the user never
+/// chose. A worktree outside the repository has nothing to walk up to, and the
+/// runner writes `failed to open repository for pipeline` to a log nothing
+/// reads back. Both are silent, so the drop is reported here instead.
 ///
 /// Only `wt merge` reaches this. `post-commit` is anchored on the feature
-/// worktree, and the removal renames that worktree into `.git/wt/trash/`
-/// before the announcer flushes; every other background hook anchors on a
+/// worktree the merge then removes; every other background hook anchors on a
 /// worktree its command keeps.
-fn report_orphaned_pipelines(orphaned: &[PendingPipeline]) {
-    for pipeline in orphaned {
+fn report_dropped_pipelines(dropped: &[PendingPipeline]) {
+    for pipeline in dropped {
         let hook_type = pipeline.hook_type;
         let summary = format_pipeline_summary(&pipeline.steps);
         let path = format_path_for_display(&pipeline.worktree_path);
@@ -520,7 +542,7 @@ fn report_orphaned_pipelines(orphaned: &[PendingPipeline]) {
             ))
         );
     }
-    if !orphaned.is_empty() {
+    if !dropped.is_empty() {
         eprintln!(
             "{}",
             hint_message(cformat!(

@@ -1395,6 +1395,12 @@ fn spawn_hooks_after_remove(
     removed_branch: Option<&str>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
+    // The worktree is gone (or, on the fallback path, being deleted by the
+    // detached `git worktree remove` this call follows), so a pipeline anchored
+    // on it must not be spawned into it. Recorded before the config load, which
+    // returns early on an unreadable user config.
+    announcer.mark_worktree_removed(ctx.worktree_path);
+
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };

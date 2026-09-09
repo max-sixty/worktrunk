@@ -326,10 +326,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Every background hook runs in the worktree it is anchored on, and only
     // post-commit is anchored on the feature worktree (the other three anchor
     // on the destination). A merge that removes that worktree therefore
-    // reaches the flush with post-commit's anchor already emptied — the fast
-    // path renames the worktree into `.git/wt/trash/` synchronously inside
-    // `finish_after_merge`. `run_hooks_background` drops such a pipeline and
-    // reports it rather than spawning it into a path whose git discovery would
+    // reaches the flush with post-commit's anchor gone, so the removal reports
+    // it via `HookAnnouncer::mark_worktree_removed` and the flush drops that
+    // pipeline rather than spawning it into a path whose git discovery would
     // walk up to the primary worktree.
     //
     // There is no earlier moment to spawn it. Between the commit and the
