@@ -74,18 +74,12 @@ CI runs on Linux, Windows, and macOS.
 
 ## Session Log Paths
 
-Claude Code names the artifact's directory after the agent's working directory,
-and from tend 0.2.5 that is a per-run `/tmp/tend-agent-workspace-*/checkout`
-rather than the runner's checkout — so there is no literal to match on any
-more, and the old `-home-runner-work-worktrunk-worktrunk/` prefix appears only
-in runs predating the bump. Find the file instead of constructing its path:
-
-```bash
-find "$DEST" -name '*.jsonl'
-```
-
-Both shapes are one `<session-id>.jsonl` under a single slugified directory, so
-whatever `find` returns is the log.
+The artifact directory is named after the agent's working directory, and from
+tend 0.2.5 that is a per-run `/tmp/tend-agent-workspace-*/checkout` — so the
+old `-home-runner-work-worktrunk-worktrunk/` prefix appears only in runs
+predating the bump, and there is no literal to match on any more. Use the
+bundled `find "$DEST" -name '*.jsonl'` recipe; either shape is one
+`<session-id>.jsonl` under a single slugified directory.
 
 ## Labels
 
@@ -357,12 +351,11 @@ jq -n --arg cwd "$PWD" '{
   context_window: {used_percentage: 42.0}
 }' > /tmp/statusline-input.json
 
-# Debug build on purpose. `tend-weekly` installs no `wt`, and its rust-cache
-# step is `save-if: false` under a key no workflow writes, so `--release`
-# means a cold optimized build of the whole dependency graph before the first
-# render. The duplicate `(command, context)` pairs this check reads are
-# profile-independent; only the timing columns, which this section doesn't
-# triage, would be worth a release build.
+# Debug build on purpose. `tend-weekly` installs no `wt` and restores no Rust
+# cache, so `--release` means a cold optimized build of the whole dependency
+# graph before the first render. The duplicate `(command, context)` pairs this
+# check reads are profile-independent; only the timing columns, which this
+# section doesn't triage, would be worth a release build.
 cargo run -- -vv list statusline --format=claude-code \
   < /tmp/statusline-input.json > /dev/null
 cargo run -- config state logs profile --format=json | jq .cache
