@@ -227,14 +227,6 @@ Link when there's substantial documentation the user would benefit from reading 
 
 **The gate cuts both ways.** Checking only accuracy pushes every entry longer: "understates" and "not covered" have no counterweight, so each pass adds and none subtracts. That asymmetry is what drove the ratchet above. An entry that is too long, too internal, or ranked above one more readers will notice is reported on the same footing as one that is wrong.
 
-The subagent should:
-1. Take the list of drafted changelog entries
-2. For each entry, find the commit(s) it describes and read the actual diff
-3. Verify the entry accurately describes what changed
-4. Check for missing changes that should be documented
-5. Check each entry against the length ceiling and the ordering rule
-6. Report inaccuracies, omissions, overlong entries, and misordering
-
 **Subagent prompt template:**
 
 ```
@@ -246,12 +238,23 @@ Commits to check: git log v<previous>..HEAD
 Entries to verify:
 [paste drafted entries]
 
-For EACH entry:
+Verify claim by claim, not entry by entry: an entry carries several independent
+claims, and one verdict over the whole entry waves through every claim that is not
+its headline.
+
 1. Find the relevant commit(s) using git log and git show
-2. Read the actual diff, not just the commit message
-3. Confirm the entry accurately describes the user-facing change
-4. Flag if the entry overstates, understates, or misdescribes the change
-5. Flag if the entry runs over 60 words (80 for one of the two or three headline
+2. Read the diff, not the commit message. The diff settles what changed. It does
+   not settle what the behavior was before, what the user sees, or what a file it
+   doesn't touch does. Settle a "previously" / "no longer" / "so X broke" claim by
+   reading the old file (`git show <sha>^:<path>`) and confirming the old behavior
+   there. The new code's handling of the old case is not that confirmation: a case
+   added together with a comment about why it produces nothing reads in a diff
+   exactly like a case that used to produce something. Settle a claim about output
+   or a version floor against the rendered output and the docs, and a claim about
+   another component against that component's own file
+3. Flag any claim its source does not support, whether it overstates,
+   understates, or misdescribes
+4. Flag if the entry runs over 60 words (80 for one of the two or three headline
    entries), restates the PR description, or explains mechanism the reader cannot
    act on — report these as seriously as an inaccuracy, and quote a shorter
    rewrite that keeps every user-facing claim
@@ -265,11 +268,11 @@ Report format:
 - Entry: [entry text]
   Status: ✅ Accurate / ⚠️ Needs revision / ❌ Incorrect
   Length: [word count] — ✅ / ⚠️ over ceiling
-  Evidence: [what you found in the diff]
+  Evidence: [for each claim, the source you read and what it said]
   Suggested fix: [if needed]
 ```
 
-**Do not finalize the changelog until the subagent confirms every entry is accurate and within the ceiling.**
+**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests is a new draft with no more evidence behind it than one you wrote yourself, so applying it leaves that entry unverified again. An entry you edit while the pass runs is in the same state. Re-run the verifier over `CHANGELOG.md` as it stands, never a scratch copy of the draft, and finalize only once a run comes back clean.
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 
