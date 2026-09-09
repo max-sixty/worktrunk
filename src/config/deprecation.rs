@@ -1350,50 +1350,43 @@ fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()>
 /// Converts: command = "llm", args = ["-m", "haiku"]
 /// To: command = "llm -m haiku"
 ///
-/// Only removes `args` if it can be successfully merged into `command` —
-/// `command` missing or not a string, or `args` not an array of strings,
-/// leaves it in place. `[commit.generation]` has no `args` field, so what this
-/// leaves behind is then dropped and reported by [`drop_unsupported_keys`]:
-/// `args` was only ever a way of spelling part of `command`, and one that
-/// couldn't be merged has nowhere to go.
+/// Merging needs a string `command` and an array of strings; anything else
+/// leaves both keys as the user wrote them. `[commit.generation]` has no
+/// `args` field, so an unmerged `args` is removed and reported by
+/// [`drop_unsupported_keys`]: `args` was only ever a way of spelling part of
+/// `command`, and one that can't be merged has nowhere to go.
+///
+/// Declining keeps that removal visible. Joining `args = [1, "--ok"]` would
+/// drop the `1`, rewrite `command` with a value the user never wrote, and
+/// report neither; dropping the whole key shows up in the deprecation warning
+/// and in the `wt config update` diff.
 fn merge_args_into_command(table: &mut toml_edit::Table) {
-    // Validate preconditions before removing args. Every element must be a
-    // string — a single non-string (e.g. `args = [1, "--ok"]`) would otherwise
-    // be silently filtered out while `args` was removed, dropping user data.
-    let can_merge = table
+    let Some(args) = table
         .get("args")
         .and_then(|a| a.as_array())
-        .is_some_and(|a| a.iter().all(|v| v.as_str().is_some()))
-        && table
-            .get("command")
-            .and_then(|c| c.as_value())
-            .is_some_and(|v| v.as_str().is_some());
-
-    if !can_merge {
+        .and_then(|a| a.iter().map(|v| v.as_str()).collect::<Option<Vec<_>>>())
+    else {
         return;
-    }
+    };
+    // Join before taking `command` mutably, while `args` is still borrowed.
+    // An empty `args` merges away without touching `command`.
+    let joined = (!args.is_empty()).then(|| shell_join(&args));
 
-    // Now safe to remove and merge
-    let args = table.remove("args").unwrap();
-    let args_array = args.as_array().unwrap();
-    let command = table
-        .get_mut("command")
-        .and_then(|c| c.as_value_mut())
-        .unwrap();
-    let cmd_str = command.as_str().unwrap();
-
-    // `can_merge` guarantees every element is a string; `filter_map` here just
-    // extracts them.
-    let args_str: Vec<&str> = args_array.iter().filter_map(|a| a.as_str()).collect();
-    if !args_str.is_empty() {
-        // Only add space if command is non-empty
-        let new_command = if cmd_str.is_empty() {
-            shell_join(&args_str)
+    let Some(command) = table.get_mut("command").and_then(|c| c.as_value_mut()) else {
+        return;
+    };
+    let Some(cmd) = command.as_str() else {
+        return;
+    };
+    if let Some(joined) = joined {
+        let merged = if cmd.is_empty() {
+            joined
         } else {
-            format!("{} {}", cmd_str, shell_join(&args_str))
+            format!("{cmd} {joined}")
         };
-        *command = toml_edit::Value::from(new_command);
+        *command = toml_edit::Value::from(merged);
     }
+    table.remove("args");
 }
 
 /// Join arguments with proper shell quoting using shell_escape
@@ -2981,6 +2974,32 @@ args = ["-m", "haiku"]
         [commit.generation]
         command = "-m haiku"
         "#);
+    }
+
+    /// An empty `args` contributes nothing to join, so `command` is left as
+    /// written and the key merges away without a separate drop report.
+    #[test]
+    fn test_migrate_empty_args_leaves_command_unchanged() {
+        let content = r#"
+[commit-generation]
+command = "llm"
+args = []
+"#;
+        let result = migrate_content(content);
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        command = "llm"
+        "#);
+        // `command` is the section's only other key and it is supported, so
+        // any unsupported-key report from this input would name `args`.
+        assert!(
+            !has_kind(&detect_deprecations(content), |k| matches!(
+                k,
+                DeprecationKind::UnsupportedKey { .. }
+            )),
+            "empty args merges away rather than being reported as unsupported"
+        );
     }
 
     #[test]

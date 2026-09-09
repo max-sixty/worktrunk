@@ -1388,13 +1388,22 @@ fn handle_branch_only_output(
 /// flushes — multi-phase callers (e.g. `wt merge`) batch with later phases,
 /// standalone callers (e.g. `wt remove`) flush immediately after.
 ///
-/// Only runs if `ctx.verify` is true (hooks approved).
+/// Hook selection is the frozen `ctx.hook_plan`, so an empty plan
+/// (`--no-hooks`, declined approval, or no project config) registers nothing.
+/// The removed-worktree mark below is not part of that: it records what the
+/// removal did, which no approval decision changes.
 fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &WorktreeRemovalContext<'_>,
     removed_branch: Option<&str>,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
+    // The worktree is gone (or, on the fallback path, being deleted by the
+    // detached `git worktree remove` this call follows), so a pipeline anchored
+    // on it must not be spawned into it. Recorded before the config load, which
+    // returns early on an unreadable user config.
+    announcer.mark_worktree_removed(ctx.worktree_path);
+
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
