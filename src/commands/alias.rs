@@ -173,7 +173,13 @@ impl AliasOptions {
     /// instead. The parser raises an actionable error pointing at the new
     /// subcommand rather than silently forwarding the flag into `{{ args }}`.
     /// The bail fires only outside `literal_mode`, so `wt alias -- --dry-run`
-    /// still forwards `--dry-run` as a positional.
+    /// still forwards `--dry-run` as a positional, and only when the template
+    /// doesn't reference `dry_run` — a template that binds the name owns the
+    /// flag, the same deference `--help` gets in `try_intercept_alias_help`
+    /// and `--yes` gets from the `--KEY` rule above. Without it a user's own
+    /// `{{ dry_run }}` binding is unreachable in the bare form while
+    /// `--dry-run=<value>` binds normally, since the bail matches the whole
+    /// token.
     ///
     /// Hyphens in variable names are canonicalized to underscores before
     /// lookup and storage (minijinja parses `{{ my-var }}` as subtraction),
@@ -211,7 +217,7 @@ impl AliasOptions {
                 i += 1;
                 continue;
             }
-            if arg == "--dry-run" {
+            if arg == "--dry-run" && !referenced_vars.contains("dry_run") {
                 bail!(
                     "--dry-run is no longer supported; use `wt config alias dry-run {name}` instead"
                 );
@@ -1407,6 +1413,51 @@ cmd = [
         assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
         // Retired `--dry-run` flag gives an actionable error pointing at the new subcommand.
         assert_snapshot!(parse(&["deploy", "--dry-run"]).unwrap_err(), @"--dry-run is no longer supported; use `wt config alias dry-run deploy` instead");
+    }
+
+    /// A template that references `{{ dry_run }}` owns the flag: the retired-flag
+    /// bail steps aside and both spellings bind, matching `--help`'s deference to
+    /// a `help` binding and `--yes`'s to a `yes` one.
+    #[test]
+    fn test_parse_dry_run_binds_when_referenced() {
+        use insta::assert_debug_snapshot;
+        assert_debug_snapshot!(parse_with(&["deploy", "--dry-run", "1"], &["dry_run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [
+                (
+                    "dry_run",
+                    "1",
+                ),
+            ],
+            positional_args: [],
+        }
+        "#);
+        // The `=` form already bound before this — the bail matches the whole
+        // token — so the two spellings agree either way.
+        assert_debug_snapshot!(parse_with(&["deploy", "--dry-run=1"], &["dry_run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [
+                (
+                    "dry_run",
+                    "1",
+                ),
+            ],
+            positional_args: [],
+        }
+        "#);
+        // At end of args there is nothing to bind, so `--KEY` forwards as a
+        // positional rather than erroring.
+        assert_debug_snapshot!(parse_with(&["deploy", "--dry-run"], &["dry_run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [],
+            positional_args: [
+                "--dry-run",
+            ],
+        }
+        "#);
     }
 
     /// `referenced_vars_for_config` unions across pipeline steps so a var
