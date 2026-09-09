@@ -223,14 +223,18 @@ Link when there's substantial documentation the user would benefit from reading 
 
 ### MANDATORY: Verify Each Changelog Entry
 
-**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** This is non-negotiable — changelog mistakes are a recurring problem.
+**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** A correction made after the tag lands in `CHANGELOG.md` and not in the GitHub release body readers already have, so this pass is the last one whose findings reach them. It is worth as much time as it takes.
 
 **The gate cuts both ways.** Checking only accuracy pushes every entry longer: "understates" and "not covered" have no counterweight, so each pass adds and none subtracts. That asymmetry is what drove the ratchet above. An entry that is too long, too internal, or ranked above one more readers will notice is reported on the same footing as one that is wrong.
 
 **Subagent prompt template:**
 
 ```
-Verify these changelog entries for version X.Y.Z are accurate.
+Verify these changelog entries for version X.Y.Z are accurate. They ship with the
+tag and are not revised afterwards, so a claim that goes unchecked here goes out to
+readers who act on it. Spend the time to read a source for each one: reading the
+entry and finding it plausible is not a check, because the entry was written from
+the same commits you are about to read.
 
 Previous version: [e.g., v0.1.9]
 Commits to check: git log v<previous>..HEAD
@@ -244,15 +248,14 @@ claims, and one verdict over the whole entry waves through every claim that is n
 its headline.
 
 1. Find the relevant commit(s) using git log and git show
-2. Read the diff, not the commit message. The diff settles what changed. It does
-   not settle what the behavior was before, what the user sees, or what a file it
-   doesn't touch does. Settle a "previously" / "no longer" / "so X broke" claim by
-   reading the old file (`git show <sha>^:<path>`) and confirming the old behavior
-   there. The new code's handling of the old case is not that confirmation: a case
-   added together with a comment about why it produces nothing reads in a diff
-   exactly like a case that used to produce something. Settle a claim about output
-   or a version floor against the rendered output and the docs, and a claim about
-   another component against that component's own file
+2. Read the diff, not the commit message. The diff settles what changed, and
+   nothing else: not what the behavior was before, not what the user sees, not
+   what a file it doesn't touch does. For those, go to the source that holds the
+   claim. Settle a "previously" / "no longer" / "so X broke" claim by reading
+   the old file (`git show <sha>^:<path>`) and confirming the old behavior
+   there. The new code's handling of the old case is not that confirmation: a
+   case added together with a comment about why it produces nothing reads in a
+   diff exactly like a case that used to produce something
 3. Flag any claim its source does not support, whether it overstates,
    understates, or misdescribes
 4. Flag if the entry runs over 60 words (80 for one of the two or three headline
@@ -273,7 +276,7 @@ Report format:
   Suggested fix: [if needed]
 ```
 
-**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests is a new draft with no more evidence behind it than one you wrote yourself, so applying it leaves that entry unverified again. An entry you edit while the pass runs is in the same state. Re-run the verifier over the section as it now stands, and finalize only once a run comes back clean.
+**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests has no more evidence behind it than one you wrote yourself, and an entry you edit while the pass runs is in the same state — both leave that entry unverified. Re-run over the section as it now stands, and finalize only once a run comes back clean.
 
 `evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed.
 
