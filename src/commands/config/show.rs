@@ -1456,15 +1456,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
-    // Show skipped (not installed) shells
-    // For fish with legacy integration, show migration hint instead of "skipped"
+    // Show skipped (not installed) shells. Fish with a wrapper at the
+    // deprecated conf.d path never lands here — `scan_shell_configs` treats
+    // that wrapper as a config location, so the row comes from the loop above.
     for (shell, path) in &scan_result.skipped {
-        if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
-            // Report the legacy fish location instead of "skipped"
-            render_fish_legacy_migration(out, legacy_fish_conf_d.as_deref(), &cmd)?;
-            any_not_configured = true;
-            continue;
-        }
         let path = format_path_for_display(path);
         writeln!(
             out,

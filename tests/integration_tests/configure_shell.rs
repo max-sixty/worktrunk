@@ -917,10 +917,101 @@ fn test_configure_shell_fish_legacy_removal_accepted_when_already_configured(
     );
 }
 
+/// Installing from inside a shell whose wrapper already intercepted the command
+/// doesn't tell it to restart.
+///
+/// Single-factor contrast with `test_configure_shell_with_yes`, which runs the
+/// same zsh install without `WORKTRUNK_DIRECTIVE_CD_FILE` and asserts
+/// `Restart shell to activate shell integration` fires. Reinstalling from a
+/// wrapped shell is how a version bump or the fish conf.d relocation is done,
+/// and integration plainly doesn't need activating there.
+#[rstest]
+fn test_configure_shell_no_restart_hint_when_integration_active(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    fs::write(temp_home.path().join(".zshrc"), "# Existing config\n").unwrap();
+    let directive_file = temp_home.path().join("directive");
+    fs::write(&directive_file, "").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
+        cmd.args(["config", "shell", "install", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+
+        ----- stderr -----
+        [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
+
+        [32m✓[39m [32mConfigured 1 shell[39m
+        [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
+        [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m
+        [0m
+        ");
+    });
+}
+
+/// A bare `wt config shell install` migrates a wrapper at fish's deprecated
+/// conf.d path, with no `functions/` directory and fish not on PATH.
+///
+/// This is the command `wt config show` points at, so it has to cover every
+/// state that section reports. Fish would otherwise be skipped for want of a
+/// config location, leaving the deprecated wrapper running with a remedy that
+/// did nothing for it.
+#[rstest]
+fn test_configure_shell_bare_install_migrates_fish_legacy_conf_d(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.args(["config", "shell", "install", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "bare install should succeed: {output:?}"
+    );
+    assert!(
+        !legacy_file.exists(),
+        "bare install must remove the deprecated conf.d/wt.fish: {legacy_file:?}"
+    );
+    assert!(
+        temp_home
+            .path()
+            .join(".config/fish/functions/wt.fish")
+            .exists(),
+        "bare install must write the canonical functions/wt.fish"
+    );
+}
+
 /// Test that detection finds fish integration in legacy conf.d location
 ///
 /// `wt config show` should detect shell integration whether it's in the
-/// old conf.d location or the new functions location.
+/// old conf.d location or the new functions location. Fish is neither on PATH
+/// nor has a `functions/` directory here, so the deprecated wrapper is the only
+/// thing putting fish in the report at all — `scan_shell_configs` treats it as
+/// a config location, which is also what makes the section's bare
+/// `wt config shell install` hint migrate it.
 #[rstest]
 fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: TempDir) {
     // Create ONLY the legacy conf.d file (simulating user who installed before #566)
@@ -947,11 +1038,9 @@ fn test_config_show_detects_fish_legacy_conf_d(mut repo: TestRepo, temp_home: Te
 
 /// Test config show when functions/ exists but wt.fish doesn't, with legacy conf.d
 ///
-/// This tests a different code path than test_config_show_detects_fish_legacy_conf_d:
-/// - That test: functions/ doesn't exist -> fish is "skipped"
-/// - This test: functions/ exists but empty -> fish is "configured" with WouldCreate
-///
-/// Both should show the migration hint for the legacy conf.d location.
+/// Pairs with `test_config_show_detects_fish_legacy_conf_d`, which has no
+/// `functions/` directory. Both report the same deprecated-location row: the
+/// wrapper at the legacy path is a config location either way.
 #[rstest]
 fn test_config_show_fish_legacy_with_functions_dir(mut repo: TestRepo, temp_home: TempDir) {
     // Create functions/ directory (empty - no wt.fish)

@@ -562,13 +562,23 @@ pub fn scan_shell_configs(
         let in_detected_shell = (matches!(shell, Shell::PowerShell) && in_powershell_env)
             || (matches!(shell, Shell::Nushell) && nushell_available);
 
-        // Only configure if explicitly targeting this shell OR if config file/location exists
-        // OR if we detected we're running in this shell's environment
-        let should_configure = shell_filter.is_some() || has_config_location || in_detected_shell;
+        // A worktrunk wrapper still at fish's deprecated conf.d path says fish
+        // is configured, just at the old path — so the install migrates it even
+        // though `~/.config/fish/functions` doesn't exist yet. Without this,
+        // fish lands in `skipped` and a bare `wt config shell install` leaves
+        // the deprecated wrapper running, which is the command `wt config show`
+        // points users at. The write target stays the canonical functions path,
+        // and `cleanup_legacy_fish_conf_d` removes the old file afterwards.
+        let has_deprecated_wrapper = matches!(shell, Shell::Fish)
+            && Shell::legacy_fish_conf_d_path(cmd).is_ok_and(|path| path.exists());
 
-        // Allow creating the config file if explicitly targeting this shell,
-        // or if we detected we're in this shell's environment
-        let allow_create = shell_filter.is_some() || in_detected_shell;
+        // Write a config file the user doesn't have yet when they named this
+        // shell, when we're running in it, or when it's already configured at a
+        // deprecated path this install migrates.
+        let allow_create = shell_filter.is_some() || in_detected_shell || has_deprecated_wrapper;
+
+        // Plus: configure whenever the config file or its directory is there.
+        let should_configure = allow_create || has_config_location;
 
         if should_configure {
             // Wrapper-based shells (Fish, Nushell) always write to the canonical

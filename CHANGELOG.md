@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **`wt config shell install` migrates a fish wrapper at the deprecated `conf.d` path even when `~/.config/fish/functions` doesn't exist yet**: fish was skipped for want of a config location, so the bare command left the deprecated wrapper running and only `wt config shell install fish` migrated it. A worktrunk wrapper at the old path now counts as fish being configured, just at the old path. `wt config show` reports that wrapper too, where before it showed nothing at all for fish unless fish was on `PATH`.
+
 - **`wt config shell install` no longer tells an already-wrapped shell to restart**: reinstalling from inside a shell that has the wrapper loaded — after a version bump, or when the fish extension moves from `conf.d` to `functions` — printed `↳ Restart shell to activate shell integration` right after the wrapper had intercepted the command. The hint now only appears when integration isn't active.
 
 - **`wt merge` no longer runs `post-commit` in a worktree the user never chose**: the merge removes the worktree that hook is anchored on before the hook starts, so the pipeline was spawned into an emptied path. Where the worktree sat inside the repository, git discovery walked up from there and the hook's commands ran in the primary worktree; anywhere else they didn't run at all, and the only record was a log file nothing reads. The merge now prints `▲ Skipped post-commit: …` naming that worktree, and points at `pre-remove` for work that must finish there. `--no-remove`, merging on the target branch, `wt step commit`, and `wt step squash` still run it. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
