@@ -20,11 +20,14 @@ use super::shared::{list_and_filter_ignored_entries, resolve_copy_ignored_config
 /// Add the four counts a result payload reports, all zero, to an exit that
 /// copied nothing.
 ///
-/// A `--dry-run` payload takes none of them. It reports what *would* be
-/// copied, so a file count and a reflink split have nothing to describe, and
-/// leaving them out is what keeps `outcome: "planned"` one shape whether or
-/// not anything matched — the two early returns below reach it with an empty
-/// entry list, the main path with a full one.
+/// An `outcome: "planned"` payload takes none of them. It reports what *would*
+/// be copied, so a file count and a reflink split have nothing to describe, and
+/// leaving them out keeps `planned` one shape whether or not anything matched:
+/// the two `!dry_run`-gated early returns reach it with an empty entry list,
+/// the main path with a full one.
+///
+/// `same_worktree` is not a plan. It is a no-op exit in either mode, carrying
+/// no `dry_run` key, so it takes the zeroed counts unconditionally.
 fn insert_empty_counts(payload: &mut serde_json::Value) {
     let obj = payload
         .as_object_mut()

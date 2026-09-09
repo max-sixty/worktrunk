@@ -1,13 +1,12 @@
 ---
-source: tests/integration_tests/config_show.rs
+source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - config
-    - plugins
-    - claude
-    - uninstall
+    - merge
+    - main
     - "--yes"
+    - "--no-remove"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLAUDE_CONFIG_DIR: "[TEST_CLAUDE_CONFIG]"
@@ -40,7 +39,7 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
-    WORKTRUNK_TEST_CLAUDE_INSTALLED: "1"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -57,12 +56,27 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mUninstalling plugin...[39m
-[36m◎[39m [36mRemoving Claude Code plugin marketplace...[39m
-[31m✗[39m [31mclaude plugin marketplace remove worktrunk failed (exit 1)[39m
-[107m [0m error: marketplace remove failed
+[33m▲[39m [33mAuto-staging 1 untracked path:[39m
+[107m [0m dirty.txt
+[36m◎[39m [36mSquashing 1 commit & working tree changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
+[2m↳[22m [2mBackup created @ c866be4[22m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[2m↳[22m [2mUsing fallback commit message. For LLM setup guide, run [4mwt config --help[24m[22m
+[107m [0m [1mSquash commits from feature[22m
+[107m [0m 
+[107m [0m Combined commits:
+[107m [0m - Add feature
+[32m✓[39m [32mSquashed @ [HASH][39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m Squash commits from feature
+[107m [0m  dirty.txt   | 1 [32m+[m
+[107m [0m  feature.txt | 1 [32m+[m
+[107m [0m  2 files changed, 2 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+2[39m[39m[90m)[39m[39m
+[2m○[22m Worktree preserved (--no-remove)
+[36m◎[39m [36mRunning post-commit: [1mmark[22m (user)[39m

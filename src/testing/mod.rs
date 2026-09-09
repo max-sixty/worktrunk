@@ -2242,49 +2242,32 @@ impl TestRepo {
         .unwrap();
     }
 
-    /// Write Claude Code's marketplace record verbatim
+    /// `claude plugin marketplace list --json` holding the worktrunk
+    /// marketplace
     ///
-    /// `known_marketplaces.json` is keyed by marketplace name, which is what
-    /// `is_marketplace_configured` reads. The body is the caller's, since the
-    /// three states that reader distinguishes — worktrunk present, a different
-    /// marketplace present, and a file that will not parse — differ only in
-    /// what this file holds.
-    pub fn setup_claude_marketplaces(temp_home: &std::path::Path, body: &str) {
-        let plugins_dir = temp_home.join(".claude/plugins");
-        std::fs::create_dir_all(&plugins_dir).unwrap();
-        std::fs::write(plugins_dir.join("known_marketplaces.json"), body).unwrap();
-    }
-
-    /// `known_marketplaces.json` holding the worktrunk marketplace
+    /// Claude Code prints a bare array of marketplace objects. These bodies
+    /// are the mock's stdout rather than a config-file fixture, because
+    /// `is_marketplace_configured` asks the harness what it holds instead of
+    /// reading the file the harness keeps it in.
     pub const CLAUDE_MARKETPLACES_WITH_WORKTRUNK: &'static str =
-        r#"{"worktrunk":{"source":{"source":"github","repo":"max-sixty/worktrunk"}}}"#;
+        r#"[{"name":"worktrunk","source":"github","repo":"max-sixty/worktrunk"}]"#;
 
-    /// `known_marketplaces.json` holding some other marketplace
+    /// `claude plugin marketplace list --json` holding some other marketplace
     ///
-    /// The state a second `uninstall` lands in: the file exists because the
-    /// user has other marketplaces, and worktrunk's entry is simply gone.
+    /// The state a second `uninstall` lands in for a user who has other
+    /// marketplaces: the list is non-empty and worktrunk is simply not in it.
     pub const CLAUDE_MARKETPLACES_WITHOUT_WORKTRUNK: &'static str =
-        r#"{"other":{"source":{"source":"github","repo":"someone/other"}}}"#;
+        r#"[{"name":"other","source":"github","repo":"someone/other"}]"#;
 
-    /// Write Codex's `config.toml` verbatim
+    /// `codex plugin marketplace list --json` holding the worktrunk
+    /// marketplace
     ///
-    /// Codex keeps each marketplace as a `[marketplaces.<name>]` table there.
-    /// Takes the config root rather than the home directory, since
-    /// `CODEX_HOME` can move it off `~/.codex`.
-    pub fn setup_codex_config(codex_dir: &std::path::Path, body: &str) {
-        std::fs::create_dir_all(codex_dir).unwrap();
-        std::fs::write(codex_dir.join("config.toml"), body).unwrap();
-    }
+    /// Codex nests its entries under `marketplaces` where Claude Code prints
+    /// a bare array.
+    pub const CODEX_MARKETPLACES_WITH_WORKTRUNK: &'static str = r#"{"marketplaces":[{"name":"worktrunk","root":"/marketplaces/worktrunk","marketplaceSource":{"sourceType":"git","source":"https://github.com/max-sixty/worktrunk.git"}}]}"#;
 
-    /// `config.toml` holding the worktrunk marketplace
-    pub const CODEX_CONFIG_WITH_WORKTRUNK: &'static str = "[marketplaces.worktrunk]\nsource_type = \"git\"\nsource = \"https://github.com/max-sixty/worktrunk.git\"\n";
-
-    /// `config.toml` a Codex user has after the marketplace is removed
-    ///
-    /// Codex keeps its model and other settings in this file, so it outlives
-    /// the marketplace table — which is why a second `uninstall` reads a
-    /// present config with no worktrunk entry rather than no config at all.
-    pub const CODEX_CONFIG_WITHOUT_WORKTRUNK: &'static str = "model = \"gpt-5.5\"\n\n[marketplaces.other]\nsource_type = \"git\"\nsource = \"https://github.com/someone/other.git\"\n";
+    /// `codex plugin marketplace list --json` holding some other marketplace
+    pub const CODEX_MARKETPLACES_WITHOUT_WORKTRUNK: &'static str = r#"{"marketplaces":[{"name":"other","root":"/marketplaces/other","marketplaceSource":{"sourceType":"git","source":"https://github.com/someone/other.git"}}]}"#;
 
     /// Setup the statusline as configured in Claude Code settings
     ///
@@ -2380,6 +2363,10 @@ impl TestRepo {
 
         MockConfig::new("claude")
             .command("plugin marketplace", MockResponse::exit(0))
+            // Uninstall asks what Claude Code holds before deciding the
+            // marketplace is gone, so a mock that answered nothing would leave
+            // the question open on every path that reaches it.
+            .command("plugin marketplace list", MockResponse::output("[]"))
             .command("plugin install", MockResponse::exit(0))
             .command("plugin uninstall", MockResponse::exit(0))
             .write(mock_bin);
@@ -2402,6 +2389,10 @@ impl TestRepo {
         MockConfig::new("codex")
             .command("plugin marketplace add", MockResponse::exit(0))
             .command("plugin marketplace remove", MockResponse::exit(0))
+            .command(
+                "plugin marketplace list",
+                MockResponse::output(r#"{"marketplaces":[]}"#),
+            )
             .command("plugin add", MockResponse::exit(0))
             .command("plugin remove", MockResponse::exit(0))
             .write(mock_bin);
@@ -2410,13 +2401,15 @@ impl TestRepo {
     }
 
     /// Setup mock `claude` CLI whose only failing command is the marketplace
-    /// removal
+    /// removal, answering `plugin marketplace list --json` with `list`
     ///
-    /// Uninstall reads the config to tell "the marketplace was already gone"
-    /// from a removal that genuinely failed, so the two cases need a mock that
-    /// fails the removal and leaves every other step alone. Must call
+    /// Uninstall asks the harness what it holds to tell "the marketplace was
+    /// already gone" from a removal that genuinely failed, so the two cases
+    /// need a mock that fails the removal and leaves every other step alone.
+    /// `list` is the whole variable between them — a body for an answer the
+    /// reader can use, a failing response for one it cannot. Must call
     /// `setup_mock_ci_tools_unauthenticated()` first.
-    pub fn setup_mock_claude_with_marketplace_remove_failing(&mut self) {
+    pub fn setup_mock_claude_with_marketplace_remove_failing(&mut self, list: MockResponse) {
         let mock_bin = self
             .mock_bin_path
             .as_ref()
@@ -2428,6 +2421,7 @@ impl TestRepo {
                 "plugin marketplace remove",
                 MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
             )
+            .command("plugin marketplace list", list)
             .command("plugin install", MockResponse::exit(0))
             .command("plugin uninstall", MockResponse::exit(0))
             .write(mock_bin);
@@ -2436,11 +2430,11 @@ impl TestRepo {
     }
 
     /// Setup mock `codex` CLI whose only failing command is the marketplace
-    /// removal
+    /// removal, answering `plugin marketplace list --json` with `list`
     ///
     /// The Codex counterpart of
     /// `setup_mock_claude_with_marketplace_remove_failing`.
-    pub fn setup_mock_codex_with_marketplace_remove_failing(&mut self) {
+    pub fn setup_mock_codex_with_marketplace_remove_failing(&mut self, list: MockResponse) {
         let mock_bin = self
             .mock_bin_path
             .as_ref()
@@ -2452,6 +2446,7 @@ impl TestRepo {
                 "plugin marketplace remove",
                 MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
             )
+            .command("plugin marketplace list", list)
             .command("plugin add", MockResponse::exit(0))
             .command("plugin remove", MockResponse::exit(0))
             .write(mock_bin);
