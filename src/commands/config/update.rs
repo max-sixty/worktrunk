@@ -62,6 +62,9 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     if !yes {
+        // Separate the prompt from the previews above; prompt_yes_no_preview
+        // emits no leading blank of its own.
+        eprintln!();
         match prompt_yes_no_preview("Apply updates?", || {})? {
             PromptResponse::Accepted => {}
             PromptResponse::Declined => {

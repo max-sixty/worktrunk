@@ -1580,7 +1580,6 @@ fn test_state_clear_all_prompt_declines(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-
     [36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled
     ");
 

@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 use color_print::cformat;
-use worktrunk::styling::{PROMPT_SYMBOL, eprint, eprintln};
+use worktrunk::styling::{PROMPT_SYMBOL, eprint};
 
 /// Response from a `[y/N/?]` prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +15,14 @@ pub enum PromptResponse {
 }
 
 /// Prompt with `[y/N/?]` options. Loops on `?` to show preview.
+///
+/// Emits no leading blank line: the separator belongs to the narration it
+/// separates from, and most prompts are the first thing their command prints
+/// (`wt config shell install`, `wt config plugins claude install`, the
+/// commit-generation setup offer at the top of `wt merge`), where a leading
+/// blank is exactly the leading blank /writing-user-outputs forbids. A caller
+/// that has already printed adds its own `eprintln!()` first — see
+/// `handle_config_update` and `prompt_shell_integration`.
 ///
 /// # Arguments
 /// * `prompt_text` - The question to ask (without the `[y/N/?]` suffix)
@@ -41,9 +49,6 @@ pub fn prompt_yes_no_preview(
     prompt_text: &str,
     show_preview: impl Fn(),
 ) -> io::Result<PromptResponse> {
-    // Blank line before first prompt for visual separation
-    eprintln!();
-
     loop {
         eprint!(
             "{}",

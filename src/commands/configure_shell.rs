@@ -1111,8 +1111,6 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    // Blank line before prompt for visual separation
-    eprintln!();
     eprint!(
         "{} ",
         prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
@@ -1553,6 +1551,9 @@ fn prompt_for_uninstall_confirmation(
 ) -> Result<bool, String> {
     eprintln!("{}", show_uninstall_preview(results, completion_results));
 
+    // Separate the prompt from the preview above; the prompt emits no leading
+    // blank of its own.
+    eprintln!();
     prompt_yes_no()
 }
 

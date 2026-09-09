@@ -1094,9 +1094,12 @@ fn approvals_diagnostic(repo: Option<&Repository>) -> ApprovalsDiagnostic {
     }
 }
 
-/// Emit the "fish integration found in deprecated location" notice plus the
-/// hint pointing at the canonical path. Used wherever fish integration lives
-/// at the legacy `~/.config/fish/conf.d/` location (deprecated since #566).
+/// Emit the "fish extension lives at the deprecated location" row, naming the
+/// canonical path it should move to. Used wherever fish integration lives at
+/// the legacy `~/.config/fish/conf.d/` location (deprecated since #566). The
+/// migration is one of the things `wt config shell install` does, so the row
+/// carries no hint of its own — the caller counts it toward the section's
+/// single trailing hint.
 fn render_fish_legacy_migration(
     out: &mut String,
     legacy_fish_conf_d: Option<&Path>,
@@ -1115,14 +1118,7 @@ fn render_fish_legacy_migration(
         out,
         "{}",
         info_message(cformat!(
-            "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
-        ))
-    )?;
-    writeln!(
-        out,
-        "{}",
-        hint_message(cformat!(
-            "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
+            "<bold>fish</>: Shell extension @ <bold>{legacy_path}</> (deprecated; now <bold>{canonical_path}</>)"
         ))
     )?;
     Ok(())
@@ -1142,18 +1138,17 @@ fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
     writeln!(
         out,
         "{}",
-        format_with_gutter("autoload -Uz compinit && compinit", None)
+        format_bash_with_gutter("autoload -Uz compinit && compinit")
     )?;
     Ok(())
 }
 
 /// Fish-only: report whether the separate completions file is in place.
-/// Doesn't flip `any_not_configured` — missing fish completions have a
-/// shell-specific remediation hint rather than the generic "To configure"
-/// summary.
-fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<()> {
+/// Returns whether the file is missing, so it counts toward the section's
+/// single trailing `wt config shell install` hint.
+fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<bool> {
     let Ok(completion_path) = Shell::Fish.completion_path(cmd) else {
-        return Ok(());
+        return Ok(false);
     };
     let completion_display = format_path_for_display(&completion_path);
     let shell = Shell::Fish;
@@ -1165,16 +1160,16 @@ fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<
                 "<bold>{shell}</>: Already configured completions @ {completion_display}"
             ))
         )?;
-    } else {
-        let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Completions not configured @ <bold>{completion_display}</>"
-        ));
-        let hint = hint_message(cformat!(
-            "To configure completions, run <underline>{cmd} config shell install {shell}</>"
-        ));
-        writeln!(out, "{warning}\n{hint}")?;
+        return Ok(false);
     }
-    Ok(())
+    writeln!(
+        out,
+        "{}",
+        warning_message(cformat!(
+            "<bold>{shell}</>: Completions not configured @ <bold>{completion_display}</>"
+        ))
+    )?;
+    Ok(true)
 }
 
 /// When the integration is configured but the wrapper isn't loaded in the
@@ -1203,13 +1198,14 @@ fn render_verify_wrapper_hint(
 
 /// Render the `AlreadyExists` row plus any per-shell follow-ups (matched
 /// lines, .exe warning, zsh compinit, fish completions, verify hint).
+/// Returns whether the row still wants `wt config shell install`.
 fn render_already_configured(
     out: &mut String,
     result: &ConfigureResult,
     detection_results: &[FileDetectionResult],
     cmd: &str,
     shell_active: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
     let what = crate::output::shell_integration::shell_extension_label(shell);
@@ -1249,19 +1245,22 @@ fn render_already_configured(
         }
     }
 
-    match shell {
-        Shell::Zsh => render_zsh_compinit_warning(out)?,
+    let needs_install = match shell {
+        Shell::Zsh => {
+            render_zsh_compinit_warning(out)?;
+            false
+        }
         Shell::Fish => render_fish_completion_status(out, cmd)?,
-        _ => {}
-    }
+        _ => false,
+    };
 
     render_verify_wrapper_hint(out, shell, cmd, shell_active)?;
-    Ok(())
+    Ok(needs_install)
 }
 
-/// Render the `WouldAdd`/`WouldCreate` arm. Returns whether the row
-/// should count toward `any_not_configured` (the trailing "To configure"
-/// summary is suppressed for outdated wrappers and dotfile-managed setups).
+/// Render the `WouldAdd`/`WouldCreate` arm. Returns whether the row should
+/// count toward `any_not_configured` — false only for a dotfile-managed setup,
+/// which `wt config shell install` cannot fix.
 fn render_would_add_or_create(
     out: &mut String,
     result: &ConfigureResult,
@@ -1274,25 +1273,24 @@ fn render_would_add_or_create(
     let path = format_path_for_display(&result.path);
     let what = crate::output::shell_integration::shell_extension_label(shell);
 
-    // Fish: prefer migration hint when the legacy conf.d location has
-    // working integration — silencing the "Not configured" row.
+    // Fish: prefer the deprecated-location row when the legacy conf.d location
+    // has working integration — silencing the "Not configured" row.
     if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
         render_fish_legacy_migration(out, legacy_fish_conf_d, cmd)?;
-        return Ok(false);
+        return Ok(true);
     }
 
     // Wrapper-based shells with WouldAdd: file exists but content drifted
-    // (e.g. outdated wrapper). The per-shell "To update" hint covers it,
-    // so the generic "To configure" summary stays silent.
+    // (e.g. outdated wrapper).
     if shell.is_wrapper_based() && matches!(result.action, ConfigAction::WouldAdd) {
-        let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Outdated shell extension @ <bold>{path}</>"
-        ));
-        let hint = hint_message(cformat!(
-            "To update, run <underline>{cmd} config shell install {shell}</>"
-        ));
-        writeln!(out, "{warning}\n{hint}")?;
-        return Ok(false);
+        writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "<bold>{shell}</>: Outdated shell extension @ <bold>{path}</>"
+            ))
+        )?;
+        return Ok(true);
     }
 
     // Integration is loaded at runtime even though no rc file matched —
@@ -1439,7 +1437,8 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     for result in &scan_result.configured {
         match result.action {
             ConfigAction::AlreadyExists => {
-                render_already_configured(out, result, &detection_results, &cmd, shell_active)?;
+                any_not_configured |=
+                    render_already_configured(out, result, &detection_results, &cmd, shell_active)?;
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate
                 if render_would_add_or_create(
@@ -1461,8 +1460,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // For fish with legacy integration, show migration hint instead of "skipped"
     for (shell, path) in &scan_result.skipped {
         if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
-            // Show migration hint for legacy fish location
+            // Report the legacy fish location instead of "skipped"
             render_fish_legacy_migration(out, legacy_fish_conf_d.as_deref(), &cmd)?;
+            any_not_configured = true;
             continue;
         }
         let path = format_path_for_display(path);

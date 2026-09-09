@@ -2460,7 +2460,7 @@ mod pty_tests {
 
         assert_eq!(exit_code, 0);
         install_pty_settings(&temp_home).bind(|| {
-            assert_snapshot!(output.trim_start_matches('\n'));
+            assert_snapshot!(output);
         });
     }
 
@@ -2475,7 +2475,7 @@ mod pty_tests {
         // User declined, so exit code is 1
         assert_eq!(exit_code, 1);
         install_pty_settings(&temp_home).bind(|| {
-            assert_snapshot!(output.trim_start_matches('\n'));
+            assert_snapshot!(output);
         });
 
         // Verify file was not modified
@@ -2600,7 +2600,7 @@ mod pty_tests {
         assert_eq!(exit_code, 0, "uninstall should succeed:\n{output}");
         assert_eq!(fs::read(&zshrc_path).unwrap(), replacement);
         install_pty_settings(&temp_home).bind(|| {
-            assert_snapshot!(output.trim_start_matches('\n'), @r#"
+            assert_snapshot!(output, @r#"
             [2m○[22m Will remove shell extension & completions for [1mzsh[0m @ [1m~/.zshrc[0m
             [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m
 

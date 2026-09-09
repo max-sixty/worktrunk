@@ -114,8 +114,9 @@ pub(crate) fn print_shell_integration_hint(repo: &Repository) {
     let _ = repo.mark_hint_shown(SHELL_INTEGRATION_HINT);
 }
 
-/// Hint shown right after installing: the wrapper cannot be active yet, so
-/// the restart advice is unconditional.
+/// Hint shown right after installing for the current shell, when the wrapper
+/// isn't already intercepting — the shell it was installed into has to reload
+/// before the function exists.
 pub(crate) fn shell_restart_hint() -> &'static str {
     "Restart shell to activate shell integration"
 }
@@ -385,7 +386,13 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
     // Restart hint for current shell. Compare Shell values, not display
     // names — the detected name can be "pwsh" or "zsh-5.9", which would
     // never equal the canonical "powershell"/"zsh" strings.
-    if shells_configured_count > 0 {
+    //
+    // Skipped when the wrapper already intercepted this invocation: the hint
+    // says integration needs activating, and it plainly doesn't. That case is
+    // reached by reinstalling from inside a wrapped shell — a version bump, or
+    // the fish conf.d → functions relocation, which writes a new file for a
+    // wrapper the running shell already has.
+    if shells_configured_count > 0 && !crate::output::is_shell_integration_active() {
         let current_shell_configured = current_shell().is_some_and(|shell| {
             scan_result
                 .configured
@@ -487,6 +494,10 @@ pub fn prompt_shell_integration(
     // and must not happen unpreviewed, exactly as `wt config shell install` previews it
     // (issue #3644).
     let legacy_preview = collect_legacy_cleanups(&scan.configured, binary_name, true);
+    // Separate the offer from the switch output above; prompt_yes_no_preview
+    // emits no leading blank of its own, so `wt config shell install` — where
+    // the same prompt is the first line — starts flush.
+    eprintln!();
     let confirmed = prompt_for_install(
         &scan.configured,
         &scan.completion_results,

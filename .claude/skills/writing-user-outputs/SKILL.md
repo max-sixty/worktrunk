@@ -605,7 +605,12 @@ Specific rules:
 
 - **No leading/trailing blanks** — Start immediately, end cleanly
 - **Blank before prompts, not after** — Signal "pause, something interactive is
-  happening" before the prompt; once the user responds, output flows continuously
+  happening" before the prompt; once the user responds, output flows continuously.
+  The blank belongs to the narration it separates from, so the caller emits it
+  and `prompt_yes_no_preview` does not: a prompt that opens a command's output
+  (`wt config shell install`, `wt config plugins claude install`, the
+  commit-generation offer at the top of `wt merge`) starts flush, since a blank
+  there is a leading blank
 - **One blank between phases** — When a sub-operation completes and a different
   operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
@@ -624,14 +629,14 @@ Specific rules:
   ↳ To configure, run wt config shell install
   ```
 
-**Prompt spacing:** A blank line before the prompt signals "something different
-is about to happen" and gives the user's eye a natural stopping point before they
-need to read and respond. No blank line after — the user's input ends the
-interactive moment and subsequent output flows naturally from that decision.
+**Prompt spacing:** A blank line before a prompt that follows narration signals
+"something different is about to happen" and gives the user's eye a natural
+stopping point before they need to read and respond. No blank line after — the
+user's input ends the interactive moment and subsequent output flows naturally
+from that decision. A prompt with nothing above it, like the setup offer below
+at the top of `wt step commit`, has nothing to separate from and starts flush.
 
 ```
-◎ Detecting available LLM tools...
-
 ❯ Configure claude for commit messages? [y/N/?] y
 ✓ Added to user config:
    ┃ [commit.generation]
