@@ -4,14 +4,20 @@ Four entries from a shipped release, three of which reached users wrong. They
 score the "MANDATORY: Verify Each Changelog Entry" prompt template: run it as a
 subagent prompt and check which of the three it reports.
 
-Run it over the whole 29-entry section, with the earlier per-group notes offered
-as a map. Handed only these four entries every wording found all three, so what
-the cases measure is attention spread across the section, a missing-entries
-sweep, and the attribution checks.
+The template reads the top section of `CHANGELOG.md` on disk, so run the arm in a
+checkout at `v0.77.0`, where that section is the 29 entries these cases come
+from. Run the template unedited: pointing it at the section some other way scores
+a prompt nobody ships, and the section it would otherwise read is whatever
+release is in progress.
 
 ```bash
-git show v0.77.0:CHANGELOG.md | awk '/^## 0\.77\.0/{f=1} /^## 0\.76\.0/{exit} f'
+git worktree add /tmp/wt-eval-0.77.0 v0.77.0   # remove it afterwards
 ```
+
+Offer the run the notes from the per-group agents as a map, the way a release
+does. Handed only these four entries every wording found all three, so what the
+cases measure is attention spread across 29 entries, a missing-entries sweep,
+and the attribution checks.
 
 None of them has its truthmaker wholly outside the commit, and that is hard to
 fix here: this repo's commits routinely restate the surrounding facts in added
