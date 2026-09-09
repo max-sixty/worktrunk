@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **`wt merge` no longer runs `post-commit` in a worktree the user never chose**: the merge removes the worktree that hook is anchored on before the hook starts, so the pipeline was spawned into an emptied path. Where the worktree sat inside the repository, git discovery walked up from there and the hook's commands ran in the primary worktree; anywhere else they didn't run at all, and the only record was a log file nothing reads. The merge now prints `▲ Skipped post-commit: …` naming that worktree, and points at `pre-remove` for work that must finish there. `--no-remove`, merging on the target branch, `wt step commit`, and `wt step squash` still run it.
+- **`wt merge` no longer runs `post-commit` in a worktree the user never chose**: the merge removes the worktree that hook is anchored on before the hook starts, so the pipeline was spawned into an emptied path. Where the worktree sat inside the repository, git discovery walked up from there and the hook's commands ran in the primary worktree; anywhere else they didn't run at all, and the only record was a log file nothing reads. The merge now prints `▲ Skipped post-commit: …` naming that worktree, and points at `pre-remove` for work that must finish there. `--no-remove`, merging on the target branch, `wt step commit`, and `wt step squash` still run it. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
 
 ## 0.77.0
 
