@@ -20,7 +20,7 @@
 
 - **`wt config plugins codex install` installs the plugin too**: it previously registered the marketplace and left you to run `/plugins` in Codex yourself. Uninstall follows for both Codex and Claude Code, removing the plugin and then the marketplace, so the two commands are inverses. (Breaking: Codex uninstall previously left an installed plugin alone; Claude uninstall now also removes the marketplace.) ([#4019](https://github.com/max-sixty/worktrunk/pull/4019))
 
-- **`wt step copy-ignored` says whether it reflinked or copied**: the summary now reads `(reflinked, no extra disk)`, `(full copy)`, or a partial count, so the same `29.5 GB` line distinguishes a free copy from one that actually wrote the bytes. `--format=json` gains `reflinked` and `written`; a `--dry-run` plan no longer reports `files`/`bytes`. ([#4025](https://github.com/max-sixty/worktrunk/pull/4025))
+- **`wt step copy-ignored` says whether it reflinked or copied**: the summary now reads `(reflinked, no extra disk)`, `(full copy)`, or a partial count, so the same `29.5 GB` line distinguishes a free copy from one that actually wrote the bytes. `--format=json` gains `reflinked` and `written`. ([#4025](https://github.com/max-sixty/worktrunk/pull/4025))
 
 - **`wt config update` removes keys its destination cannot hold**: migrating `[select]` or `[commit-generation]` drops keys the new section has no field for, reporting each one. Otherwise the key landed at a path the user never typed and warned on every command, with no way to clear it. ([#3994](https://github.com/max-sixty/worktrunk/pull/3994))
 
