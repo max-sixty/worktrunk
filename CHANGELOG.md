@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Improved
+
+- **`wt config update --output <path>` confirms the write**: it now prints `✓ Wrote user config migration @ ~/migrated.toml`, so a command whose only effect is the file it wrote now says where that file is. Writing to stdout with `--output=-` stays silent, since the artifact is right there. ([#PRNUM](https://github.com/max-sixty/worktrunk/pull/PRNUM))
+
 ### Fixed
 
 - **`wt config plugins claude uninstall` / `codex uninstall` no longer report success over a marketplace that is still there**: to tell an already-removed marketplace from a removal that failed, uninstall used to read the harness's own config file. A file or key the harness renamed reads as an absence there, so every failed removal would have printed `Plugin & marketplace removed` and exited 0. It now asks `claude` / `codex plugin marketplace list --json`, and an answer it cannot read leaves the harness's error standing. ([#4048](https://github.com/max-sixty/worktrunk/pull/4048))

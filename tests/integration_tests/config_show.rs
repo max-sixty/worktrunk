@@ -3565,7 +3565,13 @@ fn test_config_update_output_destinations_emit_same_config(repo: TestRepo) {
         .unwrap();
     assert!(file_output.status.success());
     assert!(file_output.stdout.is_empty());
-    assert!(file_output.stderr.is_empty());
+    let stderr = String::from_utf8_lossy(&file_output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("Wrote user config migration @") && stderr.contains("migrated.toml"),
+        "a file destination confirms the write, unlike stdout; got: {stderr}"
+    );
     assert_eq!(fs::read(destination).unwrap(), stdout_output.stdout);
     assert_eq!(fs::read_to_string(config_path).unwrap(), original);
 }
