@@ -223,18 +223,18 @@ Link when there's substantial documentation the user would benefit from reading 
 
 ### MANDATORY: Verify Each Changelog Entry
 
-**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** A correction made after the tag lands in `CHANGELOG.md` and not in the GitHub release body readers already have, so this pass is the last one whose findings reach them. It is worth as much time as it takes.
+**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** The tag publishes this text as the GitHub release body, so a correction afterwards takes a follow-up PR to `CHANGELOG.md` and a hand-edit of the release page, and people have read the wrong line by then. This pass is worth as much time as it takes.
 
 **The gate cuts both ways.** Checking only accuracy pushes every entry longer: "understates" and "not covered" have no counterweight, so each pass adds and none subtracts. That asymmetry is what drove the ratchet above. An entry that is too long, too internal, or ranked above one more readers will notice is reported on the same footing as one that is wrong.
 
 **Subagent prompt template:**
 
 ```
-Verify these changelog entries for version X.Y.Z are accurate. They ship with the
-tag and are not revised afterwards, so a claim that goes unchecked here goes out to
-readers who act on it. Spend the time to read a source for each one: reading the
-entry and finding it plausible is not a check, because the entry was written from
-the same commits you are about to read.
+Verify these changelog entries for version X.Y.Z are accurate. They publish with
+the tag, and by the time anyone corrects a wrong line, readers have acted on it.
+Spend the time to read a source for each one: reading the entry and finding it
+plausible is not a check, because the entry was written from the same commits you
+are about to read.
 
 Previous version: [e.g., v0.1.9]
 Commits to check: git log v<previous>..HEAD
@@ -250,12 +250,15 @@ its headline.
 1. Find the relevant commit(s) using git log and git show
 2. Read the diff, not the commit message. The diff settles what changed, and
    nothing else: not what the behavior was before, not what the user sees, not
-   what a file it doesn't touch does. For those, go to the source that holds the
-   claim. Settle a "previously" / "no longer" / "so X broke" claim by reading
-   the old file (`git show <sha>^:<path>`) and confirming the old behavior
-   there. The new code's handling of the old case is not that confirmation: a
-   case added together with a comment about why it produces nothing reads in a
-   diff exactly like a case that used to produce something
+   what a file it doesn't touch does. Settle a "previously" / "no longer" / "so X
+   broke" claim by reading the old file (`git show <sha>^:<path>`) and confirming
+   the old behavior there. The new code's handling of the old case is not that
+   confirmation: a case added together with a comment about why it produces
+   nothing reads in a diff exactly like a case that used to produce something.
+   Some claims have no source in the commit at all — a version floor, what a
+   rendered page shows, how another component behaves. Read that source: the
+   rendered output, the other component's own file, the upstream project's own
+   releases
 3. Flag any claim its source does not support, whether it overstates,
    understates, or misdescribes
 4. Flag if the entry runs over 60 words (80 for one of the two or three headline
