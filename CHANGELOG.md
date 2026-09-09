@@ -6,6 +6,8 @@
 
 - **`wt merge` no longer runs `post-commit` in a worktree the user never chose**: the merge removes the worktree that hook is anchored on before the hook starts, so the pipeline was spawned into an emptied path. Where the worktree sat inside the repository, git discovery walked up from there and the hook's commands ran in the primary worktree; anywhere else they didn't run at all, and the only record was a log file nothing reads. The merge now prints `▲ Skipped post-commit: …` naming that worktree, and points at `pre-remove` for work that must finish there. `--no-remove`, merging on the target branch, `wt step commit`, and `wt step squash` still run it. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
 
+- **`wt config plugins claude uninstall` / `codex uninstall` no longer report success over a marketplace that is still there**: to tell an already-removed marketplace from a removal that failed, uninstall used to read the harness's own config file. A file or key the harness renamed reads as an absence there, so every failed removal would have printed `Plugin & marketplace removed` and exited 0. It now asks `claude` / `codex plugin marketplace list --json`, and an answer it cannot read leaves the harness's error standing. ([#4048](https://github.com/max-sixty/worktrunk/pull/4048))
+
 ## 0.77.0
 
 ### Improved

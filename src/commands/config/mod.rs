@@ -143,6 +143,43 @@ fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The JSON `<program> plugin marketplace list --json` prints, or `None` where
+/// the harness did not answer.
+///
+/// Both harnesses expose this, and it is the only thing either of them will
+/// say about its own marketplaces that is meant to be read by another program.
+/// The alternative — reading the file the harness stores them in — is a guess
+/// at private layout, and a guess that cannot fail loudly: a record that moved
+/// looks exactly like a record that was never written, so every genuine
+/// failure reads as an already-finished removal. Asking the harness has no
+/// such gap, and a harness that will not answer at all leaves the question
+/// open rather than answering it wrong.
+fn plugin_marketplace_list(program: &str) -> Option<serde_json::Value> {
+    let output = worktrunk::shell_exec::Cmd::new(program)
+        .args(["plugin", "marketplace", "list", "--json"])
+        .run()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Whether a harness's marketplace list names `name`, or `None` where it is
+/// not a list of named marketplaces.
+///
+/// An empty list is a confident `Some(false)`: the harness has said it holds
+/// nothing. An entry that is not an object carrying a string `name` is a shape
+/// this does not understand, so it answers nothing rather than reporting an
+/// absence it inferred from a field that moved.
+fn marketplace_listed(entries: &[serde_json::Value], name: &str) -> Option<bool> {
+    let mut listed = false;
+    for entry in entries {
+        listed |= entry.get("name")?.as_str()? == name;
+    }
+    Some(listed)
+}
+
 /// Run a removal whose goal is that the target is gone.
 ///
 /// Both harnesses' `plugin marketplace remove` exits non-zero when the
@@ -152,12 +189,12 @@ fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
 /// removal that genuinely failed, which still surfaces the harness's own
 /// stderr in the gutter.
 ///
-/// Only a confident `Some(false)` drops the error. `None` — no home directory,
-/// or a config that will not read, parse, or match the shape the reader knows
-/// — keeps it, because a reader that cannot see the marketplace has not
-/// established that the removal worked. Reporting success there would fail open
-/// on exactly the silent case: a config whose shape changed under us would
-/// swallow every genuine failure and print `Plugin & marketplace removed`.
+/// Only a confident `Some(false)` drops the error. `None` — the harness would
+/// not list its marketplaces, or listed them in a shape this does not
+/// recognize — keeps it, because an answer that could not be read has not
+/// established that the removal worked. Reporting success there would fail
+/// open on exactly the silent case, printing `Plugin & marketplace removed`
+/// over a marketplace that is still there.
 ///
 /// The command runs either way, so the `?` preview lists what the uninstall
 /// actually invokes.
