@@ -74,6 +74,6 @@ Uninstalls the Worktrunk plugin from Claude Code and removes its marketplace. Eq
 [107m [0m [2m[0m[2m[34mclaude[0m[2m plugin uninstall worktrunk@worktrunk[0m
 [107m [0m [2m[0m[2m[34mclaude[0m[2m plugin marketplace remove worktrunk[0m
 
-Requires [2mclaude[0m CLI. Skips gracefully only when both are already gone. An uninstall that removed the plugin and then failed leaves the marketplace behind; running it again removes that half.
+Requires [2mclaude[0m CLI. Both removals run every time, tolerating only the "already gone" error Claude Code itself reports. Running it again is safe, and finishes an uninstall that removed the plugin and then failed on the marketplace.
 
 ----- stderr -----
