@@ -2201,9 +2201,8 @@ fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp
 fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup mock claude CLI and plugin as installed
-    repo.setup_mock_claude_installed();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    // Setup mock claude CLI listing the worktrunk plugin
+    repo.setup_mock_claude_with_plugin_installed();
 
     // Create global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -2258,9 +2257,8 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
 fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup mock claude CLI, plugin, AND statusline
-    repo.setup_mock_claude_installed();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    // Setup mock claude CLI listing the plugin, AND the statusline
+    repo.setup_mock_claude_with_plugin_installed();
     TestRepo::setup_statusline_configured(temp_home.path());
 
     // Create global config
@@ -2478,43 +2476,11 @@ fn test_config_show_gemini_available_extension_not_installed(
 }
 
 #[rstest]
-fn test_config_show_gemini_extension_invalid_manifest(mut repo: TestRepo, temp_home: TempDir) {
-    // A malformed gemini-extension.json should fall through the JSON-parse
-    // branch and report the extension as not installed (the install hint).
-    repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_gemini_installed();
-
-    let extension_dir = temp_home.path().join(".gemini/extensions/worktrunk");
-    fs::create_dir_all(&extension_dir).unwrap();
-    fs::write(extension_dir.join("gemini-extension.json"), "not json\n").unwrap();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
 fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup mock gemini CLI and extension as installed
-    repo.setup_mock_gemini_installed();
-    TestRepo::setup_gemini_extension_installed(temp_home.path());
+    // Setup mock gemini CLI listing the worktrunk extension
+    repo.setup_mock_gemini_with_extension_installed();
 
     // Create global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -4092,32 +4058,9 @@ fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins();
-
-    // Write invalid JSON to the plugins file — is_plugin_installed() should
-    // treat this as "not installed" and the install command should proceed
-    let plugins_dir = temp_home.path().join(".claude/plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    fs::write(plugins_dir.join("installed_plugins.json"), "not valid json").unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "plugins", "claude", "install", "--yes"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
 fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    repo.setup_mock_claude_with_plugin_installed();
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4148,7 +4091,6 @@ fn test_plugins_claude_install_claude_not_found(repo: TestRepo) {
 fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_with_plugins();
-    TestRepo::setup_plugin_installed(temp_home.path());
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4161,11 +4103,28 @@ fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// The plugin removal's goal is that the plugin is gone, so Claude Code
+/// listing no plugins is that goal already met. `claude plugin uninstall`
+/// exits non-zero once the plugin is absent, and the command has to succeed
+/// anyway — and go on to the marketplace, which a first `uninstall` that
+/// removed the plugin and then failed on the marketplace leaves behind.
 #[rstest]
-fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: TempDir) {
+fn test_plugins_claude_uninstall_tolerates_absent_plugin(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::MockConfig;
+
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins();
-    // Don't setup plugin as installed
+    repo.setup_mock_claude_installed();
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
+    MockConfig::new("claude")
+        .command(
+            "plugin uninstall",
+            MockResponse::exit(1).with_stderr("error: plugin not found\n"),
+        )
+        .command("plugin list", MockResponse::output("[]"))
+        .command("plugin marketplace remove", MockResponse::exit(0))
+        .write(mock_bin);
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4398,6 +4357,8 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
     // untracked file behind the command under test.
     let call_log = TempDir::new().unwrap();
 
+    let temp_home = TempDir::new().unwrap();
+
     for (action, expected) in [
         (
             "install",
@@ -4414,14 +4375,6 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
             ],
         ),
     ] {
-        // Each subcommand prompts only from the state it acts on, so the home
-        // is per-action: install returns early when the plugin is already
-        // installed, uninstall when it isn't.
-        let temp_home = TempDir::new().unwrap();
-        if action == "uninstall" {
-            TestRepo::setup_plugin_installed(temp_home.path());
-        }
-
         let mut cmd = repo.wt_command();
         cmd.args(["config", "plugins", "claude", action])
             .current_dir(repo.root_path())
@@ -4450,11 +4403,20 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
             .filter_map(|line| line.find("claude ").map(|i| line[i..].trim_end()))
             .collect();
         assert_eq!(previewed, expected, "{action} preview: {stderr}");
-        // The preview is only a preview: declining must leave claude unspawned.
-        let calls = mock_calls(call_log.path(), "claude");
+        // The preview is only a preview: declining must run none of the
+        // commands it listed. `claude plugin list --json` is a read the
+        // subcommand makes to decide, not one of the commands it previews, so
+        // the log is filtered to the calls that change something.
+        let mutations = |calls: Vec<String>| -> Vec<String> {
+            calls
+                .into_iter()
+                .filter(|call| !call.ends_with("--json"))
+                .collect()
+        };
+        let calls = mutations(mock_calls(call_log.path(), "claude"));
         assert!(
             calls.is_empty(),
-            "declining {action} must spawn no claude: {calls:#?}"
+            "declining {action} must run none of its commands: {calls:#?}"
         );
 
         // Both sides of the comparison above are the preview text, so nothing
@@ -4463,7 +4425,12 @@ fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
         // thing that can here: `setup_mock_claude_with_plugins` registers the
         // `plugin marketplace` prefix, which matches `add` and `remove` alike,
         // so a wrong marketplace name still reaches the mock's exit 0.
-        let ran = plugin_calls_when_accepted(&repo, "claude", action, temp_home.path());
+        let ran = mutations(plugin_calls_when_accepted(
+            &repo,
+            "claude",
+            action,
+            temp_home.path(),
+        ));
         // `mock_calls` records argv without argv[0]; `expected` carries the
         // binary name because that is how the preview renders it.
         let want: Vec<String> = expected
@@ -4503,44 +4470,6 @@ fn test_plugins_claude_uninstall_tolerates_absent_marketplace(
 ) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_with_marketplace_remove_failing(MockResponse::output("[]"));
-    TestRepo::setup_plugin_installed(temp_home.path());
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// A first `uninstall` that removed the plugin and then failed on the
-/// marketplace leaves the marketplace behind. Re-running has to finish that
-/// job rather than reporting "Plugin not installed" and exiting 0 with the
-/// marketplace still configured.
-#[rstest]
-fn test_plugins_claude_uninstall_removes_marketplace_left_without_plugin(
-    mut repo: TestRepo,
-    temp_home: TempDir,
-) {
-    use crate::common::mock_commands::MockConfig;
-
-    repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_installed();
-    // No `installed_plugins.json`: the plugin is already gone, and only the
-    // marketplace Claude Code still lists is left to remove.
-    let mock_bin = repo
-        .mock_bin_path()
-        .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
-    MockConfig::new("claude")
-        .command("plugin marketplace remove", MockResponse::exit(0))
-        .command(
-            "plugin marketplace list",
-            MockResponse::output(TestRepo::CLAUDE_MARKETPLACES_WITH_WORKTRUNK),
-        )
-        .write(mock_bin);
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4564,7 +4493,6 @@ fn test_plugins_claude_uninstall_tolerates_marketplace_missing_from_list(
     repo.setup_mock_claude_with_marketplace_remove_failing(MockResponse::output(
         TestRepo::CLAUDE_MARKETPLACES_WITHOUT_WORKTRUNK,
     ));
-    TestRepo::setup_plugin_installed(temp_home.path());
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4593,7 +4521,6 @@ fn test_plugins_claude_uninstall_surfaces_failure_when_list_unusable(
 ) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_with_marketplace_remove_failing(list);
-    TestRepo::setup_plugin_installed(temp_home.path());
 
     let mut cmd = repo.wt_command();
     cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
@@ -6150,7 +6077,9 @@ fn test_plugins_claude_install_statusline_falls_back_to_dot_claude(
 #[rstest]
 fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins_failing();
+    // Claude Code lists no plugins, so the install runs rather than
+    // short-circuiting, and its first command is the one that fails.
+    repo.setup_mock_claude_with_plugins_failing(MockResponse::output("[]"));
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -6176,6 +6105,7 @@ fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: 
         .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
     MockConfig::new("claude")
         .command("plugin marketplace", MockResponse::exit(0))
+        .command("plugin list", MockResponse::output("[]"))
         .command(
             "plugin install",
             MockResponse::exit(1).with_stderr("error: install failed\n"),
@@ -6196,8 +6126,11 @@ fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: 
 #[rstest]
 fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins_failing();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    // Claude Code still lists the plugin after the failed removal, which is
+    // what makes the failure genuine rather than an already-finished job.
+    repo.setup_mock_claude_with_plugins_failing(MockResponse::output(
+        TestRepo::CLAUDE_PLUGINS_WITH_WORKTRUNK,
+    ));
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -6219,7 +6152,6 @@ fn test_plugins_claude_uninstall_second_step_fails(mut repo: TestRepo, temp_home
 
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_installed();
-    TestRepo::setup_plugin_installed(temp_home.path());
 
     // Plugin uninstall succeeds and only the marketplace removal that follows
     // it fails, so the error the command surfaces can come from nothing else.
@@ -6457,7 +6389,6 @@ mod plugin_prompt_pty {
     fn test_plugins_claude_uninstall_prompt_accept(mut repo: TestRepo, temp_home: TempDir) {
         repo.setup_mock_ci_tools_unauthenticated();
         repo.setup_mock_claude_with_plugins();
-        TestRepo::setup_plugin_installed(temp_home.path());
 
         let env_vars = plugin_env_vars(&repo);
         let cmd = build_pty_command(
@@ -6484,7 +6415,6 @@ mod plugin_prompt_pty {
     fn test_plugins_claude_uninstall_prompt_decline(mut repo: TestRepo, temp_home: TempDir) {
         repo.setup_mock_ci_tools_unauthenticated();
         repo.setup_mock_claude_with_plugins();
-        TestRepo::setup_plugin_installed(temp_home.path());
 
         let env_vars = plugin_env_vars(&repo);
         let cmd = build_pty_command(

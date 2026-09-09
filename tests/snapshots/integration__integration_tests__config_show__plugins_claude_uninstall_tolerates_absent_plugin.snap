@@ -62,4 +62,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Plugin not installed
+[36m◎[39m [36mUninstalling plugin...[39m
+[36m◎[39m [36mRemoving Claude Code plugin marketplace...[39m
+[32m✓[39m [32mPlugin & marketplace removed[39m

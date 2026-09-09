@@ -74,6 +74,8 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
         }
     }
 
+    // `codex plugin remove` exits 0 when the plugin is already gone, so this
+    // step needs none of the tolerance the marketplace removal below does.
     eprintln!("{}", progress_message("Uninstalling plugin..."));
     super::run_plugin_cli("codex", &["plugin", "remove", PLUGIN_SELECTOR])?;
 
@@ -100,26 +102,28 @@ fn require_codex_cli() -> Result<()> {
     bail!("codex CLI not found. Install Codex first: https://developers.openai.com/codex/cli/");
 }
 
-/// Whether the worktrunk marketplace is configured in Codex, or `None` where
-/// Codex's answer cannot be read.
+/// Whether Codex lists the worktrunk marketplace, or `None` where its answer
+/// cannot be read.
 ///
-/// The Codex counterpart of the Claude reader in [`super::show`], asked for
-/// the same reason: `codex plugin marketplace remove` exits non-zero when the
-/// marketplace is not configured. `codex plugin marketplace list --json` nests
-/// its entries under `marketplaces`.
+/// `codex plugin marketplace list --json` nests its entries under
+/// `marketplaces` where Claude Code prints a bare array.
 ///
-/// Asking Codex is what lets this claim as much as the Claude one. Reading
-/// `config.toml` could not: `codex plugin marketplace remove` deletes the
-/// whole `marketplaces` key along with the last entry under it, so a config
-/// whose key had been renamed was indistinguishable from one a successful
-/// removal had just emptied — and the only reading that let a second
-/// `uninstall` succeed was the one that reported every genuine failure as
-/// `Codex plugin & marketplace removed`. Codex's own list separates them.
+/// Reading `config.toml` instead could not claim as much. `codex plugin
+/// marketplace remove` deletes the whole `marketplaces` key along with the
+/// last entry under it, so a config whose key had been renamed looked exactly
+/// like one a successful removal had just emptied, and the only reading that
+/// let a second `uninstall` succeed was the one that reported every genuine
+/// failure as `Codex plugin & marketplace removed`. Codex's own list
+/// separates the two.
 ///
 /// It also drops wt's copy of Codex's `CODEX_HOME` resolution. The child
 /// reads the variable itself, so a rule about where Codex keeps its config is
 /// no longer duplicated here to drift from the real one.
 pub(super) fn is_marketplace_configured() -> Option<bool> {
-    let listed = super::plugin_marketplace_list("codex")?;
-    super::marketplace_listed(listed.get("marketplaces")?.as_array()?, MARKETPLACE_NAME)
+    let listed = super::harness_listing("codex", &["plugin", "marketplace", "list", "--json"])?;
+    super::listing_names(
+        listed.get("marketplaces")?.as_array()?,
+        "name",
+        MARKETPLACE_NAME,
+    )
 }

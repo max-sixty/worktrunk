@@ -290,11 +290,17 @@ pub(super) fn home_dir() -> Option<PathBuf> {
 
 /// Get the Claude Code config directory.
 ///
-/// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its entire
-/// config tree (`settings.json`, `plugins/`, ...) away from the default
-/// `~/.claude`. A leading `~/` in the value is expanded against the home
-/// directory; the shell normally expands it before the variable is set, so a
-/// literal `~` only reaches us when the variable is set in a non-shell context.
+/// This locates `settings.json`, the one Claude Code file wt reads. It reads
+/// that file because it writes it: `install-statusline` merges the
+/// `statusLine` key in, and Claude Code has no command that reports the
+/// setting back. Everything else wt wants to know about a harness it asks the
+/// harness (see [`super::harness_listing`]).
+///
+/// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its config
+/// away from the default `~/.claude`. A leading `~/` in the value is expanded
+/// against the home directory; the shell normally expands it before the
+/// variable is set, so a literal `~` only reaches us when the variable is set
+/// in a non-shell context.
 pub(super) fn claude_config_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
         && !dir.is_empty()
@@ -305,47 +311,6 @@ pub(super) fn claude_config_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(dir));
     }
     home_dir().map(|home| home.join(".claude"))
-}
-
-/// Check if the worktrunk plugin is installed in Claude Code
-pub(super) fn is_plugin_installed() -> bool {
-    let Some(config_dir) = claude_config_dir() else {
-        return false;
-    };
-
-    let plugins_file = config_dir.join("plugins/installed_plugins.json");
-    let Ok(content) = std::fs::read_to_string(&plugins_file) else {
-        return false;
-    };
-
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-
-    json.get("plugins")
-        .and_then(|p| p.get("worktrunk@worktrunk"))
-        .is_some()
-}
-
-/// Whether the worktrunk marketplace is configured in Claude Code, or `None`
-/// where Claude Code's answer cannot be read
-///
-/// Asked because `claude plugin marketplace remove` exits non-zero when the
-/// marketplace is not there, so uninstall needs to tell that from a removal
-/// that genuinely failed. `claude plugin marketplace list --json` answers it
-/// as a bare array of marketplace objects.
-///
-/// The question goes to Claude Code rather than to the config tree
-/// `is_plugin_installed` reads, because that tree records marketplaces in a
-/// file whose absence means two different things. A
-/// `plugins/known_marketplaces.json` Claude Code never wrote and one it has
-/// since renamed or moved are the same missing path, and reading the second as
-/// a confident absence would report every failed removal as
-/// `Plugin & marketplace removed`. An empty list carries no such ambiguity:
-/// Claude Code has said what it holds.
-pub(super) fn is_marketplace_configured() -> Option<bool> {
-    let listed = super::plugin_marketplace_list("claude")?;
-    super::marketplace_listed(listed.as_array()?, "worktrunk")
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.
@@ -386,9 +351,10 @@ pub(super) fn is_statusline_configured() -> bool {
 fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("CLAUDE CODE", None))?;
 
-    // Plugin status
-    let plugin_installed = is_plugin_installed();
-    if plugin_installed {
+    // Plugin status. An answer wt could not read gets the same hint as a
+    // plain absence: the install it points at is idempotent, so following it
+    // is safe either way, and Claude Code's own output then says what is true.
+    if super::plugins::is_plugin_installed() == Some(true) {
         writeln!(out, "{}", success_message("Plugin installed"))?;
     } else {
         writeln!(
@@ -518,26 +484,18 @@ fn is_gemini_available() -> bool {
     which::which("gemini").is_ok()
 }
 
-/// Check if the worktrunk extension is installed in Gemini CLI.
+/// Whether Gemini CLI lists the worktrunk extension, or `None` where its
+/// answer cannot be read.
 ///
-/// `gemini extensions install` clones the extension into
-/// `~/.gemini/extensions/<name>/`, so a worktrunk install leaves a
-/// `gemini-extension.json` whose `name` is `worktrunk` at that path.
-fn is_gemini_extension_installed() -> bool {
-    let Some(home) = home_dir() else {
-        return false;
-    };
-
-    let manifest = home.join(".gemini/extensions/worktrunk/gemini-extension.json");
-    let Ok(content) = std::fs::read_to_string(&manifest) else {
-        return false;
-    };
-
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-
-    json.get("name").and_then(|n| n.as_str()) == Some("worktrunk")
+/// `gemini extensions list -o json` prints a bare array of extension objects
+/// carrying the `name` the install was made under. The question goes to
+/// Gemini for the reason [`super::harness_listing`] gives: the alternative is
+/// reading `~/.gemini/extensions/`, whose layout is Gemini's to change, and a
+/// layout that changed would read here as an extension that was never
+/// installed.
+fn is_gemini_extension_installed() -> Option<bool> {
+    let listed = super::harness_listing("gemini", &["extensions", "list", "-o", "json"])?;
+    super::listing_names(listed.as_array()?, "name", "worktrunk")
 }
 
 /// Render GEMINI CLI section (extension status).
@@ -545,7 +503,7 @@ fn is_gemini_extension_installed() -> bool {
 fn render_gemini_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("GEMINI CLI", None))?;
 
-    if is_gemini_extension_installed() {
+    if is_gemini_extension_installed() == Some(true) {
         writeln!(out, "{}", success_message("Extension installed"))?;
     } else {
         writeln!(
