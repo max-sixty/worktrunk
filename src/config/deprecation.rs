@@ -2991,11 +2991,13 @@ args = []
         [commit.generation]
         command = "llm"
         "#);
+        // `command` is the section's only other key and it is supported, so
+        // any unsupported-key report from this input would name `args`.
         assert!(
-            !has_kind(
-                &detect_deprecations(content),
-                |k| matches!(k, DeprecationKind::UnsupportedKey { key, .. } if key == "args")
-            ),
+            !has_kind(&detect_deprecations(content), |k| matches!(
+                k,
+                DeprecationKind::UnsupportedKey { .. }
+            )),
             "empty args merges away rather than being reported as unsupported"
         );
     }
