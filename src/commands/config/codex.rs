@@ -1,7 +1,5 @@
 //! Codex plugin and marketplace management.
 
-use std::path::PathBuf;
-
 use anyhow::{Result, bail};
 use color_print::cformat;
 use worktrunk::styling::{eprintln, hint_message, progress_message, success_message};
@@ -102,50 +100,26 @@ fn require_codex_cli() -> Result<()> {
     bail!("codex CLI not found. Install Codex first: https://developers.openai.com/codex/cli/");
 }
 
-/// Codex's config root.
-///
-/// Honors `CODEX_HOME`, which relocates the whole tree away from `~/.codex`,
-/// the same way `claude_config_dir` honors `CLAUDE_CONFIG_DIR`. They diverge
-/// on one point deliberately: a leading `~/` is taken literally here rather
-/// than expanded against the home directory, because a shell expands it before
-/// the variable is set and nothing sets `CODEX_HOME` from a non-shell context.
-fn codex_config_dir() -> Option<PathBuf> {
-    match std::env::var("CODEX_HOME") {
-        Ok(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => worktrunk::path::home_dir().map(|home| home.join(".codex")),
-    }
-}
-
 /// Whether the worktrunk marketplace is configured in Codex, or `None` where
-/// the config cannot answer.
+/// Codex's answer cannot be read.
 ///
-/// `codex plugin marketplace remove` exits non-zero when the marketplace is
-/// not configured, so uninstall needs to tell that from a removal that
-/// genuinely failed. Codex records each one as a `[marketplaces.<name>]`
-/// table in `config.toml`.
+/// The Codex counterpart of the Claude reader in [`super::show`], asked for
+/// the same reason: `codex plugin marketplace remove` exits non-zero when the
+/// marketplace is not configured. `codex plugin marketplace list --json` nests
+/// its entries under `marketplaces`.
 ///
-/// `None` is the same "cannot tell" the Claude reader returns: a `config.toml`
-/// that will not read or parse, or whose `marketplaces` is not a table, cannot
-/// say worktrunk's entry is gone.
+/// Asking Codex is what lets this claim as much as the Claude one. Reading
+/// `config.toml` could not: `codex plugin marketplace remove` deletes the
+/// whole `marketplaces` key along with the last entry under it, so a config
+/// whose key had been renamed was indistinguishable from one a successful
+/// removal had just emptied — and the only reading that let a second
+/// `uninstall` succeed was the one that reported every genuine failure as
+/// `Codex plugin & marketplace removed`. Codex's own list separates them.
 ///
-/// It claims less than the Claude reader does, because less is available here.
-/// A fresh `config.toml` legitimately has no `marketplaces` key at all, so a
-/// key that was renamed or relocated is indistinguishable from a user who has
-/// configured no marketplaces, and reads as a confident absence.
+/// It also drops wt's copy of Codex's `CODEX_HOME` resolution. The child
+/// reads the variable itself, so a rule about where Codex keeps its config is
+/// no longer duplicated here to drift from the real one.
 pub(super) fn is_marketplace_configured() -> Option<bool> {
-    let path = codex_config_dir()?.join("config.toml");
-    // `try_exists` so a directory we lack permission to stat is unknown rather
-    // than the `false` that `exists` reports for it.
-    if !path.try_exists().ok()? {
-        return Some(false);
-    }
-
-    let content = std::fs::read_to_string(&path).ok()?;
-    let config = content.parse::<toml::Table>().ok()?;
-    match config.get("marketplaces") {
-        None => Some(false),
-        Some(marketplaces) => marketplaces
-            .as_table()
-            .map(|table| table.contains_key(MARKETPLACE_NAME)),
-    }
+    let listed = super::plugin_marketplace_list("codex")?;
+    super::marketplace_listed(listed.get("marketplaces")?.as_array()?, MARKETPLACE_NAME)
 }

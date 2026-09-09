@@ -328,40 +328,24 @@ pub(super) fn is_plugin_installed() -> bool {
 }
 
 /// Whether the worktrunk marketplace is configured in Claude Code, or `None`
-/// where the config cannot answer
+/// where Claude Code's answer cannot be read
 ///
-/// Read from the same config tree as `is_plugin_installed`, and asked for the
-/// same reason: `claude plugin marketplace remove` exits non-zero when the
+/// Asked because `claude plugin marketplace remove` exits non-zero when the
 /// marketplace is not there, so uninstall needs to tell that from a removal
-/// that genuinely failed. `known_marketplaces.json` is keyed by marketplace
-/// name.
+/// that genuinely failed. `claude plugin marketplace list --json` answers it
+/// as a bare array of marketplace objects.
 ///
-/// The three-way answer is what keeps that safe. A file Claude Code has never
-/// written records no marketplaces, so its absence is a confident no. A file
-/// that exists and cannot be read, parsed, or recognized leaves the question
-/// open, and `run_plugin_removal` keeps the harness's error rather than
-/// reporting a removal it cannot confirm.
-///
-/// Recognizing the shape is the part that earns its keep. A key lookup alone
-/// answers "absent" for any JSON that simply lacks it, so a file reshaped the
-/// way the `installed_plugins.json` beside it wraps its map in a `version` key
-/// would parse, miss, and report a confident no — every genuine failure
-/// silently reported as success. Requiring every value to be a marketplace
-/// object turns that reshape into `None` instead.
+/// The question goes to Claude Code rather than to the config tree
+/// `is_plugin_installed` reads, because that tree records marketplaces in a
+/// file whose absence means two different things. A
+/// `plugins/known_marketplaces.json` Claude Code never wrote and one it has
+/// since renamed or moved are the same missing path, and reading the second as
+/// a confident absence would report every failed removal as
+/// `Plugin & marketplace removed`. An empty list carries no such ambiguity:
+/// Claude Code has said what it holds.
 pub(super) fn is_marketplace_configured() -> Option<bool> {
-    let path = claude_config_dir()?.join("plugins/known_marketplaces.json");
-    // `try_exists` so a directory we lack permission to stat is unknown rather
-    // than the `false` that `exists` reports for it.
-    if !path.try_exists().ok()? {
-        return Some(false);
-    }
-
-    let content = std::fs::read_to_string(&path).ok()?;
-    let json = serde_json::from_str::<serde_json::Value>(&content).ok()?;
-    let map = json.as_object()?;
-    map.values()
-        .all(serde_json::Value::is_object)
-        .then(|| map.contains_key("worktrunk"))
+    let listed = super::plugin_marketplace_list("claude")?;
+    super::marketplace_listed(listed.as_array()?, "worktrunk")
 }
 
 /// Whether Claude Code's statusline runs worktrunk's.
