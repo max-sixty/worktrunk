@@ -659,9 +659,12 @@ impl Repository {
 /// from any command, and it holds every object.
 ///
 /// The bare test is git's own from `is_git_directory()`: `HEAD`, plus `objects`
-/// and `refs` directories. It is deliberately shallow — this decides whether to
-/// *withhold* a claim, so a false positive costs a vaguer message and a false
-/// negative costs a wrong one.
+/// and `refs` directories. It is deliberately shallow — both callers use the
+/// answer to decide whether to *withhold* something, so a false positive costs
+/// only caution and a false negative costs a wrong claim.
+/// [`Repository::path_selector_directory`] withholds a "no worktree there"
+/// message; `run_hooks_background` withholds a background hook pipeline whose
+/// anchor would no longer stop git's discovery walk.
 ///
 /// Which is why absence has to be established rather than assumed. `Path::exists`
 /// answers `false` for every error alike, so a `.git` that cannot be statted —
@@ -678,7 +681,7 @@ impl Repository {
 /// case [`Repository::prune_worktree_entry`] documents). The pointer cannot
 /// tell them apart, so resolving it would license "this is a leftover" over the
 /// second.
-fn holds_git_data(path: &Path) -> bool {
+pub fn holds_git_data(path: &Path) -> bool {
     // `symlink_metadata` reports on the entry itself, so a symlink counts even
     // when its target is gone, and it surfaces a traversal error instead of
     // swallowing it.

@@ -35,7 +35,11 @@
 //!
 //! "Runs in" is the *anchor* — the executor's plan lookup key and render root,
 //! not a config source. A `pre-start`'s new worktree need not exist when the
-//! gate runs; the config came from the invoking worktree regardless.
+//! gate runs; the config came from the invoking worktree regardless. A
+//! background pipeline whose anchor no longer holds git data by the time the
+//! announcer flushes is dropped and reported rather than spawned (see
+//! [`report_orphaned_pipelines`]); `wt merge` is what reaches that, since it
+//! removes `post-commit`'s anchor before the flush.
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
@@ -68,10 +72,11 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, format_hook_variables};
-use worktrunk::git::{Repository, add_hook_skip_hint};
+use worktrunk::git::{Repository, add_hook_skip_hint, holds_git_data};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, verbosity,
+    warning_message,
 };
 
 use super::command_executor::{
@@ -411,11 +416,22 @@ impl Drop for HookAnnouncer<'_> {
 /// When `show_branch` is true, the announce includes the branch name for
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
 /// `Running post-remove for feature: docs (user)`.
+///
+/// Pipelines whose anchor no longer holds git data are dropped first, so the
+/// announce describes only what starts — see [`report_orphaned_pipelines`].
 fn run_hooks_background(
     repo: &Repository,
     pipelines: Vec<PendingPipeline>,
     show_branch: bool,
 ) -> anyhow::Result<()> {
+    let (pipelines, orphaned): (Vec<_>, Vec<_>) = pipelines
+        .into_iter()
+        .partition(|p| holds_git_data(&p.worktree_path));
+    report_orphaned_pipelines(&orphaned);
+    if pipelines.is_empty() {
+        return Ok(());
+    }
+
     // Merge per-source summaries by hook type so user+project for the same
     // type render as one clause: `post-merge: sync, push (user); build (project)`.
     // Pull `display_path` off the first pipeline that has one — every hook
@@ -474,6 +490,44 @@ fn run_hooks_background(
     }
 
     Ok(())
+}
+
+/// Report background hook pipelines dropped because their anchor is gone.
+///
+/// A pipeline runs with its anchor as cwd, and the runner
+/// ([`run_pipeline`](super::run_pipeline::run_pipeline)) opens the repository
+/// by discovery from there. Once the anchor stops holding git data, discovery
+/// walks up instead of stopping — so a worktree nested inside its repository
+/// resolves to the *primary* worktree, and the steps (arbitrary project code)
+/// would run in a worktree the user never chose. Outside the repository there
+/// is nothing to walk up to and the runner only writes `failed to open
+/// repository for pipeline` to a log nothing reads back. Both are silent, so
+/// the drop is reported here instead.
+///
+/// Only `wt merge` reaches this. `post-commit` is anchored on the feature
+/// worktree, and the removal renames that worktree into `.git/wt/trash/`
+/// before the announcer flushes; every other background hook anchors on a
+/// worktree its command keeps.
+fn report_orphaned_pipelines(orphaned: &[PendingPipeline]) {
+    for pipeline in orphaned {
+        let hook_type = pipeline.hook_type;
+        let summary = format_pipeline_summary(&pipeline.steps);
+        let path = format_path_for_display(&pipeline.worktree_path);
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Skipped {hook_type}: {summary} — worktree removed @ <bold>{path}</>"
+            ))
+        );
+    }
+    if !orphaned.is_empty() {
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To run commands in a worktree before it is removed, use <underline>pre-remove</>"
+            ))
+        );
+    }
 }
 
 /// Group sourced steps into one Vec per source, preserving insertion order.

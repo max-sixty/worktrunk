@@ -325,24 +325,18 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     //
     // Every background hook runs in the worktree it is anchored on, and only
     // post-commit is anchored on the feature worktree (the other three anchor
-    // on the destination). Flushing after `finish_after_merge` therefore spawns
-    // post-commit into a path the removal has already emptied — the fast path
-    // renames the worktree into `.git/wt/trash/` and leaves an empty
-    // placeholder there (torn down by the detached `sleep 1 && rmdir`). Where
-    // nothing above that placeholder is a git repository, the runner logs
-    // `failed to open repository for pipeline` to
-    // `.git/wt/logs/<branch>/user|project/post-commit/runner.log`, which
-    // nothing reads back; where the worktree is nested inside the repo,
-    // discovery walks up to the primary worktree instead and the steps run
-    // there, in a directory about to vanish. Either way the
-    // `◎ Running post-commit` line is the only trace.
-    // Accepted rather than fixed: the commit it would fire on is squashed and
-    // rebased before the merge lands, `pre-remove` already covers work that
-    // must finish in the feature worktree, and spawning early only narrows the
-    // window (removal succeeds against a live cwd). post-commit still runs where
-    // the worktree survives — `--no-remove`, merging on the target branch,
-    // merging from the primary worktree — and on `wt step commit` /
-    // `wt step squash`.
+    // on the destination). A merge that removes that worktree therefore
+    // reaches the flush with post-commit's anchor already emptied — the fast
+    // path renames the worktree into `.git/wt/trash/` synchronously inside
+    // `finish_after_merge`. `run_hooks_background` drops such a pipeline and
+    // reports it rather than spawning it into a path whose git discovery would
+    // walk up to the primary worktree.
+    //
+    // There is no earlier moment to spawn it. Between the commit and the
+    // removal the worktree is rebased and runs `pre-merge`, and a background
+    // pipeline there would race both. post-commit still runs where the
+    // worktree survives — `--no-remove`, merging on the target branch, merging
+    // from the primary worktree — and on `wt step commit` / `wt step squash`.
     let mut announcer = HookAnnouncer::new(repo, false);
 
     // The project commit-append is gated independently of hook approval:
