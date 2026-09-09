@@ -14,6 +14,10 @@ release is in progress.
 git worktree add /tmp/wt-eval-0.77.0 v0.77.0   # remove it afterwards
 ```
 
+That checkout carries this skill at `v0.77.0` too, whose template is the one
+being replaced. Pass the arm's template as the prompt and withhold the `Skill`
+tool, so the run cannot load the old one off disk instead.
+
 Offer the run the notes from the per-group agents as a map, the way a release
 does. Handed only these four entries every wording found all three, so what the
 cases measure is attention spread across 29 entries, a missing-entries sweep,
