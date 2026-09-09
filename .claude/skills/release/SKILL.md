@@ -235,8 +235,9 @@ Verify these changelog entries for version X.Y.Z are accurate.
 Previous version: [e.g., v0.1.9]
 Commits to check: git log v<previous>..HEAD
 
-Entries to verify:
-[paste drafted entries]
+Entries to verify: the top section of CHANGELOG.md as it stands on disk. Read it
+there rather than from a paste:
+awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md
 
 Verify claim by claim, not entry by entry: an entry carries several independent
 claims, and one verdict over the whole entry waves through every claim that is not
@@ -272,7 +273,9 @@ Report format:
   Suggested fix: [if needed]
 ```
 
-**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests is a new draft with no more evidence behind it than one you wrote yourself, so applying it leaves that entry unverified again. An entry you edit while the pass runs is in the same state. Re-run the verifier over `CHANGELOG.md` as it stands, never a scratch copy of the draft, and finalize only once a run comes back clean.
+**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests is a new draft with no more evidence behind it than one you wrote yourself, so applying it leaves that entry unverified again. An entry you edit while the pass runs is in the same state. Re-run the verifier over the section as it now stands, and finalize only once a run comes back clean.
+
+`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed.
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 
