@@ -28,6 +28,10 @@ dev/*.example.toml linguist-generated=true
 # Shell templates are embedded into the binary at compile time (askama); a
 # CRLF checkout would leak \r into the shell code Windows-built binaries emit.
 templates/* text eol=lf
+# makepkg reads the PKGBUILD as a shell script, and a CRLF checkout also breaks
+# `test_aur_pkgbuild_ships_the_current_fish_completion`, which matches the
+# file's heredoc byte-for-byte against `fish_completion_content("wt")`.
+.github/aur/PKGBUILD text eol=lf
 # cmd.exe resolves a `goto` label by seeking through the batch file, and an
 # LF-only batch file can fail that search ("The system cannot find the batch
 # label specified"). The hook shim is only ever run by cmd.exe, so pin its
