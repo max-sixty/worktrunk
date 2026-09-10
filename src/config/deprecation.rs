@@ -555,8 +555,9 @@ enum RulePass {
 /// earlier rules have already migrated, so a rule reports a pattern in its
 /// post-migration shape.
 ///
-/// The `[ci]` → `[forge]` rule is order-independent: `[forge]` takes over
-/// `[ci]`'s explicit document position (see [`migrate_ci_doc`]), so its
+/// The `[ci]` → `[forge]` rule is order-independent: `[forge]` renders at an
+/// explicit document position either way — the one it was parsed at, or
+/// `[ci]`'s when the rule creates the table (see [`migrate_ci_doc`]) — so its
 /// rendered placement doesn't depend on which tables other rules re-append.
 ///
 /// A [`DeprecationRule::Structural`] rule must not depend on an `UpdateOnly`
