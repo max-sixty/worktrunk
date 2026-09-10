@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: the migration stood down whenever a `[forge]` section existed at all, so the config a GitHub Enterprise or self-hosted GitLab user ends up with — `[ci] platform` from before the rename, `[forge] hostname` added later for an SSH host alias — kept the deprecated key with no warning and nothing `wt config update` would do about it. The platform still resolved, so nothing broke; the deprecation notice that precedes `[ci]`'s eventual removal simply never arrived. A `[forge]` that already sets `platform`, or a `forge` that isn't a section, still stands down.
+
 - **`wt config shell install` migrates a fish wrapper at the deprecated `conf.d` path even when `~/.config/fish/functions` doesn't exist yet**: fish was skipped for want of a config location, so the bare command left the deprecated wrapper running and only `wt config shell install fish` migrated it. A worktrunk wrapper at the old path now counts as fish being configured, just at the old path. `wt config show` reports that wrapper too, where before it showed nothing at all for fish unless fish was on `PATH`.
 
 - **`wt config shell install` no longer tells an already-wrapped shell to restart**: reinstalling from inside a shell that has the wrapper loaded — after a version bump, or when the fish extension moves from `conf.d` to `functions` — printed `↳ Restart shell to activate shell integration` right after the wrapper had intercepted the command. The hint now only appears when integration isn't active.

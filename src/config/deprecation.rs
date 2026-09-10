@@ -1081,12 +1081,18 @@ fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
 /// rewrite could meaningfully move. Removes `[ci]` if `platform` was its only
 /// field.
 ///
-/// An existing `forge` key of any shape suppresses the migration: a `[forge]`
-/// table means the user already migrated, and overwriting a malformed scalar
-/// `forge = "x"` would silently drop their config — serde's type error points
-/// at it instead.
+/// What suppresses the migration is an occupied *destination key*, not the
+/// presence of `forge`: a `[forge]` that already carries `platform` means the
+/// user already migrated, and a `forge` that isn't a table (`forge = "x"`) has
+/// no key to insert into — overwriting it would silently drop their config,
+/// where serde's type error points at it instead. A `[forge]` table without
+/// `platform` is the common half-migrated shape (`hostname` set for a GHE or
+/// self-hosted GitLab remote, `platform` still back in `[ci]`), and its slot is
+/// free, so `platform` lands there. Suppressing on the table's mere existence
+/// left that user un-migrated *and* unwarned, so the deprecated key kept
+/// working silently — right up until `[ci]` is removed.
 ///
-/// `[forge]` takes over `[ci]`'s document position — a fresh table has no
+/// A fresh `[forge]` takes over `[ci]`'s document position — a new table has no
 /// position and would render at the end of the file instead of in the user's
 /// original spot. The `platform` entry moves wholesale (key and item), so
 /// comments attached to the line survive. When `[ci]` is fully consumed, its
@@ -1094,10 +1100,26 @@ fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
 /// when other keys keep `[ci]` alive, the decor stays there and `[forge]`
 /// renders directly after the remainder — it shares `[ci]`'s position, the
 /// position sort is stable, and `[forge]` is inserted later in visit order.
+///
+/// Inserting into an *existing* `[forge]` has no position to take over and no
+/// home for `[ci]`'s decor: `[forge]` is wherever the user wrote it, which can
+/// be far from the comment above `[ci]`. So an emptied `[ci]` is removed only
+/// when its own decor is blank — a commented one stays as an empty section,
+/// which contributes no config, raises no warning, and keeps the user's prose
+/// where they put it.
 fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
-    if doc.get("forge").is_some() {
-        return Vec::new();
-    }
+    // Read the destination before touching `[ci]`, so a suppressed migration
+    // leaves the document byte-identical.
+    let forge_slot = match doc.get("forge") {
+        None => ForgeSlot::Absent,
+        Some(forge) => match forge.as_table() {
+            Some(table) if !table.contains_key("platform") => ForgeSlot::FreeSlot,
+            // `platform` already there, or `forge` is a scalar, an array, or an
+            // inline table we can't extend without reformatting what the user
+            // wrote.
+            _ => return Vec::new(),
+        },
+    };
 
     let Some(ci_table) = doc.get_mut("ci").and_then(|ci| ci.as_table_mut()) else {
         return Vec::new();
@@ -1114,17 +1136,55 @@ fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
     let (key, item) = ci_table
         .remove_entry("platform")
         .expect("checked platform exists above");
-    let mut forge_table = toml_edit::Table::new();
-    forge_table.insert_formatted(&key, item);
-    forge_table.set_position(ci_table.position());
-    if ci_table.is_empty() {
-        *forge_table.decor_mut() = ci_table.decor().clone();
-        doc.remove("ci");
+    let ci_emptied = ci_table.is_empty();
+    let ci_position = ci_table.position();
+    let ci_decor = ci_table.decor().clone();
+
+    match forge_slot {
+        ForgeSlot::Absent => {
+            let mut forge_table = toml_edit::Table::new();
+            forge_table.insert_formatted(&key, item);
+            forge_table.set_position(ci_position);
+            if ci_emptied {
+                *forge_table.decor_mut() = ci_decor;
+                doc.remove("ci");
+            }
+            doc.insert("forge", toml_edit::Item::Table(forge_table));
+        }
+        ForgeSlot::FreeSlot => {
+            let forge_table = doc
+                .get_mut("forge")
+                .and_then(|forge| forge.as_table_mut())
+                .expect("checked forge is a table above");
+            forge_table.insert_formatted(&key, item);
+            // A `[forge]` that exists only because of a sub-table renders no
+            // header of its own until something is written directly into it.
+            forge_table.set_implicit(false);
+            if ci_emptied && decor_prefix_is_blank(&ci_decor) {
+                doc.remove("ci");
+            }
+        }
     }
 
-    doc.insert("forge", toml_edit::Item::Table(forge_table));
-
     vec![DeprecationKind::CiSection]
+}
+
+/// Where the migrated `platform` key is headed — see [`migrate_ci_doc`].
+enum ForgeSlot {
+    /// No `forge` key at all: build the table and take over `[ci]`'s position.
+    Absent,
+    /// A `[forge]` table whose `platform` slot is free: insert in place.
+    FreeSlot,
+}
+
+/// Whether a table's leading decor carries nothing worth keeping (no comment,
+/// just whitespace). Decor that was never parsed from a document reads as
+/// blank — it holds no user text either way.
+fn decor_prefix_is_blank(decor: &toml_edit::Decor) -> bool {
+    decor
+        .prefix()
+        .and_then(|prefix| prefix.as_str())
+        .is_none_or(|prefix| prefix.trim().is_empty())
 }
 
 /// Migrate a negated boolean field within a table (e.g., `no-ff = true` →
@@ -3269,7 +3329,7 @@ ff = false
         "#);
     }
 
-    /// A `forge` key of any shape suppresses the `[ci]` migration — a scalar
+    /// A `forge` that isn't a table suppresses the `[ci]` migration — a scalar
     /// `forge = "x"` must not be overwritten by the migrated table (serde's
     /// type error points at it instead).
     #[test]
@@ -3286,6 +3346,75 @@ json-schema = 1
         assert!(detect_deprecations(content).is_empty());
     }
 
+    /// A `[forge]` table that only sets `hostname` has the `platform` slot
+    /// free, so the deprecated key moves into it rather than being left behind.
+    /// This is the shape a self-hosted GitLab or GHE user lands in by adding
+    /// `[forge] hostname` to a config that already carried `[ci] platform`;
+    /// suppressing on the table's mere existence left them un-migrated and
+    /// unwarned. `[ci]` was consumed entirely, so it goes.
+    #[test]
+    fn test_ci_migration_fills_free_slot_in_existing_forge() {
+        let content = r#"[ci]
+platform = "gitlab"
+
+[forge]
+hostname = "gitlab.example.com"
+"#;
+        assert!(matches!(
+            detect_deprecations(content).as_slice(),
+            [DeprecationKind::CiSection]
+        ));
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [forge]
+        hostname = "gitlab.example.com"
+        platform = "gitlab"
+        "#);
+    }
+
+    /// An existing `[forge]` is wherever the user wrote it, so there is nowhere
+    /// to carry a comment sitting above `[ci]`. An emptied but commented `[ci]`
+    /// stays as an empty section — it contributes no config and raises no
+    /// warning, and dropping it would drop the user's prose with it.
+    #[test]
+    fn test_ci_migration_keeps_commented_ci_when_forge_exists() {
+        let content = r#"# talk to the internal instance
+[ci]
+platform = "gitlab"
+
+[forge]
+hostname = "gitlab.example.com"
+"#;
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        # talk to the internal instance
+        [ci]
+
+        [forge]
+        hostname = "gitlab.example.com"
+        platform = "gitlab"
+        "#);
+    }
+
+    /// A surviving `[ci]` key keeps the section either way; only `platform`
+    /// moves, and it lands in the existing `[forge]` rather than a new one.
+    #[test]
+    fn test_ci_migration_into_existing_forge_preserves_other_keys() {
+        let content = r#"[ci]
+platform = "gitea"
+hostname = "ci.example"
+
+[forge]
+hostname = "forge.example"
+"#;
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [ci]
+        hostname = "ci.example"
+
+        [forge]
+        hostname = "forge.example"
+        platform = "gitea"
+        "#);
+    }
+
     /// The framework invariant: a warning fires exactly when `wt config
     /// update` would change the file. Degenerate configs that can't be safely
     /// rewritten produce no warning and no rewrite; deprecated configs
@@ -3300,9 +3429,10 @@ json-schema = 1
             "[ci]\nplatform = \"\"\n",
             "[ci]\nplatform = 42\n",
             "[ci]\nhostname = \"ghe.example\"\n",
-            // forge already exists — table or malformed scalar
+            // the destination key is occupied, or `forge` is not a table
             "[forge]\nplatform = \"gitlab\"\n\n[ci]\nplatform = \"github\"\n",
             "forge = \"x\"\n\n[ci]\nplatform = \"github\"\n",
+            "forge = { hostname = \"ghe.example\" }\n\n[ci]\nplatform = \"github\"\n",
             // empty deprecated sections contribute no config
             "[commit-generation]\n",
             "[select]\n",
@@ -3336,6 +3466,10 @@ json-schema = 1
 
         let rewritten = [
             "[ci]\nplatform = \"github\"\n",
+            // a `[forge]` table whose `platform` slot is free is a destination,
+            // not a blocker — with and without a comment holding `[ci]` open
+            "[ci]\nplatform = \"github\"\n\n[forge]\nhostname = \"ghe.example\"\n",
+            "# internal\n[ci]\nplatform = \"github\"\n\n[forge]\nhostname = \"ghe.example\"\n",
             "[merge]\nff = true\nno-ff = true\n",
             // negated bool written inline (`merge = { no-ff = true }`) migrates
             // like the section form
