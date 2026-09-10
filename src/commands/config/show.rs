@@ -89,6 +89,12 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
         render_opencode_status(&mut show_output)?;
     }
 
+    // Render oh-my-pi status (only when the oh-my-pi CLI is available)
+    if is_omp_available() {
+        show_output.push('\n');
+        render_omp_status(&mut show_output)?;
+    }
+
     // Render Pi status (only when the Pi CLI is available)
     if is_pi_available() {
         show_output.push('\n');
@@ -413,6 +419,14 @@ fn is_pi_available() -> bool {
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_PI_INSTALLED") {
         return val == "1";
     }
+    which::which("pi").is_ok()
+}
+
+/// Check if the oh-my-pi coding agent CLI is available.
+fn is_omp_available() -> bool {
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OMP_INSTALLED") {
+        return val == "1";
+    }
     which::which("omp").is_ok()
 }
 
@@ -447,7 +461,7 @@ fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Render PI section (plugin status).
+/// Render PI section (extension status).
 /// Caller must check `is_pi_available()` first.
 fn render_pi_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("PI", None))?;
@@ -468,6 +482,34 @@ fn render_pi_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Plugin not installed. To install, run <underline>wt config plugins pi install</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render OH-MY-PI section (hook status).
+/// Caller must check `is_omp_available()` first.
+fn render_omp_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("OH-MY-PI", None))?;
+
+    if super::omp::is_plugin_installed() {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else if super::omp::plugin_file_exists() {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin outdated. To update, run <underline>wt config plugins omp install</>"
+            ))
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins omp install</>"
             ))
         )?;
     }
