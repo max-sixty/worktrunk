@@ -1787,6 +1787,33 @@ mod tests {
         insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 
+    /// The `worktrunk-bin` AUR package installs fish completions from a
+    /// heredoc in `.github/aur/PKGBUILD` — makepkg runs no Rust, so that
+    /// literal is a hand-copied second copy of `fish_completion_content("wt")`,
+    /// as its own `TODO` says. Nothing else pins the two together: editing the
+    /// generator here ships a stale completion to AUR users on the next
+    /// release, and the only symptom is someone's tab-completion quietly
+    /// producing nothing. `release.yaml` still publishes the package: the docs
+    /// point at the official Arch package now, but `worktrunk-bin` was kept
+    /// publishing deliberately (#2052) and users track it for newer releases.
+    ///
+    /// `.github/aur/PKGBUILD` is read at test time and so never appears in
+    /// coverage; the `workspace.metadata.affected.rule` for it in `Cargo.toml`
+    /// is what force-selects this test when the PKGBUILD alone changes.
+    #[test]
+    fn test_aur_pkgbuild_ships_the_current_fish_completion() {
+        let pkgbuild_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/aur/PKGBUILD");
+        let pkgbuild = std::fs::read_to_string(&pkgbuild_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", pkgbuild_path.display()));
+        let expected = fish_completion_content("wt");
+        assert!(
+            pkgbuild.contains(&expected),
+            ".github/aur/PKGBUILD ships a fish completion that no longer matches \
+             `fish_completion_content(\"wt\")`. Replace the body of its heredoc with:\n\n{expected}"
+        );
+    }
+
     #[test]
     fn test_verify_completion_preimage_rejects_changed_state() {
         let previewed = b"# previewed completion\n".as_slice();

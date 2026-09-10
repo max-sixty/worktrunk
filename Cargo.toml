@@ -47,6 +47,13 @@ globs = [
 ]
 filterset = "test(/readme_sync/)"
 
+# The AUR PKGBUILD hand-copies the fish completion `fish_completion_content`
+# generates; `test_aur_pkgbuild_ships_the_current_fish_completion` reads it at
+# test time (fs::read_to_string), so coverage can't link the two.
+[[workspace.metadata.affected.rule]]
+globs = [".github/aur/PKGBUILD"]
+filterset = "test(/aur_pkgbuild/)"
+
 [package]
 name = "worktrunk"
 version = "0.77.0"
