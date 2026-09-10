@@ -61,17 +61,17 @@ For each uncovered function, either write a test (integration tests via `assert_
 API=https://api.codecov.io/api/v2/github/max-sixty/repos/worktrunk
 # Full SHAs throughout; an abbreviation 404s. `?pullid=N` compares the PR's
 # *current* head, so name both SHAs to ask about an earlier commit.
-curl -sL "$API/compare/?base=<base-sha>&head=<head-sha>" > /tmp/codecov.json
+curl -sL "$API/compare/?base=<base-sha>&head=<head-sha>" > "${TMPDIR:-/tmp}/codecov.json"
 
 # Patch coverage per file. `.name` is an object, and the files carrying patch
 # lines are the ones with `has_diff`:
-jq '.files[] | select(.has_diff) | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
+jq '.files[] | select(.has_diff) | {name: .name.head, patch: .totals.patch}' "${TMPDIR:-/tmp}/codecov.json"
 
 # The missed patch lines in one file. `.coverage.head` is a LineType enum
 # (0=hit, 1=miss, 2=partial), and `.added` keeps context lines inside a hunk
 # from reading as patch misses:
 jq '.files[] | select(.name.head == "<path>") | .lines[]
-    | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
+    | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' "${TMPDIR:-/tmp}/codecov.json"
 
 # Whole-file line coverage at one commit. No trailing slash after the path —
 # the route swallows it and answers 404 "coverage info not found":

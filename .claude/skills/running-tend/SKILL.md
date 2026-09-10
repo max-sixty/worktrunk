@@ -46,7 +46,9 @@ Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
 even `pwd` and `echo`. Instead, query Codecov directly, following
 `tests/CLAUDE.md` → **Coverage Investigation** for the endpoints and their
-traps.
+traps. The sandbox also mounts root `/tmp` read-only, which is why the
+scratch paths there and below go to `${TMPDIR:-/tmp}` — write new ones the
+same way.
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
 artifact from the PR head's `coverage` workflow run — it contains a
@@ -58,8 +60,8 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 CI_RUN=$(gh api "repos/$REPO/commits/<sha>/check-runs" --jq '.check_runs[] | select(.name == "code-coverage") | .details_url | capture("runs/(?<id>[0-9]+)") | .id')
 # List artifacts, then download the coverage one:
 gh api "repos/$REPO/actions/runs/$CI_RUN/artifacts" --jq '.artifacts[] | {name, id}'
-gh api "repos/$REPO/actions/artifacts/<id>/zip" > /tmp/coverage.zip
-unzip -q /tmp/coverage.zip -d /tmp/coverage
+gh api "repos/$REPO/actions/artifacts/<id>/zip" > "${TMPDIR:-/tmp}/coverage.zip"
+unzip -q "${TMPDIR:-/tmp}/coverage.zip" -d "${TMPDIR:-/tmp}/coverage"
 ```
 
 ## Test Commands
@@ -349,7 +351,7 @@ jq -n --arg cwd "$PWD" '{
   workspace: {current_dir: $cwd},
   model: {display_name: "Opus"},
   context_window: {used_percentage: 42.0}
-}' > /tmp/statusline-input.json
+}' > "${TMPDIR:-/tmp}/statusline-input.json"
 
 # Debug build on purpose. `tend-weekly` installs no `wt` and restores no Rust
 # cache, so `--release` means a cold optimized build of the whole dependency
@@ -357,7 +359,7 @@ jq -n --arg cwd "$PWD" '{
 # check reads are profile-independent; only the timing columns, which this
 # section doesn't triage, would be worth a release build.
 cargo run -- -vv list statusline --format=claude-code \
-  < /tmp/statusline-input.json > /dev/null
+  < "${TMPDIR:-/tmp}/statusline-input.json" > /dev/null
 cargo run -- config state logs profile --format=json | jq .cache
 ```
 
