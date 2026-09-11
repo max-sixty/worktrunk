@@ -101,7 +101,7 @@ With `summary = true` and a `[commit.generation] command` configured, Worktrunk 
 
 Summaries appear in:
 
-- **`wt switch`** [interactive picker](https://worktrunk.dev/switch/#interactive-picker) — preview tab 5
+- **`wt switch`** [interactive picker](https://worktrunk.dev/switch/#interactive-picker) — the `summary` preview tab
 - **`wt list --full`** — the Summary column (see [`wt list`](https://worktrunk.dev/list/#llm-summaries))
 
 Enable in user config:

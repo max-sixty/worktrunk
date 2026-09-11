@@ -122,6 +122,46 @@ impl PageMode {
     }
 }
 
+/// Keep the global-options section in the first command reference on a page,
+/// and cut it from the rest.
+///
+/// Clap repeats the same ~20-line `Global Options:` list in every reference it
+/// renders, so a page built from subdocs stacks one copy per subcommand — 11 on
+/// `wt config`, 13 on `wt step`. That pads both the site page and the skill
+/// mirror, and gives the site's search that many near-identical hits. `kept`
+/// carries the state for one page; a reference with no such section leaves it
+/// alone, so the page's first *real* reference is always the one that keeps it.
+///
+/// Terminal `--help` renders through clap directly and still prints the section
+/// for every command.
+///
+/// The section is last in the block: `help_reference_inner` cuts
+/// `after_long_help` off at `find_after_help_start`, which is the first
+/// non-indented line after it.
+fn take_global_options(reference: &str, kept: &mut bool) -> String {
+    // Clap renders references with color escapes even under NO_COLOR, so match
+    // on the stripped text.
+    let heading = |line: &str| line.ansi_strip().trim_end() == "Global Options:";
+    let Some(start) = reference
+        .lines()
+        .scan(0, |offset, line| {
+            let at = *offset;
+            *offset += line.len() + 1;
+            Some((at, line))
+        })
+        .find_map(|(at, line)| heading(line).then_some(at))
+    else {
+        return reference.to_string();
+    };
+
+    if *kept {
+        reference[..start].trim_end().to_string()
+    } else {
+        *kept = true;
+        reference.to_string()
+    }
+}
+
 /// Custom help handling for pager support and markdown rendering.
 ///
 /// We intercept help requests to provide:
@@ -485,7 +525,11 @@ Commands with pages: merge, switch, remove, list"
     };
 
     let main_help = mode.process_body(main_content);
+    // One flag for the whole page: the first reference below keeps its global
+    // options and every later one drops them.
+    let mut kept_global_options = false;
     let reference_block = help_reference(&[subcommand], Some(100));
+    let reference_block = take_global_options(&reference_block, &mut kept_global_options);
 
     mode.emit_header(subcommand);
     println!("{}", main_help.trim());
@@ -504,7 +548,8 @@ Commands with pages: merge, switch, remove, list"
         // marker) before expansion — each subdoc's own body is post-processed
         // inside format_subcommand_section, so re-running would double-convert.
         let subdocs = mode.process_subdoc_trailing(subdocs);
-        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
+        let subdocs_expanded =
+            expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode, &mut kept_global_options);
         println!();
         println!("# Subcommands");
         println!();
@@ -647,6 +692,7 @@ fn expand_subdoc_placeholders(
     parent_cmd: &clap::Command,
     parent_name: &str,
     mode: PageMode,
+    kept_global_options: &mut bool,
 ) -> String {
     const SUFFIX: &str = " -->";
 
@@ -662,7 +708,13 @@ fn expand_subdoc_placeholders(
                 .get_subcommands()
                 .find(|s| s.get_name() == subcommand_name)
             {
-                format_subcommand_section(sub, parent_name, subcommand_name, mode)
+                format_subcommand_section(
+                    sub,
+                    parent_name,
+                    subcommand_name,
+                    mode,
+                    kept_global_options,
+                )
             } else {
                 format!(
                     "<!-- subdoc error: subcommand '{}' not found -->",
@@ -711,6 +763,7 @@ fn format_subcommand_section(
     parent_name: &str,
     subcommand_name: &str,
     mode: PageMode,
+    kept_global_options: &mut bool,
 ) -> String {
     // parent_name is "wt config", subcommand_name is "create"
     // full_command is "wt config create"
@@ -743,6 +796,7 @@ fn format_subcommand_section(
         .collect();
 
     let reference_block = help_reference(&command_path, Some(100));
+    let reference_block = take_global_options(&reference_block, kept_global_options);
 
     // Format the section: heading, badge (outside heading), main content, command reference
     let mut section = format!("## {full_command}\n\n");
@@ -766,7 +820,8 @@ fn format_subcommand_section(
     // Expand nested subdocs after the command reference.
     if let Some(subdocs) = subdoc_content {
         let subdocs = mode.process_subdoc_trailing(subdocs);
-        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &full_command, mode);
+        let subdocs_expanded =
+            expand_subdoc_placeholders(&subdocs, sub, &full_command, mode, kept_global_options);
         section.push('\n');
         section.push_str(subdocs_expanded.trim());
         section.push('\n');
@@ -784,7 +839,10 @@ fn format_subcommand_section(
 /// The placeholder should be on its own line without surrounding blank lines in the source.
 /// This function adds blank lines around the figure for proper markdown paragraph separation.
 ///
-/// Supports optional dimensions: `<!-- demo: filename.gif 1600x900 -->`
+/// Supports optional dimensions and a caption, in that order:
+/// `<!-- demo: filename.gif 1600x900 | What the recording shows -->`. The
+/// caption becomes the figure's `<figcaption>`, the same treatment the
+/// hand-written homepage figures get; without one the figure has no caption.
 fn expand_demo_placeholders(text: &str) -> String {
     const SUFFIX: &str = " -->";
 
@@ -793,8 +851,12 @@ fn expand_demo_placeholders(text: &str) -> String {
         let after_prefix = start + DEMO_MARKER_PREFIX.len();
         if let Some(end_offset) = result[after_prefix..].find(SUFFIX) {
             let content = &result[after_prefix..after_prefix + end_offset];
-            // Parse "filename.gif" or "filename.gif 1600x900"
-            let mut parts = content.split_whitespace();
+            // Split "filename.gif 1600x900" from an optional "| caption"
+            let (spec, caption) = match content.split_once('|') {
+                Some((spec, caption)) => (spec, caption.trim()),
+                None => (content, ""),
+            };
+            let mut parts = spec.split_whitespace();
             let filename = parts.next().unwrap_or("");
             let dimensions = parts.next(); // Optional "WIDTHxHEIGHT"
 
@@ -807,12 +869,18 @@ fn expand_demo_placeholders(text: &str) -> String {
                 .map(|(w, h)| format!(" width=\"{w}\" height=\"{h}\""))
                 .unwrap_or_default();
 
+            let figcaption = if caption.is_empty() {
+                String::new()
+            } else {
+                format!("\n<figcaption>{caption}</figcaption>")
+            };
+
             // Use figure.demo class for proper mobile styling (no shrink, horizontal scroll)
             // Generate <picture> element for light/dark theme switching
             // Assets are organized as: /assets/docs/{light,dark}/filename.gif
             // Add trailing newline for markdown paragraph separation after the figure
             let replacement = format!(
-                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>\n"
+                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>{figcaption}\n</figure>\n"
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);
@@ -847,4 +915,65 @@ fn strip_demo_placeholders(text: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reference with no `Global Options:` heading is returned whole, and
+    /// leaves `kept` alone so the first reference that does carry one still
+    /// keeps it. Every clap-rendered reference has the section today, so this
+    /// is the path that runs if clap renames or drops the heading: the page
+    /// loses nothing rather than being truncated at a heading that isn't there.
+    #[test]
+    fn take_global_options_passes_through_a_reference_without_the_section() {
+        let reference = "Usage: wt list\n\nOptions:\n  -h, --help  Print help\n";
+        let mut kept = false;
+
+        assert_eq!(take_global_options(reference, &mut kept), reference);
+        assert!(!kept, "a reference with no section must not claim the slot");
+    }
+
+    /// The first reference keeps the section; every later one ends before the
+    /// heading. This is what stops a subdoc-assembled page from stacking a
+    /// dozen copies of the same twenty lines.
+    #[test]
+    fn take_global_options_keeps_only_the_first_section() {
+        let reference = "Usage: wt list\n\nGlobal Options:\n  -C <path>  Working directory\n";
+        let mut kept = false;
+
+        assert_eq!(take_global_options(reference, &mut kept), reference);
+        assert!(kept);
+        assert_eq!(
+            take_global_options(reference, &mut kept),
+            "Usage: wt list",
+            "a later reference ends before the heading"
+        );
+    }
+
+    /// The caption is optional: a placeholder without one renders a figure with
+    /// no `<figcaption>` rather than an empty element.
+    #[test]
+    fn demo_placeholder_without_a_caption_renders_no_figcaption() {
+        let expanded = expand_demo_placeholders("<!-- demo: wt-switch.gif 1600x900 -->");
+
+        assert!(
+            !expanded.contains("figcaption"),
+            "no caption means no element: {expanded}"
+        );
+        assert!(expanded.contains("width=\"1600\" height=\"900\""));
+    }
+
+    /// A caption after `|` becomes the figure's `<figcaption>`.
+    #[test]
+    fn demo_placeholder_caption_becomes_a_figcaption() {
+        let expanded =
+            expand_demo_placeholders("<!-- demo: wt-switch.gif | Switching worktrees -->");
+
+        assert!(
+            expanded.contains("<figcaption>Switching worktrees</figcaption>"),
+            "{expanded}"
+        );
+    }
 }

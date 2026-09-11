@@ -3,11 +3,8 @@
 # belong in the primary source (src/cli/mod.rs for command pages,
 # docs/src/content/docs/*.md for everything else).
 skills/worktrunk/reference/*.md linguist-generated=true
-# Skill-only files and the top-level README symlink are primary sources — edited
-# directly, not regenerated from docs/src/content/docs/. Exempt them so real edits stay
-# visible in PR diffs.
-skills/worktrunk/reference/README.md linguist-generated=false
-skills/worktrunk/reference/shell-integration.md linguist-generated=false
+# Skill-only files are primary sources — edited directly, not regenerated from
+# docs/src/content/docs/. Exempt them so real edits stay visible in PR diffs.
 skills/worktrunk/reference/troubleshooting.md linguist-generated=false
 # The plugin skills tree is a real-file mirror of repo-root skills/, rewritten by
 # `test_docs_are_in_sync`'s `sync_plugin_skills_mirror` stage. Nothing here is

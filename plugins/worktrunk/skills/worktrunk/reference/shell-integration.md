@@ -1,18 +1,12 @@
-# Shell Integration Reference
+# Shell integration
 
-How Worktrunk's shell integration works and how to debug issues.
+Shell integration is what lets `wt switch` change your shell's directory. This page covers how it works, what it installs, and how to fix it when it doesn't.
 
-## Why Shell Integration Exists
+## Why shell integration exists
 
-Subprocesses cannot change the parent shell's current directory. When
-`wt switch feature` runs, the `wt` binary runs as a child process and cannot
-`cd` the terminal.
+A subprocess cannot change its parent shell's directory. When `wt switch feature` runs, the `wt` binary is a child process and cannot `cd` the terminal.
 
-Worktrunk solves this with a file directive: the shell wrapper creates one temp
-file, `wt` writes the target directory to it, and the wrapper changes directory
-after `wt` exits. `--execute` runs directly inside wt. The wrapper's steps and a
-simplified implementation: [How the Shell Wrapper
-Works](#how-the-shell-wrapper-works).
+Worktrunk solves this with a file directive: the shell wrapper creates one temp file, `wt` writes the target directory to it, and the wrapper changes directory after `wt` exits. `--execute` runs directly inside `wt`. See [How the shell wrapper works](#how-the-shell-wrapper-works) for the steps and a simplified implementation.
 
 ## Installation
 
@@ -37,55 +31,61 @@ wt config shell init nu | save -f ($nu.vendor-autoload-dirs | last | path join w
 Invoke-Expression (& wt config shell init powershell | Out-String)
 ```
 
-## Checking Status
+## Files created
+
+`wt config shell install` writes:
+
+- **Bash**: adds a line to `~/.bashrc`
+- **Zsh**: adds a line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
+- **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
+- **Nushell** [experimental]: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
+- **PowerShell** (Windows): creates both profile files if they don't exist:
+  - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
+  - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
+
+Fish and Nushell wrappers live at a path named after the command, so install writes that file whole, replacing an existing `functions/wt.fish`, `completions/wt.fish`, or `wt.nu`. Bash, zsh, and PowerShell rc files hold the rest of a shell's setup, so install only appends a line to those.
+
+**PowerShell detection on Windows:** When running from cmd.exe or PowerShell, both PowerShell profile files are created automatically. When running from Git Bash or MSYS2, PowerShell is skipped (use `wt config shell install powershell` to create the profiles explicitly).
+
+**To remove:** `wt config shell uninstall`.
+
+## Checking status
 
 ```bash
 # Show shell integration status
 wt config show
 ```
 
-The RUNTIME section shows whether shell integration is active for the current
-session.
+The RUNTIME section shows whether shell integration is active for the current session.
 
-## Warning Messages
+## Warning messages
 
-When shell integration isn't working, `wt switch` shows warnings explaining why.
+When shell integration isn't working, `wt switch` shows a warning explaining why.
 
 ### "shell wrapper is out of date"
 
-**Meaning**: The active shell still has a retired wrapper loaded. Current
-versions no longer write to that wrapper's single directive file, so the
-parent shell cannot follow a directory change.
+**Meaning**: The active shell still has a retired wrapper loaded. Current versions no longer write to that wrapper's single directive file, so the parent shell cannot follow a directory change.
 
-**Fix**: Run `wt config shell install`, then restart the shell (or reload its
-config) to activate the current wrapper.
+**Fix**: Run `wt config shell install`, then restart the shell (or reload its config) to activate the current wrapper.
 
 ### "shell integration not installed"
 
-**Meaning**: The current shell's config file doesn't have the
-`eval "$(wt config shell init ...)"` line. The current shell is detected from
-the process tree (falling back to `$SHELL`), so this refers to the shell wt
-was actually invoked from, not necessarily the login shell.
+**Meaning**: The current shell's config file doesn't have the `eval "$(wt config shell init ...)"` line. The current shell is detected from the process tree (falling back to `$SHELL`), so this refers to the shell `wt` was actually invoked from, not necessarily the login shell.
 
 **Fix**: Run `wt config shell install` or add the line manually.
 
 ### "shell integration installed but not active"
 
-**Meaning**: Shell integration is configured for the current shell, but the
-shell function isn't loaded in this session — usually because the session was
-started before installation.
+**Meaning**: Shell integration is configured for the current shell, but the shell function isn't loaded in this session — usually because the session was started before installation.
 
-**Fix**: Start a new terminal or run `source ~/.bashrc` (or equivalent). If
-the message persists after a restart, `wt config show` reports the detected
-shell, `$SHELL`, and per-shell integration status.
+**Fix**: Start a new terminal or run `source ~/.bashrc` (or equivalent). If the message persists after a restart, `wt config show` reports the detected shell, `$SHELL`, and per-shell integration status.
 
 ### "ran ./path/to/wt; shell integration wraps wt"
 
-**Meaning**: The binary was invoked with an explicit path (like `./target/debug/wt`
-or `/usr/local/bin/wt`) instead of just `wt`. The shell wrapper only intercepts
-the bare command `wt`.
+**Meaning**: The binary was invoked with an explicit path (like `./target/debug/wt` or `/usr/local/bin/wt`) instead of just `wt`. The shell wrapper only intercepts the bare command `wt`.
 
 **Fix**: Use `wt` without a path. For testing dev builds, set `WORKTRUNK_BIN`:
+
 ```bash
 export WORKTRUNK_BIN=./target/debug/wt
 wt switch feature  # Now uses the dev build with shell integration
@@ -93,21 +93,18 @@ wt switch feature  # Now uses the dev build with shell integration
 
 ### "ran git wt; running through git prevents cd"
 
-**Meaning**: `git wt` (git alias) was used instead of `wt`. Git runs worktrunk as
-a subprocess, bypassing the shell wrapper.
+**Meaning**: `git wt` (git alias) was used instead of `wt`. Git runs worktrunk as a subprocess, bypassing the shell wrapper.
 
 **Fix**: Use `wt` directly instead of `git wt` when directory switching is needed.
 
 ### "Alias bypasses shell integration"
 
-**Meaning**: An alias like `alias gwt="/usr/bin/wt"` or `alias gwt="wt.exe"`
-points directly to the binary instead of the shell function.
+**Meaning**: An alias like `alias gwt="/usr/bin/wt"` or `alias gwt="wt.exe"` points directly to the binary instead of the shell function.
 
-When shell integration is installed, it creates a shell function named `wt` (or
-`git-wt`). If the alias points to the binary path, it bypasses this function
-and shell integration won't work.
+When shell integration is installed, it creates a shell function named `wt` (or `git-wt`). If the alias points to the binary path, it bypasses this function and shell integration won't work.
 
 **Examples that bypass** (won't auto-cd):
+
 ```bash
 alias gwt="/usr/bin/wt"
 alias gwt="wt.exe"
@@ -115,18 +112,17 @@ alias wt="/path/to/wt"
 ```
 
 **Fix**: Change the alias to point to the function name instead of the binary:
+
 ```bash
 alias gwt="wt"       # Good - uses the shell function
 alias gwt="git-wt"   # Good - uses the shell function
 ```
 
-`wt config show` detects these problematic aliases and shows a warning with the
-suggested fix.
+`wt config show` detects these problematic aliases and shows a warning with the suggested fix.
 
-## How the Shell Wrapper Works
+## How the shell wrapper works
 
-The shell wrapper (installed by `wt config shell install`) defines a shell
-function that:
+The shell wrapper (installed by `wt config shell install`) defines a shell function that:
 
 1. Creates a temp file
 2. Sets `WORKTRUNK_DIRECTIVE_CD_FILE`
@@ -134,7 +130,8 @@ function that:
 4. Reads the CD file with `cd -- "$(< file)"` (raw path, no shell parsing)
 5. Cleans up the temp file
 
-Simplified example (actual wrapper handles completions and edge cases):
+Simplified example (the actual wrapper also handles completions and edge cases):
+
 ```bash
 wt() {
     local cd_file exit_code=0
@@ -151,39 +148,39 @@ wt() {
 }
 ```
 
-## Debugging Checklist
+## Debugging checklist
 
-### 1. Check if wrapper is installed
+### 1. Check whether the wrapper is loaded
 
 ```bash
-# Should show shell function, not binary path
+# Should show a shell function, not a binary path
 type wt
 
 # Expected output (bash/zsh):
 # wt is a function
 # wt () { ... }
 
-# If it shows a path like /usr/local/bin/wt, wrapper isn't loaded
+# If it shows a path like /usr/local/bin/wt, the wrapper isn't loaded
 ```
 
-### 1b. Check if wrapper is installed (PowerShell)
+### 2. Check whether the wrapper is loaded (PowerShell)
 
 ```powershell
 # PowerShell: should show Function, not just Application
 Get-Command wt -All
 
-# Expected output when wrapper is loaded:
+# Expected output when the wrapper is loaded:
 # CommandType  Name  Source
 # -----------  ----  ------
 # Function     wt
 # Application  wt    C:\Users\...\wt.exe
 
-# If only Application appears, wrapper isn't loaded (restart shell)
+# If only Application appears, the wrapper isn't loaded (restart the shell)
 # If Function appears but integration is still "not active", check the body:
 (Get-Command wt -CommandType Function).ScriptBlock | Select-String WORKTRUNK
 ```
 
-### 2. Check shell config file
+### 3. Check the shell config file
 
 ```bash
 # bash
@@ -196,21 +193,21 @@ grep -n "wt config shell init" ~/.zshrc
 grep -n "wt config shell init" ~/.config/fish/config.fish
 ```
 
-Should show the `eval` line with line number.
+This should show the `eval` line with its line number.
 
-### 3. Check if directive files are set
+### 4. Check whether directive files are set
 
 ```bash
-# After running any wt command, this should be unset (temp file deleted)
+# After running any wt command, this should be unset (the temp file is deleted)
 echo $WORKTRUNK_DIRECTIVE_CD_FILE
 
-# During wt execution, these would be set to temp file paths
+# During wt execution, this is set to a temp file path
 ```
 
-### 4. Test directive files manually
+### 5. Test directive files manually
 
 ```bash
-# Create temp files and test
+# Create the temp file and test
 export WORKTRUNK_DIRECTIVE_CD_FILE=$(mktemp)
 command wt switch feature
 cat $WORKTRUNK_DIRECTIVE_CD_FILE     # Should contain: /path/to/worktree (raw path)
@@ -218,11 +215,12 @@ cd -- "$(<$WORKTRUNK_DIRECTIVE_CD_FILE)"  # Should cd you there
 rm -f $WORKTRUNK_DIRECTIVE_CD_FILE
 ```
 
-## Common Issues
+## Common issues
 
-### Shell integration works in terminal but not in IDE terminal
+### Shell integration works in the terminal but not in an IDE terminal
 
 IDE terminals may use different shell configs. Check:
+
 - VS Code: Settings → Terminal → Integrated → Shell Args
 - The IDE terminal might source a different profile
 
@@ -241,20 +239,14 @@ eval "$(wt config shell init zsh)"
 
 ### Windows Git Bash issues
 
-Git Bash uses MSYS2, which automatically converts POSIX paths in environment
-variables. The directive file path is handled correctly without manual conversion.
+Git Bash uses MSYS2, which automatically converts POSIX paths in environment variables. The directive file path is handled correctly without manual conversion.
 
-If you see path issues, ensure you're using a recent Git for Windows version.
+If you see path issues, make sure you're on a recent Git for Windows version.
 
-## Environment Variables
+## Environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKTRUNK_DIRECTIVE_CD_FILE` | Set by shell wrapper; wt writes a raw path, wrapper `cd`s to it |
-| `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
+| `WORKTRUNK_DIRECTIVE_CD_FILE` | Set by the shell wrapper; `wt` writes a raw path, the wrapper `cd`s to it |
+| `WORKTRUNK_BIN` | Override the binary path (for testing dev builds) |
 | `WORKTRUNK_COMPLETE_NAME` | Set by the bash, zsh, and PowerShell wrappers when they load completions; names the command the registration binds to, so `--cmd` integrations complete |
-
-## See Also
-
-- `wt config shell --help` — Shell integration commands
-- `wt config show` — View current configuration and status

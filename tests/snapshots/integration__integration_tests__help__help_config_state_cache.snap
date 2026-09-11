@@ -90,7 +90,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 Without a subcommand, runs [2mget[0m.
 
-[1m[32mExamples[0m
+[1m[32mCache examples[0m
 
 Show cache contents:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state cache[0m

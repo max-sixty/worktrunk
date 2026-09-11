@@ -86,7 +86,7 @@ State is stored in [2m.git/[0m (config entries and log files), separate from c
 - [1mvars[0m: Custom variables per branch
 - [1mlogs[0m: Operation and debug logs
 
-[1m[32mExamples[0m
+[1m[32mState examples[0m
 
 Get the default branch:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state default-branch[0m

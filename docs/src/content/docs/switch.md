@@ -15,6 +15,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
   <source srcset="/assets/docs/dark/wt-switch.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-switch.gif" alt="wt switch demo" width="1600" height="900">
 </picture>
+<figcaption>Switching to a worktree, creating one, and creating one that launches an agent</figcaption>
 </figure>
 
 ## Examples
@@ -87,6 +88,7 @@ The CI column shows each row's PR/MR CI and review status, the same as [`wt list
   <source srcset="/assets/docs/dark/wt-switch-picker.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-switch-picker.gif" alt="wt switch picker demo" width="1600" height="800">
 </picture>
+<figcaption>Browsing the picker, scrolling a preview, filtering, and selecting</figcaption>
 </figure>
 
 **Keybindings:**

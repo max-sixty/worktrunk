@@ -41,7 +41,7 @@ Aliases are configured under `[aliases]`:
 
 ```toml
 [aliases]
-deploy = "fly deploy --config=fly.{{ env }}.toml --app=myapp-{{ branch }}"
+deploy = "fly deploy --config=fly.{{ env }}.toml --app=myproject-{{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 since-main = "git log --oneline {{ default_branch }}..HEAD"
 ```

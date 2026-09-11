@@ -1,5 +1,9 @@
-# Shell integration
-
+---
+title: "Shell integration"
+description: "How Worktrunk's shell wrapper changes the parent shell's directory, which files each shell gets, and how to debug integration that isn't working."
+sidebar:
+  order: 25
+---
 Shell integration is what lets `wt switch` change your shell's directory. This page covers how it works, what it installs, and how to fix it when it doesn't.
 
 ## Why shell integration exists
@@ -38,7 +42,7 @@ Invoke-Expression (& wt config shell init powershell | Out-String)
 - **Bash**: adds a line to `~/.bashrc`
 - **Zsh**: adds a line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
-- **Nushell** [experimental]: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
+- **Nushell** <span class="badge-experimental"></span>: creates `wt.nu` in Nushell's user vendor-autoload directory — the last entry of `$nu.vendor-autoload-dirs`, under `$nu.data-dir` (typically `~/.local/share/nushell/vendor/autoload` on Linux, `~/Library/Application Support/nushell/vendor/autoload` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
@@ -250,3 +254,8 @@ If you see path issues, make sure you're on a recent Git for Windows version.
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Set by the shell wrapper; `wt` writes a raw path, the wrapper `cd`s to it |
 | `WORKTRUNK_BIN` | Override the binary path (for testing dev builds) |
 | `WORKTRUNK_COMPLETE_NAME` | Set by the bash, zsh, and PowerShell wrappers when they load completions; names the command the registration binds to, so `--cmd` integrations complete |
+
+## See also
+
+- [`wt config`](/config/#shell-integration) — shell integration commands
+- [FAQ: What files does Worktrunk create?](/faq/#what-files-does-worktrunk-create)
