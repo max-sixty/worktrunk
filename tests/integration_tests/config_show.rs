@@ -1,3 +1,4 @@
+use crate::common::mock_commands::MockResponse;
 use crate::common::{
     BareRepoTest, TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
     setup_home_snapshot_settings, setup_snapshot_settings, setup_snapshot_settings_with_home,
@@ -79,6 +80,39 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+#[rstest]
+fn test_config_show_rejects_invalid_approvals_file(repo: TestRepo) {
+    fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
+
+    let output = repo.wt_command().args(["config", "show"]).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(stdout.contains("Invalid approvals"), "stdout:\n{stdout}");
+    assert!(stdout.contains("approvals.toml"), "stdout:\n{stdout}");
+}
+
+#[rstest]
+fn test_config_show_hides_fully_approved_commands(repo: TestRepo) {
+    repo.write_project_config("pre-start = \"npm install\"\n");
+    let project = repo.repo.project_identifier().unwrap();
+    let project = toml::Value::String(project).to_string();
+    fs::write(
+        repo.test_approvals_path(),
+        format!("[projects.{project}]\napproved-commands = [\"npm install\"]\n"),
+    )
+    .unwrap();
+
+    let output = repo.wt_command().args(["config", "show"]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(!stdout.contains("APPROVALS"), "stdout:\n{stdout}");
+    assert!(!stdout.contains("awaiting approval"), "stdout:\n{stdout}");
 }
 
 // ==================== System Config Tests ====================
@@ -411,9 +445,7 @@ deps = "post-create-tool"
 }
 
 #[rstest]
-fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_home: TempDir) {
-    // When no system config exists but user config does, config show should
-    // display a hint under USER CONFIG with the platform-specific default path
+fn test_config_show_absent_system_config_is_a_user_config_hint(repo: TestRepo, temp_home: TempDir) {
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -432,16 +464,11 @@ fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_ho
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should NOT show a full SYSTEM CONFIG heading
     assert!(
-        !stdout.contains("SYSTEM CONFIG"),
-        "Should not show SYSTEM CONFIG section when absent, got:\n{stdout}"
-    );
-    // Should show a system config hint under USER CONFIG
-    assert!(
-        stdout.contains("Optional system config not found")
+        !stdout.contains("SYSTEM CONFIG")
+            && stdout.contains("Optional system config not found")
             && stdout.contains("worktrunk/config.toml"),
-        "Expected system config hint in output, got:\n{stdout}"
+        "Expected a compact system config hint, got:\n{stdout}"
     );
 }
 
@@ -472,7 +499,7 @@ fn test_system_config_found_via_xdg_config_dirs(repo: TestRepo) {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let worktrees = json.as_array().unwrap();
+    let worktrees = json["items"].as_array().unwrap();
 
     for wt in worktrees {
         if wt["is_primary"].as_bool() == Some(false) {
@@ -505,7 +532,7 @@ fn test_system_config_xdg_dirs_set_but_no_config_found(repo: TestRepo) {
     // Without system config, worktree paths should use the default template
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let worktrees = json.as_array().unwrap();
+    let worktrees = json["items"].as_array().unwrap();
 
     for wt in worktrees {
         if wt["is_primary"].as_bool() == Some(false) {
@@ -545,6 +572,40 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
+#[rstest]
+#[case::system("system")]
+#[case::user("user")]
+#[case::project("project")]
+fn test_config_show_reports_unreadable_source_and_continues(repo: TestRepo, #[case] source: &str) {
+    let mut cmd = repo.wt_command();
+    let system_dir = if source == "system" {
+        let dir = tempfile::tempdir().unwrap();
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", dir.path());
+        Some(dir)
+    } else {
+        None
+    };
+
+    match source {
+        "user" => fs::write(repo.test_config_path(), [0xff]).unwrap(),
+        "project" => {
+            repo.write_project_config("");
+            fs::write(repo.root_path().join(".config/wt.toml"), [0xff]).unwrap();
+        }
+        "system" => {}
+        _ => unreachable!(),
+    }
+
+    let output = cmd.args(["config", "show"]).output().unwrap();
+    drop(system_dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.ansi_strip();
+    assert!(stdout.contains("Cannot read config"), "stdout:\n{stdout}");
+    assert!(stdout.contains("OTHER"), "report was truncated:\n{stdout}");
+}
+
 /// A user config that doesn't parse must fail these commands *legibly*.
 ///
 /// `UserConfig::load()`'s error is `LoadError::File`'s multi-line Display —
@@ -561,11 +622,8 @@ fn test_config_show_empty_system_config(mut repo: TestRepo, temp_home: TempDir) 
 ///
 /// One case per fixed call site, because the `debug_assert!` only fires on a
 /// path something exercises: an uncovered site is one where a future bare `?`
-/// regresses silently. `config show --format json` is the sharpest of them —
-/// the text form of that same command renders a full diagnosis of this exact
-/// file.
+/// regresses silently. The JSON form has a separate in-band error test below.
 #[rstest]
-#[case::config_show_json(&["config", "show", "--format=json"])]
 #[case::step_prune(&["step", "prune", "--dry-run"])]
 #[case::step_relocate(&["step", "relocate", "--dry-run"])]
 #[case::step_eval(&["step", "eval", "{{ branch }}"])]
@@ -1355,6 +1413,29 @@ fn test_config_show_invalid_user_toml(mut repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_config_show_unknown_list_column(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list]\njson-schema = 2\ncolumns = [\"branch\", \"nosuchcolumn\"]\n",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_config_show_invalid_project_toml(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -2120,9 +2201,8 @@ fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp
 fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup mock claude CLI and plugin as installed
-    repo.setup_mock_claude_installed();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    // Setup mock claude CLI listing the worktrunk plugin
+    repo.setup_mock_claude_with_plugin_installed();
 
     // Create global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -2177,9 +2257,8 @@ fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, te
 fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup mock claude CLI, plugin, AND statusline
-    repo.setup_mock_claude_installed();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    // Setup mock claude CLI listing the plugin, AND the statusline
+    repo.setup_mock_claude_with_plugin_installed();
     TestRepo::setup_statusline_configured(temp_home.path());
 
     // Create global config
@@ -2397,43 +2476,11 @@ fn test_config_show_gemini_available_extension_not_installed(
 }
 
 #[rstest]
-fn test_config_show_gemini_extension_invalid_manifest(mut repo: TestRepo, temp_home: TempDir) {
-    // A malformed gemini-extension.json should fall through the JSON-parse
-    // branch and report the extension as not installed (the install hint).
-    repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_gemini_installed();
-
-    let extension_dir = temp_home.path().join(".gemini/extensions/worktrunk");
-    fs::create_dir_all(&extension_dir).unwrap();
-    fs::write(extension_dir.join("gemini-extension.json"), "not json\n").unwrap();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
 fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
-    // Setup mock gemini CLI and extension as installed
-    repo.setup_mock_gemini_installed();
-    TestRepo::setup_gemini_extension_installed(temp_home.path());
+    // Setup mock gemini CLI listing the worktrunk extension
+    repo.setup_mock_gemini_with_extension_installed();
 
     // Create global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -3484,7 +3531,13 @@ fn test_config_update_output_destinations_emit_same_config(repo: TestRepo) {
         .unwrap();
     assert!(file_output.status.success());
     assert!(file_output.stdout.is_empty());
-    assert!(file_output.stderr.is_empty());
+    let stderr = String::from_utf8_lossy(&file_output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("Wrote user config migration @") && stderr.contains("migrated.toml"),
+        "a file destination confirms the write, unlike stdout; got: {stderr}"
+    );
     assert_eq!(fs::read(destination).unwrap(), stdout_output.stdout);
     assert_eq!(fs::read_to_string(config_path).unwrap(), original);
 }
@@ -3682,6 +3735,93 @@ fn test_config_update_rejects_print(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_config_update_output_warns_about_dropped_approvals(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+json-schema = 1
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm ci", "npm test"]
+
+[projects."github.com/other/repo"]
+approved-commands = ["cargo test"]
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output=-"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains("approved-commands") && stderr.contains("wt config update"),
+        "stderr should explain how to preserve approvals, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("approved-commands"),
+        "the printed config drops them, got: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_config_update_output_rejects_source_path(repo: TestRepo) {
+    let original = r#"[list]
+json-schema = 1
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm test"]
+"#;
+    fs::write(repo.test_config_path(), original).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output"])
+        .arg(repo.test_config_path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        original
+    );
+    assert!(!repo.test_approvals_path().exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains("Cannot overwrite user config") && stderr.contains("wt config update"),
+        "stderr:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_config_update_output_can_replace_source_without_approvals(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--output"])
+        .arg(repo.test_config_path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let updated = fs::read_to_string(repo.test_config_path()).unwrap();
+    assert!(updated.contains("{{ repo }}"), "config:\n{updated}");
+}
+
 /// `wt config update` with no deprecated settings reports nothing to do
 #[rstest]
 fn test_config_update_no_deprecations(repo: TestRepo) {
@@ -3762,11 +3902,10 @@ json-schema = 1
     );
 }
 
-/// `wt config update` writes `[list] json-schema = 2` when the key is unset,
-/// adopting the upcoming default, and a second run has nothing left to do —
-/// the pending-default loop closes.
+/// `wt config update` leaves `[list] json-schema` unset now that schema 2 is
+/// the default.
 #[rstest]
-fn test_config_update_adopts_json_schema(repo: TestRepo) {
+fn test_config_update_leaves_json_schema_unset(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
         "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
@@ -3783,36 +3922,18 @@ fn test_config_update_adopts_json_schema(repo: TestRepo) {
 
     assert_eq!(
         fs::read_to_string(repo.test_config_path()).unwrap(),
-        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[list]\njson-schema = 2\n"
-    );
-
-    let output = repo
-        .wt_command()
-        .args(["config", "update", "--yes"])
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("No deprecated settings found"),
-        "second run should have nothing to update"
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n"
     );
 }
 
-/// A system config that sets `[list] json-schema` makes the resolved value
-/// explicit, so `wt config update` must not write the user file — a user-file
-/// value would override the deliberate system-level choice.
+/// Updating another deprecated setting does not materialize the default JSON
+/// schema in the user config.
 #[rstest]
-fn test_config_update_json_schema_adopt_defers_to_system_config(repo: TestRepo) {
-    let system_config_dir = tempfile::tempdir().unwrap();
-    let system_config_path = system_config_dir.path().join("config.toml");
-    fs::write(&system_config_path, "[list]\njson-schema = 1\n").unwrap();
-
-    // A user config with an unrelated deprecation: update applies that
-    // rewrite but must not insert json-schema alongside it.
+fn test_config_update_does_not_materialize_json_schema(repo: TestRepo) {
     fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
 
     let mut cmd = repo.wt_command();
     cmd.args(["config", "update", "--yes"]);
-    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
     let output = cmd.output().unwrap();
     assert!(output.status.success());
 
@@ -3898,7 +4019,9 @@ fn test_explicit_config_path_honors_directory_flag(repo: TestRepo) {
     .current_dir(&outside);
     let output = cmd.output().unwrap();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stdout.contains("full = true"),
         "config show should report the config named relative to -C:\n{stdout}"
@@ -3941,32 +4064,9 @@ fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins();
-
-    // Write invalid JSON to the plugins file — is_plugin_installed() should
-    // treat this as "not installed" and the install command should proceed
-    let plugins_dir = temp_home.path().join(".claude/plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    fs::write(plugins_dir.join("installed_plugins.json"), "not valid json").unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = repo.wt_command();
-        cmd.args(["config", "plugins", "claude", "install", "--yes"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-#[rstest]
 fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    repo.setup_mock_claude_with_plugin_installed();
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -3997,7 +4097,6 @@ fn test_plugins_claude_install_claude_not_found(repo: TestRepo) {
 fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_with_plugins();
-    TestRepo::setup_plugin_installed(temp_home.path());
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4010,11 +4109,28 @@ fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
+/// The plugin removal's goal is that the plugin is gone, so Claude Code
+/// listing no plugins is that goal already met. `claude plugin uninstall`
+/// exits non-zero once the plugin is absent, and the command has to succeed
+/// anyway — and go on to the marketplace, which a first `uninstall` that
+/// removed the plugin and then failed on the marketplace leaves behind.
 #[rstest]
-fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: TempDir) {
+fn test_plugins_claude_uninstall_tolerates_absent_plugin(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::MockConfig;
+
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins();
-    // Don't setup plugin as installed
+    repo.setup_mock_claude_installed();
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
+    MockConfig::new("claude")
+        .command(
+            "plugin uninstall",
+            MockResponse::exit(1).with_stderr("error: plugin not found\n"),
+        )
+        .command("plugin list", MockResponse::output("[]"))
+        .command("plugin marketplace remove", MockResponse::exit(0))
+        .write(mock_bin);
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -4089,6 +4205,447 @@ fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempD
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+/// The marketplace registers but `codex plugin add` fails: the install stops
+/// there rather than reporting a plugin it never installed.
+#[rstest]
+fn test_plugins_codex_install_plugin_add_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugin_ops_failing();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Run `wt config plugins <tool> <action>` and accept the prompt, returning the
+/// argv of every `<tool>` the run spawned — argv\[0\] excluded, as `mock_calls`
+/// records it.
+///
+/// The call log is the helper's own directory, so a caller looping over
+/// install and uninstall can't carry install's calls into uninstall's
+/// assertion. It lives outside the repo under test for the reason `mock_calls`
+/// documents: a log in the working tree would leave an untracked file behind
+/// the command being measured.
+fn plugin_calls_when_accepted(
+    repo: &TestRepo,
+    tool: &str,
+    action: &str,
+    home: &std::path::Path,
+) -> Vec<String> {
+    use crate::common::mock_commands::mock_calls;
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let call_log = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "plugins", tool, action])
+        .current_dir(repo.root_path())
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    set_temp_home_env(&mut cmd, home);
+
+    let mut child = cmd.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "accepting {tool} {action}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    mock_calls(call_log.path(), tool)
+}
+
+/// The `?` preview lists exactly the commands each Codex plugin subcommand
+/// runs: declining spawns none of them, and accepting spawns exactly those,
+/// so the confirmation the user answers matches what follows it.
+#[rstest]
+fn test_plugins_codex_prompt_previews_commands(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::mock_calls;
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins();
+
+    // Outside the repo: a call log in the working tree would leave an
+    // untracked file behind the command under test.
+    let call_log = TempDir::new().unwrap();
+
+    for (action, expected) in [
+        (
+            "install",
+            [
+                "codex plugin marketplace add max-sixty/worktrunk",
+                "codex plugin add worktrunk@worktrunk",
+            ],
+        ),
+        (
+            "uninstall",
+            [
+                "codex plugin remove worktrunk@worktrunk",
+                "codex plugin marketplace remove worktrunk",
+            ],
+        ),
+    ] {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", action])
+            .current_dir(repo.root_path())
+            .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        let mut child = cmd.spawn().unwrap();
+        // `?` renders the preview; `n` then declines, so nothing runs.
+        child.stdin.take().unwrap().write_all(b"?\nn\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .to_string();
+        // Compare the whole set of previewed commands, not each one in
+        // isolation: a command the preview lists but never runs is exactly
+        // what a per-command `contains` would let through.
+        // The first gutter line shares a line with the prompt, which `eprint!`
+        // leaves unterminated, so slice from each `codex ` rather than
+        // matching the line start.
+        let previewed: Vec<&str> = stderr
+            .lines()
+            .filter_map(|line| line.find("codex ").map(|i| line[i..].trim_end()))
+            .collect();
+        assert_eq!(previewed, expected, "{action} preview: {stderr}");
+        // The preview is only a preview: declining must leave codex unspawned.
+        let calls = mock_calls(call_log.path(), "codex");
+        assert!(
+            calls.is_empty(),
+            "declining {action} must spawn no codex: {calls:#?}"
+        );
+
+        // Both sides of the comparison above are the preview text, so nothing
+        // there observes the argv. Accepting the same prompt and reading the
+        // call log is what pins the preview to the spawn.
+        let ran = plugin_calls_when_accepted(&repo, "codex", action, temp_home.path());
+        // `mock_calls` records argv without argv[0]; `expected` carries the
+        // binary name because that is how the preview renders it.
+        let want: Vec<String> = expected
+            .iter()
+            .map(|c| c.strip_prefix("codex ").unwrap().to_string())
+            .collect();
+        assert_eq!(ran, want, "{action} ran: {ran:#?}");
+    }
+}
+
+/// The `?` preview lists exactly the commands each Claude plugin subcommand
+/// runs: declining spawns none of them, and accepting spawns exactly those,
+/// so the confirmation the user answers matches what follows it.
+#[rstest]
+fn test_plugins_claude_prompt_previews_commands(mut repo: TestRepo) {
+    use crate::common::mock_commands::mock_calls;
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+
+    // Outside the repo: a call log in the working tree would leave an
+    // untracked file behind the command under test.
+    let call_log = TempDir::new().unwrap();
+
+    let temp_home = TempDir::new().unwrap();
+
+    for (action, expected) in [
+        (
+            "install",
+            [
+                "claude plugin marketplace add max-sixty/worktrunk",
+                "claude plugin install worktrunk@worktrunk",
+            ],
+        ),
+        (
+            "uninstall",
+            [
+                "claude plugin uninstall worktrunk@worktrunk",
+                "claude plugin marketplace remove worktrunk",
+            ],
+        ),
+    ] {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", action])
+            .current_dir(repo.root_path())
+            .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        let mut child = cmd.spawn().unwrap();
+        // `?` renders the preview; `n` then declines, so nothing runs.
+        child.stdin.take().unwrap().write_all(b"?\nn\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .to_string();
+        // Compare the whole set of previewed commands, not each one in
+        // isolation: a command the preview lists but never runs is exactly
+        // what a per-command `contains` would let through.
+        // The first gutter line shares a line with the prompt, which `eprint!`
+        // leaves unterminated, so slice from each `claude ` rather than
+        // matching the line start.
+        let previewed: Vec<&str> = stderr
+            .lines()
+            .filter_map(|line| line.find("claude ").map(|i| line[i..].trim_end()))
+            .collect();
+        assert_eq!(previewed, expected, "{action} preview: {stderr}");
+        // The preview is only a preview: declining must run none of the
+        // commands it listed. `claude plugin list --json` is a read the
+        // subcommand makes to decide, not one of the commands it previews, so
+        // the log is filtered to the calls that change something.
+        let mutations = |calls: Vec<String>| -> Vec<String> {
+            calls
+                .into_iter()
+                .filter(|call| !call.ends_with("--json"))
+                .collect()
+        };
+        let calls = mutations(mock_calls(call_log.path(), "claude"));
+        assert!(
+            calls.is_empty(),
+            "declining {action} must run none of its commands: {calls:#?}"
+        );
+
+        // Both sides of the comparison above are the preview text, so nothing
+        // there observes the argv. Accepting the same prompt and reading the
+        // call log is what pins the preview to the spawn — and it is the only
+        // thing that can here: `setup_mock_claude_with_plugins` registers the
+        // `plugin marketplace` prefix, which matches `add` and `remove` alike,
+        // so a wrong marketplace name still reaches the mock's exit 0.
+        let ran = mutations(plugin_calls_when_accepted(
+            &repo,
+            "claude",
+            action,
+            temp_home.path(),
+        ));
+        // `mock_calls` records argv without argv[0]; `expected` carries the
+        // binary name because that is how the preview renders it.
+        let want: Vec<String> = expected
+            .iter()
+            .map(|c| c.strip_prefix("claude ").unwrap().to_string())
+            .collect();
+        assert_eq!(ran, want, "{action} ran: {ran:#?}");
+    }
+}
+
+/// `codex plugin remove` fails: the uninstall surfaces codex's error and stops
+/// rather than removing the marketplace out from under an installed plugin.
+#[rstest]
+fn test_plugins_codex_uninstall_plugin_remove_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugin_ops_failing();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The marketplace removal's goal is that the marketplace is gone, so the
+/// harness reporting an empty list is that goal already met. Running
+/// `uninstall` a second time hits exactly this, and used to fail with nothing
+/// left to do.
+#[rstest]
+fn test_plugins_claude_uninstall_tolerates_absent_marketplace(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing(MockResponse::output("[]"));
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The state a second `uninstall` lands in for a user with other
+/// marketplaces: the list is non-empty and worktrunk is simply not in it.
+#[rstest]
+fn test_plugins_claude_uninstall_tolerates_marketplace_missing_from_list(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing(MockResponse::output(
+        TestRepo::CLAUDE_MARKETPLACES_WITHOUT_WORKTRUNK,
+    ));
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// An answer that cannot be read is not an absence. Each case is one way
+/// Claude Code could stop answering the question — the subcommand gone, output
+/// that is not JSON, and a list reshaped so it parses and still means
+/// something else — and each has to leave the removal's failure standing
+/// rather than report a marketplace it never removed.
+#[rstest]
+#[case::unsupported(MockResponse::exit(1).with_stderr("error: unknown option '--json'\n"))]
+#[case::unparsable(MockResponse::output("[{\"name\":"))]
+#[case::reshaped(MockResponse::output(r#"{"marketplaces":[{"name":"other"}]}"#))]
+fn test_plugins_claude_uninstall_surfaces_failure_when_list_unusable(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] list: MockResponse,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_marketplace_remove_failing(list);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    // The rendering is pinned by the single-case tests either side of this
+    // one; what each case here asserts is that an answer it could not read
+    // leaves claude's own error standing.
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(!output.status.success(), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("claude plugin marketplace remove worktrunk failed"),
+        "stderr:\n{stderr}"
+    );
+    assert!(!stderr.contains("marketplace removed"), "stderr:\n{stderr}");
+}
+
+/// The Codex counterpart: a second `uninstall` succeeds.
+#[rstest]
+fn test_plugins_codex_uninstall_tolerates_absent_marketplace(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing(MockResponse::output(
+        r#"{"marketplaces":[]}"#,
+    ));
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The Codex counterpart: a marketplace Codex still lists after the removal
+/// failed is a genuine failure, and the error surfaces.
+#[rstest]
+fn test_plugins_codex_uninstall_surfaces_marketplace_remove_failure(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing(MockResponse::output(
+        TestRepo::CODEX_MARKETPLACES_WITH_WORKTRUNK,
+    ));
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The Codex counterpart of the missing-from-list case. Codex deletes the
+/// whole `marketplaces` key with its last entry, so reading `config.toml`
+/// could not tell this state from a config whose key had moved; its own list
+/// reports the other marketplace and nothing else.
+#[rstest]
+fn test_plugins_codex_uninstall_tolerates_marketplace_missing_from_list(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing(MockResponse::output(
+        TestRepo::CODEX_MARKETPLACES_WITHOUT_WORKTRUNK,
+    ));
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// The Codex counterpart of the unusable-answer cases. The reshaped body is
+/// the other half of the shape check: entries Codex nests where it always has,
+/// naming worktrunk under a key that is no longer `name`.
+#[rstest]
+#[case::unsupported(MockResponse::exit(1).with_stderr("error: unexpected argument '--json'\n"))]
+#[case::unparsable(MockResponse::output("{\"marketplaces\":"))]
+#[case::reshaped(MockResponse::output(r#"{"marketplaces":[{"marketplace":"worktrunk"}]}"#))]
+fn test_plugins_codex_uninstall_surfaces_failure_when_list_unusable(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+    #[case] list: MockResponse,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_marketplace_remove_failing(list);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(!output.status.success(), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("codex plugin marketplace remove worktrunk failed"),
+        "stderr:\n{stderr}"
+    );
+    assert!(!stderr.contains("marketplace removed"), "stderr:\n{stderr}");
 }
 
 #[test]
@@ -5526,7 +6083,9 @@ fn test_plugins_claude_install_statusline_falls_back_to_dot_claude(
 #[rstest]
 fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins_failing();
+    // Claude Code lists no plugins, so the install runs rather than
+    // short-circuiting, and its first command is the one that fails.
+    repo.setup_mock_claude_with_plugins_failing(MockResponse::output("[]"));
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -5541,7 +6100,7 @@ fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: Temp
 
 #[rstest]
 fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: TempDir) {
-    use crate::common::mock_commands::{MockConfig, MockResponse};
+    use crate::common::mock_commands::MockConfig;
 
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_installed();
@@ -5552,6 +6111,7 @@ fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: 
         .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
     MockConfig::new("claude")
         .command("plugin marketplace", MockResponse::exit(0))
+        .command("plugin list", MockResponse::output("[]"))
         .command(
             "plugin install",
             MockResponse::exit(1).with_stderr("error: install failed\n"),
@@ -5572,8 +6132,52 @@ fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: 
 #[rstest]
 fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
-    repo.setup_mock_claude_with_plugins_failing();
-    TestRepo::setup_plugin_installed(temp_home.path());
+    // Claude Code still lists the plugin after the failed removal, which is
+    // what makes the failure genuine rather than an already-finished job.
+    repo.setup_mock_claude_with_plugins_failing(MockResponse::output(
+        TestRepo::CLAUDE_PLUGINS_WITH_WORKTRUNK,
+    ));
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = repo.wt_command();
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// `claude plugin uninstall` succeeds and the marketplace removal that follows
+/// it fails: the uninstall surfaces claude's error rather than reporting a
+/// marketplace it never removed.
+#[rstest]
+fn test_plugins_claude_uninstall_second_step_fails(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::MockConfig;
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_installed();
+
+    // Plugin uninstall succeeds and only the marketplace removal that follows
+    // it fails, so the error the command surfaces can come from nothing else.
+    // Claude Code still lists the marketplace afterwards, which is what makes
+    // this a genuine failure rather than the already-gone state
+    // `test_plugins_claude_uninstall_tolerates_absent_marketplace` covers.
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
+    MockConfig::new("claude")
+        .command("plugin uninstall", MockResponse::exit(0))
+        .command(
+            "plugin marketplace remove",
+            MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+        )
+        .command(
+            "plugin marketplace list",
+            MockResponse::output(TestRepo::CLAUDE_MARKETPLACES_WITH_WORKTRUNK),
+        )
+        .write(mock_bin);
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
@@ -5791,7 +6395,6 @@ mod plugin_prompt_pty {
     fn test_plugins_claude_uninstall_prompt_accept(mut repo: TestRepo, temp_home: TempDir) {
         repo.setup_mock_ci_tools_unauthenticated();
         repo.setup_mock_claude_with_plugins();
-        TestRepo::setup_plugin_installed(temp_home.path());
 
         let env_vars = plugin_env_vars(&repo);
         let cmd = build_pty_command(
@@ -5809,7 +6412,7 @@ mod plugin_prompt_pty {
             "Should show prompt. Output:\n{output}"
         );
         assert!(
-            output.contains("Plugin uninstalled"),
+            output.contains("Plugin & marketplace removed"),
             "Should confirm uninstallation. Output:\n{output}"
         );
     }
@@ -5818,7 +6421,6 @@ mod plugin_prompt_pty {
     fn test_plugins_claude_uninstall_prompt_decline(mut repo: TestRepo, temp_home: TempDir) {
         repo.setup_mock_ci_tools_unauthenticated();
         repo.setup_mock_claude_with_plugins();
-        TestRepo::setup_plugin_installed(temp_home.path());
 
         let env_vars = plugin_env_vars(&repo);
         let cmd = build_pty_command(
@@ -5836,7 +6438,7 @@ mod plugin_prompt_pty {
             "Should show prompt. Output:\n{output}"
         );
         assert!(
-            !output.contains("Plugin uninstalled"),
+            !output.contains("Plugin & marketplace removed"),
             "Should NOT uninstall when declined. Output:\n{output}"
         );
     }
@@ -5848,6 +6450,13 @@ mod plugin_prompt_pty {
 
 #[rstest]
 fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        "[list]\nfull = true\njson-schema = 2\n",
+    )
+    .unwrap();
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -5860,6 +6469,7 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     repo.configure_wt_cmd(&mut cmd);
     set_xdg_config_path(&mut cmd, temp_home.path());
     set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path);
     cmd.args(["config", "show", "--format=json"])
         .current_dir(repo.root_path());
 
@@ -5875,9 +6485,300 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     assert!(json["user"]["exists"].as_bool().unwrap());
     assert!(json["user"]["path"].as_str().is_some());
     assert!(json["user"]["config"].is_object());
+    assert_eq!(json["user"]["config"]["list"]["full"], true);
 
     // Project config doesn't exist in this fixture
     assert!(!json["project"]["exists"].as_bool().unwrap());
+}
+
+#[rstest]
+#[case::environment("WORKTRUNK_LIST__TIMEOUT_MS", "invalid", None)]
+#[case::environment_validation("WORKTRUNK_WORKTREE_PATH", "", None)]
+#[case::inline("", "", Some("list.timeout-ms=\"invalid\""))]
+fn test_config_show_json_allows_invalid_runtime_override(
+    repo: TestRepo,
+    temp_home: TempDir,
+    #[case] env_name: &str,
+    #[case] env_value: &str,
+    #[case] inline: Option<&str>,
+) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "[list]\nbranches = true\n").unwrap();
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list]\nfull = true\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path);
+    if let Some(inline) = inline {
+        cmd.args(["--config-set", inline]);
+    } else {
+        cmd.env(env_name, env_value);
+    }
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "runtime overrides should warn without invalidating the source config: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["config"]["list"]["branches"], true);
+    assert_eq!(json["user"]["config"]["list"]["full"], true);
+}
+
+#[rstest]
+#[case::text(&["config", "show"], false, false)]
+#[case::json(&["config", "show", "--format=json"], false, false)]
+#[case::json_with_unrelated_env(&["config", "show", "--format=json"], true, false)]
+#[case::json_with_masking_env(&["config", "show", "--format=json"], false, true)]
+fn test_config_show_rejects_semantically_invalid_user_config(
+    repo: TestRepo,
+    #[case] args: &[&str],
+    #[case] with_unrelated_env: bool,
+    #[case] with_masking_env: bool,
+) {
+    fs::write(repo.test_config_path(), "worktree-path = \"\"\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(args);
+    if with_unrelated_env {
+        cmd.env("WORKTRUNK_LIST__FULL", "true");
+    } else if with_masking_env {
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "../valid");
+    }
+    let output = cmd.output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    if args.contains(&"--format=json") {
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let user_section = stdout
+            .split("USER CONFIG")
+            .nth(1)
+            .and_then(|rest| rest.split("PROJECT CONFIG").next())
+            .unwrap();
+        assert!(user_section.contains("Invalid config"), "{stdout}");
+        assert!(
+            user_section.contains("worktree-path cannot be empty"),
+            "{stdout}"
+        );
+    }
+}
+
+#[rstest]
+#[case::text(&["config", "show"])]
+#[case::json(&["config", "show", "--format=json"])]
+fn test_config_show_rejects_semantically_invalid_system_config(
+    repo: TestRepo,
+    #[case] args: &[&str],
+) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "worktree-path = \"\"\n").unwrap();
+    fs::write(repo.test_config_path(), "worktree-path = \"../valid\"\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_path)
+        .args(args)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    if args.contains(&"--format=json") {
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+        return;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let system_section = stdout
+        .split("SYSTEM CONFIG")
+        .nth(1)
+        .and_then(|rest| rest.split("USER CONFIG").next())
+        .unwrap();
+    assert!(system_section.contains("Invalid config"), "{stdout}");
+    assert!(
+        system_section.contains("worktree-path cannot be empty"),
+        "{stdout}"
+    );
+}
+
+#[rstest]
+#[case::text(&["config", "show"])]
+#[case::json(&["config", "show", "--format=json"])]
+fn test_config_show_warns_once_for_missing_explicit_config(repo: TestRepo, #[case] args: &[&str]) {
+    let output = repo
+        .wt_command()
+        .args(["--config", "/nonexistent/worktrunk/config.toml"])
+        .args(args)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("Config file not found").count(),
+        1,
+        "{stderr}"
+    );
+}
+
+#[rstest]
+fn test_config_show_json_rejects_invalid_custom_column(repo: TestRepo, temp_home: TempDir) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "[list.custom-columns.ticket]\ntemplate = \"{{ branch }}\"\nwidth = 0\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert!(output.stderr.is_empty());
+}
+
+#[rstest]
+fn test_config_show_json_rejects_invalid_system_config(repo: TestRepo, temp_home: TempDir) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "invalid = [toml\n").unwrap();
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["system"]["exists"], true);
+    assert!(
+        json["user"]["config"].is_object(),
+        "a broken system source must not erase valid user config"
+    );
+}
+
+#[rstest]
+fn test_config_show_json_rejects_unreadable_system_config(repo: TestRepo, temp_home: TempDir) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", system_config_dir.path());
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["system"]["exists"], true);
+}
+
+#[rstest]
+fn test_config_show_json_rejects_invalid_approvals_file(repo: TestRepo) {
+    fs::write(repo.test_approvals_path(), "not valid TOML [[[").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+}
+
+#[rstest]
+fn test_config_show_json_rejects_invalid_user_config(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "invalid = [toml\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["exists"], true);
+    assert!(json["user"]["config"].is_null());
+}
+
+#[rstest]
+fn test_config_show_json_rejects_unreadable_user_config(repo: TestRepo) {
+    fs::write(repo.test_config_path(), [0xff]).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["user"]["exists"], true);
+    assert!(json["user"]["config"].is_null());
+}
+
+#[rstest]
+fn test_config_show_json_rejects_invalid_project_config(repo: TestRepo) {
+    repo.write_project_config("invalid = [toml\n");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["project"]["exists"], true);
+    assert!(json["project"]["config"].is_null());
+}
+
+#[rstest]
+fn test_config_show_json_rejects_unreadable_project_config(repo: TestRepo) {
+    repo.write_project_config("");
+    fs::write(repo.root_path().join(".config/wt.toml"), [0xff]).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show", "--format=json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(json["project"]["exists"], true);
+    assert!(json["project"]["config"].is_null());
 }
 
 #[rstest]

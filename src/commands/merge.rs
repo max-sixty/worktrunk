@@ -322,6 +322,20 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // (from auto-commit or squash), post-remove + post-switch (from worktree
     // removal), and post-merge share a single `◎ Running …` line flushed at
     // the end.
+    //
+    // Every background hook runs in the worktree it is anchored on, and only
+    // post-commit is anchored on the feature worktree (the other three anchor
+    // on the destination). A merge that removes that worktree therefore
+    // reaches the flush with post-commit's anchor gone, so the removal reports
+    // it via `HookAnnouncer::mark_worktree_removed` and the flush drops that
+    // pipeline rather than spawning it into a path whose git discovery would
+    // walk up to the primary worktree.
+    //
+    // There is no earlier moment to spawn it. Between the commit and the
+    // removal the worktree is rebased and runs `pre-merge`, and a background
+    // pipeline there would race both. post-commit still runs where the
+    // worktree survives — `--no-remove`, merging on the target branch, merging
+    // from the primary worktree — and on `wt step commit` / `wt step squash`.
     let mut announcer = HookAnnouncer::new(repo, false);
 
     // The project commit-append is gated independently of hook approval:

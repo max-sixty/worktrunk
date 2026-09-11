@@ -8,7 +8,7 @@ use color_print::cformat;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::progress::{Progress, format_bytes};
+use worktrunk::progress::{Progress, format_bytes, format_reflink_paren};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, println, success_message, verbosity,
 };
@@ -16,6 +16,26 @@ use worktrunk::styling::{
 use crate::output::print_json;
 
 use super::shared::{list_and_filter_ignored_entries, resolve_copy_ignored_config};
+
+/// Add the four counts a result payload reports, all zero, to an exit that
+/// copied nothing.
+///
+/// An `outcome: "planned"` payload takes none of them. It reports what *would*
+/// be copied, so a file count and a reflink split have nothing to describe, and
+/// leaving them out keeps `planned` one shape whether or not anything matched:
+/// the two `!dry_run`-gated early returns reach it with an empty entry list,
+/// the main path with a full one.
+///
+/// `same_worktree` is not a plan. It is a no-op exit in either mode, carrying
+/// no `dry_run` key, so it takes the zeroed counts unconditionally.
+fn insert_empty_counts(payload: &mut serde_json::Value) {
+    let obj = payload
+        .as_object_mut()
+        .expect("the json! macro above produced an object");
+    for key in ["files", "bytes", "reflinked", "written"] {
+        obj.insert(key.to_string(), serde_json::json!(0));
+    }
+}
 
 /// Handle `wt step copy-ignored` command
 ///
@@ -70,14 +90,13 @@ pub fn step_copy_ignored(
 
     if source_path == dest_path {
         if json_mode {
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "outcome": "same_worktree",
                 "from": source_path,
                 "to": dest_path,
                 "entries": Vec::<serde_json::Value>::new(),
-                "files": 0,
-                "bytes": 0,
             });
+            insert_empty_counts(&mut payload);
             print_json(&payload)?;
         } else {
             eprintln!(
@@ -100,16 +119,17 @@ pub fn step_copy_ignored(
     // when nothing copies.
     if require_include && !source_path.join(".worktreeinclude").exists() {
         if json_mode {
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "outcome": if dry_run { "planned" } else { "copied" },
                 "dry_run": dry_run,
                 "from": source_path,
                 "to": dest_path,
                 "reason": "require-include-no-worktreeinclude",
                 "entries": Vec::<serde_json::Value>::new(),
-                "files": 0,
-                "bytes": 0,
             });
+            if !dry_run {
+                insert_empty_counts(&mut payload);
+            }
             print_json(&payload)?;
         } else {
             eprintln!(
@@ -137,15 +157,16 @@ pub fn step_copy_ignored(
 
     if entries_to_copy.is_empty() {
         if json_mode {
-            let payload = serde_json::json!({
+            let mut payload = serde_json::json!({
                 "outcome": if dry_run { "planned" } else { "copied" },
                 "dry_run": dry_run,
                 "from": source_path,
                 "to": dest_path,
                 "entries": Vec::<serde_json::Value>::new(),
-                "files": 0,
-                "bytes": 0,
             });
+            if !dry_run {
+                insert_empty_counts(&mut payload);
+            }
             print_json(&payload)?;
         } else {
             eprintln!("{}", info_message("No matching files to copy"));
@@ -257,18 +278,24 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)? {
-                progress.record(bytes);
+            if let Some((bytes, data)) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)?
+            {
+                progress.record(bytes, data);
             }
         }
     }
     let (copied_count, copied_bytes) = progress.totals();
+    let (reflinked, written) = progress.copy_split();
     progress.finish();
 
     if json_mode {
         // `entries` mirrors dry-run: the top-level units selected for copy
         // (files and dirs). `files` counts the actual leaves written
-        // (recursive + skipping pre-existing files), `bytes` sums their size.
+        // (recursive + skipping pre-existing files), `bytes` sums their size,
+        // and `reflinked`/`written` split those leaves by whether the
+        // filesystem shared the source's extents. `insert_empty_counts` carries
+        // all four through the exits that copy nothing, so a consumer never
+        // branches on a key's presence.
         let entries: Vec<_> = entries_to_copy
             .iter()
             .map(|(src_entry, is_dir)| {
@@ -289,6 +316,8 @@ pub fn step_copy_ignored(
             "entries": entries,
             "files": copied_count,
             "bytes": copied_bytes,
+            "reflinked": reflinked,
+            "written": written,
         });
         print_json(&payload)?;
     } else {
@@ -300,6 +329,7 @@ pub fn step_copy_ignored(
                 "Copied {copied_count} {file_word} · {}",
                 format_bytes(copied_bytes)
             ))
+            .append(&format_reflink_paren(reflinked, written))
         );
     }
 

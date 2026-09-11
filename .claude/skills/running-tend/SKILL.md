@@ -46,7 +46,9 @@ Don't try to `cargo install` them in the sandbox — past attempts at
 source-compiling installs cascaded into bash-tool interrupts that blocked
 even `pwd` and `echo`. Instead, query Codecov directly, following
 `tests/CLAUDE.md` → **Coverage Investigation** for the endpoints and their
-traps.
+traps. The sandbox also mounts root `/tmp` read-only, which is why the
+scratch paths there and below go to `${TMPDIR:-/tmp}` — write new ones the
+same way.
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
 artifact from the PR head's `coverage` workflow run — it contains a
@@ -58,8 +60,8 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 CI_RUN=$(gh api "repos/$REPO/commits/<sha>/check-runs" --jq '.check_runs[] | select(.name == "code-coverage") | .details_url | capture("runs/(?<id>[0-9]+)") | .id')
 # List artifacts, then download the coverage one:
 gh api "repos/$REPO/actions/runs/$CI_RUN/artifacts" --jq '.artifacts[] | {name, id}'
-gh api "repos/$REPO/actions/artifacts/<id>/zip" > /tmp/coverage.zip
-unzip -q /tmp/coverage.zip -d /tmp/coverage
+gh api "repos/$REPO/actions/artifacts/<id>/zip" > "${TMPDIR:-/tmp}/coverage.zip"
+unzip -q "${TMPDIR:-/tmp}/coverage.zip" -d "${TMPDIR:-/tmp}/coverage"
 ```
 
 ## Test Commands
@@ -74,7 +76,12 @@ CI runs on Linux, Windows, and macOS.
 
 ## Session Log Paths
 
-Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
+The artifact directory is named after the agent's working directory, and from
+tend 0.2.5 that is a per-run `/tmp/tend-agent-workspace-*/checkout` — so the
+old `-home-runner-work-worktrunk-worktrunk/` prefix appears only in runs
+predating the bump, and there is no literal to match on any more. Use the
+bundled `find "$DEST" -name '*.jsonl'` recipe; either shape is one
+`<session-id>.jsonl` under a single slugified directory.
 
 ## Labels
 
@@ -290,6 +297,14 @@ succeed. A failure is reported in the PR, never worked around: leave the file
 alone if the update fails, `git checkout flake.lock` if the eval does, and
 hand-compute an entry in neither case.
 
+**Expect both commands to fail with a permission error from tend 0.2.5 on.**
+`nix` resolves on the agent's PATH, but the multi-user client reaches the store
+by connecting to `/nix/var/nix/daemon-socket/socket`, and the sandbox blocks
+`socket(AF_UNIX, …)` outright. That is the reported failure above, not a
+problem with the bump: say so in the PR, leave `flake.lock` untouched, and
+carry the rest of the toolchain change as normal. It clears when
+max-sixty/tend#1197 gives the action a lever for it.
+
 After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
 and verify `cargo msrv verify` passes.
 
@@ -336,16 +351,15 @@ jq -n --arg cwd "$PWD" '{
   workspace: {current_dir: $cwd},
   model: {display_name: "Opus"},
   context_window: {used_percentage: 42.0}
-}' > /tmp/statusline-input.json
+}' > "${TMPDIR:-/tmp}/statusline-input.json"
 
-# Debug build on purpose. `tend-weekly` installs no `wt`, and its rust-cache
-# step is `save-if: false` under a key no workflow writes, so `--release`
-# means a cold optimized build of the whole dependency graph before the first
-# render. The duplicate `(command, context)` pairs this check reads are
-# profile-independent; only the timing columns, which this section doesn't
-# triage, would be worth a release build.
+# Debug build on purpose. `tend-weekly` installs no `wt` and restores no Rust
+# cache, so `--release` means a cold optimized build of the whole dependency
+# graph before the first render. The duplicate `(command, context)` pairs this
+# check reads are profile-independent; only the timing columns, which this
+# section doesn't triage, would be worth a release build.
 cargo run -- -vv list statusline --format=claude-code \
-  < /tmp/statusline-input.json > /dev/null
+  < "${TMPDIR:-/tmp}/statusline-input.json" > /dev/null
 cargo run -- config state logs profile --format=json | jq .cache
 ```
 

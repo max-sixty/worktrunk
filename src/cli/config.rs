@@ -243,27 +243,29 @@ $ wt config plugins pi uninstall
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsCodexCommand {
-    /// Configure the Worktrunk marketplace in Codex
+    /// Install the Worktrunk plugin
     #[command(
-        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
 
 ```console
 $ codex plugin marketplace add max-sixty/worktrunk
+$ codex plugin add worktrunk@worktrunk
 ```
 
-This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#
+Requires `codex` CLI."#
     )]
     Install,
 
-    /// Remove the Worktrunk marketplace from Codex
+    /// Remove the Worktrunk plugin
     #[command(
-        after_long_help = r#"Removes the Worktrunk plugin marketplace from Codex. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Codex and removes its marketplace. Equivalent to:
 
 ```console
+$ codex plugin remove worktrunk@worktrunk
 $ codex plugin marketplace remove worktrunk
 ```
 
-This leaves any already-installed Worktrunk plugin unchanged."#
+Requires `codex` CLI."#
     )]
     Uninstall,
 }
@@ -440,11 +442,14 @@ Requires `claude` CLI. Skips gracefully if already installed."#
 
     /// Remove the Worktrunk plugin
     #[command(
-        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code. Equivalent to:
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code and removes its marketplace. Equivalent to:
 
 ```console
 $ claude plugin uninstall worktrunk@worktrunk
-```"#
+$ claude plugin marketplace remove worktrunk
+```
+
+Requires `claude` CLI. Both removals run every time, tolerating only the "already gone" error Claude Code itself reports. Running it again is safe, and finishes an uninstall that removed the plugin and then failed on the marketplace."#
     )]
     Uninstall,
 
@@ -559,10 +564,9 @@ pub enum ConfigCommand {
 
     /// Show configuration files & locations
     #[command(
-        after_long_help = r#"Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
-and project config (`.config/wt.toml`). Also shows system config if present.
-
-If a config file doesn't exist, shows defaults that would be used.
+        after_long_help = r#"Shows config sources and checks for invalid TOML or list columns, misplaced or
+deprecated keys, and commands awaiting approval. It renders every section
+before failing; warnings exit zero.
 
 ## Full diagnostics
 
@@ -590,10 +594,8 @@ This tests:
     /// Update deprecated config settings
     #[command(
         after_long_help = r#"Updates deprecated settings in user and project config files
-to their current equivalents, removes deprecated keys that have no equivalent
-and reports each one, and adopts defaults that a future release switches —
-currently `[list] json-schema = 2` — so the switch happens as a reviewed config
-edit rather than at upgrade. Shows a diff and asks for confirmation.
+to their current equivalents, removes deprecated keys that have no equivalent,
+and reports each one. Shows a diff and asks for confirmation.
 
 Migrations are computed in memory on demand; nothing is written outside this
 command. Set `--output <path>` to write a migrated config to that destination
@@ -601,8 +603,8 @@ instead of applying it in place. Use `-` for stdout. When both user and project
 config need migration, stdout emits a labeled inspection artifact and file
 output fails rather than combining the configs.
 
-Output artifacts omit deprecated `approved-commands`; only in-place updates
-move those entries to `approvals.toml`.
+`--output` omits deprecated `approved-commands` with a stderr warning; only an
+in-place update migrates them to `approvals.toml`.
 
 ## Examples
 

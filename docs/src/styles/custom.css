@@ -50,8 +50,8 @@
   --sl-color-hairline-light: var(--wt-line);
   --sl-color-hairline: var(--wt-line);
   --sl-color-hairline-shade: var(--wt-line);
-  --sl-content-width: 50rem;
-  --sl-sidebar-width: 17rem;
+  --sl-content-width: 62rem;
+  --sl-sidebar-width: 14rem;
 }
 
 :root[data-theme='dark'] {
@@ -711,6 +711,41 @@ figure.demo img {
           (100% - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
       )
     );
+  }
+}
+
+/* Keep the compact table of contents until both sidebars leave room for examples. */
+@media (min-width: 72rem) and (max-width: 85.99rem) {
+  :root {
+    --sl-mobile-toc-height: 3rem;
+  }
+
+  [data-has-toc] .lg\:sl-flex:has(> .right-sidebar-container) {
+    flex-wrap: wrap;
+  }
+
+  [data-has-toc] .right-sidebar-container,
+  [data-has-sidebar][data-has-toc] .main-pane,
+  html:has(.wt-home) .main-pane {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  [data-has-toc] .right-sidebar {
+    position: static;
+    border-inline-start: 0;
+    padding-top: 0;
+    width: auto;
+    height: auto;
+    overflow-y: visible;
+  }
+
+  [data-has-toc] .right-sidebar .lg\:sl-hidden {
+    display: block;
+  }
+
+  [data-has-toc] .right-sidebar-panel {
+    display: none;
   }
 }
 

@@ -3247,11 +3247,14 @@ pub mod tests {
                     link_style: crate::commands::list::layout::LinkStyle::Expanded,
                 },
                 Path::new("/test"),
-                None,
-                None,
                 crate::commands::list::layout::ColumnSelection {
                     custom: &[],
                     selected: None,
+                },
+                crate::commands::list::layout::RepoFacts {
+                    has_remote: true,
+                    url_template: None,
+                    max_pr_number: None,
                 },
             ));
         (row, token, rendered, morphed)
@@ -4227,11 +4230,14 @@ pub mod tests {
                 link_style: crate::commands::list::layout::LinkStyle::Expanded,
             },
             Path::new("/test"),
-            None,
-            None,
             crate::commands::list::layout::ColumnSelection {
                 custom: &[],
                 selected: None,
+            },
+            crate::commands::list::layout::RepoFacts {
+                has_remote: true,
+                url_template: None,
+                max_pr_number: None,
             },
         );
 

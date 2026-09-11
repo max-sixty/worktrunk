@@ -201,7 +201,7 @@ impl UserConfig {
 
 impl UserConfig {
     /// Validate configuration values.
-    pub(super) fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
         if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()

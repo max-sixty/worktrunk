@@ -223,35 +223,45 @@ Link when there's substantial documentation the user would benefit from reading 
 
 ### MANDATORY: Verify Each Changelog Entry
 
-**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** This is non-negotiable — changelog mistakes are a recurring problem.
+**After drafting changelog entries, you MUST spawn a subagent to verify each bullet point is accurate.** The tag publishes this text as the GitHub release body, so a correction afterwards takes a follow-up PR to `CHANGELOG.md` and a hand-edit of the release page, and people have read the wrong line by then. This pass is worth as much time as it takes.
 
 **The gate cuts both ways.** Checking only accuracy pushes every entry longer: "understates" and "not covered" have no counterweight, so each pass adds and none subtracts. That asymmetry is what drove the ratchet above. An entry that is too long, too internal, or ranked above one more readers will notice is reported on the same footing as one that is wrong.
-
-The subagent should:
-1. Take the list of drafted changelog entries
-2. For each entry, find the commit(s) it describes and read the actual diff
-3. Verify the entry accurately describes what changed
-4. Check for missing changes that should be documented
-5. Check each entry against the length ceiling and the ordering rule
-6. Report inaccuracies, omissions, overlong entries, and misordering
 
 **Subagent prompt template:**
 
 ```
-Verify these changelog entries for version X.Y.Z are accurate.
+Verify these changelog entries for version X.Y.Z are accurate. They publish with
+the tag, and by the time anyone corrects a wrong line, readers have acted on it.
+Spend the time to read a source for each one: reading the entry and finding it
+plausible is not a check, because the entry was written from the same commits you
+are about to read.
 
 Previous version: [e.g., v0.1.9]
 Commits to check: git log v<previous>..HEAD
 
-Entries to verify:
-[paste drafted entries]
+Entries to verify: the top section of CHANGELOG.md as it stands on disk. Read it
+there rather than from a paste:
+awk '/^## /{if (f) exit; f=1} f' CHANGELOG.md
 
-For EACH entry:
+Verify claim by claim, not entry by entry: an entry carries several independent
+claims, and one verdict over the whole entry waves through every claim that is not
+its headline.
+
 1. Find the relevant commit(s) using git log and git show
-2. Read the actual diff, not just the commit message
-3. Confirm the entry accurately describes the user-facing change
-4. Flag if the entry overstates, understates, or misdescribes the change
-5. Flag if the entry runs over 60 words (80 for one of the two or three headline
+2. Read the diff, not the commit message. The diff settles what changed, and
+   nothing else: not what the behavior was before, not what the user sees, not
+   what a file it doesn't touch does. Settle a "previously" / "no longer" / "so X
+   broke" claim by reading the old file (`git show <sha>^:<path>`) and confirming
+   the old behavior there. The new code's handling of the old case is not that
+   confirmation: a case added together with a comment about why it produces
+   nothing reads in a diff exactly like a case that used to produce something.
+   Some claims have no source in the commit at all — a version floor, what a
+   rendered page shows, how another component behaves. Read that source: the
+   rendered output, the other component's own file, the upstream project's own
+   releases
+3. Flag any claim its source does not support, whether it overstates,
+   understates, or misdescribes
+4. Flag if the entry runs over 60 words (80 for one of the two or three headline
    entries), restates the PR description, or explains mechanism the reader cannot
    act on — report these as seriously as an inaccuracy, and quote a shorter
    rewrite that keeps every user-facing claim
@@ -265,11 +275,13 @@ Report format:
 - Entry: [entry text]
   Status: ✅ Accurate / ⚠️ Needs revision / ❌ Incorrect
   Length: [word count] — ✅ / ⚠️ over ceiling
-  Evidence: [what you found in the diff]
+  Evidence: [for each claim, the source you read and what it said]
   Suggested fix: [if needed]
 ```
 
-**Do not finalize the changelog until the subagent confirms every entry is accurate and within the ceiling.**
+**The pass ends on a clean run, not on the first run's findings.** A rewrite the verifier suggests has no more evidence behind it than one you wrote yourself, and an entry you edit while the pass runs is in the same state — both leave that entry unverified. Re-run over the section as it now stands, and finalize only once a run comes back clean.
+
+`evals/README.md` beside this skill holds four entries from a shipped release, three of them wrong, for scoring a change to this template against what the last wording missed.
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 

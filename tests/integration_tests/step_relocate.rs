@@ -2,6 +2,7 @@
 
 use crate::common::{TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::fs;
 use std::path::Path;
@@ -304,11 +305,18 @@ fn test_relocate_dirty_with_commit(repo: TestRepo) {
     // Make uncommitted changes
     fs::write(wrong_path.join("dirty.txt"), "uncommitted changes").unwrap();
 
-    // Configure mock LLM command via config file
-    let worktrunk_config = r#"
+    // Configure mock LLM command via config file. It saves the prompt so the
+    // assertion below can check which worktree the diff came from: `relocate`
+    // commits worktrees other than the invoking one, and reading the diff from
+    // the cwd (clean here) would describe nothing.
+    let captured = repo.home_path().join("captured-prompt.txt");
+    let worktrunk_config = format!(
+        r#"
 [commit.generation]
-command = "cat >/dev/null && echo 'chore: auto-commit before relocate'"
-"#;
+command = "cat > {} && echo 'chore: auto-commit before relocate'"
+"#,
+        captured.to_slash_lossy()
+    );
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Relocate with --commit should commit then move
@@ -330,6 +338,13 @@ command = "cat >/dev/null && echo 'chore: auto-commit before relocate'"
         !wrong_path.exists(),
         "Old worktree path should no longer exist: {}",
         wrong_path.display()
+    );
+
+    // The generator described the committed worktree, not the invoking one.
+    let prompt = fs::read_to_string(&captured).expect("generator received no prompt");
+    assert!(
+        prompt.contains("dirty.txt") && prompt.contains("+uncommitted changes"),
+        "the prompt must carry the committed worktree's diff; got:\n{prompt}"
     );
 }
 

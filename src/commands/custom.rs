@@ -7,7 +7,10 @@
 //! 1. **Alias**: if `foo` is configured as an alias in user/project config,
 //!    run it via the same path as `wt step foo`. User config wins over
 //!    `wt-<name>` PATH binaries — aliases are how users customize wt, so the
-//!    user's intent should take precedence.
+//!    user's intent should take precedence. Outside a repository an alias
+//!    cannot run (execution resolves the current worktree), so dispatch ends
+//!    there with the alias-needs-repository error and the PATH binary never
+//!    sees the name.
 //! 2. **PATH binary**: resolve `wt-<name>` via `which`. If found, run it with
 //!    the remaining args, inheriting stdio, and propagate the exit code.
 //!    Mirrors how `git foo` finds `git-foo`.
@@ -221,12 +224,22 @@ mod tests {
     }
 
     #[test]
-    fn similar_subcommands_dedupes_alias_matching_builtin() {
-        // An alias whose name shadows a built-in (e.g. `list`) should appear
-        // only once in suggestions, not duplicated.
+    fn similar_subcommands_never_suggests_the_input_itself() {
+        // An exact match — e.g. a user-config alias named like the input — is
+        // never a "similar" suggestion: dispatch paths that reach the error
+        // with the input in the candidate pool (alias outside a repository,
+        // alias skipped as non-UTF-8) must not tip the typed name back.
         let cmd = build_command();
         let aliases = vec!["list".to_string()];
         let suggestions = similar_subcommands("list", &cmd, &aliases);
+        assert!(
+            !suggestions.contains(&"list".to_string()),
+            "got: {suggestions:?}"
+        );
+
+        // A near match reachable from both pools (built-in + alias of the same
+        // name) still appears once — the dedupe set survives the filter.
+        let suggestions = similar_subcommands("lst", &cmd, &aliases);
         let count = suggestions.iter().filter(|n| *n == "list").count();
         assert_eq!(count, 1, "got: {suggestions:?}");
     }

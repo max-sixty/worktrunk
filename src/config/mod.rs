@@ -164,7 +164,6 @@ pub use deprecation::DeprecationInfo;
 pub use deprecation::check_and_migrate;
 pub use deprecation::compute_migrated_content;
 pub use deprecation::copy_approved_commands_to_approvals_file;
-pub use deprecation::detect_deprecations;
 pub use deprecation::format_deprecation_details;
 pub use deprecation::format_deprecation_warnings;
 pub use deprecation::format_migration_diff;
@@ -195,7 +194,7 @@ pub use project::{
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
-pub(crate) use user::LoadError;
+pub use user::LoadError;
 pub(crate) use user::project_match::matching_keys as matching_project_keys;
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListColumnConfig, ListConfig,

@@ -150,7 +150,7 @@ use anstyle::Style;
 use model::{BranchScope, ItemKind, ListData, ListItem};
 use progressive::RenderTarget;
 use worktrunk::git::Repository;
-use worktrunk::styling::{INFO_SYMBOL, eprintln};
+use worktrunk::styling::{INFO_SYMBOL, eprintln, terminal_width, wrap_styled_text};
 
 use crate::output::print_json;
 
@@ -175,8 +175,8 @@ pub fn handle_list(
     // above the rows instead of between them.
     repo.warn_if_project_config_unloadable();
 
-    // Resolve the JSON schema before collecting, so the unset-nag lands
-    // above the output rather than after a long collection.
+    // Resolve the JSON schema before collecting, so an invalid-value warning
+    // lands above the output rather than after a long collection.
     let json_schema =
         matches!(render_target, RenderTarget::Json).then(|| resolve_json_schema(&repo));
 
@@ -216,27 +216,16 @@ pub fn handle_list(
 
 /// Resolve `[list] json-schema` (per-project resolved config) to 1 or 2.
 ///
-/// Unset defaults to schema 1 and nags once per process; an out-of-range
-/// value warns and defaults to schema 1, matching how config load treats a
+/// Unset defaults to schema 2; an out-of-range value warns and defaults to
+/// schema 2, matching how config load treats a
 /// type error in the same key (warn and degrade, never brick a command).
-/// Both messages honor warning suppression — on the statusline, stderr
-/// would corrupt the consumer's prompt, and the same user sees the nag on
-/// their next interactive run.
-///
-/// The unset state is the `PendingDefault` row in `DEPRECATION_RULES`, but
-/// its warning fires here rather than at config load: the setting only
-/// matters to JSON consumers, so a load-time warning would nag every command
-/// for every user without the key. `wt config update` writes the upcoming
-/// `json-schema = 2` (adopting the new schema is the migration; staying on
-/// schema 1 is the deliberate manual edit), so the nag's hint offers that
-/// command exactly when running it would write the key — decided by the same
-/// detection update runs, so a missing, unreadable, or malformed user config
-/// falls back to naming the manual setting instead.
+/// The warning honors warning suppression because stderr would corrupt the
+/// statusline consumer's prompt.
 pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
     use std::sync::Once;
 
     use color_print::cformat;
-    use worktrunk::styling::{hint_message, warning_message};
+    use worktrunk::styling::warning_message;
 
     static WARNED: Once = Once::new();
     match repo.config().list.json_schema {
@@ -249,47 +238,13 @@ pub(crate) fn resolve_json_schema(repo: &Repository) -> u8 {
                 eprintln!(
                     "{}",
                     warning_message(cformat!(
-                        "[list] json-schema is <bold>{other}</>, expected 1 or 2; using schema 1"
+                        "[list] json-schema is <bold>{other}</>, expected 1 or 2; using schema 2"
                     ))
                 );
             });
-            1
+            2
         }
-        None => {
-            WARNED.call_once(|| {
-                if worktrunk::config::warnings_suppressed() {
-                    return;
-                }
-                eprintln!(
-                    "{}",
-                    warning_message(
-                        "JSON output is schema 1; a future release switches the default to schema 2"
-                    )
-                );
-                let update_would_adopt = worktrunk::config::config_path()
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                    .is_some_and(|content| {
-                        worktrunk::config::detect_deprecations(
-                            &content,
-                            worktrunk::config::ConfigFileKind::User,
-                        )
-                        .iter()
-                        .any(|k| matches!(k, worktrunk::config::DeprecationKind::JsonSchemaUnset))
-                    });
-                let adopt = if update_would_adopt {
-                    cformat!("run <underline>wt config update</>")
-                } else {
-                    cformat!("set <underline>json-schema = 2</>")
-                };
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To keep this format set <underline>[list] json-schema = 1</>; to adopt the new schema, {adopt}"
-                    ))
-                );
-            });
-            1
-        }
+        None => 2,
     }
 }
 
@@ -344,7 +299,7 @@ impl SummaryMetrics {
     pub(super) fn summary_parts(
         &self,
         include_branches: bool,
-        hidden_columns: usize,
+        hidden_columns: &[String],
     ) -> Vec<String> {
         let mut parts = Vec::new();
 
@@ -370,13 +325,8 @@ impl SummaryMetrics {
             parts.push(format!("{} ahead", self.ahead_items));
         }
 
-        if hidden_columns > 0 {
-            let plural = if hidden_columns == 1 {
-                "column"
-            } else {
-                "columns"
-            };
-            parts.push(format!("{} {} hidden", hidden_columns, plural));
+        if !hidden_columns.is_empty() {
+            parts.push(format!("hidden: {}", hidden_columns.join(", ")));
         }
 
         parts
@@ -390,26 +340,47 @@ impl SummaryMetrics {
 /// that failed instead get a named entry in the warning that follows the
 /// table, and that warning carries its own count — repeating it here would
 /// print the same number twice on adjacent lines.
+///
+/// `max_width` bounds the line, following [`format_with_gutter`]'s
+/// convention: `None` detects the terminal, and no detectable width wraps
+/// nothing. The hidden-column list grows with every column a narrow terminal
+/// drops, so the footer is longest exactly where there is least room for it —
+/// at 40 columns it ran to 67 for a table that fit. Continuations indent
+/// under the text, keeping them subordinate to the `○`.
+///
+/// [`format_with_gutter`]: worktrunk::styling::format_with_gutter
 pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
-    hidden_column_count: usize,
+    hidden_columns: &[String],
     timed_out_count: usize,
+    max_width: Option<usize>,
 ) -> String {
+    const INDENT: &str = "  "; // symbol + space, so continuations align under the text
+
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
     let summary = metrics
-        .summary_parts(show_branches, hidden_column_count)
+        .summary_parts(show_branches, hidden_columns)
         .join(", ");
 
-    if timed_out_count > 0 {
+    let body = if timed_out_count > 0 {
         let plural = if timed_out_count == 1 { "" } else { "s" };
-        format!(
-            "{INFO_SYMBOL} {dim}Showing {summary}; {timed_out_count} task{plural} timed out{dim:#}"
-        )
+        format!("Showing {summary}; {timed_out_count} task{plural} timed out")
     } else {
-        format!("{INFO_SYMBOL} {dim}Showing {summary}{dim:#}")
-    }
+        format!("Showing {summary}")
+    };
+
+    let width = max_width.or_else(terminal_width).unwrap_or(usize::MAX);
+    let body = wrap_styled_text(&body, width.saturating_sub(INDENT.len()))
+        .iter()
+        // The wrapper keeps the space it broke on, which would land a
+        // continuation one column right of the indent.
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(&format!("\n{INDENT}"));
+
+    format!("{INFO_SYMBOL} {dim}{body}{dim:#}")
 }
 
 #[cfg(test)]
@@ -455,7 +426,7 @@ mod tests {
             dirty_worktrees: 0,
             ahead_items: 0,
         };
-        let parts = metrics.summary_parts(false, 0);
+        let parts = metrics.summary_parts(false, &[]);
         assert_eq!(parts, vec!["1 worktree"]);
     }
 
@@ -468,7 +439,7 @@ mod tests {
             dirty_worktrees: 0,
             ahead_items: 0,
         };
-        let parts = metrics.summary_parts(false, 0);
+        let parts = metrics.summary_parts(false, &[]);
         assert_eq!(parts, vec!["3 worktrees"]);
     }
 
@@ -481,7 +452,7 @@ mod tests {
             dirty_worktrees: 0,
             ahead_items: 0,
         };
-        let parts = metrics.summary_parts(true, 0);
+        let parts = metrics.summary_parts(true, &[]);
         assert_eq!(
             parts,
             vec!["2 worktrees", "5 branches", "10 remote branches"]
@@ -497,7 +468,7 @@ mod tests {
             dirty_worktrees: 2,
             ahead_items: 0,
         };
-        let parts = metrics.summary_parts(false, 0);
+        let parts = metrics.summary_parts(false, &[]);
         assert_eq!(parts, vec!["3 worktrees", "2 with changes"]);
     }
 
@@ -510,7 +481,7 @@ mod tests {
             dirty_worktrees: 0,
             ahead_items: 1,
         };
-        let parts = metrics.summary_parts(false, 0);
+        let parts = metrics.summary_parts(false, &[]);
         assert_eq!(parts, vec!["2 worktrees", "1 ahead"]);
     }
 
@@ -523,11 +494,14 @@ mod tests {
             dirty_worktrees: 0,
             ahead_items: 0,
         };
-        let parts = metrics.summary_parts(false, 1);
-        assert_eq!(parts, vec!["1 worktree", "1 column hidden"]);
+        let parts = metrics.summary_parts(false, &["Message".to_string()]);
+        assert_eq!(parts, vec!["1 worktree", "hidden: Message"]);
 
-        let parts = metrics.summary_parts(false, 3);
-        assert_eq!(parts, vec!["1 worktree", "3 columns hidden"]);
+        let parts = metrics.summary_parts(
+            false,
+            &["Path".to_string(), "Commit".to_string(), "Age".to_string()],
+        );
+        assert_eq!(parts, vec!["1 worktree", "hidden: Path, Commit, Age"]);
     }
 
     #[test]
@@ -539,7 +513,7 @@ mod tests {
             dirty_worktrees: 0,
             ahead_items: 0,
         };
-        let parts = metrics.summary_parts(true, 0);
+        let parts = metrics.summary_parts(true, &[]);
         assert_eq!(parts, vec!["2 worktrees", "5 remote branches"]);
     }
 
@@ -552,7 +526,7 @@ mod tests {
             dirty_worktrees: 2,
             ahead_items: 4,
         };
-        let parts = metrics.summary_parts(true, 2);
+        let parts = metrics.summary_parts(true, &["Commit".to_string(), "Age".to_string()]);
         assert_eq!(
             parts,
             vec![
@@ -561,7 +535,7 @@ mod tests {
                 "8 remote branches",
                 "2 with changes",
                 "4 ahead",
-                "2 columns hidden"
+                "hidden: Commit, Age"
             ]
         );
     }
@@ -572,10 +546,10 @@ mod tests {
 
         // Nothing timed out. Failures alone leave the footer untouched — the
         // warning after the table names them and carries their count.
-        assert_snapshot!(format_summary_message(&[], false, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 0, None), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, 0, 1), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 1, None), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
         // Several timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 3), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 3, None), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
     }
 }

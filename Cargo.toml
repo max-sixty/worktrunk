@@ -47,9 +47,16 @@ globs = [
 ]
 filterset = "test(/readme_sync/)"
 
+# The AUR PKGBUILD hand-copies the fish completion `fish_completion_content`
+# generates; `test_aur_pkgbuild_ships_the_current_fish_completion` reads it at
+# test time (fs::read_to_string), so coverage can't link the two.
+[[workspace.metadata.affected.rule]]
+globs = [".github/aur/PKGBUILD"]
+filterset = "test(/aur_pkgbuild/)"
+
 [package]
 name = "worktrunk"
-version = "0.76.0"
+version = "0.77.0"
 edition = "2024"
 rust-version = "1.97"
 build = "build.rs"
@@ -328,7 +335,7 @@ regex = "1.12.3"
 vt100 = "0.16.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "3.1.1"
-jsonschema = { version = "0.52", default-features = false }
+jsonschema = { version = "0.53", default-features = false }
 
 [[bench]]
 name = "alias"

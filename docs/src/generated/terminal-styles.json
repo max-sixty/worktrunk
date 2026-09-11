@@ -24,7 +24,7 @@
         },
         {
           "classes": [],
-          "text": "        "
+          "text": "      "
         },
         {
           "classes": [
@@ -34,7 +34,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "     "
         },
         {
           "classes": [
@@ -44,7 +44,7 @@
         },
         {
           "classes": [],
-          "text": "     "
+          "text": "    "
         },
         {
           "classes": [
@@ -54,7 +54,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -74,7 +74,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "    "
         },
         {
           "classes": [
@@ -84,7 +84,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "  "
         },
         {
           "classes": [
@@ -166,7 +166,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -176,7 +176,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -218,7 +218,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -228,7 +228,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -253,11 +253,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden"
+          "text": "Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path"
         }
       ]
     ],
-    "plain": "  Branch        Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc  2h    Add authenticati…\n^ main              ^⇡                                    ⇡1      0e631ad  1d    Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden"
+    "plain": "  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticati…\n^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path"
   },
   {
     "lines": [
@@ -284,7 +284,7 @@
         },
         {
           "classes": [],
-          "text": "        "
+          "text": "      "
         },
         {
           "classes": [
@@ -294,7 +294,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "     "
         },
         {
           "classes": [
@@ -304,7 +304,7 @@
         },
         {
           "classes": [],
-          "text": "     "
+          "text": "    "
         },
         {
           "classes": [
@@ -314,7 +314,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -334,7 +334,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "    "
         },
         {
           "classes": [
@@ -344,7 +344,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "  "
         },
         {
           "classes": [
@@ -457,7 +457,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "   "
         },
         {
           "classes": [
@@ -467,7 +467,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "  "
         },
         {
           "classes": [
@@ -520,7 +520,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -530,7 +530,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -613,7 +613,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -623,7 +623,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -675,7 +675,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -685,7 +685,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -710,11 +710,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden"
+          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path"
         }
       ]
     ],
-    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02  30m   Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083  4d    Merge fix-auth: h…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68  5h    Add secure token…\n+ fix-typos        _|                                      |     41ee083  4d    Merge fix-auth: h…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: h…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: h…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path"
   },
   {
     "lines": [
@@ -741,7 +741,7 @@
         },
         {
           "classes": [],
-          "text": "        "
+          "text": "      "
         },
         {
           "classes": [
@@ -751,7 +751,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "     "
         },
         {
           "classes": [
@@ -761,7 +761,7 @@
         },
         {
           "classes": [],
-          "text": "     "
+          "text": "    "
         },
         {
           "classes": [
@@ -771,7 +771,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -791,7 +791,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "    "
         },
         {
           "classes": [
@@ -801,7 +801,7 @@
         },
         {
           "classes": [],
-          "text": "   "
+          "text": "  "
         },
         {
           "classes": [
@@ -843,7 +843,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -853,7 +853,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -905,7 +905,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -915,7 +915,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -987,7 +987,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -997,7 +997,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -1049,7 +1049,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -1059,7 +1059,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "  "
         },
         {
           "classes": [
@@ -1084,11 +1084,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden"
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path"
         }
       ]
     ],
-    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message\n@ main             ^⇡                                    ⇡1      33323bc  1d    Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0  1d    Add REST API endp…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e  1d    Add dashboard com…\n+ wip-docs       ? –       +1                                    33323bc  1d    Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message\n@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endp…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard com…\n+ wip-docs       ? –       +1                                    33323bc    1d  Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path"
   },
   {
     "lines": [
@@ -1115,7 +1115,7 @@
         },
         {
           "classes": [],
-          "text": "        "
+          "text": "      "
         },
         {
           "classes": [
@@ -1125,7 +1125,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "     "
         },
         {
           "classes": [
@@ -1135,7 +1135,7 @@
         },
         {
           "classes": [],
-          "text": "     "
+          "text": "    "
         },
         {
           "classes": [
@@ -1145,391 +1145,7 @@
         },
         {
           "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Remote⇅"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Path"
-        },
-        {
-          "classes": [],
-          "text": "                 "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Commit"
-        },
-        {
-          "classes": [],
-          "text": "   "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Age"
-        },
-        {
-          "classes": [],
-          "text": "   "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Message"
-        }
-      ],
-      [
-        {
-          "classes": [],
-          "text": "@ main             "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "^⇡"
-        },
-        {
-          "classes": [],
-          "text": "                                    "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "⇡1"
-        },
-        {
-          "classes": [],
-          "text": "      .                    "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "33323bc"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "1d"
-        },
-        {
-          "classes": [],
           "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "Initial commit"
-        }
-      ],
-      [
-        {
-          "classes": [],
-          "text": "+ feature-api      "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "↑"
-        },
-        {
-          "classes": [],
-          "text": " 🤖              "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "↑1"
-        },
-        {
-          "classes": [],
-          "text": "        "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "+1"
-        },
-        {
-          "classes": [],
-          "text": "                ../repo.feature-api  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "70343f0"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "1d"
-        },
-        {
-          "classes": [],
-          "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "Add REST API endpoints"
-        }
-      ],
-      [
-        {
-          "classes": [],
-          "text": "+ review-ui      "
-        },
-        {
-          "classes": [
-            "wt-terminal-cyan"
-          ],
-          "text": "?"
-        },
-        {
-          "classes": [],
-          "text": " "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "↑"
-        },
-        {
-          "classes": [],
-          "text": " 💬    "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "+1"
-        },
-        {
-          "classes": [],
-          "text": "        "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "↑1"
-        },
-        {
-          "classes": [],
-          "text": "        "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "+1"
-        },
-        {
-          "classes": [],
-          "text": "                ../repo.review-ui    "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "a585d6e"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "1d"
-        },
-        {
-          "classes": [],
-          "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "Add dashboard component"
-        }
-      ],
-      [
-        {
-          "classes": [],
-          "text": "+ wip-docs       "
-        },
-        {
-          "classes": [
-            "wt-terminal-cyan"
-          ],
-          "text": "?"
-        },
-        {
-          "classes": [],
-          "text": " "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "–"
-        },
-        {
-          "classes": [],
-          "text": "       "
-        },
-        {
-          "classes": [
-            "wt-terminal-green"
-          ],
-          "text": "+1"
-        },
-        {
-          "classes": [],
-          "text": "                                    ../repo.wip-docs     "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "33323bc"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "1d"
-        },
-        {
-          "classes": [],
-          "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "Initial commit"
-        }
-      ],
-      [],
-      [
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "○"
-        },
-        {
-          "classes": [],
-          "text": " "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "Showing 4 worktrees, 2 with changes, 2 ahead"
-        }
-      ]
-    ],
-    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  Path                 Commit   Age   Message\n@ main             ^⇡                                    ⇡1      .                    33323bc  1d    Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                ../repo.feature-api  70343f0  1d    Add REST API endpoints\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                ../repo.review-ui    a585d6e  1d    Add dashboard component\n+ wip-docs       ? –       +1                                    ../repo.wip-docs     33323bc  1d    Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead"
-  },
-  {
-    "lines": [
-      [
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Branch"
-        },
-        {
-          "classes": [],
-          "text": "       "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Status"
-        },
-        {
-          "classes": [],
-          "text": "        "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "HEAD±"
-        },
-        {
-          "classes": [],
-          "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "main↕"
-        },
-        {
-          "classes": [],
-          "text": "     "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "main…±"
-        },
-        {
-          "classes": [],
-          "text": "  "
         },
         {
           "classes": [
@@ -1895,11 +1511,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden"
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message"
         }
       ]
     ],
-    "plain": "  Branch       Status        HEAD±    main↕     main…±  Remote⇅  URL                     Commit\n@ main           ? ^⇅      +5                            ⇡1  ⇣1  http://localhost:12107  41ee083\n+ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68\n+ fix-typos        _|                                      |     http://localhost:14301  41ee083\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, 3 columns hidden"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Remote⇅  URL                     Commit\n@ main           ? ^⇅      +5                            ⇡1  ⇣1  http://localhost:12107  41ee083\n+ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68\n+ fix-typos        _|                                      |     http://localhost:14301  41ee083\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message"
   },
   {
     "lines": [
@@ -1926,7 +1542,7 @@
         },
         {
           "classes": [],
-          "text": "        "
+          "text": "      "
         },
         {
           "classes": [
@@ -1936,7 +1552,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "     "
         },
         {
           "classes": [
@@ -1946,7 +1562,7 @@
         },
         {
           "classes": [],
-          "text": "     "
+          "text": "    "
         },
         {
           "classes": [
@@ -1956,7 +1572,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -1966,7 +1582,7 @@
         },
         {
           "classes": [],
-          "text": "                                                 "
+          "text": "                      "
         },
         {
           "classes": [
@@ -1983,16 +1599,6 @@
             "wt-terminal-bold"
           ],
           "text": "CI"
-        },
-        {
-          "classes": [],
-          "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Commit"
         }
       ],
       [
@@ -2079,7 +1685,7 @@
         },
         {
           "classes": [],
-          "text": "  Refactor API to REST architecture with middleware        "
+          "text": "  Refactor API to REST archi…   "
         },
         {
           "classes": [
@@ -2097,16 +1703,6 @@
             "wt-terminal-dim"
           ],
           "text": "#412"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "6814f02"
         }
       ],
       [
@@ -2122,7 +1718,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                                            "
+          "text": "                                                                 "
         },
         {
           "classes": [
@@ -2150,16 +1746,6 @@
             "wt-terminal-green"
           ],
           "text": "#"
-        },
-        {
-          "classes": [],
-          "text": "     "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "41ee083"
         }
       ],
       [
@@ -2216,7 +1802,7 @@
         },
         {
           "classes": [],
-          "text": "  Harden auth with constant-time token validation            "
+          "text": "  Harden auth with constant-…     "
         },
         {
           "classes": [
@@ -2233,16 +1819,6 @@
             "wt-terminal-green"
           ],
           "text": "#408"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "b772e68"
         }
       ],
       [
@@ -2268,7 +1844,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                                              "
+          "text": "                                                                   "
         },
         {
           "classes": [
@@ -2285,16 +1861,6 @@
             "wt-terminal-green"
           ],
           "text": "#410"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "41ee083"
         }
       ],
       [],
@@ -2313,11 +1879,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden"
+          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message"
         }
       ]
     ],
-    "plain": "  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02\n^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68\n+ fix-typos        _|                                                                                              |     #410  41ee083\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412\n^ main             ^⇅                                                                 ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408\n+ fix-typos        _|                                                                   |     #410\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message"
   },
   {
     "lines": [
@@ -2344,7 +1910,7 @@
         },
         {
           "classes": [],
-          "text": "        "
+          "text": "      "
         },
         {
           "classes": [
@@ -2354,7 +1920,7 @@
         },
         {
           "classes": [],
-          "text": "    "
+          "text": "     "
         },
         {
           "classes": [
@@ -2364,7 +1930,7 @@
         },
         {
           "classes": [],
-          "text": "     "
+          "text": "    "
         },
         {
           "classes": [
@@ -2374,7 +1940,7 @@
         },
         {
           "classes": [],
-          "text": "  "
+          "text": "    "
         },
         {
           "classes": [
@@ -2384,7 +1950,7 @@
         },
         {
           "classes": [],
-          "text": "                                                 "
+          "text": "                      "
         },
         {
           "classes": [
@@ -2401,16 +1967,6 @@
             "wt-terminal-bold"
           ],
           "text": "CI"
-        },
-        {
-          "classes": [],
-          "text": "    "
-        },
-        {
-          "classes": [
-            "wt-terminal-bold"
-          ],
-          "text": "Commit"
         }
       ],
       [
@@ -2497,7 +2053,7 @@
         },
         {
           "classes": [],
-          "text": "  Refactor API to REST architecture with middleware        "
+          "text": "  Refactor API to REST archi…   "
         },
         {
           "classes": [
@@ -2515,16 +2071,6 @@
             "wt-terminal-dim"
           ],
           "text": "#412"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "6814f02"
         }
       ],
       [
@@ -2540,7 +2086,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                                            "
+          "text": "                                                                 "
         },
         {
           "classes": [
@@ -2568,16 +2114,6 @@
             "wt-terminal-green"
           ],
           "text": "#"
-        },
-        {
-          "classes": [],
-          "text": "     "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "41ee083"
         }
       ],
       [
@@ -2634,7 +2170,7 @@
         },
         {
           "classes": [],
-          "text": "  Harden auth with constant-time token validation            "
+          "text": "  Harden auth with constant-…     "
         },
         {
           "classes": [
@@ -2651,16 +2187,6 @@
             "wt-terminal-green"
           ],
           "text": "#408"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "b772e68"
         }
       ],
       [
@@ -2686,7 +2212,7 @@
         },
         {
           "classes": [],
-          "text": "                                                                                              "
+          "text": "                                                                   "
         },
         {
           "classes": [
@@ -2703,16 +2229,6 @@
             "wt-terminal-green"
           ],
           "text": "#410"
-        },
-        {
-          "classes": [],
-          "text": "  "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "41ee083"
         }
       ],
       [
@@ -2765,13 +2281,7 @@
         },
         {
           "classes": [],
-          "text": "       Explore GraphQL schema and resolvers                                   "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "9637922"
+          "text": "       Explore GraphQL schema and…"
         }
       ],
       [
@@ -2824,13 +2334,7 @@
         },
         {
           "classes": [],
-          "text": "       Start API documentation                                                "
-        },
-        {
-          "classes": [
-            "wt-terminal-dim"
-          ],
-          "text": "b40716d"
+          "text": "       Start API documentation"
         }
       ],
       [],
@@ -2849,11 +2353,11 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden"
+          "text": "Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message"
         }
       ]
     ],
-    "plain": "  Branch       Status        HEAD±    main↕     main…±  Summary                                                 Remote⇅  CI    Commit\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware        ⇡3      #412  6814f02\n^ main             ^⇅                                                                                            ⇡1  ⇣1  #     41ee083\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation            |     #408  b772e68\n+ fix-typos        _|                                                                                              |     #410  41ee083\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                                   9637922\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation                                                b40716d\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden"
+    "plain": "  Branch       Status      HEAD±     main↕    main…±    Summary                      Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archi…   ⇡3      #412\n^ main             ^⇅                                                                 ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-…     |     #408\n+ fix-typos        _|                                                                   |     #410\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message"
   },
   {
     "lines": [

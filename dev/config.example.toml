@@ -100,7 +100,7 @@
 # branches = false   # Include branches without worktrees (--branches)
 # remotes = false    # Include remote-only branches (--remotes)
 #
-# json-schema = 2    # JSON output schema: 2 (envelope) or 1 (bare array, the current default); unset emits 1 with a warning
+# json-schema = 2    # JSON output schema: 2 (envelope, default) or 1 (bare array)
 #
 # columns = ["branch", "status", "ci", "path"]   # Columns to show, in order — built-ins or custom headers (omit for the default set)
 #
@@ -168,7 +168,8 @@
 # All standard filters work (`sanitize`, `hash_port`, `codename`, …). A row
 # where the template renders empty (e.g. a branch without the key) shows an
 # empty cell; a column that is empty for every row is dropped from the table.
-# `wt list --format json` includes the rendered values under `columns`.
+# `wt list --format json` includes the rendered values under
+# `items[].display.columns` in schema 2, or under `columns` in schema 1.
 #
 # A `Jira` column reading a key kept in git config, and a `Summary` column
 # showing just the first line of the git-native branch description:

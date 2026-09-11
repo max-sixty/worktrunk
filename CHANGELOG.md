@@ -2,15 +2,99 @@
 
 ## Unreleased
 
+### Improved
+
+- **`wt config show` gives one `wt config shell install` for the whole shell section**: an outdated wrapper, fish integration still at the deprecated `conf.d` path, and a missing fish completions file each carried their own per-shell hint, so a machine with all three printed three commands where the bare one fixes everything. The rows still say what's wrong; the section's single trailing hint says what to run. The zsh `compinit` snippet is syntax-highlighted like every other command block.
+
+- **Interactive prompts no longer open with a blank line**: `wt config shell install`, `wt config plugins claude install`, and the commit-message setup offer at the top of `wt merge` all began with one. A prompt that follows other output keeps the blank line separating it.
+
+- **`wt config update --output <path>` confirms the write**: it now prints `✓ Wrote user config migration @ ~/migrated.toml`, so a command whose only effect is the file it wrote now says where that file is. Writing to stdout with `--output=-` stays silent, since the artifact is right there. ([#4053](https://github.com/max-sixty/worktrunk/pull/4053))
+
 ### Fixed
 
-- **Codex on Windows: the activity hooks no longer fail on every event**: each hook led with a bare `bash`, which `cmd.exe` resolves to the WSL launcher rather than Git Bash; in a sandboxed session it refuses to start, so every event raised a `Hook failed` banner. Each hook now carries a Windows-only command that runs the same `wt.sh` through a `cmd.exe` shim, which finds Git Bash by path rather than by name. ([#4008](https://github.com/max-sixty/worktrunk/pull/4008), fixes [#4007](https://github.com/max-sixty/worktrunk/issues/4007), thanks @McNultyyy for reporting and diagnosing)
+- **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: the migration stood down whenever a `[forge]` section existed at all, so the config a GitHub Enterprise or self-hosted GitLab user ends up with — `[ci] platform` from before the rename, `[forge] hostname` added later for an SSH host alias — kept the deprecated key with no warning and nothing `wt config update` would do about it. The platform still resolved, so nothing broke; the deprecation notice that precedes `[ci]`'s eventual removal simply never arrived. A `[forge]` that already sets `platform`, or a `forge` that isn't a section, still stands down.
+
+- **`wt config shell install` migrates a fish wrapper at the deprecated `conf.d` path even when `~/.config/fish/functions` doesn't exist yet**: fish was skipped for want of a config location, so the bare command left the deprecated wrapper running and only `wt config shell install fish` migrated it. A worktrunk wrapper at the old path now counts as fish being configured, just at the old path. `wt config show` reports that wrapper too, where before it showed nothing at all for fish unless fish was on `PATH`.
+
+- **`wt config shell install` no longer tells an already-wrapped shell to restart**: reinstalling from inside a shell that has the wrapper loaded — after a version bump, or when the fish extension moves from `conf.d` to `functions` — printed `↳ Restart shell to activate shell integration` right after the wrapper had intercepted the command. The hint now only appears when integration isn't active.
+
+- **An alias that binds `dry_run` can take `--dry-run <value>`**: `wt <alias> --dry-run <value>` answered the retired-flag error even when the alias's own template referenced `{{ dry_run }}`, while `--dry-run=<value>` bound normally — so one flag behaved two ways. Both value-taking spellings now bind for an alias that references the name, matching how `--help` and `--yes` already yield to a template that binds them. A bare `--dry-run` with no value still errors, since forwarding it into `{{ args }}` would leave `dry_run` unset and run the live command; the message names `--dry-run=1`. ([#4058](https://github.com/max-sixty/worktrunk/pull/4058))
+
+- **`wt merge` no longer runs `post-commit` in a worktree the user never chose**: the merge removes the worktree that hook is anchored on before the hook starts, so the pipeline was spawned into an emptied path. Where the worktree sat inside the repository, git discovery walked up from there and the hook's commands ran in the primary worktree; anywhere else they didn't run at all, and the only record was a log file nothing reads. The merge now prints `▲ Skipped post-commit: …` naming that worktree, and points at `pre-remove` for work that must finish there. `--no-remove`, merging on the target branch, `wt step commit`, and `wt step squash` still run it. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
+
+- **`wt config plugins claude uninstall` / `codex uninstall` no longer report success over a marketplace that is still there**: to tell an already-removed marketplace from a removal that failed, uninstall used to read the harness's own config file. A file or key the harness renamed reads as an absence there, so every failed removal would have printed `Plugin & marketplace removed` and exited 0. It now asks `claude` / `codex plugin marketplace list --json`, and an answer it cannot read leaves the harness's error standing. ([#4048](https://github.com/max-sixty/worktrunk/pull/4048))
+
+- **`wt config show` reports Claude Code's plugin and Gemini CLI's extension from those tools' own listings**: it read `installed_plugins.json` and the `~/.gemini/extensions/` directory, so a store either tool relocated read as an absence and the section said "not installed" over an installed plugin. Both answers now come from `claude plugin list --json` and `gemini extensions list -o json`. `wt config plugins claude uninstall` follows: it runs the plugin removal and the marketplace removal every time, each tolerating only the absence Claude Code itself reports, so it no longer exits early with `Plugin not installed` on a file read. ([#4054](https://github.com/max-sixty/worktrunk/pull/4054))
+
+## 0.77.0
+
+### Improved
+
+- **`wt list` sizes and aligns its columns to the terminal width**: one long branch name no longer sizes the Branch column for every row — it caps at 32 characters and elides, so a narrow terminal keeps its other columns instead of degenerating into a branch list. `Remote⇅` stops holding blank space open in a repo with no remote, and alignment now follows the value type. `--format=json` still carries the whole name. ([#3998](https://github.com/max-sixty/worktrunk/pull/3998))
+
+- **`wt list` names what it hid and marks detached worktrees**: the summary reads `hidden: Path, Commit` instead of counting columns, a detached worktree shows `⊘` rather than borrowing `⚑`, and a prunable row leaves its cells blank instead of showing loading dots that never resolve. ([#3998](https://github.com/max-sixty/worktrunk/pull/3998))
+
+- **`wt list --format=json` gains a `marker` field and stops reporting `detached` twice**: the branch marker set by `wt config state marker` is now readable without parsing it out of `symbols`, and `state` no longer reports a detached worktree as `branch_worktree_mismatch` — the sibling `detached` boolean carries it. ([#3998](https://github.com/max-sixty/worktrunk/pull/3998))
+
+- **`wt list --format=json` now defaults to schema 2**: callers get the envelope with repository metadata and orthogonal per-item facts without configuring `[list] json-schema`. `wt list statusline --format=json` follows the same key. Set `json-schema = 1` to retain the original bare-array format. (Breaking.) ([#4038](https://github.com/max-sixty/worktrunk/pull/4038))
+
+- **`wt config show` fails on a broken config**: it exits 1 on an unreadable or invalid config, an invalid `[list] columns`, or an invalid `approvals.toml`. Unknown keys and deprecations stay warnings and still exit 0. A new `APPROVALS` section counts project commands awaiting approval. (Breaking: it always exited 0 before.) ([#3999](https://github.com/max-sixty/worktrunk/pull/3999))
+
+- **Config migration output names its destination**: `wt config update --output <path>` writes the migration artifact to that file instead of applying it in place, and `--output=-` writes it to stdout. Output mode includes project config when run from a linked worktree. (Breaking: `--print` was removed.) ([#4021](https://github.com/max-sixty/worktrunk/pull/4021))
+
+- **Pi joins the agent integrations**: `wt config plugins pi install` writes an activity hook to `~/.omp/agent/hooks/pre/worktrunk.ts`, so Pi sessions show 🤖/💬 markers in `wt list` like Claude Code, Codex, OpenCode, and Gemini. `$PI_CONFIG_DIR`, `$PI_CODING_AGENT_DIR`, and named `$OMP_PROFILE`/`$PI_PROFILE` profiles are honored. [Docs](https://worktrunk.dev/claude-code/) ([#3594](https://github.com/max-sixty/worktrunk/pull/3594), thanks @adity982, and @ortonomy for the request)
+
+- **`wt config plugins codex install` installs the plugin too**: it previously registered the marketplace and left you to run `/plugins` in Codex yourself. Uninstall follows for both Codex and Claude Code, removing the plugin and then the marketplace, so the two commands are inverses. (Breaking: Codex uninstall previously left an installed plugin alone; Claude uninstall now also removes the marketplace.) ([#4019](https://github.com/max-sixty/worktrunk/pull/4019))
+
+- **`wt step copy-ignored` says whether it reflinked or copied**: the summary now reads `(reflinked, no extra disk)`, `(full copy)`, or a partial count, so the same `29.5 GB` line distinguishes a free copy from one that actually wrote the bytes. `--format=json` gains `reflinked` and `written`. ([#4025](https://github.com/max-sixty/worktrunk/pull/4025))
+
+- **`wt config update` removes keys its destination cannot hold**: migrating `[select]` or `[commit-generation]` drops keys the new section has no field for, reporting each one. Otherwise the key landed at a path the user never typed and warned on every command, with no way to clear it. ([#3994](https://github.com/max-sixty/worktrunk/pull/3994))
+
+### Fixed
+
+- **A failed `wt switch pr:<n>` against a fork no longer deletes a branch it didn't create**: the rollback force-deleted the branch on any setup error, including the one case where the branch wasn't its own — a `pre-switch` hook or a concurrent session claiming the name in the window after the forge answered. Branch and worktree are now created in one `git worktree add -b`, which writes nothing when the name is taken. ([#3984](https://github.com/max-sixty/worktrunk/pull/3984))
+
+- **Codex on Windows: the activity hooks no longer fail on every event**: each hook led with a bare `bash`, which `cmd.exe` resolves to the WSL launcher rather than Git Bash, so every event raised a `Hook failed` banner. Hooks now run `wt.sh` through a shim that finds Git Bash by path. ([#4008](https://github.com/max-sixty/worktrunk/pull/4008), fixes [#4007](https://github.com/max-sixty/worktrunk/issues/4007), thanks @McNultyyy for reporting and diagnosing)
+
+- **Templates leave `branch` unset in a detached worktree**: aliases and hooks rendered `{{ branch }}` as the literal `HEAD`, which git resolves, so an unguarded template ran against the wrong ref — the reported case ended in `git push origin --delete HEAD`, which git refused. `base` and `target` follow. (Breaking: an unguarded `{{ branch }}` now errors.) ([#4010](https://github.com/max-sixty/worktrunk/pull/4010), fixes [#4009](https://github.com/max-sixty/worktrunk/issues/4009))
+
+- **The OpenCode plugin loads under OpenCode 2**: OpenCode 2's loader dropped the old bare-function export silently, so activity markers stopped appearing. The plugin now exports one object carrying both the v2 `setup` and v1 `server` entry points, and spawns `wt` through `node:child_process` rather than the Bun shell. Re-run `wt config plugins opencode install` to pick it up; the one file covers OpenCode 2 and OpenCode 1.16 or later. ([#4018](https://github.com/max-sixty/worktrunk/pull/4018), thanks @pragmaticivan for the request)
+
+- **`wt step commit --branch` builds its prompt from the worktree being committed**: prompt-building git plumbing ran in the invoking worktree, so with nothing staged there the generated message described none of the changes it committed. `wt step relocate --commit` had the same bug, and `--dry-run`/`--show-prompt` now preview the worktree `--branch` names. ([#3996](https://github.com/max-sixty/worktrunk/pull/3996))
+
+- **LLM commit messages keep diffs for quoted paths**: a file whose name git quotes in the `diff --git` header — any non-ASCII name under the default `core.quotePath` — had its whole diff section dropped from the prompt once the diff exceeded the 100 KB budget. ([#4041](https://github.com/max-sixty/worktrunk/pull/4041))
+
+- **An unparsable user config is reported, not a panic**: `wt config show --format=json` and `--full`, plus `wt step prune`, `relocate`, `eval`, and `for-each`, panicked on a debug build and printed a bare `✗ Command failed` on a release one. They now report `✗ Failed to load config` with the parser's caret diagram. ([#4002](https://github.com/max-sixty/worktrunk/pull/4002))
+
+- **`wt switch --execute` names the directory the program actually starts in**: the `Executing (--execute) @ …` header rendered the worktree the background hooks run in, not the program's own directory — which differs under `--no-cd` or a switch from a subdirectory. The path is omitted when the shell already stands there. ([#4043](https://github.com/max-sixty/worktrunk/pull/4043), fixes [#4042](https://github.com/max-sixty/worktrunk/issues/4042), thanks @yajo for reporting)
+
+- **`wt config plugins claude|codex uninstall` is safe to re-run**: removing an already-absent marketplace reported a failure, and a Claude uninstall that removed the plugin and then failed left the marketplace with no way to clear it. Both now finish a half-done uninstall and succeed when there is nothing left to remove. ([#4033](https://github.com/max-sixty/worktrunk/pull/4033), [#4034](https://github.com/max-sixty/worktrunk/pull/4034))
+
+- **`wt config state marker` set and clear no-op outside a git repository**: they exited 1 with a git error, so an agent plugin running outside a repository printed one every turn (the hook's `|| true` kept the session going). ([#3981](https://github.com/max-sixty/worktrunk/pull/3981), thanks @mahirhir)
+
+- **`wt list` produces output in a bare repo with no worktrees**: it printed nothing at all and exited 0. It now reports `○ No worktrees` with a hint, `--branches` lists the branches, and `--format json` emits the envelope with an empty `items`. ([#3992](https://github.com/max-sixty/worktrunk/pull/3992))
+
+- **`wt list` warns when it can't parse the project config** rather than ignoring it silently; the listing still succeeds. ([#3993](https://github.com/max-sixty/worktrunk/pull/3993))
+
+- **Relayed command output no longer prints ahead of the delayed-stream progress line**, and delayed-stream output routes through anstream so color is stripped consistently when redirected. ([#4037](https://github.com/max-sixty/worktrunk/pull/4037), [#3995](https://github.com/max-sixty/worktrunk/pull/3995))
+
+- **A hook filter that matches nothing names the unconfigured source**, rather than reporting no match without saying which source was empty. ([#3997](https://github.com/max-sixty/worktrunk/pull/3997))
+
+### Documentation
+
+- **`wt hook` says that `post-*` hooks from the two sources run concurrently**, so dependent commands belong in one source; `wt merge` records that `post-commit` can't run when the merge removes the worktree it anchors on. ([#4020](https://github.com/max-sixty/worktrunk/pull/4020), [#4026](https://github.com/max-sixty/worktrunk/pull/4026))
+
+- **`wt step` help pages describe what the commands actually do**: `wt step prune` says it removes branches as well as worktrees, `wt step copy-ignored` documents `--from`/`--to`, `wt step commit` documents `--branch`, and both it and `squash` document their hooks and no-LLM fallback messages. ([#3997](https://github.com/max-sixty/worktrunk/pull/3997))
+
+- **The FAQ lists the files Worktrunk writes outside its own config**: OpenCode's plugin, Pi's hook, and the Claude Code `settings.json` statusline entry, alongside the existing inventory of what Worktrunk creates and deletes. The Claude and Codex plugin installs write nothing themselves. ([#4036](https://github.com/max-sixty/worktrunk/pull/4036))
+
+- **`wt step copy-ignored` documents its disk-space benefit** per filesystem, and the bare-repo `worktree-path` example names the bare repo's own location. ([#4022](https://github.com/max-sixty/worktrunk/pull/4022), [#4006](https://github.com/max-sixty/worktrunk/pull/4006))
+
+- **Terminal examples on the docs site fit a desktop window** rather than overflowing. ([#4039](https://github.com/max-sixty/worktrunk/pull/4039))
 
 ## 0.76.0
 
 ### Improved
-
-- **Config migration output names its destination**: `wt config update --output <path>` writes the migration artifact to that file instead of applying it in place, and `--output=-` writes it to stdout. Output mode includes project config when run from a linked worktree. (Breaking: `--print` was removed.)
 
 - **`wt switch --execute` takes a program, not a shell string**: `-x` names one program, with everything after `--` passed as literal argv. Worktrunk spawns it as a child rather than running it in your interactive shell, so shell functions and its `cd` no longer reach you. `-x sh -- -c '…'` recovers shell syntax, not functions. (Breaking: existing `-x` strings, plus `WORKTRUNK_DIRECTIVE_EXEC_FILE` and `WORKTRUNK_SHELL`.) ([#3977](https://github.com/max-sixty/worktrunk/pull/3977), closes [#2860](https://github.com/max-sixty/worktrunk/issues/2860), fixes [#3944](https://github.com/max-sixty/worktrunk/issues/3944), thanks @omgreenfield for testing the migration path)
 

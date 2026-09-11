@@ -65,6 +65,10 @@ exit_code: 0
 [33m▲[39m [33mProject config: template variable [1mmain_worktree[22m is deprecated in favor of [1mrepo[22m[39m
 [2m↳[22m [2mTo apply: [4mwt -C _REPO_ config update[24m[22m
 
+[36mAPPROVALS[39m @ [TEST_APPROVALS]
+[2m○[22m 1 project command awaiting approval
+[2m↳[22m [2mTo review, run [4mwt config approvals list[24m[22m
+
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not configured[39m
 [2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
