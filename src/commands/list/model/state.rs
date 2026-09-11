@@ -87,9 +87,8 @@ impl Divergence {
 /// `Detached` gets a glyph of its own because nothing else in the row says
 /// so: the Branch cell holds a short hash, which reads as a branch named
 /// like one until the column tells you otherwise.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WorktreeState {
-    #[strum(serialize = "")]
     /// Normal worktree (path matches template, not locked or prunable)
     #[default]
     None,
@@ -538,6 +537,9 @@ mod tests {
         assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚑");
         // Shares the mismatch glyph; the JSON state names which cause it was.
         assert_eq!(format!("{}", WorktreeState::DuplicateBranch), "⚑");
+        // Its own glyph: the Branch cell holds a short hash, which reads as a
+        // branch named like one until this column says otherwise.
+        assert_eq!(format!("{}", WorktreeState::Detached), "⊘");
         assert_eq!(format!("{}", WorktreeState::Prunable), "⊟");
         assert_eq!(format!("{}", WorktreeState::Locked), "⊞");
         assert_eq!(format!("{}", WorktreeState::Branch), "/");
