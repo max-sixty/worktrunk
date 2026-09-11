@@ -104,36 +104,38 @@ pub struct MergeProbeResult {
     pub is_patch_id_match: bool,
 }
 
-/// How many commits the patch-id squash-merge fallback is willing to walk on
-/// the target side before giving up.
+/// How many candidate commits the patch-id squash-merge fallback is willing to
+/// diff on the target side before giving up.
 ///
 /// [`Repository::is_squash_merged_via_patch_id`] runs
-/// `git rev-list {merge-base}..{target} | git diff-tree --stdin -p | git
-/// patch-id` — one patch per commit in the range. That range is unbounded:
-/// on a fast-moving repo an old branch can sit tens of thousands of commits
-/// behind the tip, and a single such check then dominates `wt list`,
+/// `git rev-list {merge-base}..{target} -- <branch paths> | git diff-tree
+/// --stdin -p | git patch-id` — one patch per candidate. Candidates are only
+/// the target commits that touch a path the branch changed: a commit with the
+/// branch's patch-id changes exactly the branch's files, so no other commit
+/// can match. The path-limited `rev-list` compares trees but generates no
+/// patches, so it stays cheap even when an old branch sits tens of thousands
+/// of commits behind a fast-moving tip; the patches are the cost this cap
+/// bounds, since a single unbounded check would dominate `wt list`,
 /// `wt remove`, and `wt step prune` (the latter goes visibly silent waiting
-/// for it). A cheap graph-only `git rev-list --count` pre-flight enforces
-/// this cap.
+/// for it).
 ///
 /// `500` is conservative because count is only a rough proxy for cost — the
 /// per-commit work scales with `changed_files × changed_lines`, so a few
 /// hundred lockfile-bump or large-refactor squashes can be slower than a few
 /// thousand tiny commits. Working back from "keep one check under a few
 /// seconds" on a heavy monorepo (~50-100 KB patches), 500 holds. On a typical
-/// repo (~5-20 KB patches), 500 is well under a second. Branches squash-merged
-/// within a normal review-and-cleanup cycle sit well inside this.
+/// repo (~5-20 KB patches), 500 is well under a second.
 ///
 /// # Limitation
 ///
-/// A branch that was squash-merged but whose merge point now sits more than
-/// `PATCH_ID_SCAN_MAX_COMMITS` commits behind the default-branch tip is
-/// reported as *not* integrated. This is the safe direction — the branch is
-/// kept rather than wrongly deleted — and `wt remove -D` still removes it. The
-/// fallback also only runs when `git merge-tree` itself conflicts (the same
-/// files were modified again after the squash), so the affected set is already
-/// narrow. There is no config knob; bump this constant if the trade-off needs
-/// tuning.
+/// A branch that was squash-merged, but whose files the target has since
+/// touched in more than `PATCH_ID_SCAN_MAX_COMMITS` commits, is reported as
+/// *not* integrated. This is the safe direction — the branch is kept rather
+/// than wrongly deleted — and `wt remove -D` still removes it. It takes a
+/// branch that edits a hot file (a lockfile, a generated manifest) and a
+/// target that re-touched it hundreds of times since. Commits to unrelated
+/// files, however many, don't count toward the cap. There is no config knob;
+/// bump this constant if the trade-off needs tuning.
 const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
 
 /// Outcome of `git merge-tree --write-tree`, classified by exit code.
@@ -382,37 +384,74 @@ impl Repository {
     /// config — see [`Self::patch_ids_from`].
     ///
     /// Only runs when `merge-tree` conflicts (both sides modified the same files),
-    /// since `MergeAddsNothing` handles the non-conflict case. Cost scales with the
-    /// number of commits on target since the merge-base (`git diff-tree`), so it is
-    /// capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
+    /// since `MergeAddsNothing` handles the non-conflict case. Only target commits
+    /// that touch a path the branch changed can match, so only those are diffed;
+    /// cost scales with their number, capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
-    /// `Ok(false)` otherwise (including when the target history is too deep to scan,
-    /// or when patch-id computation fails — both conservative).
+    /// `Ok(false)` otherwise (including when too many target commits touch the
+    /// branch's paths to scan, or when patch-id computation fails — both
+    /// conservative).
     fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);
         };
 
-        // Bound the target-side history walk. The patch-id scan diffs every
-        // commit landed on the default branch since this branch diverged; on
-        // a fast-moving repo with an old branch that is tens of thousands of
-        // commits, turning one integration check into seconds (or tens of
-        // seconds) of work — visible as `wt step prune` / `wt list` going
-        // silent. A `git rev-list --count` pre-flight (graph walk only, no
-        // diffs) is cheap; bail above the cap. See the limitation note on
+        // The paths the branch changed. `diff-tree` without `-M`, like the
+        // branch-side patch below, so a rename lists both its old and its new
+        // path — exactly the paths that patch covers. NUL-separated so any
+        // filename survives.
+        let branch_paths =
+            self.run_command(&["diff-tree", "-r", "-z", "--name-only", &merge_base, branch])?;
+        let branch_paths: Vec<&str> = branch_paths.split('\0').filter(|p| !p.is_empty()).collect();
+        if branch_paths.is_empty() {
+            return Ok(false);
+        }
+
+        // Candidates: target commits since the merge-base that touch one of
+        // those paths. A commit with the branch's patch-id changes exactly the
+        // branch's files, so a commit this filter drops can never match — on a
+        // fast-moving target that is nearly all of them. `rev-list --stdin`
+        // reads the range, then the paths after a `--` line, which keeps a
+        // branch that touched thousands of files off the argv.
+        // `--literal-pathspecs` stops `*`, `?`, `[` or a leading `:` in a
+        // filename from acting as pathspec magic; `--full-history` stops
+        // history simplification from dropping a commit that reached the
+        // target through the side of a merge. A path containing a line break
+        // can't be written one per line, so that branch falls back to every
+        // commit in the range.
+        let mut rev_list_input = format!("{merge_base}..{target}\n");
+        if !branch_paths.iter().any(|p| p.contains(['\n', '\r'])) {
+            rev_list_input.push_str("--\n");
+            for path in &branch_paths {
+                rev_list_input.push_str(path);
+                rev_list_input.push('\n');
+            }
+        }
+        let target_commits = self.run_command_with_stdin(
+            &[
+                "--literal-pathspecs",
+                "rev-list",
+                "--full-history",
+                "--stdin",
+            ],
+            rev_list_input.into_bytes(),
+        )?;
+
+        // Bound the patch-id work. Every candidate becomes one `diff-tree -p`
+        // patch, so a hot file re-touched by thousands of target commits would
+        // turn one integration check into seconds of work — visible as
+        // `wt step prune` / `wt list` going silent. The path-limited walk above
+        // compares trees but builds no patches, so it stays cheap however far
+        // behind the branch is. See the limitation note on
         // [`PATCH_ID_SCAN_MAX_COMMITS`].
-        let target_commit_count: usize = self
-            .run_command(&["rev-list", "--count", &format!("{merge_base}..{target}")])?
-            .trim()
-            .parse()
-            .unwrap_or(0);
-        if target_commit_count > PATCH_ID_SCAN_MAX_COMMITS {
+        let candidate_count = target_commits.lines().count();
+        if candidate_count > PATCH_ID_SCAN_MAX_COMMITS {
             tracing::debug!(
-                target_commit_count,
+                candidate_count,
                 merge_base = %merge_base,
                 target = %target,
-                "skipping patch-id squash-merge check: {target_commit_count} commits in {merge_base}..{target} exceeds cap of {PATCH_ID_SCAN_MAX_COMMITS}"
+                "skipping patch-id squash-merge check: {candidate_count} commits in {merge_base}..{target} touch the branch's paths, exceeding cap of {PATCH_ID_SCAN_MAX_COMMITS}"
             );
             return Ok(false);
         }
@@ -430,8 +469,9 @@ impl Repository {
         // `log -p` honors `diff.context` / `diff.algorithm` from the user's
         // git config while `diff-tree` ignores them, so a mismatched pair
         // never agrees on a byte-identical change. `diff-tree --stdin` reads
-        // the commit list on stdin and emits one diff per commit.
-        let target_commits = self.run_command(&["rev-list", &format!("{merge_base}..{target}")])?;
+        // the commit list on stdin and emits one diff per commit. No pathspec
+        // here: each candidate's patch must cover its whole change, or a
+        // commit that also touched other files would falsely match.
         let target_pids = self.patch_ids_from(
             &["diff-tree", "--stdin", "-p"],
             Some(target_commits.into_bytes()),
@@ -1031,42 +1071,64 @@ mod patch_id_tests {
     use crate::testing::TestRepo;
     use std::fmt::Write as _;
 
+    /// What each padding commit on the target changes.
+    #[derive(Clone, Copy)]
+    enum Padding {
+        /// Nothing — the pad reuses its parent's tree.
+        Empty,
+        /// `other`, a file the feature never touches.
+        OtherFile,
+        /// The feature's own file.
+        SameFile,
+    }
+
     /// Build the topology
     ///
     /// ```text
-    /// base ─── feature  (file: A → B)
-    ///   └────── squash ── pad1 ── … ── padN  = target  (each pad reuses parent's tree)
+    /// base ─── feature  (path: A → B)
+    ///   └────── squash ── pad1 ── … ── padN  = target  (each pad per `padding`)
     /// ```
     ///
     /// via a single `git fast-import` stream — instant even at N = 2000, where
     /// running `git commit` once per pad would dominate the test.
     /// `merge_base(target, feature)` is `base`; `squash`'s combined patch
     /// equals `feature`'s; `rev-list --count base..target` is `1 + n_padding`.
-    fn build(test: &TestRepo, n_padding: usize) {
+    /// A touching pad alternates its file between `C` and `D`, so every pad is
+    /// a real change to it.
+    fn build(test: &TestRepo, path: &str, n_padding: usize, padding: Padding) {
         let mut s = String::new();
         s.push_str("blob\nmark :10\ndata 1\nA\n");
         s.push_str("blob\nmark :11\ndata 1\nB\n");
+        s.push_str("blob\nmark :12\ndata 1\nC\n");
+        s.push_str("blob\nmark :13\ndata 1\nD\n");
         writeln!(
             s,
-            "commit refs/heads/base\nmark :1\ncommitter T <t@x> 1700000000 +0000\ndata 0\nM 100644 :10 file\n"
+            "commit refs/heads/base\nmark :1\ncommitter T <t@x> 1700000000 +0000\ndata 0\nM 100644 :10 {path}\n"
         )
         .unwrap();
         writeln!(
             s,
-            "commit refs/heads/feature\nmark :2\ncommitter T <t@x> 1700000001 +0000\ndata 0\nfrom :1\nM 100644 :11 file\n"
+            "commit refs/heads/feature\nmark :2\ncommitter T <t@x> 1700000001 +0000\ndata 0\nfrom :1\nM 100644 :11 {path}\n"
         )
         .unwrap();
         writeln!(
             s,
-            "commit refs/heads/target\nmark :3\ncommitter T <t@x> 1700000002 +0000\ndata 0\nfrom :1\nM 100644 :11 file\n"
+            "commit refs/heads/target\nmark :3\ncommitter T <t@x> 1700000002 +0000\ndata 0\nfrom :1\nM 100644 :11 {path}\n"
         )
         .unwrap();
+        // Pad marks start at :100, clear of the blob marks :10–:13.
         for i in 0..n_padding {
-            let mark = 4 + i;
+            let mark = 100 + i;
             let parent = if i == 0 { 3 } else { mark - 1 };
+            let blob = 12 + i % 2;
+            let change = match padding {
+                Padding::Empty => String::new(),
+                Padding::OtherFile => format!("M 100644 :{blob} other\n"),
+                Padding::SameFile => format!("M 100644 :{blob} {path}\n"),
+            };
             writeln!(
                 s,
-                "commit refs/heads/target\nmark :{mark}\ncommitter T <t@x> {} +0000\ndata 0\nfrom :{parent}\n",
+                "commit refs/heads/target\nmark :{mark}\ncommitter T <t@x> {} +0000\ndata 0\nfrom :{parent}\n{change}",
                 1_700_000_003 + i
             )
             .unwrap();
@@ -1091,39 +1153,96 @@ mod patch_id_tests {
             .to_string()
     }
 
+    fn is_squash_merged(test: &TestRepo) -> bool {
+        let repo = Repository::at(test.root_path()).unwrap();
+        let feature = rev_parse(&repo, "refs/heads/feature");
+        let target = rev_parse(&repo, "refs/heads/target");
+        repo.is_squash_merged_via_patch_id(&feature, &target)
+            .unwrap()
+    }
+
     #[test]
     fn detects_squash_when_range_is_under_cap() {
         let test = TestRepo::new();
         // base..target = 2 commits (squash + one pad). Well under the cap.
-        build(&test, 1);
-        let repo = Repository::at(test.root_path()).unwrap();
-        let feature = rev_parse(&repo, "refs/heads/feature");
-        let target = rev_parse(&repo, "refs/heads/target");
+        build(&test, "file", 1, Padding::Empty);
 
         assert!(
-            repo.is_squash_merged_via_patch_id(&feature, &target)
-                .unwrap(),
+            is_squash_merged(&test),
             "squash commit's patch-id matches feature's; should be detected within the cap"
         );
     }
 
     #[test]
-    fn bails_when_range_exceeds_cap() {
+    fn bails_when_commits_touching_branch_paths_exceed_cap() {
         let test = TestRepo::new();
-        // base..target = 1 (squash) + PATCH_ID_SCAN_MAX_COMMITS pads — one
-        // over the cap. The squash is still in the range; we just refuse to
-        // walk that far. Asserting `false` while the under-cap case asserts
-        // `true` pins the difference to the cap, not the topology.
-        build(&test, PATCH_ID_SCAN_MAX_COMMITS);
-        let repo = Repository::at(test.root_path()).unwrap();
-        let feature = rev_parse(&repo, "refs/heads/feature");
-        let target = rev_parse(&repo, "refs/heads/target");
+        // The squash plus PATCH_ID_SCAN_MAX_COMMITS pads, every one touching
+        // the feature's file — one candidate over the cap. The squash is still
+        // among them; we just refuse to diff that many. Asserting `false`
+        // while `detects_squash_when_only_other_paths_exceed_cap` asserts
+        // `true` on the same topology and pad count pins the difference to
+        // which paths the pads touch.
+        build(&test, "file", PATCH_ID_SCAN_MAX_COMMITS, Padding::SameFile);
 
         assert!(
-            !repo
-                .is_squash_merged_via_patch_id(&feature, &target)
-                .unwrap(),
-            "should bail (return false) when base..target exceeds {PATCH_ID_SCAN_MAX_COMMITS}"
+            !is_squash_merged(&test),
+            "should bail (return false) when more than {PATCH_ID_SCAN_MAX_COMMITS} commits touch the branch's paths"
+        );
+    }
+
+    #[test]
+    fn detects_squash_when_only_other_paths_exceed_cap() {
+        let test = TestRepo::new();
+        // base..target exceeds the cap, but every pad touches `other`, so the
+        // squash is the only candidate. A fast-moving default branch whose
+        // traffic is elsewhere must not hide an old squash merge.
+        build(&test, "file", PATCH_ID_SCAN_MAX_COMMITS, Padding::OtherFile);
+
+        assert!(
+            is_squash_merged(&test),
+            "commits that don't touch the branch's paths shouldn't count toward the cap"
+        );
+    }
+
+    #[test]
+    fn branch_paths_are_literal_not_pathspec_magic() {
+        let test = TestRepo::new();
+        // As a pathspec, `*` matches `other` too, which would put every pad
+        // among the candidates and bail at the cap. Taken literally it
+        // matches only the file named `*`.
+        build(&test, "*", PATCH_ID_SCAN_MAX_COMMITS, Padding::OtherFile);
+
+        assert!(
+            is_squash_merged(&test),
+            "a filename must be matched literally, not as a glob"
+        );
+    }
+
+    /// A target commit that makes the branch's change *and* an unrelated one
+    /// isn't a squash merge of that branch. The path filter picks such a
+    /// commit as a candidate, so its patch must still cover its whole change
+    /// — a diff narrowed to the branch's paths would match.
+    #[test]
+    fn rejects_target_commit_with_extra_changes() {
+        let test = TestRepo::new();
+        let path = test.path().join("file");
+        std::fs::write(&path, "A\n").unwrap();
+        test.run_git(&["add", "file"]);
+        test.run_git(&["commit", "-m", "base"]);
+
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(&path, "B\n").unwrap();
+        test.run_git(&["commit", "-am", "feature change"]);
+
+        test.run_git(&["checkout", "-b", "target", "main"]);
+        std::fs::write(&path, "B\n").unwrap();
+        std::fs::write(test.path().join("other"), "unrelated\n").unwrap();
+        test.run_git(&["add", "file", "other"]);
+        test.run_git(&["commit", "-m", "feature change plus something else"]);
+
+        assert!(
+            !is_squash_merged(&test),
+            "a target commit with changes beyond the branch's must not match"
         );
     }
 

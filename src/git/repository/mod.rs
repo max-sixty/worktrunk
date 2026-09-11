@@ -1904,6 +1904,26 @@ impl Repository {
         args: &[&str],
         timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<String> {
+        self.run_command_inner(args, timeout, None)
+    }
+
+    /// [`run_command`](Self::run_command) with `stdin` fed to the child — for
+    /// git commands that read their arguments from standard input
+    /// (`rev-list --stdin`), which keeps an arbitrarily long list off the argv.
+    pub(super) fn run_command_with_stdin(
+        &self,
+        args: &[&str],
+        stdin: Vec<u8>,
+    ) -> anyhow::Result<String> {
+        self.run_command_inner(args, None, Some(stdin))
+    }
+
+    fn run_command_inner(
+        &self,
+        args: &[&str],
+        timeout: Option<std::time::Duration>,
+        stdin: Option<Vec<u8>>,
+    ) -> anyhow::Result<String> {
         let mut cmd = self.with_object_store_env(
             Cmd::new("git")
                 .args(args.iter().copied())
@@ -1912,6 +1932,9 @@ impl Repository {
         );
         if let Some(timeout) = timeout {
             cmd = cmd.timeout(timeout);
+        }
+        if let Some(data) = stdin {
+            cmd = cmd.stdin_bytes(data);
         }
 
         let output = cmd
