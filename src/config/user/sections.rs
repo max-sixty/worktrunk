@@ -68,7 +68,7 @@ pub struct CommitGenerationConfig {
     pub template: Option<String>,
 
     /// Inline template for squash commit message prompt
-    /// Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}
+    /// Available variables: {{ commit_details }}, {{ target_branch }}, {{ branch }}, {{ repo }}
     #[serde(default, rename = "squash-template")]
     pub squash_template: Option<String>,
 
