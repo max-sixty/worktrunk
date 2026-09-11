@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
-use worktrunk::config::CommitGenerationConfig;
+use worktrunk::config::{CommitGenerationConfig, check_prompt_variables};
 use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository, WorkingTree};
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 
@@ -16,7 +16,7 @@ use minijinja::value::{Enumerator, Object, Value};
 ///
 /// It renders as its bare subject (`{{ detail }}` yields the subject line) so a
 /// template that iterates the list and prints the loop variable directly
-/// behaves exactly like the deprecated `commits` list of subject strings. That
+/// behaves exactly like the old `commits` list of subject strings. That
 /// equivalence is what lets `wt config update` migrate a `commits` template to
 /// `commit_details` as a plain identifier rename — no shape-changing hand edits
 /// (see #2984). The `.subject` and `.body` properties remain available for
@@ -584,8 +584,6 @@ enum TemplateType {
 ///   subject when printed bare and exposes `.subject` / `.body` properties.
 ///   Capped at [`MAX_SQUASH_COMMITS`]; the older tail is represented by one
 ///   synthetic "(N earlier commits omitted)" entry.
-/// - `commits`: Commit subjects being squashed (deprecated — see #2984;
-///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
 fn build_prompt(
     config: &CommitGenerationConfig,
@@ -593,10 +591,11 @@ fn build_prompt(
     context: &PromptContext<'_>,
 ) -> anyhow::Result<String> {
     // Get template source based on type
-    let (template, type_name) = match template_type {
+    let (template, type_name, location) = match template_type {
         TemplateType::Commit => (
             config.template.as_deref().unwrap_or(DEFAULT_TEMPLATE),
             "Template",
+            "commit.generation.template",
         ),
         TemplateType::Squash => (
             config
@@ -604,6 +603,7 @@ fn build_prompt(
                 .as_deref()
                 .unwrap_or(DEFAULT_SQUASH_TEMPLATE),
             "Squash template",
+            "commit.generation.squash-template",
         ),
     };
 
@@ -618,18 +618,9 @@ fn build_prompt(
     // Render template with minijinja - all variables available to all templates
     let env = Environment::new();
     let tmpl = env.template_from_str(template)?;
+    check_prompt_variables(&tmpl, location)?;
 
     // Reverse commits so they're in chronological order (oldest first).
-    //
-    // `commits` (a list of bare subject strings) is deprecated in favor of
-    // `commit_details` (see #2984). The deprecation warning and the
-    // `wt config update` rewrite both go through the standard config
-    // deprecation framework (`DEPRECATED_VARS`), so nothing is detected or
-    // warned here — `commits` is simply still rendered for templates that
-    // haven't migrated yet. The rename is safe because each `commit_details`
-    // element renders as its subject (see `CommitDetailValue`), so a migrated
-    // `{% for c in commit_details %}{{ c }}` reads identically to the old
-    // `{% for c in commits %}{{ c }}`.
     //
     // The list is capped at `MAX_SQUASH_COMMITS` — the one prompt input the
     // diff budget doesn't bound. Details arrive newest-first, so the newest
@@ -647,10 +638,6 @@ fn build_prompt(
     let details_chronological: Vec<&CommitMessageDetail> = synthetic_tail
         .iter()
         .chain(kept_details.iter().rev())
-        .collect();
-    let commits_chronological: Vec<&String> = details_chronological
-        .iter()
-        .map(|detail| &detail.subject)
         .collect();
     let commit_details_chronological: Vec<Value> = details_chronological
         .iter()
@@ -672,15 +659,15 @@ fn build_prompt(
     // own config); the project fragment is gated upstream and arrives here
     // as `context.project_append` (or `None` if declined). Empty string when
     // a source is absent — the templates gate the block on truthiness.
-    let render_fragment = |fragment: &str| -> anyhow::Result<String> {
+    let render_fragment = |fragment: &str, location: &str| -> anyhow::Result<String> {
         let frag_tmpl = env.template_from_str(fragment)?;
+        check_prompt_variables(&frag_tmpl, location)?;
         Ok(frag_tmpl.render(minijinja::context! {
             git_diff => context.git_diff,
             git_diff_stat => context.git_diff_stat,
             branch => context.branch,
             recent_commits => context.recent_commits.unwrap_or(&empty_commits),
             repo => context.repo_name,
-            commits => &commits_chronological,
             commit_details => &commit_details_chronological,
             target_branch => context.target_branch.unwrap_or(""),
         })?)
@@ -691,11 +678,11 @@ fn build_prompt(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        Some(fragment) => render_fragment(fragment)?,
+        Some(fragment) => render_fragment(fragment, "user commit.generation.template-append")?,
         None => String::new(),
     };
     let project_guidance = match context.project_append {
-        Some(fragment) => render_fragment(fragment)?,
+        Some(fragment) => render_fragment(fragment, "project commit.generation.template-append")?,
         None => String::new(),
     };
 
@@ -705,7 +692,6 @@ fn build_prompt(
         branch => context.branch,
         recent_commits => context.recent_commits.unwrap_or(&empty_commits),
         repo => context.repo_name,
-        commits => commits_chronological,
         commit_details => commit_details_chronological,
         target_branch => context.target_branch.unwrap_or(""),
         user_guidance => user_guidance,
@@ -1030,6 +1016,7 @@ pub(crate) fn test_commit_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
     use insta::assert_snapshot;
 
     /// `render_llm_invocation` should wrap the command through the platform shell with
@@ -1624,13 +1611,99 @@ mod tests {
         "#);
     }
 
+    #[rstest::rstest]
+    #[case::bare("{{ commits }}")]
+    #[case::loop_source("{% for c in commits %}{{ c }}{% endfor %}")]
+    #[case::filter("{{ commits | length }}")]
+    #[case::index("{{ commits[0] }}")]
+    #[case::conditional("{% if commits %}nonempty{% endif %}")]
+    #[case::unreached("{% if false %}{{ commits }}{% endif %}")]
+    fn test_prompt_rejects_removed_commits(
+        #[case] template: &str,
+        #[values(false, true)] squash: bool,
+    ) {
+        let mut config = CommitGenerationConfig::default();
+        let template_type = if squash {
+            config.squash_template = Some(template.to_string());
+            TemplateType::Squash
+        } else {
+            config.template = Some(template.to_string());
+            TemplateType::Commit
+        };
+        let details = vec![CommitMessageDetail {
+            subject: "Subject".to_string(),
+            body: "Body".to_string(),
+        }];
+        let context = if squash {
+            squash_context("diff", "feature", None, "repo", &details, "main")
+        } else {
+            commit_context("diff", "feature", None, "repo")
+        };
+        let error = build_prompt(&config, template_type, &context).unwrap_err();
+        let message = error.to_string();
+        insta::allow_duplicates! {
+            if squash {
+                assert_snapshot!(message.ansi_strip(), @"Template commit.generation.squash-template uses removed variable commits; use commit_details (run wt config update)");
+            } else {
+                assert_snapshot!(message.ansi_strip(), @"Template commit.generation.template uses removed variable commits; use commit_details (run wt config update)");
+            }
+        }
+    }
+
+    #[rstest::rstest]
+    fn test_prompt_append_rejects_removed_commits(
+        #[values(false, true)] project: bool,
+        #[values(false, true)] squash: bool,
+    ) {
+        let mut config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff", "feature", None, "repo");
+        if project {
+            context.project_append = Some("{{ commits | length }}");
+        } else {
+            config.template_append = Some("{{ commits | length }}".to_string());
+        }
+        let template_type = if squash {
+            TemplateType::Squash
+        } else {
+            TemplateType::Commit
+        };
+        let error = build_prompt(&config, template_type, &context).unwrap_err();
+        let message = error.to_string();
+        insta::allow_duplicates! {
+            if project {
+                assert_snapshot!(message.ansi_strip(), @"Template project commit.generation.template-append uses removed variable commits; use commit_details (run wt config update)");
+            } else {
+                assert_snapshot!(message.ansi_strip(), @"Template user commit.generation.template-append uses removed variable commits; use commit_details (run wt config update)");
+            }
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::literal("commits: {{ 'commits' }}", "commits: commits")]
+    #[case::comment("{# {{ commits }} #}ok", "ok")]
+    #[case::local("{% set commits = 'local' %}{{ commits }}", "local")]
+    #[case::loop_binding("{% for commits in ['a', 'b'] %}{{ commits }}{% endfor %}", "ab")]
+    #[case::object_field("{% set data = {'commits': 'field'} %}{{ data.commits }}", "field")]
+    #[case::other_unknown("{{ other_commits }}", "")]
+    fn test_prompt_preserves_non_global_commits(#[case] template: &str, #[case] expected: &str) {
+        let config = CommitGenerationConfig {
+            squash_template: Some(template.to_string()),
+            ..Default::default()
+        };
+        let context = squash_context("diff", "feature", None, "repo", &[], "main");
+        assert_eq!(
+            build_prompt(&config, TemplateType::Squash, &context).unwrap(),
+            expected
+        );
+    }
+
     #[test]
     fn test_build_squash_prompt_with_custom_template() {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
             squash_template: Some(
-                "Target: {{ target_branch }}\n{% for c in commits %}{{ c }}\n{% endfor %}"
+                "Target: {{ target_branch }}\n{% for c in commit_details %}{{ c }}\n{% endfor %}"
                     .to_string(),
             ),
             template_append: None,
@@ -1729,7 +1802,7 @@ mod tests {
             command: None,
             template: None,
             squash_template: Some(
-                "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commits %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
+                "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commit_details %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
                     .to_string(),
             ),
             template_append: None,
@@ -1827,14 +1900,14 @@ Diff follows:
             command: None,
             template: None,
             squash_template: Some(
-                r#"Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}
-{% if commits | length > 1 -%}
+                r#"Squashing {{ commit_details | length }} commit(s) from {{ branch }} to {{ target_branch }}
+{% if commit_details | length > 1 -%}
 Multiple commits detected:
-{%- for c in commits %}
+{%- for c in commit_details %}
   {{ loop.index }}/{{ loop.length }}: {{ c }}
 {%- endfor %}
 {%- else -%}
-Single commit: {{ commits[0] }}
+Single commit: {{ commit_details[0] }}
 {%- endif %}"#
                     .to_string(),
             ),
@@ -1886,7 +1959,7 @@ Single commit: {{ commits[0] }}
         let config = CommitGenerationConfig {
             command: None,
             template: Some(
-                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit subjects: {{ commits | length }}\nCommit details: {{ commit_details | length }}"
+                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit details: {{ commit_details | length }}"
                     .to_string(),
             ),
             squash_template: None,
@@ -1897,10 +1970,7 @@ Single commit: {{ commits[0] }}
         assert!(result.is_ok());
         let prompt = result.unwrap();
         // Squash-specific variables are empty for regular commits
-        assert_eq!(
-            prompt,
-            "Branch: feature\nTarget: \nCommit subjects: 0\nCommit details: 0"
-        );
+        assert_eq!(prompt, "Branch: feature\nTarget: \nCommit details: 0");
     }
 
     // Tests for diff filtering

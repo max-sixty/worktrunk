@@ -162,6 +162,7 @@ pub use deprecation::CheckAndMigrateResult;
 pub use deprecation::ConfigFileKind;
 pub use deprecation::DeprecationInfo;
 pub use deprecation::check_and_migrate;
+pub use deprecation::check_prompt_variables;
 pub use deprecation::compute_migrated_content;
 pub use deprecation::copy_approved_commands_to_approvals_file;
 pub use deprecation::format_deprecation_details;

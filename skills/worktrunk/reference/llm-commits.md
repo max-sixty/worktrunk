@@ -158,6 +158,10 @@ Diff:
 | `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
 | `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
 
+The old `commits` variable is removed. Prompt templates and append fragments that reference it fail with an error naming the template and its replacement, `commit_details`.
+Run `wt config update` to migrate existing configuration; a loop that prints each element directly keeps producing its subject.
+This removal takes effect with the release containing it, not by checking the current date. Older binaries retain their previous behavior.
+
 ### Template syntax
 
 Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
