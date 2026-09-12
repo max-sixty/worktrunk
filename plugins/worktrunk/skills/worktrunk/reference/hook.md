@@ -159,7 +159,7 @@ All hooks share the same perspective — `{{ branch | hash_port }}` produces the
 
 - `pre-switch`: hook runs in the source worktree; `worktree_path` is the destination when that worktree already exists — a switch that creates one has no destination directory yet, so `worktree_path` stays on the source (use `pre-start` to work in the new worktree)
 - `post-remove`: the active worktree is gone, so the hook runs in the primary worktree
-- `post-merge` with removal: the active worktree is gone, so the hook runs in the target worktree
+- `post-merge`: the hook runs in the target branch's worktree (the primary worktree if the target has none), including under `--no-remove`, where the merged worktree `worktree_path` names is still on disk
 
 Undefined variables error — use conditionals or defaults for optional behavior:
 
