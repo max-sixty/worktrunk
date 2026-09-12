@@ -1,7 +1,8 @@
 """VHS themes coordinated with the documentation site's color palette.
 
-The base surfaces and accents follow ``docs/src/styles/custom.css``. ANSI hues
-are tuned separately for legible terminal captures in each theme.
+Each comment names the custom property in ``docs/src/styles/custom.css`` that
+the value tracks. None is a verbatim copy: surfaces, accents, and ANSI hues are
+all nudged for legible terminal captures, so expect small deltas from the CSS.
 """
 
 import json
@@ -9,15 +10,15 @@ import json
 # Light theme — based on the default ``--wt-*`` palette in custom.css.
 LIGHT_THEME = {
     "name": "Warm Gold Light",
-    "black": "#6b7280",  # --bright-black
-    "red": "#dc2626",  # --red
-    "green": "#357a59",  # --green (desaturated from website's #1b7f4b)
-    "yellow": "#ca8a04",  # --yellow
-    "blue": "#2563eb",  # --blue
-    "magenta": "#9333ea",  # --magenta
-    "cyan": "#3d7f7f",  # --cyan (muted from website's #0a8080)
+    "black": "#6b7280",  # --wt-terminal-gutter
+    "red": "#dc2626",  # --wt-terminal-red
+    "green": "#357a59",  # --wt-terminal-green (desaturated from the site's #256b4a)
+    "yellow": "#ca8a04",  # --wt-terminal-yellow
+    "blue": "#2563eb",  # --wt-terminal-blue
+    "magenta": "#9333ea",  # --wt-terminal-magenta
+    "cyan": "#3d7f7f",  # --wt-terminal-cyan (muted from the site's #0f6f73)
     "white": "#8c959f",
-    "brightBlack": "#6b7280",  # --bright-black
+    "brightBlack": "#6b7280",  # --wt-terminal-gutter
     "brightRed": "#ef4444",
     "brightGreen": "#4a9b76",
     "brightYellow": "#eab308",
@@ -27,20 +28,20 @@ LIGHT_THEME = {
     "brightWhite": "#8c959f",
     "background": "#f7f3eb",  # --wt-paper
     "foreground": "#27231f",  # --wt-ink
-    "cursor": "#d85d22",  # --wt-orange
-    "selection": "#f7d6c1",  # --sl-color-accent-low
+    "cursor": "#d85d22",  # --wt-copper
+    "selection": "#f7d6c1",  # --wt-gold-wash (--sl-color-accent-low)
 }
 
 # Dark theme — based on the ``data-theme='dark'`` palette in custom.css.
 DARK_THEME = {
     "name": "Warm Workbench Dark",
-    "black": "#6b7280",  # --bright-black from CSS
-    "red": "#f87171",  # --red dark mode
-    "green": "#4ade80",  # --green dark mode
-    "yellow": "#fbbf24",  # --yellow dark mode
-    "blue": "#60a5fa",  # --blue dark mode
-    "magenta": "#c084fc",  # --magenta dark mode
-    "cyan": "#67d4d4",  # --cyan dark mode
+    "black": "#6b7280",  # --wt-terminal-gutter
+    "red": "#f87171",  # --wt-terminal-red
+    "green": "#4ade80",  # --wt-terminal-green (saturated from the site's #6ee7a2)
+    "yellow": "#fbbf24",  # --wt-terminal-yellow (warmed from the site's #facc15)
+    "blue": "#60a5fa",  # --wt-terminal-blue (deepened from the site's #93c5fd)
+    "magenta": "#c084fc",  # --wt-terminal-magenta (deepened from the site's #d8b4fe)
+    "cyan": "#67d4d4",  # --wt-terminal-cyan
     "white": "#a8a29e",
     "brightBlack": "#6b7280",  # same as black
     "brightRed": "#fca5a5",  # lighter red
@@ -52,8 +53,8 @@ DARK_THEME = {
     "brightWhite": "#eee8de",  # --wt-ink
     "background": "#1d1a18",  # --wt-paper
     "foreground": "#eee8de",  # --wt-ink
-    "cursor": "#ef8a50",  # --wt-orange
-    "selection": "#49200f",  # --sl-color-accent-low
+    "cursor": "#ef8a50",  # --wt-copper
+    "selection": "#49200f",  # --wt-gold-wash (--sl-color-accent-low)
 }
 
 THEMES = {
