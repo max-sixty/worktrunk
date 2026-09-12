@@ -84,6 +84,49 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     });
 }
 
+/// A `!wt` alias from the feature worktree exports `GIT_DIR` as that
+/// worktree's private gitdir. `advance_target` then runs `read-tree -m -u`
+/// with `current_dir` on main; if the child still sees the inherited
+/// `GIT_DIR`, it writes feature's index and can leave main's worktree
+/// unsynced (or dirty) while still reporting success.
+#[rstest]
+fn test_merge_syncs_target_when_git_dir_names_the_source(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    let git_dir = fs::read_to_string(feature_wt.join(".git")).unwrap();
+    let git_dir = PathBuf::from(git_dir.trim().strip_prefix("gitdir: ").unwrap());
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "main", "--no-remove", "--yes"])
+        .env("GIT_DIR", &git_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt merge must succeed when GIT_DIR names the source worktree.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("feature.txt")).unwrap_or_default(),
+        "feature content",
+        "the target worktree must receive the merged file",
+    );
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(repo.root_path())
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+        "the target worktree must be clean after the sync; got: {}",
+        String::from_utf8_lossy(&status.stdout),
+    );
+}
+
 #[rstest]
 fn test_merge_primary_not_on_default_with_default_worktree(
     mut repo_with_alternate_primary: TestRepo,

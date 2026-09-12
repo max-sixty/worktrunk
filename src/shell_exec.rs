@@ -647,7 +647,12 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 /// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
 ///   the inherited context on purpose (relative values absolutized, see issue
 ///   #1914): `wt` honoring the context it was handed is the point of running
-///   `wt` under `git`.
+///   `wt` under `git`. `WorkingTree::run_command` is the other side of that
+///   split: it relocates git into a chosen worktree, so it scrubs the
+///   discovery vars the same way hooks and `for-each` do. Otherwise a
+///   `!wt` alias from a linked worktree (`GIT_DIR` pinned to that worktree's
+///   private gitdir) makes `status` / `read-tree` on a *different* worktree
+///   use the invoking tree's index.
 ///
 /// Any new spawn site that relocates a user command into a `wt`-chosen
 /// worktree must apply this scrub, via this helper or
