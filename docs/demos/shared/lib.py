@@ -584,9 +584,6 @@ def setup_claude_code_config(
                 "numStartups": 100,
                 "installMethod": "global",
                 "theme": env.theme,
-                # Accounts in the Remote Control rollout otherwise start it,
-                # which prints a live claude.ai session URL into the GIF.
-                "remoteControlAtStartup": False,
                 "firstStartTime": "2025-01-01T00:00:00.000Z",
                 "hasCompletedOnboarding": True,
                 "hasCompletedClaudeInChromeOnboarding": True,
@@ -660,6 +657,9 @@ def setup_claude_code_config(
     settings = {
         "permissions": {"allow": allowed_tools or [], "deny": [], "ask": []},
         "model": "claude-opus-4-6",
+        # Accounts in the Remote Control rollout otherwise start it, which
+        # prints a live claude.ai session URL into the GIF.
+        "remoteControlAtStartup": False,
         "statusLine": {
             "type": "command",
             "command": "wt list statusline --format=claude-code",
