@@ -2,7 +2,7 @@
 title: "Extending Worktrunk"
 description: "Three ways to add custom behavior: hooks for lifecycle automation, aliases for reusable commands, and custom subcommands for standalone tools."
 sidebar:
-  order: 21
+  order: 22
 ---
 Worktrunk has three extension mechanisms.
 
@@ -45,7 +45,7 @@ Aliases are configured under `[aliases]`:
 
 ```toml
 [aliases]
-deploy = "fly deploy --config=fly.{{ env }}.toml --app=myapp-{{ branch }}"
+deploy = "fly deploy --config=fly.{{ env }}.toml --app=myproject-{{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 since-main = "git log --oneline {{ default_branch }}..HEAD"
 ```

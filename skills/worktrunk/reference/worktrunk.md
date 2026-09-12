@@ -13,7 +13,7 @@ A quick demo:
 
 AI agents like Claude Code and Codex can handle longer tasks without
 supervision, such that it's possible to manage 5-10+ in parallel. Git's native
-worktree feature give each agent its own working directory, so they don't step
+worktree feature gives each agent its own working directory, so they don't step
 on each other's changes.
 
 But the git worktree UX is clunky. Even a task as small as starting a new

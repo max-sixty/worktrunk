@@ -129,7 +129,7 @@ All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directo
 
 [2mwt config state logs --format=json[0m emits three arrays — [2mcommand_log[0m, [2mhook_output[0m, [2mdiagnostic[0m. Each entry carries a [2mfile[0m (relative), [2mpath[0m (absolute), [2msize[0m, and [2mmodified_at[0m (unix seconds). Hook-output entries additionally expose [2mbranch[0m, [2msource[0m ([2muser[0m / [2mproject[0m / [2minternal[0m), [2mhook_type[0m (the [2mpost-*[0m kind, or [2mnull[0m for internal ops), and [2mname[0m. Filter with [2mjq[0m to pick out a specific entry.
 
-[1m[32mExamples[0m
+[1m[32mLog examples[0m
 
 List all log files:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs[0m

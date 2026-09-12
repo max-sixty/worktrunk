@@ -4,7 +4,7 @@
 #
 # To create a starter file with commented-out examples, run `wt config create --project`.
 #
-# ## Hooks
+# ## Project hooks
 #
 # Project hooks apply to this repository only. See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, and examples.
 #
@@ -50,7 +50,7 @@
 #
 # Built-in excludes (VCS metadata and tool-state directories) always apply; the `wt step copy-ignored` docs (https://worktrunk.dev/step/#wt-step-copy-ignored) list them. User config and project config exclusions are combined.
 #
-# ## Aliases
+# ## Project aliases
 #
 # Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.
 #
@@ -58,4 +58,4 @@
 # deploy = "make deploy BRANCH={{ branch }}"
 # url = "echo http://localhost:{{ branch | hash_port }}"
 #
-# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#aliases) `[aliases]` section instead.
+# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#user-aliases) `[aliases]` section instead.

@@ -1,0 +1,51 @@
+---
+// Starlight's own footer carries only the edit link, so the site had nowhere
+// to name its version, its releases, or its license, and /code-signing/ was
+// reachable only from a collapsed block on the homepage. This wraps the
+// default rather than replacing it, keeping the upstream merge surface to the
+// one element added below.
+import Default from '@astrojs/starlight/components/Footer.astro';
+
+// The published version is whatever Cargo.toml says at build time; a second
+// copy here would go stale on the next release. `?raw` resolves at build time
+// relative to this file, unlike a runtime path in the bundled output.
+import cargoToml from '../../../Cargo.toml?raw';
+
+const repository = 'https://github.com/max-sixty/worktrunk';
+
+const version = cargoToml.match(/^\[package\][\s\S]*?^version = "([^"]+)"$/m)?.[1];
+if (!version) throw new Error('No [package] version in Cargo.toml');
+---
+
+<Default />
+
+<footer class="wt-site-footer">
+  <a href={`${repository}/releases/tag/v${version}`}>v{version}</a>
+  <a href={`${repository}/releases`}>Releases</a>
+  <a href={`${repository}/blob/main/CHANGELOG.md`}>Changelog</a>
+  <a href="/code-signing/">Code signing</a>
+  <a href={`${repository}/blob/main/LICENSE`}>MIT OR Apache-2.0</a>
+</footer>
+
+<style>
+  .wt-site-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.25rem;
+    margin-top: 2.5rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    padding-top: 1rem;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+  }
+
+  .wt-site-footer a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .wt-site-footer a:hover {
+    color: var(--wt-copper);
+    text-decoration: underline;
+  }
+</style>
