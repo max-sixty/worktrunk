@@ -1,8 +1,10 @@
 """VHS themes coordinated with the documentation site's color palette.
 
 Each comment names the custom property in ``docs/src/styles/custom.css`` that
-the value tracks. None is a verbatim copy: surfaces, accents, and ANSI hues are
-all nudged for legible terminal captures, so expect small deltas from the CSS.
+the value tracks. A parenthetical says the value was nudged from the site's for
+legible terminal captures. Without one, the dark ANSI hues are verbatim copies
+and the surfaces sit within a few units, but the accents and the light ANSI
+hues diverge — the latter still hold the palette the site used pre-Starlight.
 """
 
 import json
@@ -10,15 +12,15 @@ import json
 # Light theme — based on the default ``--wt-*`` palette in custom.css.
 LIGHT_THEME = {
     "name": "Warm Gold Light",
-    "black": "#6b7280",  # --wt-terminal-gutter
-    "red": "#dc2626",  # --wt-terminal-red
-    "green": "#357a59",  # --wt-terminal-green (desaturated from the site's #256b4a)
-    "yellow": "#ca8a04",  # --wt-terminal-yellow
-    "blue": "#2563eb",  # --wt-terminal-blue
-    "magenta": "#9333ea",  # --wt-terminal-magenta
-    "cyan": "#3d7f7f",  # --wt-terminal-cyan (muted from the site's #0f6f73)
+    "black": "#6b7280",  # --wt-terminal-gutter (pre-Starlight; site is #a8a29e)
+    "red": "#dc2626",  # --wt-terminal-red (pre-Starlight; site is #b42318)
+    "green": "#357a59",  # --wt-terminal-green (pre-Starlight; site is #256b4a)
+    "yellow": "#ca8a04",  # --wt-terminal-yellow (pre-Starlight; site is #8a5a00)
+    "blue": "#2563eb",  # --wt-terminal-blue (pre-Starlight; site is #1d4ed8)
+    "magenta": "#9333ea",  # --wt-terminal-magenta (pre-Starlight; site is #7e22ce)
+    "cyan": "#3d7f7f",  # --wt-terminal-cyan (pre-Starlight; site is #0f6f73)
     "white": "#8c959f",
-    "brightBlack": "#6b7280",  # --wt-terminal-gutter
+    "brightBlack": "#6b7280",  # --wt-terminal-gutter (pre-Starlight; site is #a8a29e)
     "brightRed": "#ef4444",
     "brightGreen": "#4a9b76",
     "brightYellow": "#eab308",
