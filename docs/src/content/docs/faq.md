@@ -59,7 +59,7 @@ Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, r
 
 Worktrees share one `.git`. Each adds a checkout of the tracked files, plus whatever gitignored build output you copy in.
 
-On APFS, btrfs, and XFS (not ext4 or NTFS), [`wt step copy-ignored`](/step/#copy-on-write) reflinks that output, so a new worktree shares the primary worktree's disk blocks. A later build rewrites only what changed, and the rest stays shared. On one machine, 56 worktrees of a Rust repository with a 40GB `target/` came to 2.6TB by `du` and 0.7TB on disk.
+On APFS, btrfs, and XFS (not ext4 or NTFS), [`wt step copy-ignored`](/step/#wt-step-copy-ignored--copy-on-write) reflinks that output, so a new worktree shares the primary worktree's disk blocks. A later build rewrites only what changed, and the rest stays shared. On one machine, 56 worktrees of a Rust repository with a 40GB `target/` came to 2.6TB by `du` and 0.7TB on disk.
 
 ## Does Worktrunk support stacked branches?
 

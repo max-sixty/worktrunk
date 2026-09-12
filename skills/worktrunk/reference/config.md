@@ -843,7 +843,7 @@ Manage command approvals.
 
 Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
 
-### Approval examples
+### Examples
 
 List commands and their approval status for current project:
 ```console
@@ -928,7 +928,7 @@ Inspect and preview aliases.
 
 Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](https://worktrunk.dev/extending/#aliases) for the configuration format.
 
-### Alias examples
+### Examples
 
 Show every configured alias's template:
 ```console
@@ -976,7 +976,7 @@ State is stored in `.git/` (config entries and log files), separate from configu
 - **vars**: [Custom variables per branch](https://worktrunk.dev/config/#wt-config-state-vars)
 - **logs**: [Operation and debug logs](https://worktrunk.dev/config/#wt-config-state-logs)
 
-### State examples
+### Examples
 
 Get the default branch:
 ```console
@@ -1052,7 +1052,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 
 Without a subcommand, runs `get`.
 
-### Cache examples
+### Examples
 
 Show cache contents:
 ```console
@@ -1193,7 +1193,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 `wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
 
-### Log examples
+### Examples
 
 List all log files:
 ```console
@@ -1335,7 +1335,7 @@ Custom variables per branch.
 
 Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
-### Variable examples
+### Examples
 
 Set and get values:
 ```console

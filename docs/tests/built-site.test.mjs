@@ -239,7 +239,7 @@ test('build preserves the public route contract', async () => {
     );
   }
   assert.doesNotMatch(configToc, /href="#claude-code"/);
-  assert.doesNotMatch(configToc, /href="#command-reference-1"/);
+  assert.doesNotMatch(configToc, /href="#wt-config-[^"]*--command-reference"/);
 
   const structuralSections = new Map([
     ['/hook/', ['hook-types', 'security', 'configuration', 'running-hooks-manually', 'recipes']],
@@ -276,9 +276,12 @@ test('nested command references expose unique search-only fragment titles', asyn
   assert.match(stepPage, /<h2 id="command-reference">Command reference<\/h2>/);
 
   const references = [...stepPage.matchAll(
-    /<h3 id="command-reference-\d+"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">(wt step [^<]+) — <\/span>Command reference<\/h3>/g,
-  )].map((match) => match[1]);
-  assert.deepEqual(references, [
+    /<h3 id="([^"]+)"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">(wt step [^<]+) — <\/span>Command reference<\/h3>/g,
+  )];
+  for (const [, id, command] of references) {
+    assert.equal(id, `${command.replaceAll(' ', '-')}--command-reference`);
+  }
+  assert.deepEqual(references.map((match) => match[2]), [
     'wt step commit',
     'wt step squash',
     'wt step rebase',
@@ -296,7 +299,7 @@ test('nested command references expose unique search-only fragment titles', asyn
   const listPage = await readFile(routeFile('/list/'), 'utf8');
   assert.match(
     listPage,
-    /<h3 id="command-reference-1"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">wt list statusline — <\/span>Command reference<\/h3>/,
+    /<h3 id="wt-list-statusline--command-reference"><span class="wt-pagefind-fragment-title" hidden aria-hidden="true">wt list statusline — <\/span>Command reference<\/h3>/,
   );
 });
 

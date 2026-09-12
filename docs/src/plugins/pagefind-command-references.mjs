@@ -1,13 +1,6 @@
+import { isCommandHeading, nodeText } from './stable-heading-ids.mjs';
+
 const fragmentTitleClass = 'wt-pagefind-fragment-title';
-
-function nodeText(node) {
-  if (node.type === 'text') return node.value;
-  return node.children?.map(nodeText).join('') ?? '';
-}
-
-function isCommandHeading(text) {
-  return /^wt\s+\S/u.test(text.trim());
-}
 
 function escapeHtml(text) {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');

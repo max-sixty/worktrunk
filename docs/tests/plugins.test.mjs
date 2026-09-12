@@ -89,6 +89,34 @@ test('duplicate heading slugs are unique', () => {
   assert.deepEqual(headings.map((heading) => heading.properties.id), ['demo', 'demo-1']);
 });
 
+test('subcommand sections scope the ids of their headings', () => {
+  const headings = [
+    heading('h2', 'Examples'),
+    heading('h1', 'Subcommands'),
+    heading('h2', 'wt config state'),
+    heading('h3', 'Examples'),
+    heading('h3', 'Cache'),
+    heading('h4', 'Examples'),
+    heading('h2', 'wt config state cache'),
+    heading('h3', 'Examples'),
+    heading('h1', 'Other'),
+    heading('h2', 'Examples'),
+  ];
+  rehypeStableHeadingIds()({ type: 'root', children: headings });
+  assert.deepEqual(headings.map((heading) => heading.properties.id), [
+    'examples',
+    'subcommands',
+    'wt-config-state',
+    'wt-config-state--examples',
+    'wt-config-state--cache',
+    'wt-config-state--examples-1',
+    'wt-config-state-cache',
+    'wt-config-state-cache--examples',
+    'other',
+    'examples-1',
+  ]);
+});
+
 function heading(tagName, value) {
   return {
     type: 'element',
