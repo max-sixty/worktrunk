@@ -2,7 +2,7 @@
 title: "wt remove"
 description: "Remove worktree; delete branch if merged. Defaults to the current worktree."
 sidebar:
-  order: 12
+  order: 13
 ---
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit src/cli/mod.rs to update -->
 

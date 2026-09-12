@@ -198,17 +198,17 @@ Branch setup (from shared infrastructure):
 
 ## Light/dark theme variants
 
-The docs build generates both light and dark GIF variants in separate directories:
-- `docs/light/wt-core.gif` / `docs/dark/wt-core.gif`
-- `docs/light/wt-core-mobile.gif` / `docs/dark/wt-core-mobile.gif` (576×432 responsive homepage source)
-- `docs/light/wt-merge.gif` / `docs/dark/wt-merge.gif`
-- `docs/light/wt-switch-picker.gif` / `docs/dark/wt-switch-picker.gif`
+The docs build generates both light and dark GIF variants in separate directories under `docs/public/assets/docs/` (the layout at the top of this file):
+- `light/wt-core.gif` / `dark/wt-core.gif`
+- `light/wt-core-mobile.gif` / `dark/wt-core-mobile.gif` (576×432 responsive homepage source)
+- `light/wt-merge.gif` / `dark/wt-merge.gif`
+- `light/wt-switch-picker.gif` / `dark/wt-switch-picker.gif`
 
 Each theme starts from a freshly prepared demo environment because recording a tape changes its repository and worktrees.
 
 Social build generates light only (social media doesn't support theme-switching media queries).
 
-Theme definitions are in `docs/demos/shared/themes.py`, matching the CSS variables in `_variables.html`.
+Theme definitions are in `docs/demos/shared/themes.py`, matching the `--wt-*` custom properties in `docs/src/styles/custom.css`.
 
 ## Debugging a demo environment
 
