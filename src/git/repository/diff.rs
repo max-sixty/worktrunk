@@ -16,6 +16,10 @@ enum DiffSource<'repo> {
     Repository {
         repo: &'repo Repository,
         path: PathBuf,
+        /// `WorkingTree::prepare_diff` relocates into `path` and must not
+        /// inherit `GIT_DIR`. `Repository::prepare_diff` keeps the alias
+        /// context (#1914).
+        relocate: bool,
     },
     TempIndex(TempIndex),
 }
@@ -38,7 +42,11 @@ impl<'repo> PreparedDiff<'repo> {
         revisions: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self {
-            source: DiffSource::Repository { repo, path },
+            source: DiffSource::Repository {
+                repo,
+                path,
+                relocate: false,
+            },
             revisions: revisions.into_iter().map(Into::into).collect(),
         }
     }
@@ -53,14 +61,40 @@ impl<'repo> PreparedDiff<'repo> {
         }
     }
 
+    fn for_worktree(
+        repo: &'repo Repository,
+        path: PathBuf,
+        revisions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            source: DiffSource::Repository {
+                repo,
+                path,
+                relocate: true,
+            },
+            revisions: revisions.into_iter().map(Into::into).collect(),
+        }
+    }
+
     fn command(&self, args: &[String]) -> Cmd {
         match &self.source {
-            DiffSource::Repository { repo, path } => repo.with_object_store_env(
-                Cmd::new("git")
+            DiffSource::Repository {
+                repo,
+                path,
+                relocate,
+            } => {
+                let cmd = Cmd::new("git")
                     .args(args.iter().cloned())
                     .current_dir(path)
-                    .context(path_to_logging_context(path)),
-            ),
+                    .context(path_to_logging_context(path));
+                let cmd = if *relocate {
+                    cmd.scrub_worktree_selection_env()
+                        .env_remove("GIT_INDEX_FILE")
+                } else {
+                    cmd
+                };
+                repo.with_object_store_env(cmd)
+            }
             DiffSource::TempIndex(index) => index.command(args.iter().cloned()),
         }
     }
@@ -146,7 +180,7 @@ impl<'repo> WorkingTree<'repo> {
         &self,
         revisions: impl IntoIterator<Item = impl Into<String>>,
     ) -> PreparedDiff<'repo> {
-        PreparedDiff::new(self.repo, self.path.clone(), revisions)
+        PreparedDiff::for_worktree(self.repo, self.path.clone(), revisions)
     }
 
     /// Prepare a diff that also includes untracked files without changing the

@@ -647,12 +647,13 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 /// - **`wt`'s own git plumbing** ([`Cmd`] via `Repository::run_command`) keeps
 ///   the inherited context on purpose (relative values absolutized, see issue
 ///   #1914): `wt` honoring the context it was handed is the point of running
-///   `wt` under `git`. `WorkingTree::run_command` is the other side of that
-///   split: it relocates git into a chosen worktree, so it scrubs the
-///   discovery vars the same way hooks and `for-each` do. Otherwise a
-///   `!wt` alias from a linked worktree (`GIT_DIR` pinned to that worktree's
-///   private gitdir) makes `status` / `read-tree` on a *different* worktree
-///   use the invoking tree's index.
+///   `wt` under `git`. Worktree-local plumbing (`WorkingTree::run_command`,
+///   `WorkingTree::prepare_diff`) is the other side of that split: it
+///   relocates git into a chosen worktree, so it scrubs the selection vars
+///   via [`Cmd::scrub_worktree_selection_env`]. Otherwise a `!wt` alias from
+///   a linked worktree (`GIT_DIR` pinned to that worktree's private gitdir)
+///   makes `status` / `read-tree` / `diff` on a *different* worktree use the
+///   invoking tree's index.
 ///
 /// Any new spawn site that relocates a user command into a `wt`-chosen
 /// worktree must apply this scrub, via this helper or
@@ -1442,6 +1443,23 @@ impl Cmd {
     pub fn scrub_git_discovery_env(mut self) -> Self {
         for var in INHERITED_GIT_PATH_VARS {
             self.env_removes.push(OsString::from(*var));
+        }
+        self
+    }
+
+    /// Scrub the vars that pick which worktree git operates on.
+    ///
+    /// Leaves `GIT_INDEX_FILE` and
+    /// `GIT_OBJECT_DIRECTORY`: `apply_common_settings` applies env-removes
+    /// after envs, so the full [`Self::scrub_git_discovery_env`] would strip
+    /// a redirected object store and a `TempIndex`'s own `GIT_INDEX_FILE`.
+    /// Worktree-local plumbing (`WorkingTree::run_command`,
+    /// `WorkingTree::prepare_diff`) uses this, then removes or sets
+    /// `GIT_INDEX_FILE` itself. Hooks and `for-each` still use the full
+    /// scrub — those children must not see any inherited git-discovery var.
+    pub fn scrub_worktree_selection_env(mut self) -> Self {
+        for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"] {
+            self.env_removes.push(OsString::from(var));
         }
         self
     }

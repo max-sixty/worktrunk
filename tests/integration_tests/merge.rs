@@ -85,10 +85,10 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
 }
 
 /// A `!wt` alias from the feature worktree exports `GIT_DIR` as that
-/// worktree's private gitdir. `advance_target` then runs `read-tree -m -u`
-/// with `current_dir` on main; if the child still sees the inherited
-/// `GIT_DIR`, it writes feature's index and can leave main's worktree
-/// unsynced (or dirty) while still reporting success.
+/// worktree's private gitdir. Every worktree-local git call then reads that
+/// index: `ensure_no_target_conflicts` sees feature's own files as
+/// uncommitted changes on main and refuses the merge, and past that gate
+/// `advance_target`'s `read-tree -m -u` would sync the wrong tree.
 #[rstest]
 fn test_merge_syncs_target_when_git_dir_names_the_source(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
