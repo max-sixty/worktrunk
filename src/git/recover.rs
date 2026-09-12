@@ -135,8 +135,9 @@ fn recover_from_path(deleted_path: &Path) -> Option<Repository> {
 /// Look for a git repository at `dir` or its immediate children that recognizes
 /// `deleted_path` as a (former) worktree.
 ///
-/// Only checks for `.git` **directories** (main repos), not `.git` files
-/// (which are linked worktrees — we need the main repo to recover).
+/// Matches `.git` **directories** (main worktrees) and bare repositories, not
+/// `.git` files (which are linked worktrees — we need the repository that owns
+/// the worktree to recover).
 fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repository> {
     // Check the directory itself first
     if let Some(repo) = try_repo_at(dir)
@@ -163,20 +164,31 @@ fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repositor
 
 /// Try to discover a repository at the given path.
 ///
-/// Returns `Some(repo)` if the path contains a `.git` directory (not a file)
-/// and `Repository::at()` succeeds.
-///
-/// Note: This only matches `.git` directories, so bare repos (which have no
-/// `.git` subdirectory) won't be discovered. `cwd_removed_hint()` handles
-/// this gracefully by falling back to progressively less specific hints.
+/// Returns `Some(repo)` if the path holds a `.git` directory (a main worktree)
+/// or is itself a bare repository, and `Repository::at()` succeeds. A `.git`
+/// *file* is a linked worktree — recovery needs the repository that owns it,
+/// which the ancestor walk reaches separately.
 fn try_repo_at(dir: &Path) -> Option<Repository> {
-    let git_path = dir.join(".git");
-    // Only match .git directories (main repos), not .git files (linked worktrees)
-    if git_path.is_dir() {
+    if dir.join(".git").is_dir() || is_bare_repo_dir(dir) {
         Repository::at(dir).ok()
     } else {
         None
     }
+}
+
+/// Whether `dir` is itself a bare repository.
+///
+/// Bare repos have no `.git` entry, so without this the ancestor walk finds
+/// nothing for them — and a bare repo's worktrees typically sit inside the
+/// bare directory, so the walk has nowhere else to land.
+///
+/// This is git's own `is_git_directory` heuristic (a `HEAD`, an `objects/`,
+/// and a `refs/`), checked on disk rather than by asking git: the walk visits
+/// every ancestor and each of its children, and `Repository::at()` discovers
+/// *upward*, so using it as the probe would answer for an unrelated ancestor
+/// repository instead of reporting "not a repository here".
+fn is_bare_repo_dir(dir: &Path) -> bool {
+    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
 }
 
 /// Check if the deleted path was a worktree of the given repository.
@@ -219,7 +231,7 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{TestRepo, test_tempdir};
+    use crate::testing::{BareRepoTest, TestRepo, TestRepoBase, test_tempdir};
     use ansi_str::AnsiStr;
 
     #[test]
@@ -234,6 +246,18 @@ mod tests {
     fn test_try_repo_at_accepts_git_dir() {
         let test = TestRepo::new();
         assert!(try_repo_at(test.path()).is_some());
+    }
+
+    #[test]
+    fn test_try_repo_at_accepts_bare_repo_dir() {
+        let test = TestRepo::bare();
+        assert!(try_repo_at(test.path()).is_some());
+    }
+
+    #[test]
+    fn test_try_repo_at_rejects_plain_directory() {
+        let tmp = test_tempdir();
+        assert!(try_repo_at(tmp.path()).is_none());
     }
 
     #[test]
@@ -415,6 +439,23 @@ mod tests {
 
         // Recovery should find the repo
         assert!(recover_from_path(&wt_path).is_some());
+    }
+
+    /// A bare repo has no `.git` entry anywhere in the ancestor walk, so
+    /// before `is_bare_repo_dir` every bare layout fell through to "no
+    /// repository found" and `wt switch` reported the raw CWD error instead
+    /// of recovering.
+    #[test]
+    fn test_recover_from_path_bare_repo_worktree() {
+        let test = BareRepoTest::new();
+        let wt_path = test.create_worktree("feature", "feature");
+        test.commit_in(&wt_path, "init");
+
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        let recovered =
+            recover_from_path(&wt_path).expect("recovery should find the bare repository");
+        assert_eq!(recovered.git_common_dir(), test.bare_repo_path());
     }
 
     #[test]
