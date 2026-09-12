@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **`wt merge` honors `git worktree lock`**: merge constructed a removal plan by hand and skipped the lock check `wt remove` already had, so a successful merge renamed a locked feature worktree into trash and reported success. It now keeps the worktree (`Worktree preserved (locked)`) the same way it keeps a primary worktree, and the shared staging path refuses a lock even if a caller skips planning.
+
 - **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: the migration stood down whenever a `[forge]` section existed at all, so the config a GitHub Enterprise or self-hosted GitLab user ends up with — `[ci] platform` from before the rename, `[forge] hostname` added later for an SSH host alias — kept the deprecated key with no warning and nothing `wt config update` would do about it. The platform still resolved, so nothing broke; the deprecation notice that precedes `[ci]`'s eventual removal simply never arrived. A `[forge]` that already sets `platform`, or a `forge` that isn't a section, still stands down.
 
 - **`wt config shell install` migrates a fish wrapper at the deprecated `conf.d` path even when `~/.config/fish/functions` doesn't exist yet**: fish was skipped for want of a config location, so the bare command left the deprecated wrapper running and only `wt config shell install fish` migrated it. A worktrunk wrapper at the old path now counts as fish being configured, just at the old path. `wt config show` reports that wrapper too, where before it showed nothing at all for fish unless fish was on `PATH`.

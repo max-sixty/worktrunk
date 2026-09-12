@@ -585,6 +585,31 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
+    /// Reason recorded by `git worktree lock`, if this worktree is locked.
+    ///
+    /// Reads the `locked` file in the worktree's git dir — the same file git
+    /// writes and `git worktree list --porcelain` reports. Does not take the
+    /// worktree-registry lock, so removal can consult it while that lock is
+    /// held for metadata teardown.
+    ///
+    /// `Ok(None)` — not locked. `Ok(Some(None))` — locked with no reason.
+    /// `Ok(Some(Some(reason)))` — locked with a reason.
+    pub fn lock_reason(&self) -> anyhow::Result<Option<Option<String>>> {
+        let lock_path = self.git_dir()?.join("locked");
+        match std::fs::read_to_string(&lock_path) {
+            Ok(contents) => {
+                let trimmed = contents.trim();
+                Ok(Some(if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).context("Failed to read worktree lock"),
+        }
+    }
+
     /// The git operation this worktree is partway through, if any.
     ///
     /// Reads the state files git writes under the worktree's git dir, in the
