@@ -530,10 +530,14 @@ header.header {
   background: transparent;
 }
 
+.expressive-code .frame.has-title .header::before {
+  content: none;
+}
+
+/* The file tab shares the left edge of its code. */
 .expressive-code .frame.has-title .title {
   width: auto;
-  max-width: calc(100% - 1.2rem);
-  margin-inline-start: 0.6rem;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--wt-line);
   border-block-end: 0;
