@@ -77,7 +77,7 @@ TUI demos (Zellij, Claude UI) can't use text snapshots because VHS only captures
 4. Validation runs automatically when building TUI demos with defined checkpoints
 
 Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation to a TUI demo:
-1. Identify key frame numbers by examining the GIF (30fps, so frame 90 = 3 seconds)
+1. Identify key frame numbers by examining the GIF (25fps, so frame 75 = 3 seconds; a negative frame counts back from the last, for the state a recording ends in)
 2. Define checkpoint patterns in `validation.py` with frame numbers, expected patterns, and forbidden patterns
 
 `wt-switch`, `wt-statusline`, and `wt-zellij-omnibus` have checkpoints. Other TUI demos are skipped until checkpoints are added.
