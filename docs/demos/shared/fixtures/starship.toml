@@ -1,19 +1,10 @@
 format = "$directory$character"
-palette = "gh_light"
-
-[palettes.gh_light]
-fg = "#1f2328"
-bg = "#ffffff"
-blue = "#0969da"
-yellow = "#d29922"
-green = "#2ea043"
-red = "#d73a49"
-muted = "#57606a"
-soft = "#8b7355"
-gold = "#d97706"
+# setup_demo_output appends [palettes.site] with the site's colors for the
+# recording's theme.
+palette = "site"
 
 [directory]
-style = "bold fg:soft"
+style = "bold fg:craft"
 truncation_length = 3
 truncate_to_repo = true
 home_symbol = "~"
@@ -40,9 +31,9 @@ format = " [$duration]($style)"
 style = "fg:muted"
 
 [character]
-success_symbol = "[❯](fg:soft)"
+success_symbol = "[❯](fg:craft)"
 error_symbol = "[❯](fg:red)"
-vicmd_symbol = "[❮](fg:soft)"
+vicmd_symbol = "[❮](fg:craft)"
 
 [time]
 disabled = true

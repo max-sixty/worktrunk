@@ -208,7 +208,7 @@ Each theme starts from a freshly prepared demo environment because recording a t
 
 Social build generates light only (social media doesn't support theme-switching media queries).
 
-Theme definitions are in `docs/demos/shared/themes.py`, matching the `--wt-*` custom properties in `docs/src/styles/custom.css`.
+Each recording's environment carries its theme. The VHS terminal, Zellij, and the starship prompt take their colors from `docs/demos/shared/themes.py`, which reads the `--wt-*` custom properties in `docs/src/styles/custom.css` when the build runs, so a site palette change reaches the GIFs on the next recording. Claude Code and delta switch to their own light or dark theme.
 
 ## Debugging a demo environment
 
