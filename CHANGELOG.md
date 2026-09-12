@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **`wt step prune` no longer deletes a branch created minutes ago from an older commit**: the min-age guard aged a branch with no worktree by the committer date of the commit it points at, so `git branch <name> main` on a default branch whose last commit was over a day old was pruned on the next run — the case `--min-age` exists to prevent. The branch's age now comes from its oldest reflog entry, written when the branch was created.
+
 - **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: the migration stood down whenever a `[forge]` section existed at all, so the config a GitHub Enterprise or self-hosted GitLab user ends up with — `[ci] platform` from before the rename, `[forge] hostname` added later for an SSH host alias — kept the deprecated key with no warning and nothing `wt config update` would do about it. The platform still resolved, so nothing broke; the deprecation notice that precedes `[ci]`'s eventual removal simply never arrived. A `[forge]` that already sets `platform`, or a `forge` that isn't a section, still stands down.
 
 - **`wt config shell install` migrates a fish wrapper at the deprecated `conf.d` path even when `~/.config/fish/functions` doesn't exist yet**: fish was skipped for want of a config location, so the bare command left the deprecated wrapper running and only `wt config shell install fish` migrated it. A worktrunk wrapper at the old path now counts as fish being configured, just at the old path. `wt config show` reports that wrapper too, where before it showed nothing at all for fish unless fish was on `PATH`.
