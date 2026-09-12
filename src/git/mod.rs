@@ -40,6 +40,24 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 /// The null OID returned by git when no commits exist (e.g., `git rev-parse HEAD` on an unborn branch).
 pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
+/// Whether `dir` is itself a git directory — a bare repository, or the `.git`
+/// directory of a non-bare one.
+///
+/// Git's own `is_git_directory()` shape: a `HEAD`, an `objects/`, and a
+/// `refs/`. Read from disk rather than by asking git, because both callers ask
+/// about an arbitrary directory and git's own discovery answers *upward* — it
+/// would report on some enclosing repository instead of saying "not one here".
+///
+/// Deliberately shallow: git additionally validates what `HEAD` contains, and
+/// a false positive costs each caller little — one withholds a claim, the
+/// other still has to find the deleted path in the candidate's own worktree
+/// list before it recovers. [`Repository::at`] is not that check: discovering
+/// upward, it succeeds for a false positive that sits inside a real
+/// repository.
+pub(crate) fn is_bare_repo_dir(dir: &Path) -> bool {
+    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
+}
+
 // Re-exports from submodules
 pub use ci_platform::ForgeKind;
 pub(crate) use diff::DiffStats;
