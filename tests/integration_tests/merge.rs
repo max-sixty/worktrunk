@@ -112,6 +112,46 @@ fn test_merge_with_no_remove_flag(merge_scenario: (TestRepo, PathBuf)) {
     ));
 }
 
+/// `git worktree lock` is the user's explicit "don't remove this".
+/// `wt remove` honors it; `wt merge` used to skip that guard and trash
+/// the locked feature worktree after a successful merge.
+#[rstest]
+fn test_merge_preserves_locked_worktree(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    repo.lock_worktree("feature", Some("agent still running"));
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
+
+    assert!(
+        feature_wt.exists(),
+        "locked feature worktree must survive merge"
+    );
+}
+
+/// Same preserve path as above, but `git worktree lock` with no reason.
+#[rstest]
+fn test_merge_preserves_locked_worktree_no_reason(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    repo.lock_worktree("feature", None);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
+
+    assert!(
+        feature_wt.exists(),
+        "locked feature worktree must survive merge"
+    );
+}
+
 #[rstest]
 fn test_merge_already_on_target(repo: TestRepo) {
     // Already on main branch (repo root)

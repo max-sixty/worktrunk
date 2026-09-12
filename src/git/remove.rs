@@ -23,9 +23,11 @@
 //! Steps 1-3 are [`stage_worktree_removal`]; 4-5 are the rest of
 //! [`remove_worktree_with_cleanup`].
 //!
-//! 1. **Clean check** (skipped with [`RemoveOptions::force_worktree`]). The
-//!    final dirty-worktree gate, immediately before the mutation. Why it
-//!    precedes the stop below: [`stage_worktree_removal`], "Why this order".
+//! 1. **Lock and clean checks**. A `git worktree lock` is refused
+//!    unconditionally (matching `git worktree remove`; `--force` does not
+//!    override it). The dirty-worktree gate is skipped with
+//!    [`RemoveOptions::force_worktree`]. Why the dirty gate precedes the
+//!    stop below: [`stage_worktree_removal`], "Why this order".
 //! 2. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
 //!    runs against the target worktree before its path disappears: it sends
 //!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
@@ -98,7 +100,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{IntegrationReason, Repository, WorktreeInfo};
+use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
 
@@ -436,7 +438,11 @@ pub fn remove_worktree_with_cleanup(
 /// hint leading straight to the deletion the check refuses. And `--force` is
 /// the user waiving their own uncommitted changes, never a claim about who
 /// owns the directory, so it cannot be allowed to skip it; git's own
-/// validation is likewise unconditional.
+/// validation is likewise unconditional. The lock check sits with ownership:
+/// `--force` does not override `git worktree lock`, and the check reads the
+/// `locked` file rather than `list_worktrees()`, whose `RepoCache` entry
+/// planning already warmed: it would answer from before the approval prompt
+/// and the `pre-remove` hook, which is the window this call closes.
 ///
 /// `wt remove` and `wt merge --remove` have already asked this during
 /// planning, where the answer can precede the "Removing …" announcement. The
@@ -446,21 +452,37 @@ pub fn remove_worktree_with_cleanup(
 ///
 /// # Errors
 ///
-/// The ownership check and the dirty-worktree gate error. A failed rename is
-/// reported as `None`, not an error, and the daemon stop is best-effort
-/// throughout.
+/// The ownership check, the lock check, and the dirty-worktree gate error. A
+/// failed rename is reported as `None`, not an error, and the daemon stop is
+/// best-effort throughout.
 pub fn stage_worktree_removal(
     repo: &Repository,
     worktree_path: &Path,
     branch: Option<&str>,
     force_worktree: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
-    repo.worktree_at(worktree_path)
-        .ensure_holds_this_worktree()?;
+    let worktree = repo.worktree_at(worktree_path);
+    worktree.ensure_holds_this_worktree()?;
+
+    // Lock is the user's explicit "don't remove this". `--force` does not
+    // override it, matching `git worktree remove` and `prepare_worktree_removal`.
+    // Read the `locked` file rather than `list_worktrees()`: its `RepoCache`
+    // entry is already warm from planning, so it would report the lock state
+    // from before the approval prompt and the `pre-remove` hook.
+    if let Some(reason) = worktree.lock_reason()? {
+        let name = branch
+            .unwrap_or_else(|| path_dir_name(worktree_path))
+            .to_string();
+        return Err(GitError::WorktreeLocked {
+            branch: name,
+            path: worktree_path.to_path_buf(),
+            reason,
+        }
+        .into());
+    }
 
     if !force_worktree {
-        repo.worktree_at(worktree_path)
-            .ensure_clean("remove worktree", branch, true)?;
+        worktree.ensure_clean("remove worktree", branch, true)?;
     }
 
     stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
@@ -478,7 +500,7 @@ pub fn stage_worktree_removal(
 /// ([`prune_worktree_entry`](Repository::prune_worktree_entry)) rather than
 /// sweeping the repository, so a sibling worktree whose directory happens to
 /// be absent right now keeps its registration. A locked worktree never reaches
-/// here — `prepare_worktree_removal` rejects one before staging.
+/// here — [`stage_worktree_removal`] rejects one before the rename.
 fn rename_into_trash(repo: &Repository, worktree_path: &Path) -> Option<PathBuf> {
     let trash_dir = repo.wt_trash_dir();
     let _ = std::fs::create_dir_all(&trash_dir);
@@ -702,6 +724,47 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> 
 mod tests {
     use super::*;
     use crate::testing::TestRepo;
+
+    /// A `git worktree lock` must stop the rename even when the caller skipped
+    /// `prepare_worktree_removal` (merge used to construct a plan by hand).
+    #[test]
+    fn stage_refuses_locked_worktree() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        test.lock_worktree("feature", Some("keep"));
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err =
+            stage_worktree_removal(&repo, &worktree_path, Some("feature"), false).unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<GitError>(),
+                Some(GitError::WorktreeLocked { branch, reason, .. })
+                    if branch == "feature" && reason.as_deref() == Some("keep")
+            ),
+            "expected WorktreeLocked, got {err:?}"
+        );
+        assert!(
+            worktree_path.exists(),
+            "locked worktree must still be on disk"
+        );
+    }
+
+    /// `--force` waives dirt, not a lock — same as `git worktree remove --force`.
+    #[test]
+    fn stage_refuses_locked_worktree_even_with_force() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        test.lock_worktree("feature", None);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = stage_worktree_removal(&repo, &worktree_path, Some("feature"), true).unwrap_err();
+        match err.downcast_ref::<GitError>() {
+            Some(GitError::WorktreeLocked { reason: None, .. }) => {}
+            other => panic!("expected WorktreeLocked without a reason, got {other:?}"),
+        }
+        assert!(worktree_path.exists());
+    }
 
     /// Registry serialization starts after the fast-path rename, so worktree
     /// staging can overlap while metadata teardown remains exclusive.
