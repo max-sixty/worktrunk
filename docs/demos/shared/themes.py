@@ -1,10 +1,10 @@
 """VHS themes coordinated with the documentation site's color palette.
 
 Each comment names the custom property in ``docs/src/styles/custom.css`` that
-the value tracks. A parenthetical says the value was nudged from the site's for
-legible terminal captures. Without one, the dark ANSI hues are verbatim copies
-and the surfaces sit within a few units, but the accents and the light ANSI
-hues diverge — the latter still hold the palette the site used pre-Starlight.
+the value tracks. Every ANSI hue here predates the Starlight rebuild: the ones
+the site has since changed quote its current hex, and the ones it kept are
+verbatim copies. Surfaces sit within a few units of their property; the cursor
+and selection accents are tuned brighter for legible terminal captures.
 """
 
 import json
@@ -39,10 +39,10 @@ DARK_THEME = {
     "name": "Warm Workbench Dark",
     "black": "#6b7280",  # --wt-terminal-gutter
     "red": "#f87171",  # --wt-terminal-red
-    "green": "#4ade80",  # --wt-terminal-green (saturated from the site's #6ee7a2)
-    "yellow": "#fbbf24",  # --wt-terminal-yellow (warmed from the site's #facc15)
-    "blue": "#60a5fa",  # --wt-terminal-blue (deepened from the site's #93c5fd)
-    "magenta": "#c084fc",  # --wt-terminal-magenta (deepened from the site's #d8b4fe)
+    "green": "#4ade80",  # --wt-terminal-green (pre-Starlight; site is #6ee7a2)
+    "yellow": "#fbbf24",  # --wt-terminal-yellow (pre-Starlight; site is #facc15)
+    "blue": "#60a5fa",  # --wt-terminal-blue (pre-Starlight; site is #93c5fd)
+    "magenta": "#c084fc",  # --wt-terminal-magenta (pre-Starlight; site is #d8b4fe)
     "cyan": "#67d4d4",  # --wt-terminal-cyan
     "white": "#a8a29e",
     "brightBlack": "#6b7280",  # same as black
