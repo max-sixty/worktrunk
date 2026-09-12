@@ -176,10 +176,25 @@ def _forward_macos_keychains(home: Path) -> None:
     )
 
 
+def recorder_env() -> dict[str, str]:
+    """The recorder's environment without the calling Claude Code session's state.
+
+    A build started from inside Claude Code inherits that session's ``CLAUDE*``
+    variables, and a demo's Claude Code reads them as its own: the inherited
+    child-session marker, for one, makes it warn that transcript saving is off.
+    Only ``CLAUDE_CODE_OAUTH_TOKEN``, the documented way to authenticate demos,
+    passes through.
+    """
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("CLAUDE") or name == "CLAUDE_CODE_OAUTH_TOKEN"
+    }
+
+
 def _isolated_claude_env(home: Path) -> dict[str, str]:
     """Build an environment whose Claude state stays under an isolated HOME."""
-    env = os.environ.copy()
-    env.pop("CLAUDE_CONFIG_DIR", None)
+    env = recorder_env()
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
     return env
@@ -359,8 +374,7 @@ def record_vhs(
     tape_path: Path, vhs_binary: str = "vhs", expected_output: Path = None
 ):
     """Record a demo GIF using VHS."""
-    env = os.environ.copy()
-    env.pop("CLAUDE_CONFIG_DIR", None)
+    env = recorder_env()
     # GIF assets include ANSI styling independent of the recorder's shell.
     env.pop("NO_COLOR", None)
     env["CLICOLOR_FORCE"] = "1"
@@ -570,6 +584,9 @@ def setup_claude_code_config(
                 "numStartups": 100,
                 "installMethod": "global",
                 "theme": env.theme,
+                # Accounts in the Remote Control rollout otherwise start it,
+                # which prints a live claude.ai session URL into the GIF.
+                "remoteControlAtStartup": False,
                 "firstStartTime": "2025-01-01T00:00:00.000Z",
                 "hasCompletedOnboarding": True,
                 "hasCompletedClaudeInChromeOnboarding": True,

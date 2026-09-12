@@ -43,6 +43,7 @@ from shared import (  # noqa: E402
     setup_demo_output,
     write_starship_config,
     record_theme,
+    recorder_env,
     SIZE_DOCS,
     SIZE_DOCS_MOBILE,
     SIZE_SOCIAL,
@@ -452,8 +453,7 @@ def record_demo(
 
 def spawn_debug_shell(env: DemoEnv):
     """Spawn an interactive fish shell with the demo environment set up."""
-    shell_env = os.environ.copy()
-    shell_env.pop("CLAUDE_CONFIG_DIR", None)
+    shell_env = recorder_env()
     shell_env.update(
         {
             "HOME": str(env.home),
