@@ -698,7 +698,7 @@ fn worktree_age(
 /// forbids `@{` inside a ref name, so the last `@{` opens the timestamp.
 ///
 /// Returns `None` if the reflog is missing or unparsable — callers treat
-/// "unknown age" as "old enough", matching the previous inline behavior.
+/// "unknown age" as "old enough".
 fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
     let ref_name = format!("refs/heads/{branch}");
     let stdout = repo
