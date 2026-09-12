@@ -100,7 +100,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::git::repository::WorkingTree;
-use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo};
+use crate::git::{GitError, IntegrationReason, Repository, WorktreeInfo, path_dir_name};
 use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
 
@@ -440,8 +440,9 @@ pub fn remove_worktree_with_cleanup(
 /// owns the directory, so it cannot be allowed to skip it; git's own
 /// validation is likewise unconditional. The lock check sits with ownership:
 /// `--force` does not override `git worktree lock`, and the check reads the
-/// `locked` file instead of `list_worktrees()` so it does not take the
-/// registry lock this function may already be nested under.
+/// `locked` file rather than `list_worktrees()`, whose `RepoCache` entry
+/// planning already warmed: it would answer from before the approval prompt
+/// and the `pre-remove` hook, which is the window this call closes.
 ///
 /// `wt remove` and `wt merge --remove` have already asked this during
 /// planning, where the answer can precede the "Removing …" announcement. The
@@ -465,17 +466,13 @@ pub fn stage_worktree_removal(
 
     // Lock is the user's explicit "don't remove this". `--force` does not
     // override it, matching `git worktree remove` and `prepare_worktree_removal`.
-    // Read the `locked` file rather than `list_worktrees()`: that porcelain
-    // call takes the registry read lock, and the rename-before-teardown path
-    // holds the write lock across this function.
+    // Read the `locked` file rather than `list_worktrees()`: its `RepoCache`
+    // entry is already warm from planning, so it would report the lock state
+    // from before the approval prompt and the `pre-remove` hook.
     if let Some(reason) = worktree.lock_reason()? {
-        let name = branch.map(str::to_string).unwrap_or_else(|| {
-            worktree_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("worktree")
-                .to_string()
-        });
+        let name = branch
+            .unwrap_or_else(|| path_dir_name(worktree_path))
+            .to_string();
         return Err(GitError::WorktreeLocked {
             branch: name,
             path: worktree_path.to_path_buf(),
@@ -737,7 +734,8 @@ mod tests {
         test.lock_worktree("feature", Some("keep"));
         let repo = Repository::at(test.root_path()).unwrap();
 
-        let err = stage_worktree_removal(&repo, &worktree_path, Some("feature"), false).unwrap_err();
+        let err =
+            stage_worktree_removal(&repo, &worktree_path, Some("feature"), false).unwrap_err();
         assert!(
             matches!(
                 err.downcast_ref::<GitError>(),

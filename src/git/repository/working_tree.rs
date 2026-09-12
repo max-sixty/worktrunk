@@ -588,9 +588,9 @@ impl<'a> WorkingTree<'a> {
     /// Reason recorded by `git worktree lock`, if this worktree is locked.
     ///
     /// Reads the `locked` file in the worktree's git dir — the same file git
-    /// writes and `git worktree list --porcelain` reports. Does not take the
-    /// worktree-registry lock, so removal can consult it while that lock is
-    /// held for metadata teardown.
+    /// writes and `git worktree list --porcelain` reports. Goes to the file
+    /// rather than `list_worktrees()`, whose `RepoCache` entry planning may
+    /// already have warmed with a stale lock state.
     ///
     /// `Ok(None)` — not locked. `Ok(Some(None))` — locked with no reason.
     /// `Ok(Some(Some(reason)))` — locked with a reason.
