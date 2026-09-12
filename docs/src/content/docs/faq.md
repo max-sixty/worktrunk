@@ -210,7 +210,7 @@ To protect a worktree from removal entirely (say it holds a local database), loc
 git worktree lock ../myproject.feature --reason "Contains local database"
 ```
 
-Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
+Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor any Worktrunk removal path — `wt remove` or `wt merge` — will delete them, even with `--force`. Unlock with `git worktree unlock`.
 
 ### Branch deletion
 

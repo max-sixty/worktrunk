@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/merge.rs
-assertion_line: 123
 info:
   program: wt
   args:
