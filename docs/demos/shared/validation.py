@@ -135,12 +135,12 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
             expected=["Removing feature"],
             forbidden=["/var/folders/", "wt-demo-"],
         ),
-        # Near end — wt list --full showing all worktrees.
+        # The recording ends on wt list --full showing all worktrees.
         # "billing" omitted: depends on timing of when the branch appears
         # in the list relative to the frame window.
         Checkpoint(
-            start=1650,
-            end=1850,
+            start=-100,
+            end=-1,
             expected=["Branch", "main"],
             forbidden=[
                 "CONFLICT",
