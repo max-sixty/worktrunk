@@ -2416,6 +2416,9 @@ Available variables (in addition to commit template variables):
 - `{{ commit_details }}` — list of commits being squashed; each renders as its subject and exposes `.subject` / `.body`
 - `{{ target_branch }}` — merge target branch
 
+The old `commits` variable has been removed. Run `wt config update` to migrate existing prompt templates to `commit_details`.
+Each detail still renders as its subject when printed directly; `.body` remains available separately.
+
 Default template:
 
 <!-- DEFAULT_SQUASH_TEMPLATE_START -->

@@ -3950,7 +3950,10 @@ fn test_config_update_does_not_materialize_json_schema(repo: TestRepo) {
 /// element renders as its subject, so the migrated template renders identically
 /// to the original.
 #[rstest]
-fn test_config_update_migrates_commits_squash_var(repo: TestRepo) {
+fn test_config_update_migrates_commits_squash_var(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
     let config_path = repo.test_config_path();
     fs::write(
         config_path,
@@ -3962,6 +3965,15 @@ Combine {{ commits | length }} commits:
 "#,
     )
     .unwrap();
+
+    let before = repo
+        .wt_command()
+        .args(["step", "squash", "main", "--show-prompt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(!before.status.success());
+    assert!(before.stdout.is_empty());
 
     let output = repo
         .wt_command()
@@ -3989,6 +4001,29 @@ Combine {{ commits | length }} commits:
         !updated.contains("{{ commits"),
         "no deprecated commits reference should remain: {updated}"
     );
+    let rendered = repo
+        .wt_command()
+        .args(["step", "squash", "main", "--show-prompt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(rendered.stdout).unwrap(),
+        "Combine 2 commits:\n- Add a\n- Add b\n\n"
+    );
+    assert!(rendered.stderr.is_empty());
+    let again = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(again.status.success());
+    assert_eq!(fs::read_to_string(config_path).unwrap(), updated);
 }
 
 /// A relative `--config` resolves against `-C`, the way git resolves the path

@@ -1,10 +1,11 @@
 use crate::common::{
     SLEEP_FOR_ABSENCE_CHECK, TestRepo, make_snapshot_cmd, merge_scenario,
-    mock_commands::{create_mock_cargo, create_mock_llm_auth},
+    mock_commands::{create_mock_cargo, create_mock_llm_auth, mock_calls},
     repo, repo_with_alternate_primary, repo_with_main_worktree, repo_with_multi_commit_feature,
-    repo_with_remote, setup_snapshot_settings, wait_for_file, wait_for_file_content,
+    repo_with_remote, setup_snapshot_settings, test_tempdir, wait_for_file, wait_for_file_content,
     wait_for_worktree_removed,
 };
+use ansi_str::AnsiStr;
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -2821,13 +2822,10 @@ squash-template = """
     ));
 }
 
-/// A custom squash template that references the deprecated `commits` variable
-/// still renders, and the standard config-deprecation framework warns that it
-/// is replaced by `commit_details` and points at `wt config update` to apply
-/// the rewrite (see #2984). The rename is mechanical because each
-/// `commit_details` element renders as its subject when printed bare.
+/// Removed prompt variables fail even in the read-only preview. The existing
+/// config warning and the rendering error both retain the migration route.
 #[rstest]
-fn test_step_squash_show_prompt_deprecated_commits_warns(mut repo: TestRepo) {
+fn test_step_squash_show_prompt_removed_commits_errors(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
     repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
@@ -2845,6 +2843,71 @@ squash-template = "Squashing {{ commits | length }} commits from {{ branch }}"
         &["squash", "--show-prompt"],
         Some(&feature_wt),
     ));
+}
+
+/// A bad prompt must not invoke the configured generator or replace either
+/// branch, whether squash is invoked directly or through merge.
+#[rstest]
+#[case::squash(&["step", "squash", "main"])]
+#[case::merge(&["merge", "main"])]
+fn test_removed_commits_stops_generation(#[case] args: &[&str], mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
+    let before = repo
+        .git_command()
+        .args(["rev-parse", "main", "feature"])
+        .run()
+        .unwrap()
+        .stdout;
+    assert!(
+        repo.git_command()
+            .args(["status", "--porcelain"])
+            .run()
+            .unwrap()
+            .stdout
+            .is_empty()
+    );
+
+    let external = test_tempdir();
+    let bin_dir = external.path().join("bin");
+    fs::create_dir(&bin_dir).unwrap();
+    create_mock_llm_auth(&bin_dir);
+    fs::write(
+        repo.test_config_path(),
+        r#"
+[commit.generation]
+command = "llm"
+squash-template = "{{ commits | length }}"
+"#,
+    )
+    .unwrap();
+    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
+    let output = repo
+        .wt_command()
+        .args(args)
+        .current_dir(&feature_wt)
+        .env(path_var, path_with_bin)
+        .env("WORKTRUNK_TEST_MOCK_CONFIG_DIR", &bin_dir)
+        .env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", external.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .ansi_strip()
+            .contains("uses removed variable commits")
+    );
+    assert!(mock_calls(external.path(), "llm").is_empty());
+    assert_eq!(
+        repo.git_command()
+            .args(["rev-parse", "main", "feature"])
+            .run()
+            .unwrap()
+            .stdout,
+        before
+    );
+    assert!(feature_wt.exists());
 }
 
 // =============================================================================

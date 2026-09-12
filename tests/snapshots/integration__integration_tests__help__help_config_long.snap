@@ -481,6 +481,9 @@ Available variables (in addition to commit template variables):
 - [2m{{ commit_details }}[0m — list of commits being squashed; each renders as its subject and exposes [2m.subject[0m / [2m.body[0m
 - [2m{{ target_branch }}[0m — merge target branch
 
+The old [2mcommits[0m variable has been removed. Run [2mwt config update[0m to migrate existing prompt templates to [2mcommit_details[0m.
+Each detail still renders as its subject when printed directly; [2m.body[0m remains available separately.
+
 Default template:
 
 [107m [0m [2m[36m[commit.generation][0m

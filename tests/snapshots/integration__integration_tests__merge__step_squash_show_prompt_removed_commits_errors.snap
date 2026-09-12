@@ -55,11 +55,11 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
-Squashing 2 commits from feature
 
 ----- stderr -----
 [33m▲[39m [33mUser config: template variable [1mcommits[22m is deprecated in favor of [1mcommit_details[22m[39m
 [2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
+[31m✗[39m [31mTemplate [1mcommit.generation.squash-template[22m uses removed variable [1mcommits[22m; use [1mcommit_details[22m (run [1mwt config update[22m)[39m

@@ -14,6 +14,10 @@
 //! one predicate and cannot drift. The table order is both the
 //! warning-emission order and the migration order.
 //!
+//! Retired prompt variables are checked by [`check_prompt_variables`] when a
+//! prompt is built, not when config is loaded. Their migration remains available
+//! to `wt config update`, and unrelated commands can still load the config.
+//!
 //! Detection is purely in-memory — nothing writes to the filesystem from a
 //! config load path. `check_and_migrate` returns the structurally migrated
 //! content (for serde) and a `DeprecationInfo` describing what needs fixing.
@@ -97,18 +101,36 @@ pub fn warnings_suppressed() -> bool {
 static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+const RETIRED_COMMITS_VAR: (&str, &str) = ("commits", "commit_details");
+
 /// Mapping from deprecated variable name to its replacement
 const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("repo_root", "repo_path"),
     ("worktree", "worktree_path"),
     ("main_worktree", "repo"),
     ("main_worktree_path", "primary_worktree_path"),
-    // Squash-template-only. The rename is a safe mechanical rewrite because each
+    // Retired prompt variable; retain the migration for existing configs. Each
     // `commit_details` element renders as its subject when printed bare, so a
     // migrated `{% for c in commit_details %}{{ c }}` reads identically to the
     // old `{% for c in commits %}{{ c }}` (see #2984 and `CommitDetailValue`).
-    ("commits", "commit_details"),
+    RETIRED_COMMITS_VAR,
 ];
+
+/// Reject retired prompt variables without matching literals or local bindings.
+/// Config loading and the migration rule stay independent of prompt rendering,
+/// so the suggested recovery command can still repair an existing config.
+pub fn check_prompt_variables(
+    template: &minijinja::Template<'_, '_>,
+    location: &str,
+) -> anyhow::Result<()> {
+    let (old, new) = RETIRED_COMMITS_VAR;
+    if template.undeclared_variables(false).contains(old) {
+        anyhow::bail!(cformat!(
+            "Template <bold>{location}</> uses removed variable <bold>{old}</>; use <bold>{new}</> (run <bold>wt config update</>)"
+        ));
+    }
+    Ok(())
+}
 
 /// Metadata for a deprecated top-level section key.
 #[derive(Debug)]
@@ -524,11 +546,11 @@ type SilentMigrateFn = fn(&mut toml_edit::DocumentMut) -> bool;
 enum DeprecationRule {
     /// Warns, and is rewritten on every config load before serde parses.
     Structural(MigrateFn),
-    /// Warns, but the deprecated form still works at runtime (deprecated
-    /// template variables resolve via [`normalize_template_vars`];
-    /// `approved-commands` is still a valid serde field), so the load path
-    /// leaves it alone. Rewritten only via [`compute_migrated_content`]
-    /// (`wt config show` / `wt config update`).
+    /// Warns without changing the loaded config. Template strings need an
+    /// explicit rewrite, including variables retired from prompt rendering;
+    /// `approved-commands` must be copied to approvals.toml before removal.
+    /// Rewritten only via [`compute_migrated_content`] (`wt config show` /
+    /// `wt config update`).
     UpdateOnly(MigrateFn),
     /// Silently-migrated rename: rewritten on every load like `Structural`,
     /// but with no warning by construction.
@@ -653,8 +675,8 @@ fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
 /// Run every rule in table order against `doc`, appending each rule's warning
 /// kinds to `kinds` and returning whether the document changed.
 ///
-/// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites (cosmetic
-/// or still-valid serde fields, so serde doesn't need them applied).
+/// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites: template
+/// strings and still-valid serde fields don't need rewriting for deserialization.
 /// Detection and [`compute_migrated_content`] run the update pass.
 fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Deprecations) -> bool {
     let mut modified = false;
@@ -1258,7 +1280,7 @@ fn migrate_negated_bool_doc(
 /// Returns true if any modifications were made.
 ///
 /// [`DeprecationRule::UpdateOnly`] rules are excluded — template variable
-/// renaming is cosmetic (would break `--var` overrides), and approved-commands
+/// renaming can change `--var` overrides, and approved-commands
 /// is still a valid serde field. They apply in [`compute_migrated_content`].
 fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     apply_rules(doc, RulePass::Load, &mut Vec::new())
