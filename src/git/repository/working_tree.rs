@@ -1264,6 +1264,21 @@ mod tests {
     use crate::testing::TestRepo;
 
     #[test]
+    fn lock_reason_errors_when_locked_is_unreadable() {
+        let mut test = TestRepo::with_initial_commit();
+        let worktree_path = test.add_worktree("feature");
+        let repo = Repository::at(test.root_path()).unwrap();
+        let worktree = repo.worktree_at(&worktree_path);
+        let lock_path = worktree.git_dir().unwrap().join("locked");
+        std::fs::create_dir(&lock_path).unwrap();
+        let err = worktree.lock_reason().unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to read worktree lock"),
+            "expected a lock-file IO error, got {err:?}"
+        );
+    }
+
+    #[test]
     fn submodule_status_empty_is_not_initialized() {
         assert!(!has_initialized_submodules_from_status(""));
     }

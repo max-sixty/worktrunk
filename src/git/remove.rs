@@ -759,13 +759,10 @@ mod tests {
         let repo = Repository::at(test.root_path()).unwrap();
 
         let err = stage_worktree_removal(&repo, &worktree_path, Some("feature"), true).unwrap_err();
-        assert!(
-            matches!(
-                err.downcast_ref::<GitError>(),
-                Some(GitError::WorktreeLocked { reason: None, .. })
-            ),
-            "expected WorktreeLocked without a reason, got {err:?}"
-        );
+        match err.downcast_ref::<GitError>() {
+            Some(GitError::WorktreeLocked { reason: None, .. }) => {}
+            other => panic!("expected WorktreeLocked without a reason, got {other:?}"),
+        }
         assert!(worktree_path.exists());
     }
 
