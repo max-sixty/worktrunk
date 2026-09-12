@@ -434,6 +434,8 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
           title: title.textContent,
           titleBottom: title.getBoundingClientRect().bottom,
           codeTop: pre.getBoundingClientRect().top,
+          titleLeft: title.getBoundingClientRect().left,
+          codeLeft: pre.getBoundingClientRect().left,
           titleFont: getComputedStyle(title).fontFamily,
           titleColor: getComputedStyle(title).color,
           titleBackground: getComputedStyle(title).backgroundColor,
@@ -448,6 +450,10 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
       assert.ok(
         Math.abs(fileFrame.titleBottom - fileFrame.codeTop) < 1,
         `${theme} file label is detached from its code`,
+      );
+      assert.ok(
+        Math.abs(fileFrame.titleLeft - fileFrame.codeLeft) < 1,
+        `${theme} file label is inset from its code`,
       );
       assert.notEqual(
         fileFrame.titleBackground,
