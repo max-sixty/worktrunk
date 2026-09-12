@@ -50,8 +50,10 @@ pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 ///
 /// Deliberately shallow: git additionally validates what `HEAD` contains, and
 /// a false positive costs each caller little — one withholds a claim, the
-/// other hands the path to [`Repository::at`], which fails on a
-/// non-repository.
+/// other still has to find the deleted path in the candidate's own worktree
+/// list before it recovers. [`Repository::at`] is not that check: discovering
+/// upward, it succeeds for a false positive that sits inside a real
+/// repository.
 pub(crate) fn is_bare_repo_dir(dir: &Path) -> bool {
     dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
 }

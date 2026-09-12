@@ -146,7 +146,9 @@ fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repositor
         return Some(repo);
     }
 
-    // Check immediate children for .git directories.
+    // Check immediate children for either shape, which is where a sibling
+    // layout keeps the repository: `<root>/repo` beside the worktrees, or
+    // `<root>/.bare`.
     // Uses is_some_and instead of ? so an unreadable entry (e.g., broken symlink)
     // skips that entry rather than aborting the entire search.
     let entries = std::fs::read_dir(dir).ok()?;
