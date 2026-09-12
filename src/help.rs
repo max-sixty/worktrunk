@@ -126,7 +126,7 @@ impl PageMode {
 /// and cut it from the rest.
 ///
 /// Clap repeats the same ~20-line `Global Options:` list in every reference it
-/// renders, so a page built from subdocs stacks one copy per subcommand — 11 on
+/// renders, so a page built from subdocs stacks one copy per reference — 12 on
 /// `wt config`, 13 on `wt step`. That pads both the site page and the skill
 /// mirror, and gives the site's search that many near-identical hits. `kept`
 /// carries the state for one page; a reference with no such section leaves it

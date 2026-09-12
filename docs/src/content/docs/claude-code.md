@@ -11,9 +11,9 @@ Worktrunk ships a plugin for each supported agent CLI. What a plugin provides de
 | Configuration skill | ✓ | ✓ |  |  | ✓ |
 | Activity tracking (🤖/💬 in `wt list`) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Worktree isolation | ✓ |  |  |  |  |
-| `/wt-switch-create` skill | ✓ | ✓\* |  |  | ✓\* |
+| `/wt-switch-create` skill\* | ✓ |  |  |  |  |
 
-\* Codex and Gemini load the `/wt-switch-create` skill from the same shared skill set, but neither lets a skill change the session's working directory, so it does nothing there.
+\* Codex and Gemini also load the `/wt-switch-create` skill from the shared skill set, but neither lets a skill change the session's working directory, so it does nothing there.
 
 The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation needs worktree-lifecycle hooks, which only Claude Code exposes, so Codex, OpenCode, Pi, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex tracks activity through its own `Stop` and `SessionEnd` hooks.
 
