@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .themes import THEMES, format_theme_for_vhs
+from .themes import PALETTES, THEMES, format_theme_for_vhs
 
 REAL_HOME = Path.home()
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -176,10 +176,25 @@ def _forward_macos_keychains(home: Path) -> None:
     )
 
 
+def recorder_env() -> dict[str, str]:
+    """The recorder's environment without the calling Claude Code session's state.
+
+    A build started from inside Claude Code inherits that session's ``CLAUDE*``
+    variables, and a demo's Claude Code reads them as its own: the inherited
+    child-session marker, for one, makes it warn that transcript saving is off.
+    Only ``CLAUDE_CODE_OAUTH_TOKEN``, the documented way to authenticate demos,
+    passes through.
+    """
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("CLAUDE") or name == "CLAUDE_CODE_OAUTH_TOKEN"
+    }
+
+
 def _isolated_claude_env(home: Path) -> dict[str, str]:
     """Build an environment whose Claude state stays under an isolated HOME."""
-    env = os.environ.copy()
-    env.pop("CLAUDE_CONFIG_DIR", None)
+    env = recorder_env()
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
     return env
@@ -284,6 +299,7 @@ class DemoEnv:
 
     name: str
     out_dir: Path
+    theme: str
     repo_name: str = "worktrunk"
 
     @property
@@ -305,6 +321,10 @@ class DemoEnv:
     @property
     def bare_remote(self) -> Path:
         return self.root / "remote.git"
+
+    @property
+    def starship_config(self) -> Path:
+        return self.out_dir / "starship.toml"
 
 
 def run(cmd, cwd=None, env=None, check=True, capture=False):
@@ -354,8 +374,7 @@ def record_vhs(
     tape_path: Path, vhs_binary: str = "vhs", expected_output: Path = None
 ):
     """Record a demo GIF using VHS."""
-    env = os.environ.copy()
-    env.pop("CLAUDE_CONFIG_DIR", None)
+    env = recorder_env()
     # GIF assets include ANSI styling independent of the recorder's shell.
     env.pop("NO_COLOR", None)
     env["CLICOLOR_FORCE"] = "1"
@@ -564,7 +583,7 @@ def setup_claude_code_config(
             {
                 "numStartups": 100,
                 "installMethod": "global",
-                "theme": "light",
+                "theme": env.theme,
                 "firstStartTime": "2025-01-01T00:00:00.000Z",
                 "hasCompletedOnboarding": True,
                 "hasCompletedClaudeInChromeOnboarding": True,
@@ -638,6 +657,9 @@ def setup_claude_code_config(
     settings = {
         "permissions": {"allow": allowed_tools or [], "deny": [], "ask": []},
         "model": "claude-opus-4-6",
+        # Accounts in the Remote Control rollout otherwise start it, which
+        # prints a live claude.ai session URL into the GIF.
+        "remoteControlAtStartup": False,
         "statusLine": {
             "type": "command",
             "command": "wt list statusline --format=claude-code",
@@ -650,13 +672,15 @@ def setup_claude_code_config(
 def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
     """Set up Zellij configuration for demo recording.
 
-    Creates config with warm-gold theme, minimal keybinds, and tab-rename plugin.
-    Plugin is downloaded automatically if missing.
+    Creates config with the site palette for the recording's theme, minimal
+    keybinds, and tab-rename plugin. Plugin is downloaded automatically if
+    missing.
 
     Args:
         env: Demo environment
         default_cwd: Optional default working directory for new panes
     """
+    palette = PALETTES[env.theme]
     zellij_config_dir = env.home / ".config" / "zellij"
     zellij_config_dir.mkdir(parents=True, exist_ok=True)
     zellij_plugins_dir = zellij_config_dir / "plugins"
@@ -691,27 +715,26 @@ default_shell "fish"
 pane_frames false
 show_startup_tips false
 show_release_notes false
-theme "warm-gold"
+theme "worktrunk"
 
 // Load the tab-name plugin
 load_plugins {{
     "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
 }}
 
-// Warm gold theme to match the demo aesthetic
 themes {{
-    warm-gold {{
-        fg "#1f2328"
-        bg "#FFFDF8"
-        black "#f5f0e8"
-        red "#d73a49"
-        green "#22863a"
-        yellow "#d29922"
-        blue "#0969da"
-        magenta "#8250df"
-        cyan "#1b7c83"
-        white "#57534e"
-        orange "#d97706"
+    worktrunk {{
+        fg "{palette['--wt-ink']}"
+        bg "{palette['--wt-paper']}"
+        black "{palette['--wt-paper-soft']}"
+        red "{palette['--wt-terminal-red']}"
+        green "{palette['--wt-terminal-green']}"
+        yellow "{palette['--wt-terminal-yellow']}"
+        blue "{palette['--wt-terminal-blue']}"
+        magenta "{palette['--wt-terminal-magenta']}"
+        cyan "{palette['--wt-terminal-cyan']}"
+        white "{palette['--wt-ink-muted']}"
+        orange "{palette['--wt-copper']}"
     }}
 }}
 
@@ -1105,15 +1128,21 @@ def check_ffmpeg_libass():
         )
 
 
-def setup_demo_output(out_dir: Path) -> Path:
-    """Set up demo output directory and copy starship config.
+def write_starship_config(path: Path, theme: str) -> None:
+    """Write the starship fixture plus its ``site`` palette for ``theme``."""
+    palette = PALETTES[theme]
+    path.write_text(f"""{(FIXTURES_DIR / "starship.toml").read_text()}
+[palettes.site]
+craft = "{palette['--wt-craft']}"
+muted = "{palette['--wt-ink-muted']}"
+red = "{palette['--wt-terminal-red']}"
+""")
 
-    Returns the path to the starship config file.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    starship_config = out_dir / "starship.toml"
-    shutil.copy(FIXTURES_DIR / "starship.toml", starship_config)
-    return starship_config
+
+def setup_demo_output(env: DemoEnv) -> None:
+    """Set up demo output directory and write the starship config."""
+    env.out_dir.mkdir(parents=True, exist_ok=True)
+    write_starship_config(env.starship_config, env.theme)
 
 
 def record_text(
@@ -1362,13 +1391,11 @@ def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
     - Source shared-setup.tape: VHS Set directives (at top, before Output)
     - Source shared-commands.tape: Env vars and shell setup (after Require)
     """
-    starship_config = (demo_env.out_dir / "starship.toml").resolve()
-
     return {
         "DEMO_REPO": demo_env.repo.resolve(),
         "DEMO_HOME": demo_env.home.resolve(),
         "REAL_HOME": REAL_HOME,
-        "STARSHIP_CONFIG": starship_config,
+        "STARSHIP_CONFIG": demo_env.starship_config.resolve(),
         "TARGET_DEBUG": (repo_root / "target" / "debug").resolve(),
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
         "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),
@@ -1379,18 +1406,16 @@ def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
 def record_theme(
     demo_env: "DemoEnv",
     tape_template: Path,
-    theme_name: str,
     output_gif: Path,
     repo_root: Path,
     vhs_binary: str = "vhs",
     size: DemoSize = None,
 ):
-    """Record one demo GIF in a prepared environment.
+    """Record one demo GIF in a prepared environment, in the environment's theme.
 
     Args:
         demo_env: Prepared demo environment for this theme
         tape_template: Path to the .tape template file
-        theme_name: Name of the VHS theme to use
         output_gif: Output GIF path
         repo_root: Path to worktrunk repo root (for target/debug)
         vhs_binary: VHS binary to use (default "vhs", can be path to custom build)
@@ -1400,14 +1425,13 @@ def record_theme(
         size = SIZE_DOCS
 
     tape_rendered = demo_env.out_dir / ".rendered.tape"
-    theme = THEMES[theme_name]
     delta_flags = "delta --paging=never"
-    if theme_name == "light":
+    if demo_env.theme == "light":
         delta_flags += " --light"
     replacements = {
         **build_tape_replacements(demo_env, repo_root),
         "OUTPUT_GIF": output_gif,
-        "THEME": format_theme_for_vhs(theme),
+        "THEME": format_theme_for_vhs(THEMES[demo_env.theme]),
         "WIDTH": size.width,
         "HEIGHT": size.height,
         "FONTSIZE": size.fontsize,
@@ -1419,7 +1443,7 @@ def record_theme(
         return
 
     tape_rendered.write_text(rendered)
-    print(f"\nRecording {theme_name} GIF...")
+    print(f"\nRecording {demo_env.theme} GIF...")
     record_vhs(tape_rendered, vhs_binary, expected_output=output_gif)
     tape_rendered.unlink(missing_ok=True)
     print(f"GIF saved to {output_gif}")

@@ -30,7 +30,13 @@ from pathlib import Path
 
 @dataclass
 class Checkpoint:
-    """A validation checkpoint that scans a range of frames."""
+    """A validation checkpoint that scans a range of frames.
+
+    A negative ``start`` or ``end`` counts back from the GIF's last frame (-1),
+    for checkpoints on the state a recording ends in. How many frames a tape
+    produces varies between runs with the recording machine's speed, so a
+    fixed frame number near the end can fall past a faster recording's end.
+    """
 
     start: int
     end: int
@@ -40,7 +46,7 @@ class Checkpoint:
 
 
 # Checkpoint definitions per TUI demo.
-# Ranges are calibrated from actual GIF content at 30fps.
+# Ranges are calibrated from actual GIF content, which plays at 25fps.
 # Expected patterns must ALL be present (case-insensitive) in at least one
 # frame within the range. Every forbidden pattern must be absent from every
 # sampled frame.
@@ -48,27 +54,33 @@ class Checkpoint:
 TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
     "wt-switch": [
         Checkpoint(
-            start=360,
-            end=455,
+            start=-100,
+            end=-1,
             expected=["Claude Code", "Opus", "acme.dashboard"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
     ],
     "wt-statusline": [
         Checkpoint(
-            start=280,
-            end=410,
+            start=-130,
+            end=-1,
             expected=["Claude Code", "Opus", "acme.alpha"],
             forbidden=[
                 "Not logged in",
                 "Unknown command",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
     ],
@@ -87,6 +99,9 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Not logged in",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
         # Claude UI visible on TAB 2 (billing), without referral or model ads.
@@ -99,6 +114,9 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
                 "Share Claude Code",
                 "Fable 5 is now",
                 "Tackle your toughest",
+                # The recorder's own Claude Code session leaking in.
+                "claude.ai/code",
+                "Transcript saving",
             ],
         ),
         # The API agent adds a test. Commit generation should describe that
@@ -117,12 +135,12 @@ TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
             expected=["Removing feature"],
             forbidden=["/var/folders/", "wt-demo-"],
         ),
-        # Near end — wt list --full showing all worktrees.
+        # The recording ends on wt list --full showing all worktrees.
         # "billing" omitted: depends on timing of when the branch appears
         # in the list relative to the frame window.
         Checkpoint(
-            start=1650,
-            end=1850,
+            start=-100,
+            end=-1,
             expected=["Branch", "main"],
             forbidden=[
                 "CONFLICT",
@@ -183,6 +201,25 @@ def extract_frames(
         for i, frame in enumerate(frames)
         if (out_dir / f"frame_{i + 1:04d}.png").exists()
     }
+
+
+def frame_count(gif_path: Path) -> int:
+    """Number of frames in a GIF."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-count_frames",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=nb_read_frames",
+            "-of", "csv=p=0",
+            str(gif_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(result.stdout)
 
 
 def ocr_image(image_path: Path) -> str:
@@ -298,11 +335,15 @@ def validate_checkpoint(
 
     Returns (passed, detail_message).
     """
-    frame_numbers = list(range(checkpoint.start, checkpoint.end + 1, checkpoint.step))
+    start, end = checkpoint.start, checkpoint.end
+    if start < 0 or end < 0:
+        total = frame_count(gif_path)
+        start, end = (total + n if n < 0 else n for n in (start, end))
+    label = f"frames {start}-{end}"
+    frame_numbers = list(range(start, end + 1, checkpoint.step))
     frame_paths = extract_frames(gif_path, frame_numbers, work_dir)
 
     if not frame_paths:
-        label = f"frames {checkpoint.start}-{checkpoint.end}"
         return False, f"failed to extract {label}"
 
     best_errors: list[str] = []
@@ -338,7 +379,6 @@ def validate_checkpoint(
         if not best_errors or len(errors) < len(best_errors):
             best_errors = errors
 
-    label = f"frames {checkpoint.start}-{checkpoint.end}"
     if not frames_checked:
         return False, f"no readable frames in {label}"
     if matched_frame is not None:

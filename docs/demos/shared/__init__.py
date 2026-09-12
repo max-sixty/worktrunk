@@ -26,7 +26,9 @@ from .lib import (
     check_dependencies,
     check_ffmpeg_libass,
     setup_demo_output,
+    write_starship_config,
     record_theme,
+    recorder_env,
     # Text output recording
     record_text,
     build_tape_replacements,
@@ -66,7 +68,9 @@ __all__ = [
     "check_dependencies",
     "check_ffmpeg_libass",
     "setup_demo_output",
+    "write_starship_config",
     "record_theme",
+    "recorder_env",
     # Text output recording
     "record_text",
     "build_tape_replacements",
