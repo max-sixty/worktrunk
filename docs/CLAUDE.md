@@ -25,10 +25,18 @@ npm --prefix docs run build
 npm --prefix docs run test:site
 ```
 
-`npm run build` clears Astro's content cache, writes `docs/dist/`, and builds
-the Pagefind search index. The forced content rebuild is intentional: renderer
-plugin changes affect generated asset hashes but are not part of Astro's
-content-cache key.
+`npm run build` writes `docs/dist/` and builds the Pagefind search index. Both
+`build` and `dev` pass `--force`, which clears Astro's content cache before
+rendering. Cached pages carry the URL of the Expressive Code stylesheet, whose
+hash comes from the code-rendering configuration and plugins, and Astro's cache
+key covers neither: a stale page links a stylesheet the server no longer serves,
+and every code block renders unstyled.
+
+The cache is cleared only when the server starts. When `astro.config.mjs`
+changes under a running dev server, through an edit or a merge, Astro restarts
+the server in place but keeps rendering content with the renderer it started
+with, and pages break the same way. Restart it with `wt hook post-start docs`;
+the new `astro dev --force` replaces the running server.
 
 ### Verifying changes
 
