@@ -12,7 +12,7 @@ use color_print::cformat;
 use crate::path::canonicalize_with_parents;
 use crate::styling::eprintln;
 
-use super::Repository;
+use super::{Repository, is_bare_repo_dir};
 
 /// Try to get the current repository, recovering from a deleted CWD if possible.
 ///
@@ -168,27 +168,16 @@ fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repositor
 /// or is itself a bare repository, and `Repository::at()` succeeds. A `.git`
 /// *file* is a linked worktree — recovery needs the repository that owns it,
 /// which the ancestor walk reaches separately.
+///
+/// The bare arm is what a bare layout needs: a bare repo has no `.git` entry
+/// anywhere, and its worktrees typically sit *inside* the bare directory, so
+/// without it the ancestor walk has nowhere to land.
 fn try_repo_at(dir: &Path) -> Option<Repository> {
     if dir.join(".git").is_dir() || is_bare_repo_dir(dir) {
         Repository::at(dir).ok()
     } else {
         None
     }
-}
-
-/// Whether `dir` is itself a bare repository.
-///
-/// Bare repos have no `.git` entry, so without this the ancestor walk finds
-/// nothing for them — and a bare repo's worktrees typically sit inside the
-/// bare directory, so the walk has nowhere else to land.
-///
-/// This is git's own `is_git_directory` heuristic (a `HEAD`, an `objects/`,
-/// and a `refs/`), checked on disk rather than by asking git: the walk visits
-/// every ancestor and each of its children, and `Repository::at()` discovers
-/// *upward*, so using it as the probe would answer for an unrelated ancestor
-/// repository instead of reporting "not a repository here".
-fn is_bare_repo_dir(dir: &Path) -> bool {
-    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
 }
 
 /// Check if the deleted path was a worktree of the given repository.
