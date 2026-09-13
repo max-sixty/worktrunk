@@ -146,11 +146,11 @@ When a mismatch, a false positive, or a stale value has an obvious non-code
 workaround (a template change, a config value, an alias, a comment recording
 the drift), don't stop there. First check whether the workaround is **lossy or
 foot-gunny**, and weigh a proportionate **root-cause code fix** before opening
-a docs-only PR. A "docs-only, no risk" framing is not the same as good
-guidance — a zero-code-risk change can still steer users toward a
+a PR that only records it. A "docs-only, no risk" framing is not the same as
+good guidance — a zero-code-risk change can still steer users toward a
 collision-prone or lossy config, and annotating a stale value leaves the
-duplication that made it stale. If you do recommend a config change, surface
-its downsides in the PR body up front, not only when challenged.
+duplication that made it stale. If you do recommend a workaround, surface its
+downsides in the PR body up front, not only when challenged.
 
 This governs every workflow that opens a PR here, not just issue triage. The
 nightly sweep's #4069 annotated twelve stale VHS theme colors with
