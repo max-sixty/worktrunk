@@ -152,10 +152,7 @@ collision-prone or lossy config, and annotating a stale value leaves the
 duplication that made it stale. If you do recommend a workaround, surface its
 downsides in the PR body up front, not only when challenged.
 
-This governs every workflow that opens a PR here, not just issue triage. The
-nightly sweep's #4069 annotated twelve stale VHS theme colors with
-`(pre-Starlight; site is …)`; the maintainer replaced all twelve by reading
-the hex properties out of `custom.css` at build time.
+This governs every workflow that opens a PR here, not just issue triage.
 
 ## Issue Triage
 
