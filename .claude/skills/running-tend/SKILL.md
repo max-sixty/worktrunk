@@ -140,6 +140,23 @@ The codecov-failure dismissal pattern is different and remains correct:
 `codecov/patch`, so dismissing the approval until the coverage gap is
 addressed is intentional.
 
+## Weigh the root-cause fix before shipping a workaround
+
+When a mismatch, a false positive, or a stale value has an obvious non-code
+workaround (a template change, a config value, an alias, a comment recording
+the drift), don't stop there. First check whether the workaround is **lossy or
+foot-gunny**, and weigh a proportionate **root-cause code fix** before opening
+a docs-only PR. A "docs-only, no risk" framing is not the same as good
+guidance — a zero-code-risk change can still steer users toward a
+collision-prone or lossy config, and annotating a stale value leaves the
+duplication that made it stale. If you do recommend a config change, surface
+its downsides in the PR body up front, not only when challenged.
+
+This governs every workflow that opens a PR here, not just issue triage. The
+nightly sweep's #4069 annotated twelve stale VHS theme colors with
+`(pre-Starlight; site is …)`; the maintainer replaced all twelve by reading
+the hex properties out of `custom.css` at build time.
+
 ## Issue Triage
 
 When you need more information to diagnose a reported bug, the **primary
@@ -227,17 +244,6 @@ across every repo. It's the project's preferred extension point.
 4. Post the tested alias with usage examples.
 5. Link to the [aliases docs](https://worktrunk.dev/extending/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/).
-
-### Weigh the root-cause fix before shipping a config/docs workaround
-
-When a mismatch or false-positive report has an obvious configurable
-workaround (a template change, a config value, an alias), don't stop at
-documenting it. First check whether the workaround is **lossy or
-foot-gunny**, and weigh a proportionate **root-cause code fix** before
-opening a docs-only PR. A "docs-only, no risk" framing is not the same as
-good guidance — a zero-code-risk change can still steer users toward a
-collision-prone or lossy config. If you do recommend a config change,
-surface its downsides in the PR body up front, not only when challenged.
 
 ### Don't fix tests by adding skip guards
 
