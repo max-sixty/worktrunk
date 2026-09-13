@@ -365,7 +365,7 @@ test('shell command roles preserve syntax outside the styled grammar', () => {
   assert.equal(shellCommandSegments(source).map(({ text }) => text).join(''), source);
 });
 
-test('console blocks separate copyable recipes from output', () => {
+test('console blocks give each of several commands its own copy control', () => {
   const lines = ['# Recent', '$ wt list', '', '# Failed', '$ wt list --full'].map((text) => ({
     text,
     editText(start, end, replacement) {
@@ -377,41 +377,54 @@ test('console blocks separate copyable recipes from output', () => {
   prepareCodeBlock(plugin, codeBlock);
 
   assert.equal(codeBlock.language, 'bash');
-  assert.equal(codeBlock.props.frame, 'terminal');
 
-  const classes = lines.map((_, lineIndex) => {
+  const lineAsts = lines.map((_, lineIndex) => {
     const renderData = { lineAst: { properties: {} } };
     plugin.hooks.postprocessRenderedLine({ codeBlock, lineIndex, renderData });
-    return renderData.lineAst.properties.className;
+    return renderData.lineAst;
   });
 
   assert.deepEqual(
     lines.map((line) => line.text),
     ['# Recent', 'wt list', '', '# Failed', 'wt list --full'],
   );
-  assert.deepEqual(classes, [
+  assert.deepEqual(lineAsts.map((lineAst) => lineAst.properties.className), [
     ['wt-copyable'],
     ['wt-command'],
     ['wt-copyable'],
     ['wt-copyable'],
     ['wt-command'],
   ]);
+  assert.deepEqual(
+    lineAsts.map((lineAst) => lineAst.children?.[0].children[1].properties['data-code']),
+    [undefined, 'wt list', undefined, undefined, 'wt list --full'],
+  );
 
-  const copyButton = { type: 'element', tagName: 'button', properties: { 'data-code': 'stale' } };
   const renderData = {
     blockAst: {
-      children: [{
-        type: 'element',
-        properties: { className: ['copy'] },
-        children: [copyButton],
-      }],
+      properties: { className: ['frame'] },
+      children: [{ type: 'element', properties: { className: ['copy'] }, children: [] }],
     },
   };
   plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData });
-  assert.equal(
-    copyButton.properties['data-code'],
-    '# Recent\u007fwt list\u007f\u007f# Failed\u007fwt list --full',
-  );
+  assert.deepEqual(renderData.blockAst.children, [], 'the block keeps its own copy control');
+});
+
+test('console blocks wrap several commands but never captured output', () => {
+  const wraps = (texts) => {
+    const lines = texts.map((text) => ({
+      text,
+      editText(start, end, replacement) {
+        this.text = this.text.slice(0, start) + replacement + this.text.slice(end);
+      },
+    }));
+    const codeBlock = { language: 'console', getLines: () => lines };
+    prepareCodeBlock(pluginWorktrunkTerminal(), codeBlock);
+    return codeBlock.props.wrap;
+  };
+  assert.equal(wraps(['$ wt list', '$ wt list --full']), true);
+  assert.equal(wraps(['$ wt list', '$ wt list --full', 'output']), undefined);
+  assert.equal(wraps(['$ wt list']), undefined);
 });
 
 test('console output and its blank lines stay out of copied commands', () => {
@@ -449,26 +462,6 @@ test('console output and its blank lines stay out of copied commands', () => {
   };
   plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData });
   assert.equal(copyButton.properties['data-code'], 'wt list\u007f# shell comment');
-});
-
-test('shell snippets use the command-only terminal classifier', () => {
-  const codeBlock = { language: 'bash', getLines: () => [] };
-  const blockAst = {
-    type: 'element',
-    tagName: 'figure',
-    properties: { className: ['frame', 'is-terminal'] },
-    children: [],
-  };
-  const plugin = pluginWorktrunkTerminal();
-
-  plugin.hooks.preprocessCode({ codeBlock });
-  plugin.hooks.postprocessRenderedBlock({ codeBlock, renderData: { blockAst } });
-
-  assert.deepEqual(blockAst.properties.className, [
-    'frame',
-    'is-terminal',
-    'wt-commands-only',
-  ]);
 });
 
 test('console output retains state-color semantics without ANSI in Markdown', () => {

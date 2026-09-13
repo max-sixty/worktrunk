@@ -120,7 +120,7 @@ test('mobile pages stay viewport-bound while code remains readable', { timeout: 
               ));
               return contrast(effective, background);
             });
-            const fixedTerminal = [...document.querySelectorAll('.frame.is-terminal')]
+            const fixedTerminal = [...document.querySelectorAll('.expressive-code .frame')]
               .filter((frame) => frame.querySelector('.wt-output'))
               .map((frame) => frame.querySelector('pre'))
               .find((pre) => pre.scrollWidth > pre.clientWidth + 1);
@@ -133,10 +133,6 @@ test('mobile pages stay viewport-bound while code remains readable', { timeout: 
               frames: [...document.querySelectorAll('.expressive-code .frame')].map((frame) => {
                 const pre = frame.querySelector('pre');
                 return {
-                  className: frame.className,
-                  managedTerminal: Boolean(
-                    frame.querySelector('.wt-command, .wt-output, .wt-copyable'),
-                  ),
                   hasOutput: Boolean(frame.querySelector('.wt-output')),
                   frameLeft: frame.getBoundingClientRect().left,
                   frameRight: frame.getBoundingClientRect().right,
@@ -164,17 +160,7 @@ test('mobile pages stay viewport-bound while code remains readable', { timeout: 
               frame.frameRight <= layout.viewportWidth + 1,
               `${theme} ${width}px ${route} code ends offscreen`,
             );
-            const terminal = frame.className.includes('is-terminal');
-            const commandsOnly = frame.className.includes('wt-commands-only');
-            if (terminal) {
-              assert.equal(
-                commandsOnly,
-                !frame.hasOutput,
-                `${theme} ${width}px ${route} misclassifies a terminal block`,
-              );
-            }
-            const wraps = !terminal || commandsOnly;
-            if (wraps) {
+            if (!frame.hasOutput) {
               assert.ok(
                 frame.preScrollWidth <= frame.preClientWidth + 1,
                 `${theme} ${width}px ${route} wrappable code still scrolls horizontally`,
@@ -213,7 +199,7 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
               const rect = block.getBoundingClientRect();
               return { left: rect.left, right: rect.right, text: block.textContent.trim().slice(0, 60) };
             }),
-            terminals: [...document.querySelectorAll('.frame.is-terminal')]
+            terminals: [...document.querySelectorAll('.expressive-code .frame')]
               .filter((frame) => frame.querySelector('.wt-output'))
               .map((frame) => {
                 const pre = frame.querySelector('pre');
@@ -236,6 +222,62 @@ test('desktop code examples fit the content column', { timeout: 60_000 }, async 
             terminal.scrollWidth <= terminal.clientWidth + 1,
             `${route} ${terminal.command} scrolls horizontally at ${width}px`,
           );
+        }
+      }
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('copy buttons sit in view on the line they copy without overlapping', { timeout: 60_000 }, async () => {
+  const browser = await webkit.launch();
+  try {
+    for (const { width, touch } of [{ width: 393, touch: true }, { width: 1376, touch: false }]) {
+      const page = await browser.newPage({
+        viewport: { width, height: 900 },
+        hasTouch: touch,
+        isMobile: touch,
+      });
+      for (const route of await sitemapRoutes()) {
+        await page.goto(`${baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
+        const frames = await page.evaluate(() => {
+          for (const details of document.querySelectorAll('.sl-markdown-content details')) details.open = true;
+          return [...document.querySelectorAll('.expressive-code .frame')].map((frame) => {
+            const code = frame.querySelector('pre').getBoundingClientRect();
+            return {
+              text: frame.textContent.trim().slice(0, 60),
+              codeLeft: code.left,
+              codeRight: code.right,
+              buttons: [...frame.querySelectorAll('.copy button')].map((button) => {
+                // A block's control belongs on its first line.
+                const line = (button.closest('.ec-line') ?? frame.querySelector('.ec-line'))
+                  .getBoundingClientRect();
+                const { top, bottom, left, right } = button.getBoundingClientRect();
+                return { top, bottom, left, right, lineTop: line.top, lineBottom: line.bottom };
+              }),
+            };
+          });
+        });
+        const label = (frame) => `${route} "${frame.text}" at ${width}px`;
+        for (const frame of frames) {
+          for (const [index, button] of frame.buttons.entries()) {
+            const center = (button.top + button.bottom) / 2;
+            assert.ok(
+              center >= button.lineTop && center <= button.lineBottom,
+              `${label(frame)}: copy button is off its line`,
+            );
+            assert.ok(
+              button.left >= frame.codeLeft - 1 && button.right <= frame.codeRight + 1,
+              `${label(frame)}: copy button is scrolled out of sight`,
+            );
+            assert.ok(
+              frame.buttons.slice(index + 1)
+                .every((other) => other.top >= button.bottom - 0.5 || other.bottom <= button.top + 0.5),
+              `${label(frame)}: copy buttons overlap`,
+            );
+          }
         }
       }
       await page.close();
@@ -380,7 +422,7 @@ test('code artifacts keep their visual hierarchy in both themes', async () => {
         document.documentElement.dataset.theme = selectedTheme;
       }, theme);
       const listStyles = await page.evaluate(() => {
-        const frame = [...document.querySelectorAll('.frame.is-terminal')]
+        const frame = [...document.querySelectorAll('.expressive-code .frame')]
           .find((candidate) => candidate.textContent.includes('feature-api'));
         const normal = frame.querySelector('.wt-output .code');
         const dim = frame.querySelector('.wt-terminal-dim:not(.wt-terminal-red)');

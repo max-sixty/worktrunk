@@ -69,10 +69,10 @@ Not natively — stacked-branch workflows are a large design space, so Worktrunk
 
 Stash the changes, create the worktree, then pop:
 
-```console
-$ git stash push -u           # -u also stashes untracked files
-$ wt switch --create feature  # new branch off the default branch
-$ git stash pop               # changes reappear in the new worktree
+```bash
+git stash push -u           # -u also stashes untracked files
+wt switch --create feature  # new branch off the default branch
+git stash pop               # changes reappear in the new worktree
 ```
 
 The stash lives in the shared `.git` directory, so it's reachable from the new worktree. The original branch is left clean.

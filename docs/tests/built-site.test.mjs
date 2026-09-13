@@ -146,8 +146,8 @@ test('build preserves the public route contract', async () => {
     homepage,
     /<div\b[^>]*class="wt-home"[^>]*>[\s\S]*?<p>Worktrunk is a CLI for Git worktree management, designed for <strong>parallel AI agent\s+workflows<\/strong>\.<\/p>/,
   );
-  assert.match(homepage, /<button\b[^>]*aria-label="Menu"[^>]*aria-controls="starlight__sidebar"/);
-  assert.match(homepage, /<div id="starlight__sidebar" class="sidebar-pane\b/);
+  assert.match(homepage, /<button\b[^>]*popovertarget="starlight__sidebar"[^>]*class="[^"]*\bsl-menu-button\b[^"]*"[^>]*>[\s\S]*?<span class="sr-only[^"]*">Menu<\/span><\/button>/);
+  assert.match(homepage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"[^>]*class="sidebar-pane\b/);
   assert.match(homepage, /<a\b[^>]*href="\/switch\/"[^>]*><span\b[^>]*>wt switch<\/span><\/a>/);
   assert.match(homepage, /<a\b[^>]*href="\/faq\/"[^>]*><span\b[^>]*>FAQ<\/span><\/a>/);
   assert.doesNotMatch(homepage, /data-has-toc/);
@@ -365,7 +365,7 @@ test('output-only console blocks do not expose copy controls', async () => {
   let outputOnlyBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
-    for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       if (!/class="ec-line wt-output"/.test(frame)) continue;
       if (/class="ec-line wt-(?:command|copyable)"/.test(frame)) continue;
@@ -381,7 +381,7 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
   let perLineBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
-    for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       const lines = [...frame.matchAll(
         /<div class="ec-line wt-(command|copyable|output)"><div class="code">([\s\S]*?)<\/div>/g,
@@ -393,26 +393,25 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
 
       commandBearingBlocks += 1;
       // The block control carries the bare `copy` class; per-line controls add
-      // `wt-line-copy`, so this anchors on the block's own payload.
+      // `wt-line-copy`.
       const encodedPayload = frame.match(
         /<div class="copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/,
       )?.[1];
-      assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
-      assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
-
-      // A block listing several commands is as often a menu of alternatives as
-      // a recipe, so each command line offers its own payload alongside the
-      // block's.
       const commands = lines
         .filter((line) => line[1] === 'command')
         .map((line) => renderedText(line[2]).replace(/\n$/u, ''));
       const perLine = [...frame.matchAll(
         /<div class="copy wt-line-copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/g,
       )].map((line) => renderedText(line[1]));
+      // Most blocks listing several commands are menus of alternatives, so
+      // each command line offers its own payload in place of the block's.
       if (commands.length > 1) {
         perLineBlocks += 1;
+        assert.equal(encodedPayload, undefined, `${page} offers a block copy beside per-line copies`);
         assert.deepEqual(perLine, commands, `${page} per-line copy payloads do not match its commands`);
       } else {
+        assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
+        assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
         assert.deepEqual(perLine, [], `${page} adds per-line copy to a single-command block`);
       }
     }
@@ -603,13 +602,13 @@ test('short wide tables become labeled records without capturing dense tables', 
   );
 });
 
-test('mobile menu control is hidden until its script is available', async () => {
+test('mobile menu control works without JavaScript', async () => {
   const faqPage = await readFile(routeFile('/faq/'), 'utf8');
-  assert.match(faqPage, /<starlight-menu-button\b/);
-  assert.match(
-    faqPage,
-    /<style>\s*starlight-menu-button:not\(:defined\)\s*\{\s*display:\s*none;\s*\}\s*<\/style>/,
-  );
+  assert.match(faqPage, /<button\b[^>]*popovertarget="starlight__sidebar"/);
+  assert.match(faqPage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"/);
+  // Starlight 0.42 drives the menu from the popover API, so nothing hydrates
+  // first and the pre-hydration hiding this page used to carry is obsolete.
+  assert.doesNotMatch(faqPage, /starlight-menu-button/);
 });
 
 test('built pages have unique IDs and valid internal page links', async () => {

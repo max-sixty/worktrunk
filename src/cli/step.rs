@@ -293,10 +293,10 @@ $ wt step diff | delta
 
 Equivalent to:
 
-```console
-$ cp "$(git rev-parse --git-dir)/index" /tmp/idx
-$ GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-$ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+```bash
+cp "$(git rev-parse --git-dir)/index" /tmp/idx
+GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
