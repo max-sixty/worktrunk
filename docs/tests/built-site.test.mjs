@@ -365,7 +365,7 @@ test('output-only console blocks do not expose copy controls', async () => {
   let outputOnlyBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
-    for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       if (!/class="ec-line wt-output"/.test(frame)) continue;
       if (/class="ec-line wt-(?:command|copyable)"/.test(frame)) continue;
@@ -381,7 +381,7 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
   let perLineBlocks = 0;
   for (const page of renderedPages) {
     const html = await readFile(page, 'utf8');
-    for (const match of html.matchAll(/<figure class="frame is-terminal[^"]*">([\s\S]*?)<\/figure>/g)) {
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
       const frame = match[1];
       const lines = [...frame.matchAll(
         /<div class="ec-line wt-(command|copyable|output)"><div class="code">([\s\S]*?)<\/div>/g,
@@ -393,26 +393,25 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
 
       commandBearingBlocks += 1;
       // The block control carries the bare `copy` class; per-line controls add
-      // `wt-line-copy`, so this anchors on the block's own payload.
+      // `wt-line-copy`.
       const encodedPayload = frame.match(
         /<div class="copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/,
       )?.[1];
-      assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
-      assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
-
-      // A block listing several commands is as often a menu of alternatives as
-      // a recipe, so each command line offers its own payload alongside the
-      // block's.
       const commands = lines
         .filter((line) => line[1] === 'command')
         .map((line) => renderedText(line[2]).replace(/\n$/u, ''));
       const perLine = [...frame.matchAll(
         /<div class="copy wt-line-copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/g,
       )].map((line) => renderedText(line[1]));
+      // Most blocks listing several commands are menus of alternatives, so
+      // each command line offers its own payload in place of the block's.
       if (commands.length > 1) {
         perLineBlocks += 1;
+        assert.equal(encodedPayload, undefined, `${page} offers a block copy beside per-line copies`);
         assert.deepEqual(perLine, commands, `${page} per-line copy payloads do not match its commands`);
       } else {
+        assert.notEqual(encodedPayload, undefined, `${page} is missing a terminal copy payload`);
+        assert.equal(renderedText(encodedPayload), expected.join('\u007f'), `${page} copies captured output`);
         assert.deepEqual(perLine, [], `${page} adds per-line copy to a single-command block`);
       }
     }

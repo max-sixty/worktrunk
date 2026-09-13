@@ -570,21 +570,18 @@ header.header {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Captured command output keeps its columns and scrolls; other code wraps. */
 @media (max-width: 42rem) {
-  .expressive-code .frame:not(.is-terminal) pre,
-  .expressive-code .frame.is-terminal.wt-commands-only pre {
+  .expressive-code .frame:not(:has(.wt-output)) pre {
     overflow-x: clip;
   }
 
-  .expressive-code .frame:not(.is-terminal) .ec-line,
-  .expressive-code .frame:not(.is-terminal) .code,
-  .expressive-code .frame.is-terminal.wt-commands-only .ec-line,
-  .expressive-code .frame.is-terminal.wt-commands-only .code {
+  .expressive-code .frame:not(:has(.wt-output)) .ec-line,
+  .expressive-code .frame:not(:has(.wt-output)) .code {
     min-width: 0;
   }
 
-  .expressive-code .frame:not(.is-terminal) .code,
-  .expressive-code .frame.is-terminal.wt-commands-only .code {
+  .expressive-code .frame:not(:has(.wt-output)) .code {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

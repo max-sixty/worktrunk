@@ -65,6 +65,8 @@ export default defineConfig({
         ThemeSelect: './src/components/ThemeSelect.astro',
       },
       expressiveCode: {
+        // Shell examples render as plain code, without terminal window chrome.
+        defaultProps: { frame: 'code' },
         plugins: [pluginWorktrunkTerminal()],
         themes: [worktrunkDarkCodeTheme, worktrunkLightCodeTheme],
         useStarlightUiThemeColors: true,
