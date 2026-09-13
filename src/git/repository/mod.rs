@@ -1789,6 +1789,10 @@ impl Repository {
         // rationale above), so it re-applies the test floor by hand.
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        // Same relocate scrub as `Cmd::scrub_worktree_selection_env` (+
+        // `GIT_INDEX_FILE`): this is the one production git spawn that
+        // bypasses `Cmd`, so it cannot call the builder method.
+        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
         // appearing as a gap on the switch hot path. Uses `status()` (not
         // `Cmd::run`) deliberately — see the doc comment.

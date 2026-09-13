@@ -3117,6 +3117,57 @@ fn test_step_commit_dry_run_no_llm_configured(repo: TestRepo) {
     );
 }
 
+/// `run_git_capture` builds the commit prompt from `wt.path()`, which for
+/// `--branch` is not the invoking worktree. An inherited `GIT_DIR` from a
+/// `!wt` alias pins staged-diff reads to the invoking tree, so the fallback
+/// message (and any LLM prompt) would name the wrong files.
+#[rstest]
+fn test_step_commit_branch_prompt_follows_target_not_git_dir(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("feature-only.txt"), "target staged").unwrap();
+    repo.git_command()
+        .args(["add", "feature-only.txt"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+
+    fs::write(repo.root_path().join("main-only.txt"), "invoking staged").unwrap();
+    repo.git_command()
+        .args(["add", "main-only.txt"])
+        .run()
+        .unwrap();
+
+    fs::write(repo.test_config_path(), "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "commit",
+            "--branch",
+            "feature",
+            "--dry-run",
+            "--stage=none",
+        ])
+        .env("GIT_DIR", repo.root_path().join(".git"))
+        .output()
+        .expect("wt step commit --dry-run failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "dry-run must succeed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("feature-only.txt"),
+        "prompt must describe the target worktree's staged file; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("main-only.txt"),
+        "prompt must not describe the invoking worktree's staged file; got:\n{stdout}"
+    );
+}
+
 #[rstest]
 fn test_step_squash_dry_run(repo_with_multi_commit_feature: TestRepo) {
     let repo = repo_with_multi_commit_feature;

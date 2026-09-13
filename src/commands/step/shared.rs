@@ -217,8 +217,9 @@ fn list_ignored_entries(
         .args(args)
         .current_dir(worktree_path)
         .context(context)
-        .scrub_worktree_selection_env()
-        .env_remove("GIT_INDEX_FILE")
+        // Full scrub: this site has no object-store env and no TempIndex, so
+        // the narrower selection helper has nothing to preserve.
+        .scrub_git_discovery_env()
         .run()
         .context("Failed to run git ls-files")?;
 

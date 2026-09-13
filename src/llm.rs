@@ -803,10 +803,19 @@ fn run_git_capture(
     cwd: &Path,
     index_override: Option<&Path>,
 ) -> anyhow::Result<String> {
-    let mut cmd = Cmd::new("git").args(args.iter().copied()).current_dir(cwd);
-    if let Some(index) = index_override {
-        cmd = cmd.env("GIT_INDEX_FILE", index);
-    }
+    // `cwd` is the worktree being committed, which may not be the invoking
+    // one (`wt step commit --branch <b>`). Scrub the selection vars a `!wt`
+    // alias pins to the invoking worktree, or the staged diff (and the
+    // fallback commit message) describes the wrong tree.
+    let mut cmd = Cmd::new("git")
+        .args(args.iter().copied())
+        .current_dir(cwd)
+        .scrub_worktree_selection_env();
+    cmd = match index_override {
+        Some(index) => cmd.env("GIT_INDEX_FILE", index),
+        // No override: drop an inherited index so git reads `cwd`'s.
+        None => cmd.env_remove("GIT_INDEX_FILE"),
+    };
     let output = cmd
         .run()
         .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
