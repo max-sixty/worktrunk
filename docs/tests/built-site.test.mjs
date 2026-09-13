@@ -9,6 +9,8 @@ import {
   syncTocCurrentToHash,
 } from '../src/components/toc-scroll.mjs';
 
+import { withoutTrailingShellComments } from '../src/plugins/worktrunk-terminal.mjs';
+
 const docsRoot = fileURLToPath(new URL('..', import.meta.url));
 const dist = path.join(docsRoot, 'dist');
 const publicRoutes = [
@@ -388,7 +390,10 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
       )];
       const expected = lines
         .filter((line) => line[1] !== 'output')
-        .map((line) => renderedText(line[2]).replace(/\n$/u, ''));
+        .map((line) => {
+          const text = renderedText(line[2]).replace(/\n$/u, '');
+          return line[1] === 'command' ? withoutTrailingShellComments(text) : text;
+        });
       if (expected.length === 0) continue;
 
       commandBearingBlocks += 1;
@@ -399,7 +404,7 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
       )?.[1];
       const commands = lines
         .filter((line) => line[1] === 'command')
-        .map((line) => renderedText(line[2]).replace(/\n$/u, ''));
+        .map((line) => withoutTrailingShellComments(renderedText(line[2]).replace(/\n$/u, '')));
       const perLine = [...frame.matchAll(
         /<div class="copy wt-line-copy">[\s\S]*?<button\b[^>]*\bdata-code="([^"]*)"/g,
       )].map((line) => renderedText(line[1]));
@@ -418,6 +423,22 @@ test('command-bearing console blocks emit command-only copy payloads', async () 
   }
   assert.ok(commandBearingBlocks > 0, 'expected command-bearing console blocks');
   assert.ok(perLineBlocks > 0, 'expected blocks listing several commands');
+});
+
+test('shell copy payloads leave out trailing comments', async () => {
+  let payloads = 0;
+  for (const page of renderedPages) {
+    const html = await readFile(page, 'utf8');
+    for (const match of html.matchAll(/<figure class="frame[^"]*">([\s\S]*?)<\/figure>/g)) {
+      if (!/<pre\b[^>]*\bdata-language="(?:bash|sh)"/.test(match[1])) continue;
+      for (const button of match[1].matchAll(/<button\b[^>]*\bdata-code="([^"]*)"/g)) {
+        payloads += 1;
+        const code = renderedText(button[1]).replaceAll('\u007f', '\n');
+        assert.equal(code, withoutTrailingShellComments(code), `${page} copies a trailing shell comment`);
+      }
+    }
+  }
+  assert.ok(payloads > 0, 'expected shell copy payloads');
 });
 
 test('generated command references expose no copy control', async () => {

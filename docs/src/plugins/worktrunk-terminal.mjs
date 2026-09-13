@@ -175,6 +175,44 @@ export function shellCommandSegments(text) {
   return segments;
 }
 
+/**
+ * A `#` that begins an unquoted word starts a shell comment. Zsh passes one to
+ * the command as arguments unless `interactivecomments` is set, so copied
+ * commands leave trailing comments out. A line that is only a comment stays.
+ * Heredocs, backticks, and `$'…'` strings aren't parsed; no example uses them.
+ */
+export function withoutTrailingShellComments(code) {
+  let output = '';
+  let quote;
+  let wordStart = true;
+  for (let index = 0; index < code.length; index += 1) {
+    const char = code[index];
+    if (quote) {
+      output += char;
+      if (char === quote) quote = undefined;
+      else if (char === '\\' && quote === '"') output += code[++index] ?? '';
+      wordStart = false;
+    } else if (char === '\\') {
+      output += char + (code[++index] ?? '');
+      wordStart = false;
+    } else if (char === "'" || char === '"') {
+      output += char;
+      quote = char;
+      wordStart = false;
+    } else if (char === '#' && wordStart) {
+      const newline = code.indexOf('\n', index);
+      const lineEnd = newline === -1 ? code.length : newline;
+      const lineSoFar = output.slice(output.lastIndexOf('\n') + 1);
+      output = lineSoFar.trim() === '' ? output + code.slice(index, lineEnd) : output.trimEnd();
+      index = lineEnd - 1;
+    } else {
+      output += char;
+      wordStart = /[\s;&|()<>]/u.test(char);
+    }
+  }
+  return output;
+}
+
 function renderShellCommand(code) {
   code.children = shellCommandSegments(nodeText(code)).map(({ text: value, tone }) => tone
     ? {
@@ -558,7 +596,9 @@ export function pluginWorktrunkTerminal() {
         // each command line gets its own control in place of the block's.
         if (className === 'wt-command' && terminal.commandLines.size > 1) {
           renderData.lineAst.children ??= [];
-          renderData.lineAst.children.push(copyControl(text, 'wt-line-copy'));
+          renderData.lineAst.children.push(
+            copyControl(withoutTrailingShellComments(text), 'wt-line-copy'),
+          );
         }
         if (className === 'wt-output') {
           const rendered = terminal.recordedByLine.has(lineIndex)
@@ -575,7 +615,12 @@ export function pluginWorktrunkTerminal() {
           return;
         }
         const terminal = terminalBlocks.get(codeBlock);
-        if (!terminal) return;
+        if (!terminal) {
+          if (codeBlock.language === 'bash' || codeBlock.language === 'sh') {
+            setCopyText(renderData.blockAst, withoutTrailingShellComments(codeBlock.code).replaceAll('\n', '\u007f'));
+          }
+          return;
+        }
         if (terminal.commandLines.size > 1) {
           addClass(renderData.blockAst, 'wt-line-copies');
           removeCopyControl(renderData.blockAst);
@@ -586,10 +631,10 @@ export function pluginWorktrunkTerminal() {
           return;
         }
         const copyText = [...codeBlock.getLines()]
-          .filter((_, lineIndex) => (
-            terminal.commandLines.has(lineIndex) || terminal.copyableLines.has(lineIndex)
-          ))
-          .map((line) => line.text)
+          .flatMap((line, lineIndex) => {
+            if (terminal.commandLines.has(lineIndex)) return [withoutTrailingShellComments(line.text)];
+            return terminal.copyableLines.has(lineIndex) ? [line.text] : [];
+          })
           .join('\u007f');
         setCopyText(renderData.blockAst, copyText);
       },

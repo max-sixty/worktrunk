@@ -13,6 +13,7 @@ import {
   rehypeComparisonCommands,
   semanticOutputSegments,
   shellCommandSegments,
+  withoutTrailingShellComments,
 } from '../src/plugins/worktrunk-terminal.mjs';
 
 function prepareCodeBlock(plugin, codeBlock) {
@@ -365,6 +366,25 @@ test('shell command roles preserve syntax outside the styled grammar', () => {
   assert.equal(shellCommandSegments(source).map(({ text }) => text).join(''), source);
 });
 
+test('copied shell commands leave out trailing comments', () => {
+  assert.equal(withoutTrailingShellComments('wt switch -    # Previous worktree'), 'wt switch -');
+  assert.equal(withoutTrailingShellComments('wt list;# after an operator'), 'wt list;');
+  assert.equal(withoutTrailingShellComments('echo a\\ #b'), 'echo a\\ #b');
+  assert.equal(
+    withoutTrailingShellComments(`git config k '{"a":"#b"}' "c # d"  # Direct`),
+    `git config k '{"a":"#b"}' "c # d"`,
+  );
+  assert.equal(withoutTrailingShellComments('echo $# ${#x} a#b \\#c'), 'echo $# ${#x} a#b \\#c');
+  assert.equal(
+    withoutTrailingShellComments('# Install\nbrew install wt  # the CLI\n'),
+    '# Install\nbrew install wt\n',
+  );
+  assert.equal(
+    withoutTrailingShellComments("sh -c 'a\n# quoted' # comment"),
+    "sh -c 'a\n# quoted'",
+  );
+});
+
 test('console blocks give each of several commands its own copy control', () => {
   const lines = ['# Recent', '$ wt list', '', '# Failed', '$ wt list --full'].map((text) => ({
     text,
@@ -428,7 +448,7 @@ test('console blocks wrap several commands but never captured output', () => {
 });
 
 test('console output and its blank lines stay out of copied commands', () => {
-  const lines = ['$ wt list', 'output', '', '# shell comment'].map((text) => ({
+  const lines = ['$ wt list  # recent', 'output', '', '# shell comment'].map((text) => ({
     text,
     editText(start, end, replacement) {
       this.text = this.text.slice(0, start) + replacement + this.text.slice(end);
