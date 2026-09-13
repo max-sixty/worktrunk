@@ -141,6 +141,7 @@ fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     let head_sha = setup_github_repo_with_feature(&mut repo);
 
     let pr_json = format!(
@@ -193,6 +194,7 @@ fn test_list_full_json_ci_repo_from_pr_url(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_json_ci_repo_uses_configured_provider_for_opaque_host(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     repo.run_git(&[
         "remote",
         "set-url",

@@ -115,6 +115,11 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbols: Option<String>,
 
+    /// Branch marker stored via `wt config state marker`; absent when none is
+    /// set. The same string is the last glyph in `symbols`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
+
     /// Custom variables stored via `wt config state vars`
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, String>,
@@ -387,6 +392,7 @@ impl JsonItem {
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.statusline.clone();
         let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
+        let marker = item.user_marker.clone().flatten();
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
         let vars = super::json_v2::take_vars(item.branch(), all_vars);
@@ -420,6 +426,7 @@ impl JsonItem {
             summary,
             statusline,
             symbols,
+            marker,
             vars,
             columns,
         }
@@ -451,7 +458,10 @@ fn worktree_state_to_json(
     // (metadata family) hasn't been populated yet; fall through to the
     // direct-field fallback below.
     match status_symbols.worktree_state {
-        None | Some(WorktreeState::None) => {}
+        // `Detached` has no `state` string of its own: the sibling `detached`
+        // field already carries it, and naming it twice would be the only
+        // state this object reports in two places.
+        None | Some(WorktreeState::None | WorktreeState::Detached) => {}
         Some(WorktreeState::Branch) => return (Some("no_worktree"), None),
         Some(WorktreeState::BranchWorktreeMismatch) => {
             return (Some("branch_worktree_mismatch"), None);

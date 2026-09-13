@@ -605,7 +605,12 @@ Specific rules:
 
 - **No leading/trailing blanks** — Start immediately, end cleanly
 - **Blank before prompts, not after** — Signal "pause, something interactive is
-  happening" before the prompt; once the user responds, output flows continuously
+  happening" before the prompt; once the user responds, output flows continuously.
+  The blank belongs to the narration it separates from, so the caller emits it
+  and `prompt_yes_no_preview` does not: a prompt that opens a command's output
+  (`wt config shell install`, `wt config plugins claude install`, the
+  commit-generation offer at the top of `wt merge`) starts flush, since a blank
+  there is a leading blank
 - **One blank between phases** — When a sub-operation completes and a different
   operation begins, add a blank line to visually separate them
 - **Never double blanks** — One blank line maximum between elements
@@ -624,14 +629,14 @@ Specific rules:
   ↳ To configure, run wt config shell install
   ```
 
-**Prompt spacing:** A blank line before the prompt signals "something different
-is about to happen" and gives the user's eye a natural stopping point before they
-need to read and respond. No blank line after — the user's input ends the
-interactive moment and subsequent output flows naturally from that decision.
+**Prompt spacing:** A blank line before a prompt that follows narration signals
+"something different is about to happen" and gives the user's eye a natural
+stopping point before they need to read and respond. No blank line after — the
+user's input ends the interactive moment and subsequent output flows naturally
+from that decision. A prompt with nothing above it, like the setup offer below
+at the top of `wt step commit`, has nothing to separate from and starts flush.
 
 ```
-◎ Detecting available LLM tools...
-
 ❯ Configure claude for commit messages? [y/N/?] y
 ✓ Added to user config:
    ┃ [commit.generation]
@@ -1106,8 +1111,19 @@ eprintln!("{}", success_message(format!(
 
 ## Table Column Alignment
 
-- **Text columns** (Branch, Path): left-aligned
-- **Numeric columns** (HEAD±, main↕): right-aligned
+- **Text columns** (Branch, Path, Message): left-aligned
+- **Single-value numeric columns** (Age): right-aligned, so `now` and `4m` line
+  up on the unit
+- **Diff columns** (HEAD±, main↕): two right-aligned halves either side of a
+  separator (`+999 -999`); a state for the whole field, such as a loading or
+  in-sync marker, is centered
+
+A header follows its content, except over a diff column, where it centres:
+pushed to either edge it stands over one half and reads as that half's label,
+leaving a lone `+1` stranded left of `HEAD±`.
+
+Rows carry no trailing padding. Padding places a cell; past the last one it
+places nothing, and a reader who selects the row gets it anyway.
 
 ## Snapshot Testing
 

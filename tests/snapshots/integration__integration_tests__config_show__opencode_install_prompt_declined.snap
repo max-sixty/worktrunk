@@ -52,5 +52,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-
 [36m❯[39m Install OpenCode plugin @ [1m~/opencode-config/plugins/worktrunk.ts[22m? [1m[y/N/?][22m

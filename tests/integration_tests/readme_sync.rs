@@ -123,14 +123,27 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Regex to convert site-root documentation links to full URLs.
-/// Matches: [text](/page/) or [text](/page/#anchor).
+/// Matches: [text](/page/), [text](/page/#anchor), and the homepage forms
+/// [text](/) and [text](/#anchor) — the page segment is optional because the
+/// homepage has none.
 ///
 /// Link text tolerates `]` characters when they appear inside a backticked
 /// code span (e.g. `[[block]]`), alternating "a `...` code span" with "any
 /// non-`]`-non-backtick char". Bare backticks are forbidden so the regex
 /// can't bridge across two unrelated code spans on the same line.
-static SITE_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/([^)/]+)/(#[^)]*)?\)").unwrap());
+static SITE_LINK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(/(?:([^)/#]+)/)?(#[^)]*)?\)").unwrap()
+});
+
+/// Expand one `SITE_LINK_PATTERN` capture into an absolute worktrunk.dev link.
+fn expand_site_link(caps: &regex::Captures) -> String {
+    let text = caps.get(1).unwrap().as_str();
+    let page = caps
+        .get(2)
+        .map_or(String::new(), |m| format!("{}/", m.as_str()));
+    let anchor = caps.get(3).map_or("", |m| m.as_str());
+    format!("[{text}](https://worktrunk.dev/{page}{anchor})")
+}
 
 /// Guardrail for root-relative or legacy Zola links on generated non-site surfaces.
 static UNTRANSFORMED_SITE_LINK_PATTERN: LazyLock<Regex> =
@@ -948,12 +961,7 @@ fn heading_to_anchor(heading: &str) -> String {
 fn transform_docs_to_github(content: &str) -> String {
     // Transform internal links
     let content = SITE_LINK_PATTERN
-        .replace_all(content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
+        .replace_all(content, expand_site_link)
         .into_owned();
     let content = AUTO_GENERATED_MARKER_PATTERN
         .replace_all(&content, "")
@@ -1204,8 +1212,8 @@ fn test_config_markdown_links_convert_to_plain_text() {
         // `[[projects."…".post-start]]` pipelines, so a link naming one is the
         // next form to arrive; the code-span class covers it.
         (
-            "see [`[[projects.\"…\".post-start]]` hooks](/config/#hooks) for the pipeline form",
-            "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#hooks) for the pipeline form",
+            "see [`[[projects.\"…\".post-start]]` hooks](/config/#project-hooks) for the pipeline form",
+            "see `[[projects.\"…\".post-start]]` hooks (https://worktrunk.dev/config/#project-hooks) for the pipeline form",
         ),
         // Two links on one line still both convert.
         (
@@ -1241,7 +1249,7 @@ fn test_config_markdown_links_convert_to_plain_text() {
 fn test_untransformed_site_link_fails_the_config_transform() {
     // An unbalanced backtick in the link text: the code-span alternative can't
     // close, so the rewrite declines and the raw target would survive.
-    transform_config_source_to_toml("See [a `broken span](/config/#hooks) here");
+    transform_config_source_to_toml("See [a `broken span](/config/#project-hooks) here");
 }
 
 #[test]
@@ -1437,11 +1445,13 @@ fn test_project_config_docs_include_all_sections() {
     }
 
     // Hooks section should exist (individual hook keys are documented in user config
-    // and cross-referenced from project config)
+    // and cross-referenced from project config). The heading names its config
+    // kind because both kinds land on /config/ and would otherwise share an
+    // anchor.
     assert!(
-        project_config_content.contains("## Hooks"),
+        project_config_content.contains("## Project hooks"),
         "Hooks section heading missing from project config docs.\n\
-         Expected `## Hooks` between PROJECT_CONFIG_START/END markers."
+         Expected `## Project hooks` between PROJECT_CONFIG_START/END markers."
     );
 }
 
@@ -2094,12 +2104,7 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
 /// Site-root links → full URLs, remove "See also", and collapse blank lines.
 fn finalize_skill_content(content: &str) -> String {
     let content = SITE_LINK_PATTERN
-        .replace_all(content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
+        .replace_all(content, expand_site_link)
         .into_owned();
 
     // Installed skills don't have the site's root URL as a resolution base.
@@ -2130,8 +2135,8 @@ fn finalize_skill_content(content: &str) -> String {
 /// only: Codex's plugin installer copies the plugin root with a copier that
 /// silently skips symlink entries (`copy_dir_recursive` in codex-rs
 /// core-plugins), so a symlink anywhere in the tree — a `skills` link at the
-/// top or a nested one like `reference/README.md` — ships no content, and a
-/// symlink also materializes as a plain text file on Windows checkouts.
+/// top or one nested under `reference/` — ships no content, and a symlink
+/// also materializes as a plain text file on Windows checkouts.
 /// Repo-root `skills/` stays the authored home: Gemini reads it directly, and
 /// the earlier sync stages write into it.
 fn sync_plugin_skills_mirror(project_root: &Path) -> (Vec<String>, Vec<String>) {
@@ -2651,6 +2656,23 @@ fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
 
     let out = format!("{}\n", out.trim_end());
 
+    // Every page llms.txt names is served as `<slug>.md` from a hand-created
+    // symlink into the skill reference. A new page reaches llms.txt from its
+    // frontmatter alone, so without this the listing links a 404.
+    for name in docs_content_page_names(&docs_dir) {
+        let served = project_root.join("docs/public").join(&name);
+        if !served.exists() {
+            errors.push(format!(
+                "docs/public/{name} is missing — add the symlink \
+                 `ln -s ../../skills/worktrunk/reference/{name} docs/public/{name}` \
+                 so llms.txt's https://worktrunk.dev/{name} resolves"
+            ));
+        }
+    }
+    if !errors.is_empty() {
+        return (errors, updated);
+    }
+
     let dst = project_root.join("docs/public/llms.txt");
     let current = fs::read_to_string(&dst).unwrap_or_default();
     if current != out {
@@ -2831,6 +2853,82 @@ fn test_no_nested_auto_generated_markers() {
         "Nested AUTO-GENERATED markers found — outer help-page regex would chop \
          the region at the inner close. Either flatten the nesting or restore a \
          disambiguating close marker.\n\n{}",
+        violations.join("\n")
+    );
+}
+
+/// The authored sidebar in `docs/src/site-navigation.mjs` and each page's
+/// `sidebar.order` frontmatter are two orderings of the same pages, and only
+/// the frontmatter reaches `docs/public/llms.txt`. When they disagree, the
+/// sidebar a reader browses and the index an agent reads put the pages in
+/// different orders.
+///
+/// Only pages the sidebar names are checked. A page may carry an order without
+/// a sidebar entry (`code-signing.md`); the order still places it in llms.txt.
+#[test]
+fn test_sidebar_matches_frontmatter_order() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let nav_path = project_root.join("docs/src/site-navigation.mjs");
+    let nav = fs::read_to_string(&nav_path).unwrap();
+
+    // `link: '/switch/'` names the page `switch.md`; `link: '/'` is the
+    // homepage, `worktrunk.md`. A link carrying a fragment (`/#install`) points
+    // into a page rather than at one, so it has no order of its own.
+    let link_pattern = Regex::new(r"link: '([^']+)'").unwrap();
+    let slugs: Vec<String> = link_pattern
+        .captures_iter(&nav)
+        .map(|captures| captures[1].to_string())
+        .filter(|link| !link.contains('#'))
+        .map(|link| match link.trim_matches('/') {
+            "" => "worktrunk".to_string(),
+            slug => slug.to_string(),
+        })
+        .collect();
+
+    assert!(
+        slugs.len() > 5,
+        "found only {} sidebar links in {} — the `link:` shape changed and this \
+         test would pass on an empty list",
+        slugs.len(),
+        nav_path.display()
+    );
+
+    let mut violations = Vec::new();
+    let mut previous: Option<(String, i64)> = None;
+    for slug in slugs {
+        let path = project_root.join(format!("docs/src/content/docs/{slug}.md"));
+        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "sidebar names {slug}, but reading {} failed: {e}",
+                path.display()
+            )
+        });
+        let frontmatter = YAML_FRONTMATTER_PATTERN
+            .captures(&content)
+            .unwrap_or_else(|| panic!("no YAML frontmatter in {}", path.display()));
+        let order: i64 = frontmatter
+            .get(1)
+            .unwrap()
+            .as_str()
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("order:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or_else(|| panic!("no numeric sidebar.order in {}", path.display()));
+
+        if let Some((previous_slug, previous_order)) = &previous
+            && order <= *previous_order
+        {
+            violations.push(format!(
+                "{slug} (order {order}) is listed after {previous_slug} (order {previous_order})"
+            ));
+        }
+        previous = Some((slug, order));
+    }
+
+    assert!(
+        violations.is_empty(),
+        "site-navigation.mjs lists pages out of `sidebar.order`, so the sidebar and \
+         docs/public/llms.txt would order them differently. Reconcile the two:\n\n{}",
         violations.join("\n")
     );
 }

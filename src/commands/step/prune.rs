@@ -688,20 +688,32 @@ fn worktree_age(
     )))
 }
 
-/// Resolve the age of an orphan branch via its reflog creation timestamp.
+/// Resolve the age of an orphan branch from when its oldest reflog entry was
+/// written.
+///
+/// That is the entry's own timestamp, not the committer date of the commit it
+/// points at: `git branch <name> main` on a days-old tip creates a new branch,
+/// and aging it by the commit would prune it before the guard saw it as young.
+/// `--date=unix` renders each entry's selector as `<name>@{<epoch>}`, and git
+/// forbids `@{` inside a ref name, so the last `@{` opens the timestamp.
 ///
 /// Returns `None` if the reflog is missing or unparsable — callers treat
-/// "unknown age" as "old enough", matching the previous inline behavior.
+/// "unknown age" as "old enough". A bare repository defaults
+/// `core.logAllRefUpdates` to false, so a branch created or updated only from
+/// the bare directory itself has no reflog and no min-age guard; one touched
+/// from inside a linked worktree has a reflog.
 fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
     let ref_name = format!("refs/heads/{branch}");
     let stdout = repo
-        .run_command(&["reflog", "show", "--format=%ct", &ref_name])
+        .run_command(&["reflog", "show", "--date=unix", "--format=%gd", &ref_name])
         .ok()?;
     let created_epoch = stdout
         .trim()
         .lines()
         .last()
-        .and_then(|s| s.parse::<u64>().ok())?;
+        .and_then(|selector| selector.rsplit_once("@{"))
+        .and_then(|(_, epoch)| epoch.strip_suffix('}'))
+        .and_then(|epoch| epoch.parse::<u64>().ok())?;
     Some(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
 }
 

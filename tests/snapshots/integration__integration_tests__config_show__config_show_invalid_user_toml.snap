@@ -54,8 +54,8 @@ info:
     WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [31m✗[39m [31mInvalid config[39m

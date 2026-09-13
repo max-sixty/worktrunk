@@ -562,13 +562,23 @@ pub fn scan_shell_configs(
         let in_detected_shell = (matches!(shell, Shell::PowerShell) && in_powershell_env)
             || (matches!(shell, Shell::Nushell) && nushell_available);
 
-        // Only configure if explicitly targeting this shell OR if config file/location exists
-        // OR if we detected we're running in this shell's environment
-        let should_configure = shell_filter.is_some() || has_config_location || in_detected_shell;
+        // A worktrunk wrapper still at fish's deprecated conf.d path says fish
+        // is configured, just at the old path — so the install migrates it even
+        // though `~/.config/fish/functions` doesn't exist yet. Without this,
+        // fish lands in `skipped` and a bare `wt config shell install` leaves
+        // the deprecated wrapper running, which is the command `wt config show`
+        // points users at. The write target stays the canonical functions path,
+        // and `cleanup_legacy_fish_conf_d` removes the old file afterwards.
+        let has_deprecated_wrapper = matches!(shell, Shell::Fish)
+            && Shell::legacy_fish_conf_d_path(cmd).is_ok_and(|path| path.exists());
 
-        // Allow creating the config file if explicitly targeting this shell,
-        // or if we detected we're in this shell's environment
-        let allow_create = shell_filter.is_some() || in_detected_shell;
+        // Write a config file the user doesn't have yet when they named this
+        // shell, when we're running in it, or when it's already configured at a
+        // deprecated path this install migrates.
+        let allow_create = shell_filter.is_some() || in_detected_shell || has_deprecated_wrapper;
+
+        // Plus: configure whenever the config file or its directory is there.
+        let should_configure = allow_create || has_config_location;
 
         if should_configure {
             // Wrapper-based shells (Fish, Nushell) always write to the canonical
@@ -1111,8 +1121,6 @@ pub fn prompt_for_install(
 
 /// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
-    // Blank line before prompt for visual separation
-    eprintln!();
     eprint!(
         "{} ",
         prompt_message(color_print::cformat!("Proceed? <bold>[y/N]</>"))
@@ -1553,6 +1561,9 @@ fn prompt_for_uninstall_confirmation(
 ) -> Result<bool, String> {
     eprintln!("{}", show_uninstall_preview(results, completion_results));
 
+    // Separate the prompt from the preview above; the prompt emits no leading
+    // blank of its own.
+    eprintln!();
     prompt_yes_no()
 }
 
@@ -1774,6 +1785,33 @@ mod tests {
     #[test]
     fn test_fish_completion_content_custom_cmd() {
         insta::assert_snapshot!(fish_completion_content("myapp"));
+    }
+
+    /// The `worktrunk-bin` AUR package installs fish completions from a
+    /// heredoc in `.github/aur/PKGBUILD` — makepkg runs no Rust, so that
+    /// literal is a hand-copied second copy of `fish_completion_content("wt")`,
+    /// as its own `TODO` says. Nothing else pins the two together: editing the
+    /// generator here ships a stale completion to AUR users on the next
+    /// release, and the only symptom is someone's tab-completion quietly
+    /// producing nothing. `release.yaml` still publishes the package: the docs
+    /// point at the official Arch package now, but `worktrunk-bin` was kept
+    /// publishing deliberately (#2052) and users track it for newer releases.
+    ///
+    /// `.github/aur/PKGBUILD` is read at test time and so never appears in
+    /// coverage; the `workspace.metadata.affected.rule` for it in `Cargo.toml`
+    /// is what force-selects this test when the PKGBUILD alone changes.
+    #[test]
+    fn test_aur_pkgbuild_ships_the_current_fish_completion() {
+        let pkgbuild_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/aur/PKGBUILD");
+        let pkgbuild = std::fs::read_to_string(&pkgbuild_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", pkgbuild_path.display()));
+        let expected = fish_completion_content("wt");
+        assert!(
+            pkgbuild.contains(&expected),
+            ".github/aur/PKGBUILD ships a fish completion that no longer matches \
+             `fish_completion_content(\"wt\")`. Replace the body of its heredoc with:\n\n{expected}"
+        );
     }
 
     #[test]

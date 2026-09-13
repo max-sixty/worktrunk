@@ -210,6 +210,10 @@ pub fn offer_bare_repo_worktree_path_fix(
         ))
     );
 
+    // Separate the prompt from the diagnosis above; prompt_yes_no_preview
+    // emits no leading blank of its own.
+    eprintln!();
+
     let config_path_for_preview = config_path_display.clone();
     let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(

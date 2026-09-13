@@ -165,7 +165,7 @@ pub struct ListConfig {
 
     /// JSON output schema for `wt list --format=json` (1 or 2).
     /// Schema 2 wraps items in an envelope of per-item facts (see the
-    /// `wt list` JSON docs). Unset emits schema 1 with a warning.
+    /// `wt list` JSON docs) and is the default.
     #[serde(rename = "json-schema", skip_serializing_if = "Option::is_none")]
     pub json_schema: Option<u8>,
 

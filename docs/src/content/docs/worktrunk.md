@@ -41,7 +41,7 @@ A quick demo:
 
 AI agents like Claude Code and Codex can handle longer tasks without
 supervision, such that it's possible to manage 5-10+ in parallel. Git's native
-worktree feature give each agent its own working directory, so they don't step
+worktree feature gives each agent its own working directory, so they don't step
 on each other's changes.
 
 But the git worktree UX is clunky. Even a task as small as starting a new
@@ -112,7 +112,7 @@ Multiple parallel agents, same simple commands:
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-zellij-omnibus.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
+  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900" loading="lazy">
 </picture>
 <figcaption>Multiple Claude agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
 </figure>
@@ -182,11 +182,11 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 ```console
 $ wt list
-  Branch        Status        HEAD±    main↕     main…±  Remote⇅  Commit   Age   Message
-@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc  2h    Add authenticati…
-^ main              ^⇡                                    ⇡1      0e631ad  1d    Initial commit
+  Branch        Status      HEAD±     main↕    main…±    Remote⇅  Commit    Age  Message
+@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticati…
+^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit
 
-○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden
+○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path
 ```
 
 <!-- END AUTO-GENERATED -->

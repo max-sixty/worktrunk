@@ -1165,17 +1165,34 @@ impl std::fmt::Display for StreamCommandError {
 
 impl std::error::Error for StreamCommandError {}
 
+/// Shared state between [`Cmd::delayed_stream`] and its two reader threads.
+///
+/// `streaming` lives *inside* the mutex rather than beside it as an atomic so
+/// that a reader cannot consult it without also holding the buffer. The
+/// ordering guarantee this type exists for depends on the check and the write
+/// being one critical section (see [`spawn_delayed_reader`]), and an atomic
+/// makes a lock-free read the natural thing to write.
+#[derive(Default)]
+struct DelayedOutput {
+    /// Once set, readers write to stderr instead of buffering.
+    streaming: bool,
+    /// Lines held back before the switch: drained to stderr behind the
+    /// progress message, or joined into the error body when the command fails
+    /// before streaming ever starts.
+    lines: Vec<String>,
+}
+
 /// Convert a finished child's exit status into `Ok(())` or a
 /// [`StreamCommandError`] carrying the buffered output.
 fn stream_exit_result(
     status: std::process::ExitStatus,
-    buffer: &Arc<Mutex<Vec<String>>>,
+    state: &Arc<Mutex<DelayedOutput>>,
     cmd_str: &str,
 ) -> anyhow::Result<()> {
     if status.success() {
         return Ok(());
     }
-    let lines = buffer.lock().unwrap();
+    let lines = &state.lock().unwrap().lines;
     let exit_info = status
         .code()
         .map(|c| format!("exit code {c}"))
@@ -1189,21 +1206,30 @@ fn stream_exit_result(
 }
 
 /// Spawn a reader thread for [`Cmd::delayed_stream`]: each line is written to
-/// stderr live once `streaming` is set, or buffered (for the quiet-fast and
-/// pre-threshold cases) until then. Both the child's stdout and stderr use
-/// this; everything routes to stderr to keep our stdout clean.
+/// stderr live once the switch to streaming has happened, or buffered (for the
+/// quiet-fast and pre-threshold cases) until then. Both the child's stdout and
+/// stderr use this; everything routes to stderr to keep our stdout clean.
+///
+/// One [`DelayedOutput`] guard covers both reading `streaming` and writing the
+/// line, and the switch sets that same field under that same lock. So each
+/// line lands on one side of the switch or the other: it is either buffered,
+/// and so drained in order behind the progress message, or written after that
+/// drain has finished. Were the flag readable without the lock, a reader could
+/// observe the flip and print between the progress message and the drain — or
+/// ahead of the progress message entirely, which is what a zero delay makes
+/// routine, since nothing has to be buffered first.
 fn spawn_delayed_reader<R: Read + Send + 'static>(
     stream: R,
-    streaming: Arc<AtomicBool>,
-    buffer: Arc<Mutex<Vec<String>>>,
+    state: Arc<Mutex<DelayedOutput>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
-            if streaming.load(Ordering::Relaxed) {
+            let mut state = state.lock().unwrap();
+            if state.streaming {
                 eprintln!("{}", line);
             } else {
-                buffer.lock().unwrap().push(line);
+                state.lines.push(line);
             }
         }
     })
@@ -2126,11 +2152,11 @@ impl Cmd {
         let stdout = child.take_stdout().expect("stdout was piped");
         let stderr = child.take_stderr().expect("stderr was piped");
 
-        // Shared state: when true, output streams directly; when false, buffers.
-        let streaming = Arc::new(AtomicBool::new(false));
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let stdout_handle = spawn_delayed_reader(stdout, streaming.clone(), buffer.clone());
-        let stderr_handle = spawn_delayed_reader(stderr, streaming.clone(), buffer.clone());
+        // Shared state: readers stream directly once `streaming` is set, and
+        // buffer until then.
+        let state = Arc::new(Mutex::new(DelayedOutput::default()));
+        let stdout_handle = spawn_delayed_reader(stdout, state.clone());
+        let stderr_handle = spawn_delayed_reader(stderr, state.clone());
 
         let start = Instant::now();
 
@@ -2148,7 +2174,7 @@ impl Cmd {
                         let _ = stdout_handle.join();
                         let _ = stderr_handle.join();
                         trace.complete(status.success());
-                        return stream_exit_result(status, &buffer, &cmd_str);
+                        return stream_exit_result(status, &state, &cmd_str);
                     }
                     // No status yet: the threshold passed, or the timed wait
                     // itself failed. Both fall through to streaming. A failed
@@ -2165,13 +2191,18 @@ impl Cmd {
                 }
             }
 
-            // Delay threshold exceeded — switch to streaming.
-            streaming.store(true, Ordering::Relaxed);
-            if let Some(ref msg) = progress_message {
-                eprintln!("{}", msg);
-            }
-            for line in buffer.lock().unwrap().drain(..) {
-                eprintln!("{}", line);
+            // Delay threshold exceeded — switch to streaming. The flip, the
+            // progress message, and the drain happen under the same lock the
+            // readers take per line, so no reader can print between them.
+            {
+                let mut state = state.lock().unwrap();
+                state.streaming = true;
+                if let Some(ref msg) = progress_message {
+                    eprintln!("{}", msg);
+                }
+                for line in state.lines.drain(..) {
+                    eprintln!("{}", line);
+                }
             }
         }
 
@@ -2187,7 +2218,7 @@ impl Cmd {
             }
         };
         trace.complete(status.success());
-        stream_exit_result(status, &buffer, &cmd_str)
+        stream_exit_result(status, &state, &cmd_str)
     }
 }
 

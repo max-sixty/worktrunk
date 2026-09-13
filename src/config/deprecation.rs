@@ -14,13 +14,6 @@
 //! one predicate and cannot drift. The table order is both the
 //! warning-emission order and the migration order.
 //!
-//! The table also carries pending default changes
-//! ([`DeprecationRule::PendingDefault`]): defaults a future release switches,
-//! which `wt config update` adopts early by writing the upcoming value. These
-//! share the detection-equals-migration predicate but warn at the surface
-//! that reads the setting (the `wt list` JSON nag) instead of at config load,
-//! and apply only to the config kind that owns the key.
-//!
 //! Detection is purely in-memory — nothing writes to the filesystem from a
 //! config load path. `check_and_migrate` returns the structurally migrated
 //! content (for serde) and a `DeprecationInfo` describing what needs fixing.
@@ -52,9 +45,7 @@ use crate::styling::{
 /// Which config file a deprecation pass is examining.
 ///
 /// Replaces the string labels that used to travel with each check: the kind
-/// derives the display label, and kind-scoped rules
-/// (`DeprecationRule::PendingDefault`) use it to apply only to the config
-/// file that owns their key.
+/// derives the display label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigFileKind {
     /// `~/.config/worktrunk/config.toml` — the file `wt config update` rewrites.
@@ -95,7 +86,7 @@ pub fn suppress_warnings() {
 }
 
 /// Whether [`suppress_warnings`] latched this process. Consulted by warning
-/// emitters outside this module (e.g. the `wt list` JSON schema nag) so
+/// emitters outside this module (e.g. the `wt list` invalid-schema warning) so
 /// suppressed surfaces like the statusline stay clean.
 pub fn warnings_suppressed() -> bool {
     SUPPRESS_WARNINGS.get().is_some()
@@ -504,23 +495,6 @@ pub enum DeprecationKind {
     /// `task-timeout-ms` under `[list]` (removed — `[list] timeout-ms` bounds
     /// the collect phase).
     ListTaskTimeout,
-    /// `[list] json-schema` unset while the default is scheduled to switch to
-    /// schema 2 — `wt config update` writes the upcoming `json-schema = 2`.
-    /// Warns at the JSON-emitting surface (`resolve_json_schema`), not at
-    /// config load.
-    JsonSchemaUnset,
-}
-
-impl DeprecationKind {
-    /// Whether this kind tracks a pending default change rather than a
-    /// deprecated-pattern rewrite. Pending defaults warn at the surface that reads
-    /// the setting (the `wt list` JSON nag) instead of at config load — the
-    /// setting only matters to consumers of that surface — and still render
-    /// on the pull surfaces (`wt config show`, the `wt config update`
-    /// preview), where the user asked for details.
-    fn is_pending_default(&self) -> bool {
-        matches!(self, Self::JsonSchemaUnset)
-    }
 }
 
 /// All deprecation patterns detected in a config file, in the order their
@@ -559,31 +533,18 @@ enum DeprecationRule {
     /// Silently-migrated rename: rewritten on every load like `Structural`,
     /// but with no warning by construction.
     Silent(SilentMigrateFn),
-    /// Pending default change: a default that a future release switches, which
-    /// `wt config update` adopts early by writing the upcoming value. Applies
-    /// only on the update pass and only to the config kind that owns the key —
-    /// the load path must leave the document alone (an in-memory value would
-    /// read as an explicit setting, switching behavior without a config edit
-    /// and silencing the usage-site nag). Its
-    /// [`DeprecationKind`] returns true from `is_pending_default`, so the warning
-    /// fires where the setting is consumed rather than on every config load.
-    PendingDefault {
-        kind: ConfigFileKind,
-        migrate: MigrateFn,
-    },
 }
 
 /// Which pass rules run under.
 ///
 /// `Load` is the structural rewrite before serde parses — `Structural` and
 /// `Silent` rows only. `Update` is what `wt config update` materializes —
-/// every row, with kind-scoped rows applying only to their config kind.
-/// Detection always runs the `Update` pass against a scratch copy, so a
-/// rule's detection and migration share one predicate and cannot drift.
+/// every row. Detection always runs the `Update` pass against a scratch copy,
+/// so a rule's detection and migration share one predicate and cannot drift.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RulePass {
     Load,
-    Update(ConfigFileKind),
+    Update,
 }
 
 /// Every deprecation, one row each. The table order is the contract:
@@ -594,8 +555,9 @@ enum RulePass {
 /// earlier rules have already migrated, so a rule reports a pattern in its
 /// post-migration shape.
 ///
-/// The `[ci]` → `[forge]` rule is order-independent: `[forge]` takes over
-/// `[ci]`'s explicit document position (see [`migrate_ci_doc`]), so its
+/// The `[ci]` → `[forge]` rule is order-independent: `[forge]` renders at an
+/// explicit document position either way — the one it was parsed at, or
+/// `[ci]`'s when the rule creates the table (see [`migrate_ci_doc`]) — so its
 /// rendered placement doesn't depend on which tables other rules re-append.
 ///
 /// A [`DeprecationRule::Structural`] rule must not depend on an `UpdateOnly`
@@ -617,9 +579,7 @@ enum RulePass {
 /// [`DeprecationKind`] variant with its `format_deprecation_warnings` arm,
 /// and a row here (plus a [`DeprecatedSection`] entry for a removed top-level
 /// section). A silently-migrated rename is just a [`DeprecationRule::Silent`]
-/// row. A pending default change is a [`DeprecationRule::PendingDefault`] row
-/// whose kind returns true from `is_pending_default` — the surface that reads the
-/// setting owns the warning.
+/// row.
 const DEPRECATION_RULES: &[DeprecationRule] = &[
     // Template variables: {{ repo_root }} → {{ repo_path }} etc., inside any
     // string value.
@@ -666,83 +626,15 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
             Vec::new()
         }
     }),
-    // [list] json-schema unset → write json-schema = 2, adopting the default
-    // ahead of the release that switches it. User config only: the key isn't
-    // valid in project config, and the top-level write covers every repo
-    // (per-project overrides in user config remain the user's own choice).
-    DeprecationRule::PendingDefault {
-        kind: ConfigFileKind::User,
-        migrate: adopt_json_schema_doc,
-    },
 ];
 
-/// Write `[list] json-schema = 2` at the top level when the key is absent —
-/// adopting the upcoming default ahead of the release that switches it.
-///
-/// A `list` slot occupied by a non-table is left alone (serde's type error is
-/// the messaging); a present key of any value is the user's explicit choice,
-/// including out-of-range values, which already warn at resolve time. When
-/// the system config layer defines the key, resolution is already explicit —
-/// no nag fires — and a user-file write would *override* that deliberate
-/// system-level choice, so the rule stays inert — the one rule that reads a
-/// second file (detection stays write-free; the common no-system-config case
-/// costs one stat).
-fn adopt_json_schema_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
-    if system_config_defines_json_schema() {
-        return Vec::new();
-    }
-    // `or_insert` only fills a vacant slot, so a bail through the fallthrough
-    // arm (scalar occupant, key already present) leaves the document
-    // unmodified; an absent `list` becomes the empty table the first arm
-    // then fills.
-    match doc
-        .entry("list")
-        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
-    {
-        toml_edit::Item::Table(t) if !t.contains_key("json-schema") => {
-            t.insert("json-schema", toml_edit::value(2));
-        }
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(t))
-            if !t.contains_key("json-schema") =>
-        {
-            t.insert("json-schema", 2.into());
-        }
-        _ => return Vec::new(),
-    }
-    vec![DeprecationKind::JsonSchemaUnset]
-}
-
-/// Whether the system config layer sets `[list] json-schema` (any value, any
-/// table shape). Unreadable or unparsable system config counts as not
-/// defining it.
-fn system_config_defines_json_schema() -> bool {
-    let Some(path) = crate::config::system_config_path() else {
-        return false;
-    };
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-    match doc.get("list") {
-        Some(toml_edit::Item::Table(t)) => t.contains_key("json-schema"),
-        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(t))) => {
-            t.contains_key("json-schema")
-        }
-        _ => false,
-    }
-}
-
-/// Detect deprecations in config content. Pure function, no I/O.
-///
-/// Returns the detected deprecation patterns. This is the recommended entry
-/// point for deprecation detection.
-pub fn detect_deprecations(content: &str, kind: ConfigFileKind) -> Deprecations {
+/// Test helper: detect deprecations in config content without I/O.
+#[cfg(test)]
+fn detect_deprecations(content: &str) -> Deprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return Vec::new();
     };
-    detect_deprecations_from_doc(&doc, kind)
+    detect_deprecations_from_doc(&doc)
 }
 
 /// Detect deprecations from an already-parsed document.
@@ -751,13 +643,10 @@ pub fn detect_deprecations(content: &str, kind: ConfigFileKind) -> Deprecations 
 /// a warning fires exactly when `wt config update` would change the file.
 /// Pushes kinds in [`DEPRECATION_RULES`] order — the warning-emission order —
 /// so iterating the returned `Vec` reproduces the warning text byte-for-byte.
-fn detect_deprecations_from_doc(
-    doc: &toml_edit::DocumentMut,
-    kind: ConfigFileKind,
-) -> Deprecations {
+fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
     let mut scratch = doc.clone();
     let mut kinds = Vec::new();
-    apply_rules(&mut scratch, RulePass::Update(kind), &mut kinds);
+    apply_rules(&mut scratch, RulePass::Update, &mut kinds);
     kinds
 }
 
@@ -765,9 +654,7 @@ fn detect_deprecations_from_doc(
 /// kinds to `kinds` and returning whether the document changed.
 ///
 /// The load pass excludes [`DeprecationRule::UpdateOnly`] rewrites (cosmetic
-/// or still-valid serde fields, so serde doesn't need them applied) and
-/// [`DeprecationRule::PendingDefault`] writes (an in-memory value would
-/// switch behavior without a config edit and silence the usage-site nag).
+/// or still-valid serde fields, so serde doesn't need them applied).
 /// Detection and [`compute_migrated_content`] run the update pass.
 fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Deprecations) -> bool {
     let mut modified = false;
@@ -779,20 +666,13 @@ fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Dep
                 kinds.extend(new_kinds);
             }
             DeprecationRule::UpdateOnly(migrate) => {
-                if matches!(pass, RulePass::Update(_)) {
+                if matches!(pass, RulePass::Update) {
                     let new_kinds = migrate(doc);
                     modified |= !new_kinds.is_empty();
                     kinds.extend(new_kinds);
                 }
             }
             DeprecationRule::Silent(migrate) => modified |= migrate(doc),
-            DeprecationRule::PendingDefault { kind, migrate } => {
-                if pass == RulePass::Update(*kind) {
-                    let new_kinds = migrate(doc);
-                    modified |= !new_kinds.is_empty();
-                    kinds.extend(new_kinds);
-                }
-            }
         }
     }
     modified
@@ -1202,12 +1082,18 @@ fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
 /// rewrite could meaningfully move. Removes `[ci]` if `platform` was its only
 /// field.
 ///
-/// An existing `forge` key of any shape suppresses the migration: a `[forge]`
-/// table means the user already migrated, and overwriting a malformed scalar
-/// `forge = "x"` would silently drop their config — serde's type error points
-/// at it instead.
+/// What suppresses the migration is an occupied *destination key*, not the
+/// presence of `forge`: a `[forge]` that already carries `platform` means the
+/// user already migrated, and a `forge` that isn't a table (`forge = "x"`) has
+/// no key to insert into — overwriting it would silently drop their config,
+/// where serde's type error points at it instead. A `[forge]` table without
+/// `platform` is the common half-migrated shape (`hostname` set for a GHE or
+/// self-hosted GitLab remote, `platform` still back in `[ci]`), and its slot is
+/// free, so `platform` lands there. Suppressing on the table's mere existence
+/// left that user un-migrated *and* unwarned, so the deprecated key kept
+/// working silently — right up until `[ci]` is removed.
 ///
-/// `[forge]` takes over `[ci]`'s document position — a fresh table has no
+/// A fresh `[forge]` takes over `[ci]`'s document position — a new table has no
 /// position and would render at the end of the file instead of in the user's
 /// original spot. The `platform` entry moves wholesale (key and item), so
 /// comments attached to the line survive. When `[ci]` is fully consumed, its
@@ -1215,10 +1101,26 @@ fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
 /// when other keys keep `[ci]` alive, the decor stays there and `[forge]`
 /// renders directly after the remainder — it shares `[ci]`'s position, the
 /// position sort is stable, and `[forge]` is inserted later in visit order.
+///
+/// Inserting into an *existing* `[forge]` has no position to take over and no
+/// home for `[ci]`'s decor: `[forge]` is wherever the user wrote it, which can
+/// be far from the comment above `[ci]`. So an emptied `[ci]` is removed only
+/// when its own decor is blank — a commented one stays as an empty section,
+/// which contributes no config, raises no warning, and keeps the user's prose
+/// where they put it.
 fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
-    if doc.get("forge").is_some() {
-        return Vec::new();
-    }
+    // Read the destination before touching `[ci]`, so a suppressed migration
+    // leaves the document byte-identical.
+    let forge_slot = match doc.get("forge") {
+        None => ForgeSlot::Absent,
+        Some(forge) => match forge.as_table() {
+            Some(table) if !table.contains_key("platform") => ForgeSlot::FreeSlot,
+            // `platform` already there, or `forge` is a scalar, an array, or an
+            // inline table we can't extend without reformatting what the user
+            // wrote.
+            _ => return Vec::new(),
+        },
+    };
 
     let Some(ci_table) = doc.get_mut("ci").and_then(|ci| ci.as_table_mut()) else {
         return Vec::new();
@@ -1235,17 +1137,55 @@ fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
     let (key, item) = ci_table
         .remove_entry("platform")
         .expect("checked platform exists above");
-    let mut forge_table = toml_edit::Table::new();
-    forge_table.insert_formatted(&key, item);
-    forge_table.set_position(ci_table.position());
-    if ci_table.is_empty() {
-        *forge_table.decor_mut() = ci_table.decor().clone();
-        doc.remove("ci");
+    let ci_emptied = ci_table.is_empty();
+    let ci_position = ci_table.position();
+    let ci_decor = ci_table.decor().clone();
+
+    match forge_slot {
+        ForgeSlot::Absent => {
+            let mut forge_table = toml_edit::Table::new();
+            forge_table.insert_formatted(&key, item);
+            forge_table.set_position(ci_position);
+            if ci_emptied {
+                *forge_table.decor_mut() = ci_decor;
+                doc.remove("ci");
+            }
+            doc.insert("forge", toml_edit::Item::Table(forge_table));
+        }
+        ForgeSlot::FreeSlot => {
+            let forge_table = doc
+                .get_mut("forge")
+                .and_then(|forge| forge.as_table_mut())
+                .expect("checked forge is a table above");
+            forge_table.insert_formatted(&key, item);
+            // A `[forge]` that exists only because of a sub-table renders no
+            // header of its own until something is written directly into it.
+            forge_table.set_implicit(false);
+            if ci_emptied && decor_prefix_is_blank(&ci_decor) {
+                doc.remove("ci");
+            }
+        }
     }
 
-    doc.insert("forge", toml_edit::Item::Table(forge_table));
-
     vec![DeprecationKind::CiSection]
+}
+
+/// Where the migrated `platform` key is headed — see [`migrate_ci_doc`].
+enum ForgeSlot {
+    /// No `forge` key at all: build the table and take over `[ci]`'s position.
+    Absent,
+    /// A `[forge]` table whose `platform` slot is free: insert in place.
+    FreeSlot,
+}
+
+/// Whether a table's leading decor carries nothing worth keeping (no comment,
+/// just whitespace). Decor that was never parsed from a document reads as
+/// blank — it holds no user text either way.
+fn decor_prefix_is_blank(decor: &toml_edit::Decor) -> bool {
+    decor
+        .prefix()
+        .and_then(|prefix| prefix.as_str())
+        .is_none_or(|prefix| prefix.trim().is_empty())
 }
 
 /// Migrate a negated boolean field within a table (e.g., `no-ff = true` →
@@ -1471,50 +1411,43 @@ fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()>
 /// Converts: command = "llm", args = ["-m", "haiku"]
 /// To: command = "llm -m haiku"
 ///
-/// Only removes `args` if it can be successfully merged into `command` —
-/// `command` missing or not a string, or `args` not an array of strings,
-/// leaves it in place. `[commit.generation]` has no `args` field, so what this
-/// leaves behind is then dropped and reported by [`drop_unsupported_keys`]:
-/// `args` was only ever a way of spelling part of `command`, and one that
-/// couldn't be merged has nowhere to go.
+/// Merging needs a string `command` and an array of strings; anything else
+/// leaves both keys as the user wrote them. `[commit.generation]` has no
+/// `args` field, so an unmerged `args` is removed and reported by
+/// [`drop_unsupported_keys`]: `args` was only ever a way of spelling part of
+/// `command`, and one that can't be merged has nowhere to go.
+///
+/// Declining keeps that removal visible. Joining `args = [1, "--ok"]` would
+/// drop the `1`, rewrite `command` with a value the user never wrote, and
+/// report neither; dropping the whole key shows up in the deprecation warning
+/// and in the `wt config update` diff.
 fn merge_args_into_command(table: &mut toml_edit::Table) {
-    // Validate preconditions before removing args. Every element must be a
-    // string — a single non-string (e.g. `args = [1, "--ok"]`) would otherwise
-    // be silently filtered out while `args` was removed, dropping user data.
-    let can_merge = table
+    let Some(args) = table
         .get("args")
         .and_then(|a| a.as_array())
-        .is_some_and(|a| a.iter().all(|v| v.as_str().is_some()))
-        && table
-            .get("command")
-            .and_then(|c| c.as_value())
-            .is_some_and(|v| v.as_str().is_some());
-
-    if !can_merge {
+        .and_then(|a| a.iter().map(|v| v.as_str()).collect::<Option<Vec<_>>>())
+    else {
         return;
-    }
+    };
+    // Join before taking `command` mutably, while `args` is still borrowed.
+    // An empty `args` merges away without touching `command`.
+    let joined = (!args.is_empty()).then(|| shell_join(&args));
 
-    // Now safe to remove and merge
-    let args = table.remove("args").unwrap();
-    let args_array = args.as_array().unwrap();
-    let command = table
-        .get_mut("command")
-        .and_then(|c| c.as_value_mut())
-        .unwrap();
-    let cmd_str = command.as_str().unwrap();
-
-    // `can_merge` guarantees every element is a string; `filter_map` here just
-    // extracts them.
-    let args_str: Vec<&str> = args_array.iter().filter_map(|a| a.as_str()).collect();
-    if !args_str.is_empty() {
-        // Only add space if command is non-empty
-        let new_command = if cmd_str.is_empty() {
-            shell_join(&args_str)
+    let Some(command) = table.get_mut("command").and_then(|c| c.as_value_mut()) else {
+        return;
+    };
+    let Some(cmd) = command.as_str() else {
+        return;
+    };
+    if let Some(joined) = joined {
+        let merged = if cmd.is_empty() {
+            joined
         } else {
-            format!("{} {}", cmd_str, shell_join(&args_str))
+            format!("{cmd} {joined}")
         };
-        *command = toml_edit::Value::from(new_command);
+        *command = toml_edit::Value::from(merged);
     }
+    table.remove("args");
 }
 
 /// Join arguments with proper shell quoting using shell_escape
@@ -1537,15 +1470,14 @@ pub struct DeprecationInfo {
     pub config_path: PathBuf,
     /// All detected deprecations
     pub deprecations: Deprecations,
-    /// Which config file this is; derives the display label and scopes
-    /// [`compute_migrated_content`] to the rules that apply to it.
+    /// Which config file this is; derives the display label.
     pub kind: ConfigFileKind,
     /// Main worktree path when viewing from a linked worktree (for `-C` in hints)
     pub main_worktree_path: Option<PathBuf>,
 }
 
 impl DeprecationInfo {
-    /// Returns true if any deprecations were found
+    /// Returns true if any deprecations were found.
     pub fn has_deprecations(&self) -> bool {
         !self.deprecations.is_empty()
     }
@@ -1553,14 +1485,6 @@ impl DeprecationInfo {
     /// Display label for this config file (e.g., "User config").
     pub fn label(&self) -> &'static str {
         self.kind.label()
-    }
-
-    /// True when the file contains deprecated patterns, as opposed to only
-    /// pending-default writes, which deprecate nothing in the file. `wt config
-    /// show` dumps the config only when this is false: a deprecation diff
-    /// supersedes the dump, while a pending-default write is additive.
-    pub fn has_deprecated_patterns(&self) -> bool {
-        self.deprecations.iter().any(|k| !k.is_pending_default())
     }
 }
 
@@ -1592,8 +1516,7 @@ pub struct CheckAndMigrateResult {
 /// linked worktree cannot update the file, but read-only output remains
 /// actionable and passes true.
 ///
-/// `kind` names the config file being checked; it derives the warning label
-/// and scopes kind-specific rules (`DeprecationRule::PendingDefault`).
+/// `kind` names the config file being checked and derives the warning label.
 ///
 /// `repo` is used to resolve the primary worktree path for the "run this from
 /// the main worktree" hint when viewing project config from a linked worktree.
@@ -1620,7 +1543,7 @@ pub fn check_and_migrate(
     // `info` is `Some`) can assume the content parses.
     let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
         Ok(doc) => {
-            let deprecations = detect_deprecations_from_doc(&doc, kind);
+            let deprecations = detect_deprecations_from_doc(&doc);
             let migrated_content = migrate_content_from_doc(content, doc);
             (deprecations, migrated_content)
         }
@@ -1654,18 +1577,6 @@ pub fn check_and_migrate(
         });
     }
 
-    // Pending-default kinds warn at their own usage surface instead of at
-    // load, so an info carrying only those (most user configs until the
-    // json-schema default flips) skips the dedup registry and emission
-    // entirely — no canonicalize + lock on every load for a config with
-    // nothing to say here.
-    if !info.has_deprecated_patterns() {
-        return Ok(CheckAndMigrateResult {
-            info: Some(info),
-            migrated_content,
-        });
-    }
-
     // Deduplicate warnings per path per process
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     {
@@ -1683,13 +1594,9 @@ pub fn check_and_migrate(
 
     // For non-config-show commands, emit per-kind warnings but skip the diff.
     // The diff is reserved for `wt config show`, where the user has opted into
-    // details. Pending-default kinds still ride along in a mixed info, so
-    // they are filtered out of the emitted lines here.
+    // details.
     if emit_inline_warnings && !warnings_suppressed() {
-        let warnings = format_warning_lines(
-            info.deprecations.iter().filter(|k| !k.is_pending_default()),
-            info.label(),
-        );
+        let warnings = format_warning_lines(info.deprecations.iter(), info.label());
         eprint!("{warnings}");
         if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
             eprintln!(
@@ -1718,14 +1625,14 @@ pub fn check_and_migrate(
 /// Pure function — no filesystem access. Idempotent: feeding its own output
 /// back in is a no-op. Callers materialize the result via `wt config update`
 /// or display it via `wt config show`.
-pub fn compute_migrated_content(content: &str, kind: ConfigFileKind) -> String {
+pub fn compute_migrated_content(content: &str) -> String {
     // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
     // all run content through `check_and_migrate` first, so it is known to parse.
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
 
-    if apply_rules(&mut doc, RulePass::Update(kind), &mut Vec::new()) {
+    if apply_rules(&mut doc, RulePass::Update, &mut Vec::new()) {
         doc.to_string()
     } else {
         content.to_string()
@@ -1888,15 +1795,6 @@ fn format_warning_lines<'a>(
                     ))
                 );
             }
-            DeprecationKind::JsonSchemaUnset => {
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    warning_message(cformat!(
-                        "{label}: <bold>[list] json-schema</> is unset; a future release switches the JSON default to schema 2"
-                    ))
-                );
-            }
         }
     }
 
@@ -1934,7 +1832,7 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
         hint_message(cformat!("To apply: <underline>wt config update</>"))
     );
 
-    let migrated = compute_migrated_content(original_content, info.kind);
+    let migrated = compute_migrated_content(original_content);
     let label = info
         .config_path
         .file_name()
@@ -2213,7 +2111,7 @@ mod tests {
     }
 
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
-        detect_deprecations(content, ConfigFileKind::User)
+        detect_deprecations(content)
             .into_iter()
             .filter_map(|k| match k {
                 DeprecationKind::TemplateVar { old, new } => Some((old, new)),
@@ -2230,7 +2128,7 @@ mod tests {
     }
 
     fn find_commit_generation_deprecations(content: &str) -> ScopedSections {
-        detect_deprecations(content, ConfigFileKind::User)
+        detect_deprecations(content)
             .into_iter()
             .find_map(|k| match k {
                 DeprecationKind::CommitGeneration(found) => Some(found),
@@ -2240,13 +2138,13 @@ mod tests {
     }
 
     fn find_approved_commands_deprecation(content: &str) -> bool {
-        has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
+        has_kind(&detect_deprecations(content), |k| {
             matches!(k, DeprecationKind::ApprovedCommands)
         })
     }
 
     fn find_select_deprecation(content: &str) -> bool {
-        has_kind(&detect_deprecations(content, ConfigFileKind::User), |k| {
+        has_kind(&detect_deprecations(content), |k| {
             matches!(k, DeprecationKind::Select(_))
         })
     }
@@ -2392,7 +2290,7 @@ post-start = "cd {{ worktree_path }} && npm install"
     #[test]
     fn test_compute_migrated_content_escaped_quotes() {
         let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert!(
             !migrated.contains("repo_root"),
             "compute_migrated_content must migrate vars inside escaped strings; got: {migrated}"
@@ -2489,25 +2387,20 @@ timeout = 30
 
     /// Canonical config with no deprecations must round-trip through
     /// `compute_migrated_content` byte-for-byte (the unmodified branch).
-    /// Canonical includes an explicit json-schema value — without one the
-    /// pending-default row writes it.
     #[test]
     fn test_compute_migrated_content_noop_returns_input_unchanged() {
-        let content = "pre-start = \"echo {{ repo_path }}\"\n\n[list]\njson-schema = 1\n";
-        assert_eq!(
-            compute_migrated_content(content, ConfigFileKind::User),
-            content
-        );
+        let content = "pre-start = \"echo {{ repo_path }}\"\n";
+        assert_eq!(compute_migrated_content(content), content);
     }
 
     #[test]
     fn test_compute_migrated_content_does_not_rewrite_literal_text_when_other_template_uses_deprecated_var()
      {
-        let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\nlist = { json-schema = 1 }\n";
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\n";
+        let migrated = compute_migrated_content(content);
         assert_eq!(
             migrated,
-            "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\nlist = { json-schema = 1 }\n"
+            "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\n"
         );
     }
 
@@ -3106,7 +2999,7 @@ template = "some template"
         template = "some template"
         "#);
         assert!(has_kind(
-            &detect_deprecations(content, ConfigFileKind::User),
+            &detect_deprecations(content),
             |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
                 if section == "[commit-generation]" && key == "args")
         ));
@@ -3142,6 +3035,32 @@ args = ["-m", "haiku"]
         [commit.generation]
         command = "-m haiku"
         "#);
+    }
+
+    /// An empty `args` contributes nothing to join, so `command` is left as
+    /// written and the key merges away without a separate drop report.
+    #[test]
+    fn test_migrate_empty_args_leaves_command_unchanged() {
+        let content = r#"
+[commit-generation]
+command = "llm"
+args = []
+"#;
+        let result = migrate_content(content);
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        command = "llm"
+        "#);
+        // `command` is the section's only other key and it is supported, so
+        // any unsupported-key report from this input would name `args`.
+        assert!(
+            !has_kind(&detect_deprecations(content), |k| matches!(
+                k,
+                DeprecationKind::UnsupportedKey { .. }
+            )),
+            "empty args merges away rather than being reported as unsupported"
+        );
     }
 
     #[test]
@@ -3355,7 +3274,7 @@ args = [1, "--ok"]
         command = "echo"
         "#);
         assert!(has_kind(
-            &detect_deprecations(content, ConfigFileKind::User),
+            &detect_deprecations(content),
             |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
                 if section == "[commit-generation]" && key == "args")
         ));
@@ -3411,7 +3330,7 @@ ff = false
         "#);
     }
 
-    /// A `forge` key of any shape suppresses the `[ci]` migration — a scalar
+    /// A `forge` that isn't a table suppresses the `[ci]` migration — a scalar
     /// `forge = "x"` must not be overwritten by the migrated table (serde's
     /// type error points at it instead).
     #[test]
@@ -3425,19 +3344,85 @@ platform = "github"
 json-schema = 1
 "#;
         assert_eq!(migrate_content(content), content);
-        assert!(detect_deprecations(content, ConfigFileKind::User).is_empty());
+        assert!(detect_deprecations(content).is_empty());
+    }
+
+    /// A `[forge]` table that only sets `hostname` has the `platform` slot
+    /// free, so the deprecated key moves into it rather than being left behind.
+    /// This is the shape a self-hosted GitLab or GHE user lands in by adding
+    /// `[forge] hostname` to a config that already carried `[ci] platform`;
+    /// suppressing on the table's mere existence left them un-migrated and
+    /// unwarned. `[ci]` was consumed entirely, so it goes.
+    #[test]
+    fn test_ci_migration_fills_free_slot_in_existing_forge() {
+        let content = r#"[ci]
+platform = "gitlab"
+
+[forge]
+hostname = "gitlab.example.com"
+"#;
+        assert!(matches!(
+            detect_deprecations(content).as_slice(),
+            [DeprecationKind::CiSection]
+        ));
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [forge]
+        hostname = "gitlab.example.com"
+        platform = "gitlab"
+        "#);
+    }
+
+    /// An existing `[forge]` is wherever the user wrote it, so there is nowhere
+    /// to carry a comment sitting above `[ci]`. An emptied but commented `[ci]`
+    /// stays as an empty section — it contributes no config and raises no
+    /// warning, and dropping it would drop the user's prose with it.
+    #[test]
+    fn test_ci_migration_keeps_commented_ci_when_forge_exists() {
+        let content = r#"# talk to the internal instance
+[ci]
+platform = "gitlab"
+
+[forge]
+hostname = "gitlab.example.com"
+"#;
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        # talk to the internal instance
+        [ci]
+
+        [forge]
+        hostname = "gitlab.example.com"
+        platform = "gitlab"
+        "#);
+    }
+
+    /// A surviving `[ci]` key keeps the section either way; only `platform`
+    /// moves, and it lands in the existing `[forge]` rather than a new one.
+    #[test]
+    fn test_ci_migration_into_existing_forge_preserves_other_keys() {
+        let content = r#"[ci]
+platform = "gitea"
+hostname = "ci.example"
+
+[forge]
+hostname = "forge.example"
+"#;
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [ci]
+        hostname = "ci.example"
+
+        [forge]
+        hostname = "forge.example"
+        platform = "gitea"
+        "#);
     }
 
     /// The framework invariant: a warning fires exactly when `wt config
     /// update` would change the file. Degenerate configs that can't be safely
     /// rewritten produce no warning and no rewrite; deprecated configs
     /// produce both, and what the update writes is schema-clean — a rewritten
-    /// file must not warn about a key the user never typed. (Silent renames
+    /// file must not warn about a key the user never typed. Silent renames
     /// change the file without warning by design and aren't part of this
-    /// battery. Every case gets an explicit json-schema value appended so only
-    /// the rule under test drives the diff; the pending-default row satisfies
-    /// the same invariant with its warning at the JSON-emitting surface — see
-    /// `test_json_schema_adopt_iff`.)
+    /// battery.
     #[test]
     fn test_warning_fires_iff_update_changes() {
         let untouched = [
@@ -3445,9 +3430,10 @@ json-schema = 1
             "[ci]\nplatform = \"\"\n",
             "[ci]\nplatform = 42\n",
             "[ci]\nhostname = \"ghe.example\"\n",
-            // forge already exists — table or malformed scalar
+            // the destination key is occupied, or `forge` is not a table
             "[forge]\nplatform = \"gitlab\"\n\n[ci]\nplatform = \"github\"\n",
             "forge = \"x\"\n\n[ci]\nplatform = \"github\"\n",
+            "forge = { hostname = \"ghe.example\" }\n\n[ci]\nplatform = \"github\"\n",
             // empty deprecated sections contribute no config
             "[commit-generation]\n",
             "[select]\n",
@@ -3468,13 +3454,12 @@ json-schema = 1
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
         ];
         for content in untouched {
-            let content = &format!("{content}\n[list]\njson-schema = 1\n");
             assert!(
-                detect_deprecations(content, ConfigFileKind::User).is_empty(),
+                detect_deprecations(content).is_empty(),
                 "no warning expected for:\n{content}"
             );
             assert_eq!(
-                &compute_migrated_content(content, ConfigFileKind::User),
+                compute_migrated_content(content),
                 content,
                 "no rewrite expected for:\n{content}"
             );
@@ -3482,6 +3467,10 @@ json-schema = 1
 
         let rewritten = [
             "[ci]\nplatform = \"github\"\n",
+            // a `[forge]` table whose `platform` slot is free is a destination,
+            // not a blocker — with and without a comment holding `[ci]` open
+            "[ci]\nplatform = \"github\"\n\n[forge]\nhostname = \"ghe.example\"\n",
+            "# internal\n[ci]\nplatform = \"github\"\n\n[forge]\nhostname = \"ghe.example\"\n",
             "[merge]\nff = true\nno-ff = true\n",
             // negated bool written inline (`merge = { no-ff = true }`) migrates
             // like the section form
@@ -3497,25 +3486,23 @@ json-schema = 1
             "[projects.\"github.com/u/r\".select]\nheight = \"50%\"\n",
             // an `args` that can't be merged into `command` has nowhere to go
             "[commit-generation]\nargs = [\"-m\", \"haiku\"]\n",
-            // list.task-timeout-ms, section and inline forms (project-scoped so
-            // the appended `[list]` below isn't a duplicate table)
+            // list.task-timeout-ms, section and inline forms
             "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
             "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
-            let content = &format!("{content}\n[list]\njson-schema = 1\n");
             assert!(
-                !detect_deprecations(content, ConfigFileKind::User).is_empty(),
+                !detect_deprecations(content).is_empty(),
                 "warning expected for:\n{content}"
             );
-            let migrated = compute_migrated_content(content, ConfigFileKind::User);
+            let migrated = compute_migrated_content(content);
             assert_ne!(&migrated, content, "rewrite expected for:\n{content}");
             // The user-visible loop closes: applying the update silences the
             // warning.
             assert!(
-                detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
+                detect_deprecations(&migrated).is_empty(),
                 "no warning expected after update for:\n{migrated}"
             );
             // …and closes it for the *other* warning channel too: the update
@@ -3541,120 +3528,13 @@ json-schema = 1
         }
     }
 
-    /// The pending-default row's own iff: the unset nag (fired by
-    /// `resolve_json_schema`, not at config load) corresponds exactly to
-    /// `wt config update` writing the key.
-    #[test]
-    fn test_json_schema_adopt_iff() {
-        // Unset → detected and adopted, and applying the update closes the loop.
-        let migrated = compute_migrated_content("", ConfigFileKind::User);
-        insta::assert_snapshot!(migrated, @r#"
-        [list]
-        json-schema = 2
-        "#);
-        assert!(matches!(
-            detect_deprecations("", ConfigFileKind::User).as_slice(),
-            [DeprecationKind::JsonSchemaUnset]
-        ));
-        assert!(detect_deprecations(&migrated, ConfigFileKind::User).is_empty());
-
-        // Any present value is the user's explicit choice — including
-        // out-of-range ones, which warn at resolve time instead.
-        let untouched = [
-            "[list]\njson-schema = 1\n",
-            "[list]\njson-schema = 2\n",
-            "[list]\njson-schema = 42\n",
-            "list = { json-schema = 2 }\n",
-            // a non-table `list` is left for serde's type error
-            "list = 5\n",
-        ];
-        for content in untouched {
-            assert!(
-                detect_deprecations(content, ConfigFileKind::User).is_empty(),
-                "no detection expected for:\n{content}"
-            );
-            assert_eq!(
-                compute_migrated_content(content, ConfigFileKind::User),
-                content,
-                "no rewrite expected for:\n{content}"
-            );
-        }
-    }
-
-    /// The adopted key lands inside an existing `[list]` section (either
-    /// shape) rather than duplicating it.
-    #[test]
-    fn test_json_schema_adopt_joins_existing_list_section() {
-        let migrated =
-            compute_migrated_content("[list]\ncolumns = [\"ci\"]\n", ConfigFileKind::User);
-        insta::assert_snapshot!(migrated, @r#"
-        [list]
-        columns = ["ci"]
-        json-schema = 2
-        "#);
-
-        let migrated =
-            compute_migrated_content("list = { columns = [\"ci\"] }\n", ConfigFileKind::User);
-        insta::assert_snapshot!(migrated, @r#"list = { columns = ["ci"] , json-schema = 2 }"#);
-
-        // A `list` that exists only implicitly (via a subtable) hosts the key
-        // too; toml_edit renders the now-explicit [list] header ahead of the
-        // subtable.
-        let migrated = compute_migrated_content(
-            "[list.custom-columns]\nflag = \"echo hi\"\n",
-            ConfigFileKind::User,
-        );
-        insta::assert_snapshot!(migrated, @r#"
-        [list]
-        json-schema = 2
-        [list.custom-columns]
-        flag = "echo hi"
-        "#);
-    }
-
-    /// Every `PendingDefault` row's kinds must return true from
-    /// `is_pending_default` — that flag is what keeps their warning off the
-    /// load surface and out of `has_deprecated_patterns`. A row emitting a
-    /// non-pending kind would leak a load warning and suppress the
-    /// `wt config show` dump.
-    #[test]
-    fn test_pending_default_rules_emit_pending_kinds() {
-        for rule in DEPRECATION_RULES {
-            if let DeprecationRule::PendingDefault { migrate, .. } = rule {
-                let mut doc = toml_edit::DocumentMut::new();
-                let kinds = migrate(&mut doc);
-                assert!(!kinds.is_empty(), "pending rule inert on an empty doc");
-                for kind in kinds {
-                    assert!(kind.is_pending_default(), "{kind:?}");
-                }
-            }
-        }
-    }
-
-    /// The write is scoped to user config — project config doesn't own the
-    /// key, and the system layer isn't rewritten by `wt config update` — and
-    /// to the update pass: an in-memory value at load would read as an
-    /// explicit setting, switching behavior without a config edit and
-    /// silencing the usage-site nag.
-    #[test]
-    fn test_json_schema_adopt_scope() {
-        for kind in [ConfigFileKind::System, ConfigFileKind::Project] {
-            assert!(detect_deprecations("", kind).is_empty());
-            assert_eq!(compute_migrated_content("", kind), "");
-        }
-        assert_eq!(migrate_content(""), "");
-    }
-
     /// A retired `timeout-ms` key under `[select]` is removed instead of
     /// being carried into `[switch.picker]`, and reported after the section
     /// rename: the rename lines first, then one line per unsupported key.
     #[test]
     fn test_select_timeout_ms_removed_alongside_rename() {
         let content = "[select]\npager = \"delta\"\ntimeout-ms = 500\n";
-        let deprecations: Vec<_> = detect_deprecations(content, ConfigFileKind::User)
-            .into_iter()
-            .filter(|kind| !kind.is_pending_default())
-            .collect();
+        let deprecations = detect_deprecations(content);
         assert!(matches!(
             deprecations.as_slice(),
             [
@@ -3677,10 +3557,7 @@ json-schema = 1
     #[test]
     fn test_select_with_only_unsupported_keys_leaves_no_section() {
         let content = "[select]\nheight = \"50%\"\n";
-        let deprecations: Vec<_> = detect_deprecations(content, ConfigFileKind::User)
-            .into_iter()
-            .filter(|kind| !kind.is_pending_default())
-            .collect();
+        let deprecations = detect_deprecations(content);
         assert!(matches!(
             deprecations.as_slice(),
             [DeprecationKind::UnsupportedKey { section, key }]
@@ -3697,11 +3574,7 @@ json-schema = 1
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
             deprecations: detect_deprecations(
                 "[projects.\"github.com/u/r\".select]\npager = \"delta\"\nheight = \"50%\"\n",
-                ConfigFileKind::User,
-            )
-            .into_iter()
-            .filter(|kind| !kind.is_pending_default())
-            .collect(),
+            ),
             kind: ConfigFileKind::User,
             main_worktree_path: None,
         };
@@ -3720,11 +3593,11 @@ json-schema = 1
     fn test_project_config_keeps_misplaced_user_only_keys() {
         let content = "[commit-generation]\ncommand = \"llm\"\nbogus = 1\n";
         assert!(has_kind(
-            &detect_deprecations(content, ConfigFileKind::Project),
+            &detect_deprecations(content),
             |k| matches!(k, DeprecationKind::UnsupportedKey { section, key }
                 if section == "[commit-generation]" && key == "bogus")
         ));
-        let migrated = compute_migrated_content(content, ConfigFileKind::Project);
+        let migrated = compute_migrated_content(content);
         insta::assert_snapshot!(migrated, @r#"
         [commit.generation]
         command = "llm"
@@ -3974,7 +3847,7 @@ approved-commands = ["npm install"]
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ApprovedCommands
@@ -4021,7 +3894,7 @@ approved-commands = ["npm install"]
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert!(!migrated.contains("approved-commands"));
     }
 
@@ -4361,7 +4234,7 @@ full = true
 [select]
 pager = "delta"
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select(_)
@@ -4415,7 +4288,7 @@ pager = "delta --paging=never"
 [select]
 pager = "delta --paging=never"
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert!(
             migrated.contains("[switch.picker]"),
             "Migrated content should have [switch.picker]: {migrated}"
@@ -4500,7 +4373,7 @@ server = "npm run dev"
 [list]
 json-schema = 1
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }
 
@@ -4514,11 +4387,8 @@ timeout-ms = 500
 [list]
 json-schema = 1
 "#;
-        assert!(detect_deprecations(content, ConfigFileKind::User).is_empty());
-        assert_eq!(
-            compute_migrated_content(content, ConfigFileKind::User),
-            content
-        );
+        assert!(detect_deprecations(content).is_empty());
+        assert_eq!(compute_migrated_content(content), content);
     }
 
     #[test]
@@ -4528,7 +4398,7 @@ json-schema = 1
 branches = true
 task-timeout-ms = 500
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ListTaskTimeout
@@ -4541,7 +4411,7 @@ task-timeout-ms = 500
 [projects."github.com/user/repo".list]
 task-timeout-ms = 300
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ListTaskTimeout
@@ -4554,7 +4424,7 @@ task-timeout-ms = 300
 [list]
 timeout-ms = 500
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(!has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::ListTaskTimeout
@@ -4632,7 +4502,6 @@ timeout-ms = 500
                 DeprecationKind::NoFf,
                 DeprecationKind::NoCd,
                 DeprecationKind::ListTaskTimeout,
-                DeprecationKind::JsonSchemaUnset,
             ],
             kind: ConfigFileKind::User,
             main_worktree_path: None,
@@ -4649,13 +4518,12 @@ timeout-ms = 500
         ▲ User config: merge.no-ff is deprecated in favor of merge.ff (inverted)
         ▲ User config: switch.no-cd is deprecated in favor of switch.cd (inverted)
         ▲ User config: list.task-timeout-ms is no longer used — list.timeout-ms bounds the collect phase
-        ▲ User config: [list] json-schema is unset; a future release switches the JSON default to schema 2
         "#);
     }
 
     #[test]
     fn test_detect_no_ff_deprecation() {
-        let deprecations = detect_deprecations("[merge]\nno-ff = true\n", ConfigFileKind::User);
+        let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4669,7 +4537,7 @@ timeout-ms = 500
     #[test]
     fn test_no_ff_warned_and_removed_when_ff_exists() {
         let content = "[merge]\nff = true\nno-ff = true\n";
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4682,7 +4550,7 @@ timeout-ms = 500
 
     #[test]
     fn test_detect_no_cd_deprecation() {
-        let deprecations = detect_deprecations("[switch]\nno-cd = true\n", ConfigFileKind::User);
+        let deprecations = detect_deprecations("[switch]\nno-cd = true\n");
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoCd
@@ -4695,7 +4563,7 @@ timeout-ms = 500
 [projects."github.com/user/repo".merge]
 no-ff = true
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::NoFf
@@ -4767,7 +4635,7 @@ no-ff = true
 [projects."github.com/user/repo".select]
 pager = "bat"
 "#;
-        let deprecations = detect_deprecations(content, ConfigFileKind::User);
+        let deprecations = detect_deprecations(content);
         assert!(has_kind(&deprecations, |k| matches!(
             k,
             DeprecationKind::Select(_)
@@ -5012,16 +4880,16 @@ server = "npm run dev"
 [projects."github.com/user/repo"]
 approved-commands = ["npm test"]
 "#;
-        let migrated = compute_migrated_content(content, ConfigFileKind::User);
+        let migrated = compute_migrated_content(content);
         assert_eq!(
-            compute_migrated_content(&migrated, ConfigFileKind::User),
+            compute_migrated_content(&migrated),
             migrated,
             "migration must be idempotent"
         );
+        let remaining = detect_deprecations(&migrated);
         assert!(
-            detect_deprecations(&migrated, ConfigFileKind::User).is_empty(),
-            "applying the update must silence every warning; got {:?}",
-            detect_deprecations(&migrated, ConfigFileKind::User)
+            remaining.is_empty(),
+            "applying the update must silence every warning; got {remaining:?}"
         );
         insta::assert_snapshot!(migration_diff(content, &migrated));
     }

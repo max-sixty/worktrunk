@@ -15,10 +15,10 @@ use worktrunk::config::{
     copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
 };
 use worktrunk::git::{Repository, resolve_input_path};
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprint, eprintln, format_bash_with_gutter, hint_message, info_message, print, success_message,
-    suggest_command_in_dir,
+    suggest_command_in_dir, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -62,6 +62,9 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
     }
 
     if !yes {
+        // Separate the prompt from the previews above; prompt_yes_no_preview
+        // emits no leading blank of its own.
+        eprintln!();
         match prompt_yes_no_preview("Apply updates?", || {})? {
             PromptResponse::Accepted => {}
             PromptResponse::Declined => {
@@ -106,35 +109,57 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
 }
 
 /// Write the migration artifact to a path, or to stdout when the path is `-`.
+///
+/// The two destinations differ in what they can carry, so they run as separate
+/// paths rather than one path testing `-` at each step. Stdout labels and
+/// concatenates every candidate and needs no confirmation — the artifact is
+/// right there. A file takes exactly one migration, so the checks below and
+/// the confirmation can name the config it came from.
 fn write_migrated_output(output: &Path, candidates: &[UpdateCandidate]) -> anyhow::Result<()> {
-    let stdout = output == Path::new("-");
-
-    if candidates.is_empty() {
-        if !stdout {
-            eprintln!("{}", info_message("No deprecated settings found"));
+    if output == Path::new("-") {
+        for candidate in candidates {
+            eprint!("{}", format_dropped_approvals_warning(candidate));
         }
+        print!("{}", format_migrated_output(candidates));
         return Ok(());
     }
 
-    if !stdout && candidates.len() > 1 {
+    if candidates.is_empty() {
+        eprintln!("{}", info_message("No deprecated settings found"));
+        return Ok(());
+    }
+
+    let [candidate] = candidates else {
         bail!(cformat!(
             "Cannot write <bold>user config</> and <bold>project config</> migrations to one file; use <bold>--output=-</> to inspect both or run <bold>wt config update</> to apply them in place"
         ));
-    }
-
-    let artifact = format_migrated_output(candidates);
-    if stdout {
-        print!("{artifact}");
-        return Ok(());
-    }
+    };
 
     let output = resolve_input_path(output);
+    if drops_approved_commands(candidate) && paths_match(&output, &candidate.config_path) {
+        bail!(cformat!(
+            "Cannot overwrite <bold>{}</> with <bold>--output</>; run <bold>wt config update</> to apply the migration in place",
+            candidate.info.label().to_lowercase()
+        ));
+    }
+
+    eprint!("{}", format_dropped_approvals_warning(candidate));
+
+    let artifact = format_migrated_output(candidates);
     worktrunk::utils::write_atomically(&output, &artifact).with_context(|| {
         format!(
             "Failed to write output @ {}",
             format_path_for_display(&output)
         )
     })?;
+    eprintln!(
+        "{}",
+        success_message(format!(
+            "Wrote {} migration @ {}",
+            candidate.info.label().to_lowercase(),
+            format_path_for_display(&output)
+        ))
+    );
     Ok(())
 }
 
@@ -159,6 +184,26 @@ fn format_migrated_output(candidates: &[UpdateCandidate]) -> String {
     }
 
     artifact
+}
+
+fn format_dropped_approvals_warning(candidate: &UpdateCandidate) -> String {
+    if !drops_approved_commands(candidate) {
+        return String::new();
+    }
+    format!(
+        "{}\n",
+        warning_message(cformat!(
+            "Output omits deprecated <bold>approved-commands</>; run <underline>wt config update</> to migrate them to approvals.toml"
+        ))
+    )
+}
+
+fn drops_approved_commands(candidate: &UpdateCandidate) -> bool {
+    candidate
+        .info
+        .deprecations
+        .iter()
+        .any(|kind| matches!(kind, DeprecationKind::ApprovedCommands))
 }
 
 /// Format update preview for display.
@@ -207,7 +252,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    let migrated = compute_migrated_content(&original, ConfigFileKind::User);
+    let migrated = compute_migrated_content(&original);
     Ok(Some(UpdateCandidate {
         config_path,
         original,
@@ -256,7 +301,7 @@ fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidat
         return Ok(None);
     }
 
-    let migrated = compute_migrated_content(&original, ConfigFileKind::Project);
+    let migrated = compute_migrated_content(&original);
     Ok(Some(UpdateCandidate {
         config_path,
         original,

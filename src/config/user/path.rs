@@ -143,9 +143,7 @@ pub fn system_config_path() -> Option<PathBuf> {
     //
     // Deliberately unguarded, unlike `config_path()`: this resolves a
     // machine-wide file (`/etc/xdg`, `/Library/Application Support`) rather than
-    // the developer's own config, and `config::deprecation`'s `PendingDefault`
-    // rules genuinely need the lookup to decide whether the system layer already
-    // defines a key.
+    // the developer's own config.
     for dir in &system_config_dirs() {
         let path = dir.join("worktrunk").join("config.toml");
         if path.exists() {

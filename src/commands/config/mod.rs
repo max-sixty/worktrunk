@@ -143,6 +143,73 @@ fn run_plugin_cli(program: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The JSON a harness prints for a `--json` listing of its own state, or
+/// `None` where it did not answer.
+///
+/// Every question wt asks about what another harness holds goes through here.
+/// The alternative — reading the file the harness keeps them in — is a guess
+/// at private layout, and a guess that cannot fail loudly: a record that moved
+/// looks exactly like a record that was never written, so an installed plugin
+/// reads as absent and a failed removal reads as one already finished. Asking
+/// has no such gap, and a harness that will not answer at all leaves the
+/// question open rather than answering it wrong.
+fn harness_listing(program: &str, args: &[&str]) -> Option<serde_json::Value> {
+    let output = worktrunk::shell_exec::Cmd::new(program)
+        .args(args.iter().copied())
+        .run()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Whether any of `entries` carries `field` equal to `value`, or `None` where
+/// they are not objects carrying that field as a string.
+///
+/// An empty list is a confident `Some(false)`: the harness has said it holds
+/// nothing. An entry of a shape this does not understand answers nothing
+/// rather than reporting an absence it inferred from a field that moved.
+fn listing_names(entries: &[serde_json::Value], field: &str, value: &str) -> Option<bool> {
+    let mut listed = false;
+    for entry in entries {
+        listed |= entry.get(field)?.as_str()? == value;
+    }
+    Some(listed)
+}
+
+/// Run a removal whose goal is that the target is gone.
+///
+/// `claude plugin uninstall`, and both harnesses' `plugin marketplace remove`,
+/// exit non-zero when the target is not there — the state the removal is
+/// trying to reach — so running `uninstall` twice would otherwise fail with
+/// nothing left to do. Asking `still_present` after the attempt tells that
+/// apart from a removal that genuinely failed, which still surfaces the
+/// harness's own stderr in the gutter.
+///
+/// Only a confident `Some(false)` drops the error. `None` — the harness would
+/// not list what it holds, or listed it in a shape this does not recognize —
+/// keeps it, because an answer that could not be read has not established that
+/// the removal worked. Reporting success there would fail open on exactly the
+/// silent case, printing `Plugin & marketplace removed` over a plugin or
+/// marketplace that is still there.
+///
+/// The command runs either way, so the `?` preview lists what the uninstall
+/// actually invokes.
+fn run_plugin_removal(
+    program: &str,
+    args: &[&str],
+    still_present: impl Fn() -> Option<bool>,
+) -> anyhow::Result<()> {
+    match run_plugin_cli(program, args) {
+        Ok(()) => Ok(()),
+        Err(err) => match still_present() {
+            Some(false) => Ok(()),
+            _ => Err(err),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;

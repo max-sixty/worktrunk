@@ -5,7 +5,7 @@
   "scripts": {
     "build": "astro build --force",
     "check": "astro check",
-    "dev": "astro dev",
+    "dev": "astro dev --force",
     "parity": "node scripts/parity.mjs",
     "preview": "astro preview",
     "test": "node --test tests/plugins.test.mjs",

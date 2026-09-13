@@ -61,6 +61,26 @@ function setCopyText(blockAst, copyText) {
   button.properties['data-code'] = copyText;
 }
 
+/// Expressive Code's copy script binds every `.expressive-code .copy button`
+/// and reads `data-code` (newlines encoded as U+007F), so a control built to
+/// the same shape works wherever it is placed inside the frame.
+function copyControl(text, className) {
+  return {
+    type: 'element',
+    tagName: 'div',
+    properties: { className: ['copy', className] },
+    children: [
+      { type: 'element', tagName: 'div', properties: { 'aria-live': 'polite' }, children: [] },
+      {
+        type: 'element',
+        tagName: 'button',
+        properties: { title: 'Copy this line', 'data-copied': 'Copied!', 'data-code': text },
+        children: [{ type: 'element', tagName: 'div', properties: {}, children: [] }],
+      },
+    ],
+  };
+}
+
 function removeTitlelessHeader(blockAst) {
   blockAst.children = blockAst.children.filter((child) => {
     if (
@@ -420,6 +440,28 @@ export function pluginWorktrunkTerminal() {
         text-decoration: underline;
         text-underline-offset: 0.14em;
       }
+      .expressive-code .frame.wt-line-copies .ec-line.wt-command {
+        position: relative;
+      }
+      .expressive-code .frame.wt-line-copies .ec-line.wt-command .code {
+        padding-inline-end: calc(2rem + var(--ec-codePadInl));
+      }
+      .expressive-code .frame .wt-line-copy {
+        inset-block-start: 0;
+      }
+      @media (hover: hover) {
+        .expressive-code .frame:hover .wt-line-copy button:not(:hover) {
+          opacity: 0;
+        }
+        .expressive-code .frame .ec-line:hover .wt-line-copy button:not(:hover) {
+          opacity: 0.75;
+        }
+        /* The block control and the first line's sit in the same corner, so
+           hand the corner to whichever line the pointer is on. */
+        .expressive-code .frame.wt-line-copies:has(.ec-line:hover) > .copy button:not(:hover) {
+          opacity: 0;
+        }
+      }
       .expressive-code .frame.wt-command-reference .wt-help-heading {
         color: var(--wt-copper);
         font-weight: 650;
@@ -520,6 +562,13 @@ export function pluginWorktrunkTerminal() {
             : 'wt-output';
         addClass(renderData.lineAst, className);
         const text = line?.text ?? codeBlock.getLines()[lineIndex].text;
+        // A block listing several commands is as often a menu of alternatives
+        // as a recipe, and nothing in the markup tells them apart — so each
+        // command line gets its own control alongside the block's.
+        if (className === 'wt-command' && terminal.commandLines.size > 1) {
+          renderData.lineAst.children ??= [];
+          renderData.lineAst.children.push(copyControl(text, 'wt-line-copy'));
+        }
         if (className === 'wt-output') {
           const rendered = terminal.recordedByLine.has(lineIndex)
             && renderRecordedOutput(renderData.lineAst, terminal.recordedByLine.get(lineIndex));
@@ -530,6 +579,10 @@ export function pluginWorktrunkTerminal() {
         removeTitlelessHeader(renderData.blockAst);
         if (commandReferenceBlocks.has(codeBlock)) {
           addClass(renderData.blockAst, 'wt-command-reference');
+          // Generated `--help` output is reference material — its copy button
+          // offered thousands of characters nobody pastes anywhere.
+          removeCopyControl(renderData.blockAst);
+          return;
         }
         const terminal = terminalBlocks.get(codeBlock);
         if (!terminal) {
@@ -539,6 +592,7 @@ export function pluginWorktrunkTerminal() {
           return;
         }
         if (!terminal.hasOutput) addClass(renderData.blockAst, 'wt-commands-only');
+        if (terminal.commandLines.size > 1) addClass(renderData.blockAst, 'wt-line-copies');
         if (terminal.commandLines.size === 0 && terminal.copyableLines.size === 0) {
           removeCopyControl(renderData.blockAst);
           return;

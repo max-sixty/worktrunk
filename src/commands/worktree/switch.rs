@@ -1849,7 +1849,7 @@ impl SwitchPipeline<'_> {
         let fallback_path = repo.repo_path()?.to_path_buf();
         let cwd = shell_cwd().unwrap_or(fallback_path.clone());
         let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
-        let hooks_display_path =
+        let display_paths =
             handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
 
         // Offer shell integration if not already installed/active (only shows
@@ -1892,7 +1892,7 @@ impl SwitchPipeline<'_> {
                 branch_info.branch.as_deref(),
                 yes,
                 &extra_vars,
-                hooks_display_path.as_deref(),
+                display_paths.hooks.as_deref(),
                 &hook_plan,
             )?;
         }
@@ -1939,7 +1939,10 @@ impl SwitchPipeline<'_> {
                 })
                 .collect();
             let argv: Vec<String> = std::iter::once(program).chain(args?).collect();
-            execute_user_command(&argv, hooks_display_path.as_deref())?;
+            // The header names where the program starts, which is the
+            // directory the switch cd'd to and not the worktree the hooks
+            // announce (#4042).
+            execute_user_command(&argv, display_paths.execute.as_deref())?;
         }
 
         Ok(())

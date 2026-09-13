@@ -58,16 +58,6 @@ success: true
 exit_code: 0
 ----- stdout -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config: [1m[list] json-schema[22m is unset; a future release switches the JSON default to schema 2[39m
-[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
-[2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex e69de29..16ea47f 100644[m
-[107m [0m [1m--- a/config.toml/current[m
-[107m [0m [1m+++ b/config.toml/migrated[m
-[107m [0m [36m@@ -0,0 +1,2 @@[m
-[107m [0m [32m+[m[32m[list][m
-[107m [0m [32m+[m[32mjson-schema = 2[m
 [2m↳[22m [2mEmpty file (using defaults)[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
@@ -81,7 +71,7 @@ exit_code: 0
 [2m○[22m [1mfish[22m: Already configured shell extension @ ~/.config/fish/functions/wt.fish:15
 [107m [0m [2m[0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m
 [33m▲[39m [33m[1mfish[22m: Completions not configured @ [1m~/.config/fish/completions/wt.fish[22m[39m
-[2m↳[22m [2mTo configure completions, run [4mwt config shell install fish[24m[22m
+[2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

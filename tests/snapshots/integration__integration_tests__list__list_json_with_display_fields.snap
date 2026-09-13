@@ -57,242 +57,286 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[
-  {
-    "branch": "main",
-    "path": "_REPO_",
-    "kind": "worktree",
-    "commit": {
-      "sha": "e52e0f4263b6ea30cadae914ebde3d46431b69ca",
-      "short_sha": "e52e0f4",
-      "message": "Main commit 2",
-      "timestamp": 1735689600
-    },
-    "working_tree": {
-      "staged": false,
-      "modified": false,
-      "untracked": false,
-      "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
-      }
-    },
-    "main_state": "is_main",
-    "remote": {
-      "name": "origin",
+{
+  "schema": 2,
+  "repo": {
+    "default_branch": "main"
+  },
+  "collected": {
+    "ci": false,
+    "summary": false
+  },
+  "items": [
+    {
       "branch": "main",
-      "ahead": 3,
-      "behind": 0
-    },
-    "worktree": {
-      "detached": false
-    },
-    "is_main": true,
-    "is_current": true,
-    "is_previous": false,
-    "statusline": "main  \u001b[2m^\u001b[22m\u001b[2m⇡\u001b[22m  \u001b[32m⇡3\u001b[0m",
-    "symbols": "^⇡"
-  },
-  {
-    "branch": "feature-a",
-    "path": "_REPO_.feature-a",
-    "kind": "worktree",
-    "commit": {
-      "sha": "1b87d4731ea707905d15a726e193531c20affa14",
-      "short_sha": "1b87d47",
-      "message": "Add feature-a file",
-      "timestamp": 1735718400
-    },
-    "working_tree": {
-      "staged": false,
-      "modified": false,
-      "untracked": false,
-      "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
+      "head": {
+        "sha": "e52e0f4263b6ea30cadae914ebde3d46431b69ca",
+        "short_sha": "e52e0f4",
+        "subject": "Main commit 2",
+        "committed_at": "2025-01-01T00:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_",
+        "main": true,
+        "current": true,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "upstream": {
+        "remote": "origin",
+        "branch": "main",
+        "ahead": 3,
+        "behind": 0
+      },
+      "display": {
+        "state": "is_main",
+        "symbols": "^⇡",
+        "statusline": "main  \u001b[2m^\u001b[22m\u001b[2m⇡\u001b[22m  \u001b[32m⇡3\u001b[0m"
       }
     },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 1,
-      "behind": 3,
-      "diff": {
-        "added": 1,
-        "deleted": 0
+    {
+      "branch": "feature-a",
+      "head": {
+        "sha": "1b87d4731ea707905d15a726e193531c20affa14",
+        "short_sha": "1b87d47",
+        "subject": "Add feature-a file",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-a",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 3,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "↕",
+        "statusline": "feature-a  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓3\u001b[0m  ^\u001b[32m+1\u001b[0m"
       }
     },
-    "worktree": {
-      "detached": false
-    },
-    "is_main": false,
-    "is_current": false,
-    "is_previous": false,
-    "statusline": "feature-a  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓3\u001b[0m  ^\u001b[32m+1\u001b[0m",
-    "symbols": "↕"
-  },
-  {
-    "branch": "feature-b",
-    "path": "_REPO_.feature-b",
-    "kind": "worktree",
-    "commit": {
-      "sha": "f62940fcec424585adf98625e722fdf990810614",
-      "short_sha": "f62940f",
-      "message": "Add feature-b file",
-      "timestamp": 1735718400
-    },
-    "working_tree": {
-      "staged": false,
-      "modified": false,
-      "untracked": false,
-      "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
+    {
+      "branch": "feature-b",
+      "head": {
+        "sha": "f62940fcec424585adf98625e722fdf990810614",
+        "short_sha": "f62940f",
+        "subject": "Add feature-b file",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-b",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 3,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "↕",
+        "statusline": "feature-b  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓3\u001b[0m  ^\u001b[32m+1\u001b[0m"
       }
     },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 1,
-      "behind": 3,
-      "diff": {
-        "added": 1,
-        "deleted": 0
+    {
+      "branch": "feature-c",
+      "head": {
+        "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
+        "short_sha": "345c7c9",
+        "subject": "Add feature-c file",
+        "committed_at": "2025-01-01T08:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-c",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 1,
+        "behind": 3,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "↕",
+        "statusline": "feature-c  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓3\u001b[0m  ^\u001b[32m+1\u001b[0m"
       }
     },
-    "worktree": {
-      "detached": false
-    },
-    "is_main": false,
-    "is_current": false,
-    "is_previous": false,
-    "statusline": "feature-b  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓3\u001b[0m  ^\u001b[32m+1\u001b[0m",
-    "symbols": "↕"
-  },
-  {
-    "branch": "feature-c",
-    "path": "_REPO_.feature-c",
-    "kind": "worktree",
-    "commit": {
-      "sha": "345c7c93ad7c3d8f5b08380898d78e024019599c",
-      "short_sha": "345c7c9",
-      "message": "Add feature-c file",
-      "timestamp": 1735718400
-    },
-    "working_tree": {
-      "staged": false,
-      "modified": false,
-      "untracked": false,
-      "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
+    {
+      "branch": "feature-ahead",
+      "head": {
+        "sha": "e0c9ce16d24b8c17f0c763f73816037180c89d7f",
+        "short_sha": "e0c9ce1",
+        "subject": "Feature commit 2",
+        "committed_at": "2025-01-01T00:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-ahead",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": true,
+          "untracked": true,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 2,
+            "deleted": 1
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 2,
+        "behind": 2,
+        "diff": {
+          "added": 1,
+          "deleted": 0
+        },
+        "orphan": false,
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "diverged",
+        "symbols": "!?↕",
+        "statusline": "feature-ahead  \u001b[36m!\u001b[39m\u001b[36m?\u001b[39m\u001b[2m↕\u001b[22m  @\u001b[32m+2\u001b[0m \u001b[31m-1\u001b[0m  \u001b[32m↑2\u001b[0m \u001b[2m\u001b[31m↓2\u001b[0m  ^\u001b[32m+1\u001b[0m"
       }
     },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 1,
-      "behind": 3,
-      "diff": {
-        "added": 1,
-        "deleted": 0
+    {
+      "branch": "feature-behind",
+      "head": {
+        "sha": "01cab36ce221a5ff5c7a6cf60cea6bab3c6315d7",
+        "short_sha": "01cab36",
+        "subject": "Initial commit on main",
+        "committed_at": "2025-01-01T00:00:00Z"
+      },
+      "worktree": {
+        "path": "_REPO_.feature-behind",
+        "main": false,
+        "current": false,
+        "previous": false,
+        "detached": false,
+        "branch_mismatch": false,
+        "duplicate_branch": false,
+        "changes": {
+          "staged": false,
+          "modified": false,
+          "untracked": false,
+          "renamed": false,
+          "deleted": false,
+          "conflicted": false,
+          "diff": {
+            "added": 0,
+            "deleted": 0
+          }
+        }
+      },
+      "default_branch": {
+        "ahead": 0,
+        "behind": 2,
+        "diff": {
+          "added": 0,
+          "deleted": 0
+        },
+        "orphan": false,
+        "integration": {
+          "reason": "ancestor"
+        },
+        "merge_conflicts": false
+      },
+      "display": {
+        "state": "integrated",
+        "symbols": "⊂",
+        "statusline": "feature-behind  \u001b[2m⊂\u001b[22m  \u001b[2m\u001b[31m↓2\u001b[0m"
       }
-    },
-    "worktree": {
-      "detached": false
-    },
-    "is_main": false,
-    "is_current": false,
-    "is_previous": false,
-    "statusline": "feature-c  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓3\u001b[0m  ^\u001b[32m+1\u001b[0m",
-    "symbols": "↕"
-  },
-  {
-    "branch": "feature-ahead",
-    "path": "_REPO_.feature-ahead",
-    "kind": "worktree",
-    "commit": {
-      "sha": "e0c9ce16d24b8c17f0c763f73816037180c89d7f",
-      "short_sha": "e0c9ce1",
-      "message": "Feature commit 2",
-      "timestamp": 1735689600
-    },
-    "working_tree": {
-      "staged": false,
-      "modified": true,
-      "untracked": true,
-      "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 2,
-        "deleted": 1
-      }
-    },
-    "main_state": "diverged",
-    "main": {
-      "ahead": 2,
-      "behind": 2,
-      "diff": {
-        "added": 1,
-        "deleted": 0
-      }
-    },
-    "worktree": {
-      "detached": false
-    },
-    "is_main": false,
-    "is_current": false,
-    "is_previous": false,
-    "statusline": "feature-ahead  \u001b[36m!\u001b[39m\u001b[36m?\u001b[39m\u001b[2m↕\u001b[22m  @\u001b[32m+2\u001b[0m \u001b[31m-1\u001b[0m  \u001b[32m↑2\u001b[0m \u001b[2m\u001b[31m↓2\u001b[0m  ^\u001b[32m+1\u001b[0m",
-    "symbols": "!?↕"
-  },
-  {
-    "branch": "feature-behind",
-    "path": "_REPO_.feature-behind",
-    "kind": "worktree",
-    "commit": {
-      "sha": "01cab36ce221a5ff5c7a6cf60cea6bab3c6315d7",
-      "short_sha": "01cab36",
-      "message": "Initial commit on main",
-      "timestamp": 1735689600
-    },
-    "working_tree": {
-      "staged": false,
-      "modified": false,
-      "untracked": false,
-      "renamed": false,
-      "deleted": false,
-      "diff": {
-        "added": 0,
-        "deleted": 0
-      }
-    },
-    "main_state": "integrated",
-    "integration_reason": "ancestor",
-    "main": {
-      "ahead": 0,
-      "behind": 2,
-      "diff": {
-        "added": 0,
-        "deleted": 0
-      }
-    },
-    "worktree": {
-      "detached": false
-    },
-    "is_main": false,
-    "is_current": false,
-    "is_previous": false,
-    "statusline": "feature-behind  \u001b[2m⊂\u001b[22m  \u001b[2m\u001b[31m↓2\u001b[0m",
-    "symbols": "⊂"
-  }
-]
+    }
+  ]
+}
 
 ----- stderr -----
-[33m▲[39m [33mJSON output is schema 1; a future release switches the default to schema 2[39m
-[2m↳[22m [2mTo keep this format set [4m[list] json-schema = 1[24m; to adopt the new schema, set [4mjson-schema = 2[24m[22m

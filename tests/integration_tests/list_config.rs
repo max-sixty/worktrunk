@@ -136,6 +136,7 @@ url = "http://localhost:{{ branch | hash_port }}"
 
 #[rstest]
 fn test_list_json_url_fields(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Create project config with URL template
     repo.write_project_config(
         r#"[list]
@@ -170,6 +171,7 @@ url = "http://localhost:{{ branch | hash_port }}"
 
 #[rstest]
 fn test_list_json_no_url_without_template(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // No project config means no URL template configured.
 
     let mut cmd = wt_command();
@@ -195,6 +197,7 @@ fn test_list_json_no_url_without_template(repo: TestRepo) {
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
 fn test_list_url_with_branches_flag(mut repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Remove fixture worktrees and their branches to isolate test (keep only main worktree)
     repo.remove_fixture_worktrees();
 
@@ -244,6 +247,7 @@ url = "http://localhost:{{ branch | hash_port }}"
 
 #[rstest]
 fn test_list_url_with_branch_variable(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
     // Create project config with {{ branch }} in URL
     repo.write_project_config(
         r#"[list]
@@ -750,7 +754,10 @@ template = "{{ vars.ticket }}"
 fn test_list_custom_columns_json(repo: TestRepo) {
     fs::write(
         repo.test_config_path(),
-        r#"[list.custom-columns.Ticket]
+        r#"[list]
+json-schema = 1
+
+[list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 "#,
     )
@@ -790,7 +797,10 @@ fn test_list_custom_column_git_branch(repo: TestRepo) {
     // git-native multi-line description is reduced to its first line.
     fs::write(
         repo.test_config_path(),
-        r#"[list.custom-columns.Jira]
+        r#"[list]
+json-schema = 1
+
+[list.custom-columns.Jira]
 template = "{{ git.branch.jira }}"
 
 [list.custom-columns.Summary]
@@ -856,7 +866,10 @@ fn test_list_custom_column_worktree_identity(repo: TestRepo) {
     // directory name, a branch with no worktree falls back to an empty cell.
     fs::write(
         repo.test_config_path(),
-        r#"[list.custom-columns.Dir]
+        r#"[list]
+json-schema = 1
+
+[list.custom-columns.Dir]
 template = "{{ worktree_name }}"
 "#,
     )
@@ -1113,11 +1126,7 @@ fn test_list_json_ignores_columns_selection(repo: TestRepo) {
     fs::write(feature_dir.join("dirty.txt"), "uncommitted\n").unwrap();
 
     let run_json = |config: &str| -> serde_json::Value {
-        if config.is_empty() {
-            let _ = fs::remove_file(repo.test_config_path());
-        } else {
-            fs::write(repo.test_config_path(), config).unwrap();
-        }
+        fs::write(repo.test_config_path(), config).unwrap();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         cmd.args(["list", "--format=json"])
@@ -1142,7 +1151,7 @@ fn test_list_json_ignores_columns_selection(repo: TestRepo) {
 
     // Control: the default set emits the working_tree field, with the untracked
     // change visible.
-    let default = run_json("");
+    let default = run_json("[list]\njson-schema = 1\n");
     assert_eq!(
         working_tree_of(&default)["untracked"],
         serde_json::Value::Bool(true),
@@ -1153,6 +1162,7 @@ fn test_list_json_ignores_columns_selection(repo: TestRepo) {
     // change JSON output: working_tree stays exactly as the default set emits.
     let narrowed = run_json(
         r#"[list]
+json-schema = 1
 columns = ["branch", "age"]
 "#,
     );

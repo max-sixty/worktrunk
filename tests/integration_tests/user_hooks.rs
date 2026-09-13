@@ -1047,15 +1047,14 @@ sync = "echo merged"
 /// `CommitOptions::commit`, which threads the merge announcer through. The
 /// post-commit phase should join post-remove + post-switch + post-merge on
 /// one combined announce line — the non-squash sibling of
-/// [`test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge`].
+/// [`test_merge_squash_combines_post_remove_post_switch_post_merge`].
 ///
-/// The announce line is all this pins. post-commit is announced but can't be
-/// relied on to run on a merge that removes the worktree, which
-/// `handle_merge`'s announcer comment covers.
+/// The announce line is all this pins. The merge removes the worktree
+/// post-commit is anchored on, so that clause is a `Skipped post-commit` line
+/// instead — see
+/// [`test_merge_post_commit_runs_only_when_its_worktree_survives`].
 #[rstest]
-fn test_merge_auto_commit_combines_post_commit_post_remove_post_switch_post_merge(
-    mut repo: TestRepo,
-) {
+fn test_merge_auto_commit_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
     let feature_wt =
         repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
     // Leave an uncommitted change so the merge auto-commits via
@@ -1078,23 +1077,23 @@ sync = "echo merged"
     );
 
     snapshot_merge(
-        "merge_auto_commit_combines_post_commit_post_remove_post_switch_post_merge",
+        "merge_auto_commit_combines_post_remove_post_switch_post_merge",
         &repo,
         &["main", "--yes", "--no-squash"],
         Some(&feature_wt),
     );
 }
 
-/// `wt merge --squash` announces post-commit (from the squash phase),
-/// post-remove, post-switch (from worktree removal), and post-merge. All four
-/// should share one `Running …` announce line so the user sees a single status
-/// line for the whole command, not four.
+/// `wt merge --squash` registers post-commit (from the squash phase),
+/// post-remove, post-switch (from worktree removal), and post-merge. The three
+/// that still have a worktree share one `Running …` announce line so the user
+/// sees a single status line for the whole command, not three.
 ///
-/// That line is all this pins. post-commit is announced but can't be relied on
-/// to run on a merge that removes the worktree, which `handle_merge`'s
-/// announcer comment covers.
+/// That line is all this pins. The merge removes the worktree post-commit is
+/// anchored on, so that clause is a `Skipped post-commit` line instead — see
+/// [`test_merge_post_commit_runs_only_when_its_worktree_survives`].
 #[rstest]
-fn test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge(mut repo: TestRepo) {
+fn test_merge_squash_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
     // Squash needs >1 commit ahead of main to actually run.
     let feature_wt = repo.add_worktree_with_commit("feature", "feature1.txt", "one", "feat: one");
     repo.commit_in_worktree(&feature_wt, "feature2.txt", "two", "feat: two");
@@ -1115,11 +1114,75 @@ sync = "echo merged"
     );
 
     snapshot_merge(
-        "merge_squash_combines_post_commit_post_remove_post_switch_post_merge",
+        "merge_squash_combines_post_remove_post_switch_post_merge",
         &repo,
         &["main", "--yes", "--squash"],
         Some(&feature_wt),
     );
+}
+
+/// `post-commit` is anchored on the worktree the commit was made in, and a
+/// `wt merge` that removes that worktree reaches the announcer's flush with
+/// the anchor already renamed into `.git/wt/trash/`. `run_hooks_background`
+/// drops such a pipeline rather than spawn it: the runner would open the
+/// repository by discovery from an emptied path, which for a worktree nested
+/// inside its repository resolves to the **primary** worktree and runs the
+/// project's commands there.
+///
+/// The worktree is nested here so that a regression executes rather than
+/// merely fails — `git rev-parse --show-toplevel` would answer with the
+/// primary worktree and write the marker. `--no-remove` is the control: the
+/// same hook, config, and marker path, with the worktree kept.
+#[rstest]
+#[case::removed("removed", &["main", "--yes"], false)]
+#[case::kept("kept", &["main", "--yes", "--no-remove"], true)]
+fn test_merge_post_commit_runs_only_when_its_worktree_survives(
+    repo: TestRepo,
+    #[case] label: &str,
+    #[case] args: &[&str],
+    #[case] expect_ran: bool,
+) {
+    // A worktree inside the repository, so a pipeline spawned into its emptied
+    // path would find the primary worktree one level up.
+    let nested = repo.path().join(".worktrees").join("feature");
+    repo.run_git(&["worktree", "add", "-b", "feature", &nested.to_slash_lossy()]);
+    fs::write(nested.join("feature.txt"), "feature").unwrap();
+    repo.run_git_in(&nested, &["add", "feature.txt"]);
+    repo.run_git_in(&nested, &["commit", "-m", "Add feature"]);
+    // Uncommitted work so the merge squashes, which is what fires post-commit.
+    fs::write(nested.join("dirty.txt"), "uncommitted").unwrap();
+
+    // The marker lives in the primary worktree so it outlives the feature
+    // worktree, and records which worktree the hook resolved to.
+    repo.write_test_config(
+        r#"[post-commit]
+mark = "git rev-parse --show-toplevel > {{ repo_path }}/post-commit-toplevel.txt"
+"#,
+    );
+
+    let marker = repo.path().join("post-commit-toplevel.txt");
+    snapshot_merge(
+        &format!("merge_post_commit_worktree_{label}"),
+        &repo,
+        args,
+        Some(&nested),
+    );
+
+    if expect_ran {
+        wait_for_file_content(&marker);
+        let toplevel = fs::read_to_string(&marker).unwrap();
+        assert!(
+            toplevel.trim().ends_with(".worktrees/feature"),
+            "post-commit should resolve to the feature worktree, got: {toplevel}"
+        );
+    } else {
+        thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+        assert!(
+            !marker.exists(),
+            "post-commit ran with its worktree removed, resolving to {:?}",
+            fs::read_to_string(&marker).ok()
+        );
+    }
 }
 
 /// When post-merge template prep errors after post-remove + post-switch are

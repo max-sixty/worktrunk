@@ -149,6 +149,30 @@ impl StyledLine {
         self.segments.iter().map(|s| s.width()).sum()
     }
 
+    /// Drop trailing spaces.
+    ///
+    /// Padding places a cell; past the last one it places nothing, and a
+    /// reader who selects the line gets it anyway. A segment emptied by the
+    /// trim goes too, so no bare escape pair is left standing around nothing.
+    pub fn trim_end(&mut self) {
+        while let Some(last) = self.segments.last_mut() {
+            let trimmed = last.text.trim_end_matches(' ');
+            // Nothing but spaces left, which includes a segment that was empty
+            // to begin with — `render_text_cell` pushes one of those for an
+            // empty cell, and stopping on it would leave the padding before it
+            // standing.
+            if trimmed.is_empty() {
+                self.segments.pop();
+                continue;
+            }
+            if trimmed.len() == last.text.len() {
+                return;
+            }
+            last.text.truncate(trimmed.len());
+            return;
+        }
+    }
+
     /// Renders the entire line with ANSI escape codes
     pub fn render(&self) -> String {
         self.segments.iter().map(|s| s.render()).collect()
