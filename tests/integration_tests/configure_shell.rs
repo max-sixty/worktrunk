@@ -3244,3 +3244,53 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
          vendor-autoload-dirs:\n{dirs}"
     );
 }
+
+/// An exported-but-empty `ZDOTDIR` resolves to `$HOME`, the way zsh itself
+/// reads it — never to a bare relative `.zshrc`.
+///
+/// Regression guard: the empty value used to be taken at face value, so the
+/// zsh config path collapsed to the relative `.zshrc` and install appended the
+/// integration line to a `.zshrc` in whatever directory `wt` was run from — a
+/// dotfiles checkout being the obvious way to have one — while the file zsh
+/// actually reads went untouched. Uninstall rewrites rc files whole, so the
+/// same resolution decides which file that rewrite lands on.
+#[rstest]
+fn test_configure_shell_empty_zdotdir_uses_home(repo: TestRepo, temp_home: TempDir) {
+    let home_zshrc = temp_home.path().join(".zshrc");
+    fs::write(&home_zshrc, "# Existing config\n").unwrap();
+
+    // A decoy `.zshrc` in the invocation directory: with the empty value taken
+    // literally, this is the file the install would have edited.
+    let run_dir = temp_home.path().join("dotfiles");
+    fs::create_dir_all(&run_dir).unwrap();
+    let decoy_zshrc = run_dir.join(".zshrc");
+    fs::write(&decoy_zshrc, "# Decoy\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("ZDOTDIR", "");
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.current_dir(&run_dir);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let home_contents = fs::read_to_string(&home_zshrc).unwrap();
+    assert!(
+        home_contents.contains("config shell init zsh"),
+        "integration line should land in $HOME/.zshrc, got:\n{home_contents}"
+    );
+    assert_eq!(
+        fs::read_to_string(&decoy_zshrc).unwrap(),
+        "# Decoy\n",
+        "the .zshrc in the invocation directory must be left alone"
+    );
+}

@@ -141,8 +141,16 @@ fn legacy_nushell_autoload_dirs(
     if let Some(dir) = default_config {
         dirs.push(dir.to_path_buf());
     }
-    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        dirs.push(PathBuf::from(xdg_config).join("nushell"));
+    // Absolute-only, as `nushell_data_dir_fallback` already reads
+    // `XDG_DATA_HOME`: an unset-but-exported (or relative) value would put a
+    // bare `nushell/vendor/autoload` into the stranded-file search, which then
+    // looks under the invocation directory instead of a config dir.
+    if let Some(xdg_config) = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        dirs.push(xdg_config.join("nushell"));
     }
     dirs.push(home.join(".config").join("nushell"));
     if let Ok(strategy) = choose_base_strategy() {
@@ -209,6 +217,24 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
     }
 }
 
+/// The directory zsh reads its rc files from: `$ZDOTDIR`, or `$HOME` when that
+/// is unset **or empty**.
+///
+/// The empty case is zsh's own rule rather than a defensive extra — zsh falls
+/// back to `$HOME` when `ZDOTDIR` is unset or the empty string, so an
+/// exported-but-empty value still starts zsh from `~/.zshrc`. Taking it at face
+/// value instead yields the bare relative path `.zshrc`, which resolves against
+/// whatever directory `wt` was invoked from: `wt config shell install` would
+/// append the integration line to a `.zshrc` sitting there (a dotfiles
+/// checkout being the obvious way to have one) and never touch the file zsh
+/// actually reads, while uninstall would rewrite that same wrong file whole.
+pub(super) fn zdotdir_or_home(home: &std::path::Path) -> PathBuf {
+    std::env::var("ZDOTDIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| home.to_path_buf(), PathBuf::from)
+}
+
 /// Rc/profile files scanned line-by-line for integration lines.
 ///
 /// Bash/Zsh/PowerShell integration is one line in an rc file, so these paths
@@ -221,12 +247,7 @@ pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> V
             // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
             vec![home.join(".bashrc")]
         }
-        super::Shell::Zsh => {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.to_path_buf());
-            vec![zdotdir.join(".zshrc")]
-        }
+        super::Shell::Zsh => vec![zdotdir_or_home(home).join(".zshrc")],
         super::Shell::PowerShell => powershell_profile_paths(home),
         super::Shell::Fish | super::Shell::Nushell => Vec::new(),
     }

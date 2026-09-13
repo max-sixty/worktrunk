@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **`wt config shell install` no longer writes the zsh integration line into a `.zshrc` in the current directory**: an exported-but-empty `ZDOTDIR` was taken at face value, so zsh's config path collapsed to the relative `.zshrc` — landing the line in a dotfiles checkout, say, while `~/.zshrc` went untouched and `wt config show` reported from the same wrong file. Uninstall rewrites rc files whole, so the same resolution decided which file that rewrite hit. An empty value now means `$HOME`, which is how zsh itself reads it. The Nushell uninstall's search for wrappers stranded by older versions ignores a non-absolute `XDG_CONFIG_HOME` for the same reason, matching the `XDG_DATA_HOME` guard beside it.
+
 - **`wt step prune` no longer deletes a branch created minutes ago from an older commit**: the min-age guard aged a branch with no worktree by the committer date of the commit it points at, so `git branch <name> main` on a default branch whose last commit was over a day old was pruned on the next run — the case `--min-age` exists to prevent. The branch's age now comes from its oldest reflog entry, written when the branch was created.
 
 - **`wt merge` no longer deletes a worktree locked with `git worktree lock`**: its cleanup step removed the worktree anyway and reported success. The merge now completes and prints `Worktree preserved (locked)`, and every Worktrunk removal path refuses a lock even under `--force` — what `git worktree remove` does, minus git's `-f -f` override. Unlock with `git worktree unlock <path>` first. ([#4073](https://github.com/max-sixty/worktrunk/pull/4073), thanks @Duang777)
