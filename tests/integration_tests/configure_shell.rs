@@ -3245,8 +3245,9 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
     );
 }
 
-/// An exported-but-empty `ZDOTDIR` resolves to `$HOME`, the way zsh itself
-/// reads it — never to a bare relative `.zshrc`.
+/// An exported-but-empty `ZDOTDIR` resolves to `$HOME` — never to a bare
+/// relative `.zshrc`. (zsh itself would read `/.zshrc` there; `$HOME` is the
+/// useful target, and the file `wt config show` reads back from.)
 ///
 /// Regression guard: the empty value used to be taken at face value, so the
 /// zsh config path collapsed to the relative `.zshrc` and install appended the

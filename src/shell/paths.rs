@@ -220,10 +220,10 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
 /// The directory zsh reads its rc files from: `$ZDOTDIR`, or `$HOME` when that
 /// is unset **or empty**.
 ///
-/// The empty case is zsh's own rule rather than a defensive extra — zsh falls
-/// back to `$HOME` when `ZDOTDIR` is unset or the empty string, so an
-/// exported-but-empty value still starts zsh from `~/.zshrc`. Taking it at face
-/// value instead yields the bare relative path `.zshrc`, which resolves against
+/// The empty case is worktrunk's rule, not zsh's: zsh null-checks `ZDOTDIR`
+/// rather than testing it for emptiness, so an exported-but-empty value sends
+/// *zsh* to `/.zshrc`. `$HOME` is the only useful target left, and taking the
+/// empty value at face value would be worse still — the bare `.zshrc` resolves against
 /// whatever directory `wt` was invoked from: `wt config shell install` would
 /// append the integration line to a `.zshrc` sitting there (a dotfiles
 /// checkout being the obvious way to have one) and never touch the file zsh
