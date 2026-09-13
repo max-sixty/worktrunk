@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **`wt config plugins opencode install` no longer writes the plugin into the directory it was run from**: an exported-but-empty `OPENCODE_CONFIG_DIR` was taken at face value, so the install target collapsed to the relative path `plugins/worktrunk.ts` — typically somewhere inside the user's repository. `is_plugin_installed()` then read the plugin back from that same relative path, so the install reported success while OpenCode never saw it. An empty value now reads as unset, as it already did for `$CLAUDE_CONFIG_DIR` and `$PI_CONFIG_DIR`; the documented precedence `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode` is unchanged. ([#4084](https://github.com/max-sixty/worktrunk/pull/4084))
+
 - **`wt step prune` no longer deletes a branch created minutes ago from an older commit**: the min-age guard aged a branch with no worktree by the committer date of the commit it points at, so `git branch <name> main` on a default branch whose last commit was over a day old was pruned on the next run — the case `--min-age` exists to prevent. The branch's age now comes from its oldest reflog entry, written when the branch was created.
 
 - **`wt merge` no longer deletes a worktree locked with `git worktree lock`**: its cleanup step removed the worktree anyway and reported success. The merge now completes and prints `Worktree preserved (locked)`, and every Worktrunk removal path refuses a lock even under `--force` — what `git worktree remove` does, minus git's `-f -f` override. Unlock with `git worktree unlock <path>` first. ([#4073](https://github.com/max-sixty/worktrunk/pull/4073), thanks @Duang777)
