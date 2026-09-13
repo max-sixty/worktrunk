@@ -629,7 +629,7 @@ fn build_prompt(
     // variable (a list of bare subject strings) is handled entirely by the
     // config deprecation layer (`RETIRED_VARS`), which rewrites it to
     // `commit_details` on every load and warns, so an unmigrated template
-    // arrives here already renaming — nothing is detected or warned here. The
+    // arrives here already renamed — nothing is detected or warned here. The
     // rename is safe because each `commit_details` element renders as its
     // subject (see `CommitDetailValue`), so `{% for c in commit_details %}{{ c
     // }}` reads identically to the old `{% for c in commits %}{{ c }}`.

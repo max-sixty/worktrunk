@@ -99,7 +99,7 @@ static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
 
 /// Deprecated variables a renderer still supplies under the old name, mapped
 /// to their replacement. The old name resolves at runtime (the aliases in
-/// `build_template_vars`), so the rewrite is [`DeprecationRule::UpdateOnly`] —
+/// `build_hook_context`), so the rewrite is [`DeprecationRule::UpdateOnly`] —
 /// the config file is left alone until the user runs `wt config update`.
 const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("repo_root", "repo_path"),
@@ -3542,6 +3542,11 @@ hostname = "forge.example"
             "switch = \"x\"\n\n[select]\nheight = \"50%\"\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
+            // `recent_commits` merely contains a deprecated var's name; the
+            // rewrite matches whole identifiers, and the retired `commits`
+            // row runs on every load, so a substring match here would mangle
+            // a live variable in every user's config on every command
+            "[commit.generation]\nsquash-template = \"{{ recent_commits | length }}\"\n",
         ];
         for content in untouched {
             assert!(
