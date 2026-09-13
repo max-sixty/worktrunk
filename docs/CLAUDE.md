@@ -95,8 +95,9 @@ Use root-relative links in canonical Markdown:
 
 The sync pipeline expands them to full `https://worktrunk.dev/...` URLs for
 README and agent-skill copies. Do not add framework-specific link syntax.
-`stable-heading-ids.mjs` preserves the site's established anchor scheme, and
-`test:site` verifies every built internal page link and fragment.
+`stable-heading-ids.mjs` defines the heading-anchor scheme, including the ids
+scoped under each subcommand section, and `test:site` verifies every built
+internal page link and fragment.
 
 Images and demos use root-relative paths into `public/`:
 

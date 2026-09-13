@@ -77,7 +77,7 @@ TUI demos (Zellij, Claude UI) can't use text snapshots because VHS only captures
 4. Validation runs automatically when building TUI demos with defined checkpoints
 
 Checkpoints are defined in `docs/demos/shared/validation.py`. To add validation to a TUI demo:
-1. Identify key frame numbers by examining the GIF (30fps, so frame 90 = 3 seconds)
+1. Identify key frame numbers by examining the GIF (25fps, so frame 75 = 3 seconds; a negative frame counts back from the last, for the state a recording ends in)
 2. Define checkpoint patterns in `validation.py` with frame numbers, expected patterns, and forbidden patterns
 
 `wt-switch`, `wt-statusline`, and `wt-zellij-omnibus` have checkpoints. Other TUI demos are skipped until checkpoints are added.
@@ -208,7 +208,7 @@ Each theme starts from a freshly prepared demo environment because recording a t
 
 Social build generates light only (social media doesn't support theme-switching media queries).
 
-Theme definitions are in `docs/demos/shared/themes.py`, matching the `--wt-*` custom properties in `docs/src/styles/custom.css`.
+Each recording's environment carries its theme. The VHS terminal, Zellij, and the starship prompt take their colors from `docs/demos/shared/themes.py`, which reads the `--wt-*` custom properties in `docs/src/styles/custom.css` when the build runs, so a site palette change reaches the GIFs on the next recording. Claude Code and delta switch to their own light or dark theme.
 
 ## Debugging a demo environment
 

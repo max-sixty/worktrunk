@@ -277,7 +277,7 @@ pub enum ApprovalsCommand {
     #[command(
         after_long_help = r#"Shows every command the project config declares — hooks, aliases, and commit-message guidance — grouped into APPROVED and UNAPPROVED sections. Approvals recorded for commands no longer in the project config (edited or removed since approval) are listed separately.
 
-Reading is all it does: no prompt, no write. `--format=json` emits the same four distinctions as a structured payload — see [Reading approval state](/config/#reading-approval-state).
+Reading is all it does: no prompt, no write. `--format=json` emits the same four distinctions as a structured payload — see [Reading approval state](/config/#wt-config-approvals--reading-approval-state).
 
 ## Examples
 
@@ -303,7 +303,7 @@ $ wt config approvals list --format=json | jq -r .state
 By default, shows only unapproved commands. Use `--all` to review all commands
 including previously approved ones.
 
-`--yes` writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval. A caller that wants to look before granting them can list those first — see [Reading approval state](/config/#reading-approval-state).
+`--yes` writes the approvals without prompting, which is how a container or CI job pre-approves a project it has just cloned. It trusts every command the project config declares, including one whose template changed since an earlier approval. A caller that wants to look before granting them can list those first — see [Reading approval state](/config/#wt-config-approvals--reading-approval-state).
 
 ## Examples
 
@@ -638,7 +638,7 @@ $ wt config update --output=-
     #[command(
         after_long_help = r#"Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
 
-## Approval examples
+## Examples
 
 List commands and their approval status for current project:
 ```console
@@ -709,7 +709,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
     #[command(
         after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](/extending/#aliases) for the configuration format.
 
-## Alias examples
+## Examples
 
 Show every configured alias's template:
 ```console
@@ -769,7 +769,7 @@ $ wt config plugins pi install
 - **vars**: [Custom variables per branch](/config/#wt-config-state-vars)
 - **logs**: [Operation and debug logs](/config/#wt-config-state-logs)
 
-## State examples
+## Examples
 
 Get the default branch:
 ```console
@@ -889,7 +889,7 @@ untouched."#)]
 
 Without a subcommand, runs `get`.
 
-## Cache examples
+## Examples
 
 Show cache contents:
 ```console
@@ -1022,7 +1022,7 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). A
 
 `wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
 
-## Log examples
+## Examples
 
 List all log files:
 ```console
@@ -1148,7 +1148,7 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
         name = "vars",
         after_long_help = r#"Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
-## Variable examples
+## Examples
 
 Set and get values:
 ```console
