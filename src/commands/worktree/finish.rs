@@ -7,10 +7,11 @@
 //! 1. Capture the feature worktree's path + commit BEFORE removal — afterward
 //!    the worktree directory is gone, but post-merge hooks still need to
 //!    reference it via Active template overrides.
-//! 2. Decide whether to remove the feature worktree. Four conditions block
-//!    removal: `--no-remove`, on-target, primary-worktree, and default-branch.
-//!    Otherwise `ensure_clean` gates removal and `handle_remove_output`
-//!    performs it (sharing the same code path as `wt remove`).
+//! 2. Decide whether to remove the feature worktree. Five conditions block
+//!    removal: `--no-remove`, on-target, primary-worktree, locked, and
+//!    default-branch. Otherwise `ensure_clean` gates removal and
+//!    `handle_remove_output` performs it (sharing the same code path as
+//!    `wt remove`).
 //! 3. Register the post-merge hook with the announcer. The caller owns
 //!    `flush()` because it's a command-level lifecycle operation, not part of
 //!    the finish sequence.
@@ -123,6 +124,17 @@ pub fn finish_after_merge(
         false
     } else if is_primary_worktree(repo)? {
         eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
+        false
+    } else if let Some(reason) = repo.current_worktree().lock_reason()? {
+        // `git worktree lock` is "don't remove this", not "don't merge".
+        // Merge already succeeded; skip cleanup the same way `--no-remove`
+        // and primary-worktree do. `stage_worktree_removal` also refuses a
+        // lock, so a path that skips this check still cannot trash the dir.
+        let msg = match reason {
+            Some(r) => format!("Worktree preserved (locked: {r})"),
+            None => "Worktree preserved (locked)".to_string(),
+        };
+        eprintln!("{}", info_message(msg));
         false
     } else {
         // Phase 3: reject removing default branch (merge always uses SafeDelete).

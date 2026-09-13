@@ -12,7 +12,7 @@ use super::{
     GitError, Repository, ResolvedWorktree, Selector, WorktreeInfo, is_valid_branch_name,
     normalize_selector, resolve_input_path,
 };
-use crate::git::WorktreeId;
+use crate::git::{WorktreeId, is_bare_repo_dir};
 use crate::path::{format_path_for_display, paths_match};
 use crate::styling::{
     eprintln, format_with_gutter, hint_message, suggest_command, warning_message,
@@ -658,10 +658,9 @@ impl Repository {
 /// bare layout the repository sits among the worktrees it serves, one `../`
 /// from any command, and it holds every object.
 ///
-/// The bare test is git's own from `is_git_directory()`: `HEAD`, plus `objects`
-/// and `refs` directories. It is deliberately shallow — this decides whether to
-/// *withhold* a claim, so a false positive costs a vaguer message and a false
-/// negative costs a wrong one.
+/// The bare test is [`is_bare_repo_dir`], and its shallowness is what this
+/// caller wants: the answer decides whether to *withhold* a claim, so a false
+/// positive costs a vaguer message and a false negative costs a wrong one.
 ///
 /// Which is why absence has to be established rather than assumed. `Path::exists`
 /// answers `false` for every error alike, so a `.git` that cannot be statted —
@@ -691,7 +690,7 @@ fn holds_git_data(path: &Path) -> bool {
     }
     // Reached only when that probe succeeded in saying "nothing there", so the
     // directory is readable and the bare shape can be read plainly.
-    path.join("HEAD").exists() && path.join("objects").is_dir() && path.join("refs").is_dir()
+    is_bare_repo_dir(path)
 }
 
 /// Paths of every worktree checked out on `branch`, in git's listing order.
