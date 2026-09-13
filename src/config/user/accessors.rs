@@ -255,7 +255,6 @@ impl UserConfig {
         // Use native path format (not POSIX) since this is used for filesystem operations
         let repo_path = repo.repo_path()?.to_string_lossy().to_string();
         let mut vars = HashMap::new();
-        vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());

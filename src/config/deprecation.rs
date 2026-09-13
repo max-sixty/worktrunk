@@ -97,37 +97,35 @@ pub fn warnings_suppressed() -> bool {
 static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Deprecated variables a renderer still supplies under the old name, mapped
-/// to their replacement. The old name resolves at runtime (the aliases in
-/// `build_hook_context`), so the rewrite is [`DeprecationRule::UpdateOnly`] —
-/// the config file is left alone until the user runs `wt config update`.
-const DEPRECATED_VARS: &[(&str, &str)] = &[
+/// Retired template variables, mapped to their replacement. No renderer
+/// supplies the old name any more, so the rewrite is
+/// [`DeprecationRule::Structural`]: it applies on every load, before serde
+/// parses, and is what keeps an unmigrated template rendering what it always
+/// did. The warning still fires and still points at `wt config update`, which
+/// writes the rename into the user's file.
+///
+/// Every row is a mechanical identifier swap — the replacement resolves to the
+/// same value the old name did — which is what makes rewriting the in-memory
+/// config on every load safe. `commits` is squash-template-only, and each
+/// `commit_details` element renders as its subject when printed bare, so a
+/// migrated `{% for c in commit_details %}{{ c }}` reads identically to the old
+/// `{% for c in commits %}{{ c }}` (see #2984 and `CommitDetailValue`).
+///
+/// The rewrite happens at load, not on request, because an old name that
+/// reached a renderer would fail differently depending on where it sat. A
+/// hook, alias, or `worktree-path` template would fail its `SemiStrict`
+/// expansion with an undefined-variable error — loud, and fixable from the
+/// message. A squash template would render nothing at all: `build_prompt`
+/// renders under minijinja's default `UndefinedBehavior::Lenient`, which
+/// iterates an undefined value as an empty sequence, so the prompt would lose
+/// its commit list silently — the outcome #2984 opens by calling out.
+const RETIRED_VARS: &[(&str, &str)] = &[
     ("repo_root", "repo_path"),
     ("worktree", "worktree_path"),
     ("main_worktree", "repo"),
     ("main_worktree_path", "primary_worktree_path"),
+    ("commits", "commit_details"),
 ];
-
-/// Deprecated variables no renderer supplies any more, mapped to their
-/// replacement. Nothing resolves the old name at runtime, so the rewrite is
-/// [`DeprecationRule::Structural`]: it applies on every load, before serde
-/// parses, which is what keeps an unmigrated template rendering what it always
-/// did rather than silently rendering nothing (minijinja's default
-/// `UndefinedBehavior::Lenient` iterates an undefined value as an empty
-/// sequence). The warning still fires and still points at `wt config update`.
-///
-/// `commits` is squash-template-only. The rename is a safe mechanical rewrite
-/// because each `commit_details` element renders as its subject when printed
-/// bare, so a migrated `{% for c in commit_details %}{{ c }}` reads identically
-/// to the old `{% for c in commits %}{{ c }}` (see #2984 and
-/// `CommitDetailValue`).
-const RETIRED_VARS: &[(&str, &str)] = &[("commits", "commit_details")];
-
-/// Every deprecated `(old, new)` pair, runtime-aliased rows first — the order
-/// detection reports them in.
-fn all_deprecated_vars() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
-    DEPRECATED_VARS.iter().chain(RETIRED_VARS)
-}
 
 /// Metadata for a deprecated top-level section key.
 #[derive(Debug)]
@@ -184,18 +182,17 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
         .unwrap_or(Cow::Borrowed(template))
 }
 
-/// The deprecated `(old, new)` pairs used as variables in `template`, in
-/// [`all_deprecated_vars`] order. Empty when none appear (or the template
-/// doesn't parse). An identifier appearing only as an attribute name
+/// The retired `(old, new)` pairs used as variables in `template`, in
+/// [`RETIRED_VARS`] order. Empty when none appear (or the template doesn't
+/// parse). An identifier appearing only as an attribute name
 /// (`{{ foo.repo_root }}`) or an assignment target doesn't count — only
 /// genuine variable uses, which is exactly what the rewrite replaces.
 ///
-/// Detection spans both tables; which pairs a given rule *rewrites* is the
-/// rule's own filter (see [`migrate_template_vars_doc`]), so the two rules
-/// share this one predicate.
+/// Detection and migration share this one predicate: the rule rewrites what
+/// this reports, so the two cannot drift.
 fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static str)> {
-    // Quick check: if none of the deprecated vars appear, skip parsing
-    if !all_deprecated_vars().any(|(old, _)| template.contains(old)) {
+    // Quick check: if none of the retired vars appear, skip parsing
+    if !RETIRED_VARS.iter().any(|(old, _)| template.contains(old)) {
         return Vec::new();
     }
 
@@ -204,7 +201,8 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
         return Vec::new();
     };
     let used_vars = parsed.undeclared_variables(false);
-    all_deprecated_vars()
+    RETIRED_VARS
+        .iter()
         .copied()
         .filter(|(old, _)| used_vars.contains(*old))
         .collect()
@@ -384,64 +382,40 @@ fn is_template_identifier_char(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
 
-/// Replace the `vars` subset of deprecated template vars in every string value
-/// of the document, mutating the `toml_edit` tree in place; returns one
-/// [`DeprecationKind::TemplateVar`] per `(old, new)` pair replaced, in `vars`
-/// order.
-///
-/// The two rows that call this pass their own table — [`DEPRECATED_VARS`] or
-/// [`RETIRED_VARS`] — because the two differ only in *when* the rewrite
-/// applies, not in how the pattern is found: detection still spans both tables
-/// via [`deprecated_vars_in_template`], and each row rewrites and reports only
-/// its own pairs.
+/// Replace every [`RETIRED_VARS`] template variable in every string value of
+/// the document, mutating the `toml_edit` tree in place; returns one
+/// [`DeprecationKind::TemplateVar`] per `(old, new)` pair replaced, in
+/// [`RETIRED_VARS`] order.
 ///
 /// Operating on the parsed tree (rather than a raw `str::replace` against the
 /// file text) is correct when the TOML source uses escapes: the decoded value
 /// would not appear verbatim in the file, so a raw replace silently skipped
 /// the migration while detection still warned. `toml_edit` re-serializes the
 /// changed string with proper escaping.
-fn migrate_template_vars_doc(
-    doc: &mut toml_edit::DocumentMut,
-    vars: &'static [(&'static str, &'static str)],
-) -> Deprecations {
+fn migrate_template_vars_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
     type Replaced = HashSet<(&'static str, &'static str)>;
 
-    fn walk_table(
-        table: &mut toml_edit::Table,
-        vars: &'static [(&'static str, &'static str)],
-        replaced: &mut Replaced,
-    ) {
+    fn walk_table(table: &mut toml_edit::Table, replaced: &mut Replaced) {
         for (_, item) in table.iter_mut() {
-            walk_item(item, vars, replaced);
+            walk_item(item, replaced);
         }
     }
-    fn walk_item(
-        item: &mut toml_edit::Item,
-        vars: &'static [(&'static str, &'static str)],
-        replaced: &mut Replaced,
-    ) {
+    fn walk_item(item: &mut toml_edit::Item, replaced: &mut Replaced) {
         match item {
-            toml_edit::Item::Value(v) => walk_value(v, vars, replaced),
-            toml_edit::Item::Table(t) => walk_table(t, vars, replaced),
+            toml_edit::Item::Value(v) => walk_value(v, replaced),
+            toml_edit::Item::Table(t) => walk_table(t, replaced),
             toml_edit::Item::ArrayOfTables(arr) => {
                 for t in arr.iter_mut() {
-                    walk_table(t, vars, replaced);
+                    walk_table(t, replaced);
                 }
             }
             _ => {}
         }
     }
-    fn walk_value(
-        value: &mut toml_edit::Value,
-        vars: &'static [(&'static str, &'static str)],
-        replaced: &mut Replaced,
-    ) {
+    fn walk_value(value: &mut toml_edit::Value, replaced: &mut Replaced) {
         match value {
             toml_edit::Value::String(s) => {
-                let pairs: Vec<_> = deprecated_vars_in_template(s.value())
-                    .into_iter()
-                    .filter(|pair| vars.contains(pair))
-                    .collect();
+                let pairs = deprecated_vars_in_template(s.value());
                 if pairs.is_empty() {
                     return;
                 }
@@ -455,12 +429,12 @@ fn migrate_template_vars_doc(
             }
             toml_edit::Value::Array(arr) => {
                 for v in arr.iter_mut() {
-                    walk_value(v, vars, replaced);
+                    walk_value(v, replaced);
                 }
             }
             toml_edit::Value::InlineTable(t) => {
                 for (_, v) in t.iter_mut() {
-                    walk_value(v, vars, replaced);
+                    walk_value(v, replaced);
                 }
             }
             _ => {}
@@ -468,8 +442,9 @@ fn migrate_template_vars_doc(
     }
 
     let mut replaced = Replaced::new();
-    walk_table(doc.as_table_mut(), vars, &mut replaced);
-    vars.iter()
+    walk_table(doc.as_table_mut(), &mut replaced);
+    RETIRED_VARS
+        .iter()
         .filter(|pair| replaced.contains(*pair))
         .map(|&(old, new)| DeprecationKind::TemplateVar { old, new })
         .collect()
@@ -566,12 +541,13 @@ type SilentMigrateFn = fn(&mut toml_edit::DocumentMut) -> bool;
 enum DeprecationRule {
     /// Warns, and is rewritten on every config load before serde parses.
     Structural(MigrateFn),
-    /// Warns, but the deprecated form still works at runtime (the
-    /// [`DEPRECATED_VARS`] template variables are supplied under both names;
-    /// `approved-commands` is still a valid serde field), so the load path
+    /// Warns, but the deprecated form still works at runtime
+    /// (`approved-commands` is still a valid serde field), so the load path
     /// leaves it alone. Rewritten only via [`compute_migrated_content`]
-    /// (`wt config show` / `wt config update`). A variable nothing supplies any
-    /// more belongs in [`RETIRED_VARS`] and is rewritten structurally instead.
+    /// (`wt config show` / `wt config update`). A template variable nothing
+    /// supplies any more belongs in [`RETIRED_VARS`], which is rewritten
+    /// structurally instead — an unmigrated name would otherwise reach a
+    /// renderer that has nothing to resolve it to.
     UpdateOnly(MigrateFn),
     /// Silently-migrated rename: rewritten on every load like `Structural`,
     /// but with no warning by construction.
@@ -606,11 +582,10 @@ enum RulePass {
 /// A [`DeprecationRule::Structural`] rule must not depend on an `UpdateOnly`
 /// rewrite preceding it: the load path skips `UpdateOnly` rules while
 /// detection applies them, so such a dependency would make the load-path
-/// rewrite diverge from what was warned. The two template-variable rules share
-/// a key space without such a dependency — each rewrites only its own
-/// [`DEPRECATED_VARS`] / [`RETIRED_VARS`] pairs, and neither table's pattern is
-/// created or consumed by the other. `approved-commands` is read by no other
-/// rule.
+/// rewrite diverge from what was warned. No rule here has such a dependency —
+/// the template-variable row reads and writes a key space
+/// (`{{ … }}` identifiers inside string values) that no other rule touches,
+/// and `approved-commands` is read by no other rule.
 ///
 /// A rule that moves a section's table wholesale into a new location must
 /// remove the keys its destination has no field for, reporting each via
@@ -626,17 +601,12 @@ enum RulePass {
 /// section). A silently-migrated rename is just a [`DeprecationRule::Silent`]
 /// row.
 const DEPRECATION_RULES: &[DeprecationRule] = &[
-    // Template variables: {{ repo_root }} → {{ repo_path }} etc., inside any
-    // string value. The old names still resolve at runtime, so the file is
-    // rewritten only by `wt config update`.
-    DeprecationRule::UpdateOnly(|doc| migrate_template_vars_doc(doc, DEPRECATED_VARS)),
-    // Retired template variables: {{ commits }} → {{ commit_details }}, inside
-    // any string value. Structural because nothing supplies `commits` at render
-    // time any more — the load-path rewrite is what keeps an unmigrated squash
-    // template rendering its commit list. It shares the key space of the
-    // `UpdateOnly` row above but not its pairs, so it depends on no rewrite
-    // that the load path skips.
-    DeprecationRule::Structural(|doc| migrate_template_vars_doc(doc, RETIRED_VARS)),
+    // Retired template variables: {{ repo_root }} → {{ repo_path }},
+    // {{ commits }} → {{ commit_details }}, etc., inside any string value.
+    // Structural because no renderer supplies any of these names any more —
+    // the load-path rewrite is what keeps an unmigrated template rendering
+    // what it always did.
+    DeprecationRule::Structural(migrate_template_vars_doc),
     // [commit-generation] → [commit.generation], top-level and per-project.
     DeprecationRule::Structural(migrate_commit_generation_doc),
     // approved-commands under [projects."..."] → approvals.toml. The rule only
@@ -2149,11 +2119,7 @@ mod tests {
         let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
             return content.to_string();
         };
-        // Both template-var rules, in table order — the helper's callers care
-        // about the substituted text, not which row performed it.
-        let aliased = migrate_template_vars_doc(&mut doc, DEPRECATED_VARS);
-        let retired = migrate_template_vars_doc(&mut doc, RETIRED_VARS);
-        if aliased.is_empty() && retired.is_empty() {
+        if migrate_template_vars_doc(&mut doc).is_empty() {
             return content.to_string();
         }
         // `toml_edit` always serializes a document with a trailing newline.
@@ -2279,12 +2245,13 @@ post-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
         );
     }
 
-    /// The load path rewrites a retired variable (`commits`, which no renderer
-    /// supplies) but leaves a runtime-aliased one (`repo_root`) for
-    /// `wt config update`, which rewrites both. Detection reports both either
-    /// way, so the warning text doesn't depend on which rule owns the pair.
+    /// Every retired variable is rewritten on load, not just by
+    /// `wt config update`: nothing supplies the old names at render time, so a
+    /// template that reached a renderer un-rewritten would fail its expansion
+    /// (`worktree-path`) or render nothing (`squash-template`). Detection
+    /// reports the same pairs either way.
     #[test]
-    fn test_retired_var_migrates_on_load_aliased_var_waits_for_update() {
+    fn test_retired_vars_migrate_on_load_and_on_update() {
         let content = r#"worktree-path = "../{{ repo_root }}.{{ branch }}"
 
 [commit.generation]
@@ -2295,21 +2262,20 @@ squash-template = "{% for c in commits %}{{ c }}\n{% endfor %}"
             vec![("repo_root", "repo_path"), ("commits", "commit_details")]
         );
 
-        let loaded = migrate_content(content);
-        assert!(
-            loaded.contains("for c in commit_details"),
-            "load must rewrite the retired var: {loaded}"
-        );
-        assert!(
-            loaded.contains("{{ repo_root }}"),
-            "load must leave the runtime-aliased var: {loaded}"
-        );
-
-        let updated = compute_migrated_content(content);
-        assert!(
-            updated.contains("for c in commit_details") && updated.contains("{{ repo_path }}"),
-            "update must rewrite both: {updated}"
-        );
+        for (label, migrated) in [
+            ("load", migrate_content(content)),
+            ("update", compute_migrated_content(content)),
+        ] {
+            assert!(
+                migrated.contains("{{ repo_path }}")
+                    && migrated.contains("for c in commit_details"),
+                "{label} must rewrite both retired vars: {migrated}"
+            );
+            assert!(
+                !migrated.contains("repo_root") && !migrated.contains("in commits"),
+                "{label} must leave no retired var behind: {migrated}"
+            );
+        }
     }
 
     #[test]
@@ -3542,11 +3508,16 @@ hostname = "forge.example"
             "switch = \"x\"\n\n[select]\nheight = \"50%\"\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
-            // `recent_commits` merely contains a deprecated var's name; the
-            // rewrite matches whole identifiers, and the retired `commits`
-            // row runs on every load, so a substring match here would mangle
-            // a live variable in every user's config on every command
+            // Live variables whose names merely contain a retired one. The
+            // rewrite matches whole identifiers, and it now runs on every
+            // load, so a substring match here would mangle a current variable
+            // in every user's config on every command — `worktree` inside
+            // `worktree_path`, `main_worktree` inside `main_worktree_path`
+            // (itself retired, to a different name), `commits` inside
+            // `recent_commits`
             "[commit.generation]\nsquash-template = \"{{ recent_commits | length }}\"\n",
+            "worktree-path = \"{{ worktree_path }}\"\n",
+            "post-start = \"ln -sf {{ primary_worktree_path }}/node_modules .\"\n",
         ];
         for content in untouched {
             assert!(
@@ -3584,8 +3555,13 @@ hostname = "forge.example"
             // list.task-timeout-ms, section and inline forms
             "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
             "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
+            // Retired template variables, rewritten on load as well as by
+            // update. `main_worktree_path` is the near-miss of the row above
+            // it in the table and must reach its own replacement.
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
-            // the retired `commits` var, rewritten on load as well as by update
+            "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n",
+            "post-start = \"ln -sf {{ main_worktree_path }}/node_modules .\"\n",
+            "post-start = \"cp {{ worktree }}/.env .\"\n",
             "[commit.generation]\nsquash-template = \"{{ commits | length }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];

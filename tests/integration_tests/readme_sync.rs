@@ -2943,8 +2943,7 @@ fn test_template_variables_table_matches_constants() {
     use std::collections::{BTreeMap, BTreeSet};
     use strum::IntoEnumIterator;
     use worktrunk::config::{
-        ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
-        ValidationScope, vars_available_in,
+        ACTIVE_VARS, ALIAS_ARGS_KEY, EXEC_BASE_VARS, REPO_VARS, ValidationScope, vars_available_in,
     };
     use worktrunk::git::HookType;
 
@@ -3023,7 +3022,6 @@ fn test_template_variables_table_matches_constants() {
         .iter()
         .chain(REPO_VARS.iter())
         .chain(EXEC_BASE_VARS.iter())
-        .chain(DEPRECATED_TEMPLATE_VARS.iter())
         .collect();
     let infra_and_args: BTreeSet<&str> = ["hook_type", "hook_name", ALIAS_ARGS_KEY].into();
     let mut operation: BTreeSet<String> = BTreeSet::new();
