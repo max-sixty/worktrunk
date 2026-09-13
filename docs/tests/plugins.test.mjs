@@ -410,6 +410,23 @@ test('console blocks give each of several commands its own copy control', () => 
   assert.deepEqual(renderData.blockAst.children, [], 'the block keeps its own copy control');
 });
 
+test('console blocks wrap several commands but never captured output', () => {
+  const wraps = (texts) => {
+    const lines = texts.map((text) => ({
+      text,
+      editText(start, end, replacement) {
+        this.text = this.text.slice(0, start) + replacement + this.text.slice(end);
+      },
+    }));
+    const codeBlock = { language: 'console', getLines: () => lines };
+    prepareCodeBlock(pluginWorktrunkTerminal(), codeBlock);
+    return codeBlock.props.wrap;
+  };
+  assert.equal(wraps(['$ wt list', '$ wt list --full']), true);
+  assert.equal(wraps(['$ wt list', '$ wt list --full', 'output']), undefined);
+  assert.equal(wraps(['$ wt list']), undefined);
+});
+
 test('console output and its blank lines stay out of copied commands', () => {
   const lines = ['$ wt list', 'output', '', '# shell comment'].map((text) => ({
     text,

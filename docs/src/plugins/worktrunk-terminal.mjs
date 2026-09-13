@@ -520,8 +520,9 @@ export function pluginWorktrunkTerminal() {
           }
         }
         // Per-line copy controls sit at the end of their line, so a block with
-        // several commands wraps rather than scrolling them out of view.
-        if (commandLines.size > 1) codeBlock.props.wrap = true;
+        // several commands wraps rather than scrolling them out of view. Captured
+        // output keeps its columns, so a block carrying it never wraps.
+        if (commandLines.size > 1 && !hasOutput) codeBlock.props.wrap = true;
         const outputLines = lines
           .map((line, lineIndex) => ({ line, lineIndex }))
           .filter(({ lineIndex }) => (
