@@ -35,12 +35,12 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-llvm-cov
-        version: "=0.9.0"
+        version: "=0.9.1"
 
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.143"
+        version: "=0.9.144"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
