@@ -8,6 +8,8 @@
 
 - **Interactive prompts no longer open with a blank line**: `wt config shell install`, `wt config plugins claude install`, and the commit-message setup offer at the top of `wt merge` all began with one. A prompt that follows other output keeps the blank line separating it.
 
+- **The squash prompt no longer supplies the deprecated `commits` variable**: `commit_details` is the only commit list the renderer passes to a squash template. A template that still says `commits` keeps rendering exactly what it did, because the config deprecation layer now rewrites the name to `commit_details` every time config loads — the same plain identifier rename `wt config update` writes into the file, and the same warning pointing at it. ([#2984](https://github.com/max-sixty/worktrunk/issues/2984))
+
 - **`wt config update --output <path>` confirms the write**: it now prints `✓ Wrote user config migration @ ~/migrated.toml`, so a command whose only effect is the file it wrote now says where that file is. Writing to stdout with `--output=-` stays silent, since the artifact is right there. ([#4053](https://github.com/max-sixty/worktrunk/pull/4053))
 
 ### Fixed
