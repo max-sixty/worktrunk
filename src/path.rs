@@ -90,37 +90,6 @@ fn find_cygpath_from_shell(shell: &crate::shell_exec::ShellConfig) -> Option<Pat
 /// - Windows: `USERPROFILE` or `HOMEDRIVE`/`HOMEPATH`
 pub use home::home_dir;
 
-/// An XDG base directory named by `var`, or `None` when the variable can't
-/// name one and the caller's own default applies instead.
-///
-/// The [XDG base directory spec] makes two exclusions, and every worktrunk
-/// read of an `XDG_*_HOME` variable owes both: an unset *or empty* value means
-/// the default, and a relative path is invalid and must be ignored. Taken at
-/// face value either one resolves the caller's join against whatever directory
-/// `wt` was invoked from — `tea/config.yml` or `opencode/plugins/` under the
-/// user's repository rather than under `~/.config` — so the file worktrunk
-/// reads or writes is picked by the cwd. The lookups that own such a join
-/// (tea's config in `git::remote_ref::gitea`, OpenCode's plugins dir, and both
-/// Nushell directory fallbacks in `shell::paths`) share this guard rather than
-/// each filtering to a different strictness.
-///
-/// The `$HOME`-relative default is the caller's, not this function's: the
-/// tools worktrunk locates disagree about it (OpenCode reads `~/.config` even
-/// on macOS, where worktrunk's own config follows etcetera), so `None` means
-/// "apply yours".
-///
-/// [XDG base directory spec]: https://specifications.freedesktop.org/basedir-spec/latest/
-pub fn xdg_base_dir(var: &str) -> Option<PathBuf> {
-    xdg_base(std::env::var_os(var))
-}
-
-/// The rule behind [`xdg_base_dir`], over a raw value rather than the
-/// environment, so it is unit-testable without mutating the process
-/// environment that every other test in the binary shares.
-fn xdg_base(raw: Option<std::ffi::OsString>) -> Option<PathBuf> {
-    raw.map(PathBuf::from).filter(|path| path.is_absolute())
-}
-
 /// Check if a string needs shell escaping (contains characters outside the safe set).
 fn needs_shell_escaping(s: &str) -> bool {
     !matches!(escape(Cow::Borrowed(s)), Cow::Borrowed(_))
@@ -394,33 +363,7 @@ mod tests {
     use super::{
         canonicalize_with_parents, executable_name, expand_tilde, format_path_for_display,
         home_dir, paths_match, sanitize_for_filename, strip_suffix_ignoring_case, to_posix_path,
-        xdg_base,
     };
-
-    /// Regression guard for every `XDG_*_HOME` read: an exported-but-empty (or
-    /// relative) value used to be taken at face value at each site, so the
-    /// caller's join produced a relative path — resolved against whatever
-    /// directory `wt` was invoked from — instead of falling through to the
-    /// `$HOME`-relative default. `read_tea_config` then looked for
-    /// `tea/config.yml` beside the cwd and never saw the user's tea logins, so
-    /// `wt list --full` dropped the Gitea CI column and `wt switch pr:<n>`
-    /// picked the wrong forge CLI for a self-hosted host.
-    #[test]
-    fn xdg_base_ignores_empty_and_relative_values() {
-        use std::ffi::OsString;
-
-        // An absolute value is the base directory.
-        let absolute = std::env::temp_dir();
-        assert!(absolute.is_absolute(), "temp_dir is absolute: {absolute:?}");
-        assert_eq!(xdg_base(Some(OsString::from(&absolute))), Some(absolute));
-
-        // Unset, empty, and relative all mean "apply the caller's default",
-        // which is what `None` selects.
-        assert_eq!(xdg_base(None), None);
-        assert_eq!(xdg_base(Some(OsString::from(""))), None);
-        assert_eq!(xdg_base(Some(OsString::from("config"))), None);
-        assert_eq!(xdg_base(Some(OsString::from("./config"))), None);
-    }
 
     /// The tilde form `format_path_for_display` prints is a form wt reads back,
     /// so a path from wt's own output can be pasted into a wt command.

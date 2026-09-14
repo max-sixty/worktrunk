@@ -3,7 +3,7 @@
 //! This module handles locating shell configuration files (e.g., `.bashrc`, `.zshrc`)
 //! and completion directories for different shells.
 
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+use etcetera::base_strategy::{BaseStrategy, Xdg, choose_base_strategy};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -94,12 +94,21 @@ fn nu_dirs() -> NuDirs {
 
 /// Fallback for Nushell's `$nu.data-dir` when `nu` can't be queried.
 ///
-/// Mirrors `nu_path::data_dir`: `XDG_DATA_HOME` (when absolute) wins on every
-/// platform, otherwise `dirs::data_dir()` (`~/Library/Application Support` on
-/// macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux). Nushell appends
-/// `nushell`.
+/// Mirrors Nushell's own `resolve_xdg_base` (`crates/nu-config/src/resolve.rs`):
+/// `XDG_DATA_HOME` wins on every platform when it is absolute, otherwise
+/// `dirs::data_dir()` (`~/Library/Application Support` on macOS, `%APPDATA%` on
+/// Windows, `~/.local/share` on Linux). Nushell appends `nushell`.
+///
+/// The one XDG read worktrunk still spells out, because it is Nushell's rule
+/// rather than the spec's: etcetera's `Xdg::data_dir()` applies the same
+/// absolute-only filter but falls back to `~/.local/share` everywhere, which is
+/// the wrong directory on macOS and Windows, and the native strategies that get
+/// those right ignore `XDG_DATA_HOME`.
 fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Some(xdg) = crate::path::xdg_base_dir("XDG_DATA_HOME") {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
         return xdg.join("nushell");
     }
     dirs::data_dir()
@@ -138,12 +147,14 @@ fn legacy_nushell_autoload_dirs(
     if let Some(dir) = default_config {
         dirs.push(dir.to_path_buf());
     }
-    // Absolute-only, as `nushell_data_dir_fallback` reads `XDG_DATA_HOME`: an
-    // exported-but-empty or relative value would put a bare
-    // `nushell/vendor/autoload` into the stranded-file search, which then looks
-    // under the invocation directory instead of a config dir.
-    if let Some(xdg_config) = crate::path::xdg_base_dir("XDG_CONFIG_HOME") {
-        dirs.push(xdg_config.join("nushell"));
+    // etcetera's XDG strategy: `$XDG_CONFIG_HOME` when absolute, `~/.config`
+    // otherwise. Reading the variable directly would put a bare
+    // `nushell/vendor/autoload` into the stranded-file search when the value is
+    // empty or relative, which then looks under the invocation directory
+    // instead of a config dir. `~/.config` stays listed separately for the case
+    // where no home directory can be determined from the environment.
+    if let Ok(xdg) = Xdg::new() {
+        dirs.push(xdg.config_dir().join("nushell"));
     }
     dirs.push(home.join(".config").join("nushell"));
     if let Ok(strategy) = choose_base_strategy() {

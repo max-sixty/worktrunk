@@ -32,6 +32,7 @@
 //! resolves its own context.
 
 use anyhow::{Context, bail};
+use etcetera::base_strategy::{BaseStrategy, Xdg};
 use serde::Deserialize;
 
 use super::{
@@ -370,26 +371,29 @@ fn content_has_any_login(content: &str) -> bool {
 /// Read tea's config.yml, honoring `$XDG_CONFIG_HOME` and the legacy
 /// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
 ///
-/// `$XDG_CONFIG_HOME` goes through [`crate::path::xdg_base_dir`], so an
-/// exported-but-empty or relative value falls through to `~/.config` rather
-/// than resolving `tea/config.yml` against the invocation directory — which
-/// would leave the user's tea logins unread, dropping the Gitea CI column from
-/// `wt list --full` and sending `wt switch pr:<n>` to GitHub for a self-hosted
-/// host tea is logged in to.
+/// The base directory comes from etcetera's XDG strategy — the crate worktrunk
+/// already resolves its own config with — rather than a hand-rolled read of
+/// `$XDG_CONFIG_HOME`, so the spec's exclusions apply: an exported-but-empty
+/// or relative value is ignored in favor of `~/.config`. Taken at face value
+/// it would resolve `tea/config.yml` against whatever directory `wt` was
+/// invoked from, leaving the user's tea logins unread — dropping the Gitea CI
+/// column from `wt list --full` and sending `wt switch pr:<n>` to GitHub for a
+/// self-hosted host tea is logged in to.
+///
+/// `Xdg` specifically, not `choose_base_strategy`: tea reads `~/.config` on
+/// every platform, where the chosen strategy would pick `%APPDATA%` on
+/// Windows.
 fn read_tea_config() -> Option<String> {
-    let xdg = crate::path::xdg_base_dir("XDG_CONFIG_HOME");
-    let home = crate::path::home_dir();
-
-    let primary = xdg
-        .or_else(|| home.as_ref().map(|h| h.join(".config")))
-        .map(|base| base.join("tea").join("config.yml"));
+    let primary = Xdg::new()
+        .ok()
+        .map(|xdg| xdg.config_dir().join("tea").join("config.yml"));
     if let Some(path) = primary
         && let Ok(content) = std::fs::read_to_string(&path)
     {
         return Some(content);
     }
 
-    let legacy = home.map(|h| h.join(".tea").join("tea.yml"));
+    let legacy = crate::path::home_dir().map(|h| h.join(".tea").join("tea.yml"));
     if let Some(path) = legacy
         && let Ok(content) = std::fs::read_to_string(&path)
     {

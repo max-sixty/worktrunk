@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use etcetera::base_strategy::{BaseStrategy, Xdg};
 
 /// The plugin source, embedded at compile time.
 const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
@@ -22,25 +23,27 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 /// not where OpenCode looks for user plugins, so we deliberately avoid `dirs::config_dir()`
 /// here — it would put the plugin in the wrong place on macOS.
 ///
-/// Both overrides read an exported-but-empty value as unset, matching
+/// `OPENCODE_CONFIG_DIR` reads an exported-but-empty value as unset, matching
 /// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::pi`.
 /// An empty value taken at face value yields the relative path `plugins/`, so
 /// the install writes the plugin into whatever directory `wt` was run from.
-/// `$XDG_CONFIG_HOME` gets the stricter XDG rule via
-/// [`worktrunk::path::xdg_base_dir`] — a relative value is invalid there too,
-/// and lands the plugin in the same wrong place an empty one would.
+///
+/// The two lower rungs are etcetera's XDG strategy, which is `$XDG_CONFIG_HOME`
+/// when it is absolute and `~/.config` otherwise — the spec's own exclusions,
+/// so an empty or relative value lands the plugin in the same wrong place an
+/// empty `OPENCODE_CONFIG_DIR` would. `Xdg` rather than `choose_base_strategy`
+/// keeps `~/.config` on Windows too, for the same reason the macOS path is
+/// avoided above.
 fn opencode_plugins_dir() -> Result<PathBuf> {
     let config_dir = if let Some(dir) = std::env::var("OPENCODE_CONFIG_DIR")
         .ok()
         .filter(|s| !s.is_empty())
     {
         PathBuf::from(dir)
-    } else if let Some(xdg) = worktrunk::path::xdg_base_dir("XDG_CONFIG_HOME") {
-        xdg.join("opencode")
     } else {
-        worktrunk::path::home_dir()
+        Xdg::new()
             .context("Could not determine home directory")?
-            .join(".config")
+            .config_dir()
             .join("opencode")
     };
     Ok(config_dir.join("plugins"))
