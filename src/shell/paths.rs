@@ -209,6 +209,25 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
     }
 }
 
+/// The directory fish reads its configuration from — fish's own
+/// `$__fish_config_dir`: `$XDG_CONFIG_HOME/fish` when that variable is set,
+/// otherwise `~/.config/fish`. That is what `etcetera`'s base strategy already
+/// resolves, so the rule isn't restated here.
+///
+/// Every fish path goes through this one function — the wrapper
+/// ([`config_paths`]), the completion ([`completion_path`]) and the deprecated
+/// `conf.d` file ([`legacy_fish_conf_d_path`]) — because they have to agree.
+/// Resolving the wrapper's directory separately from the completion's put the
+/// wrapper under `~/.config/fish` whenever `$XDG_CONFIG_HOME` pointed anywhere
+/// else, which fish never reads, while the completion landed in the directory
+/// it does read; install reported success for both and `wt` was never defined.
+fn fish_config_dir(home: &std::path::Path) -> PathBuf {
+    choose_base_strategy()
+        .map(|strategy| strategy.config_dir())
+        .unwrap_or_else(|_| home.join(".config"))
+        .join("fish")
+}
+
 /// Rc/profile files scanned line-by-line for integration lines.
 ///
 /// Bash/Zsh/PowerShell integration is one line in an rc file, so these paths
@@ -249,8 +268,7 @@ pub(super) fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf
             // fixing the issue where Homebrew PATH setup in config.fish runs
             // after conf.d/ files. See: https://github.com/max-sixty/worktrunk/issues/566
             vec![
-                home.join(".config")
-                    .join("fish")
+                fish_config_dir(&home)
                     .join("functions")
                     .join(format!("{}.fish", cmd)),
             ]
@@ -277,9 +295,7 @@ pub(super) fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf
 /// can clean it up.
 pub(super) fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
     let home = home_dir_required()?;
-    Ok(home
-        .join(".config")
-        .join("fish")
+    Ok(fish_config_dir(&home)
         .join("conf.d")
         .join(format!("{}.fish", cmd)))
 }
@@ -311,16 +327,9 @@ pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf,
                 .join(cmd)
         }
         super::Shell::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
-        super::Shell::Fish => {
-            let config_home = strategy
-                .as_ref()
-                .map(|s| s.config_dir())
-                .unwrap_or_else(|| home.join(".config"));
-            config_home
-                .join("fish")
-                .join("completions")
-                .join(format!("{}.fish", cmd))
-        }
+        super::Shell::Fish => fish_config_dir(&home)
+            .join("completions")
+            .join(format!("{}.fish", cmd)),
         super::Shell::Nushell => {
             // Nushell completions are defined inline in the init script.
             // Return the canonical vendor-autoload path (same as config).

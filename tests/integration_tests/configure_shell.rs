@@ -3244,3 +3244,54 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
          vendor-autoload-dirs:\n{dirs}"
     );
 }
+
+/// A non-default `XDG_CONFIG_HOME` sends the fish wrapper and the fish
+/// completion to the same fish config directory.
+///
+/// Regression guard: `config_paths` hardcoded `~/.config/fish` while
+/// `completion_path` resolved the XDG config dir, so with the variable pointing
+/// anywhere else worktrunk wrote the wrapper where fish never looks and the
+/// completion where it does — install reported success for both and `wt` was
+/// never defined as a function.
+#[rstest]
+#[cfg(unix)]
+fn test_configure_shell_fish_honors_xdg_config_home(repo: TestRepo, temp_home: TempDir) {
+    let xdg_config = temp_home.path().join("xdg-config");
+    fs::create_dir_all(&xdg_config).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    // After `set_temp_home_env`, which pins the variable to `$HOME/.config` —
+    // the one value that makes the hardcode and the XDG lookup agree.
+    cmd.env("XDG_CONFIG_HOME", &xdg_config);
+    cmd.env("SHELL", "/bin/fish");
+    cmd.args(["config", "shell", "install", "fish", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let wrapper = xdg_config.join("fish/functions/wt.fish");
+    let completion = xdg_config.join("fish/completions/wt.fish");
+    assert!(
+        wrapper.exists(),
+        "wrapper should land under $XDG_CONFIG_HOME: {wrapper:?}"
+    );
+    assert!(
+        completion.exists(),
+        "completion should land under $XDG_CONFIG_HOME: {completion:?}"
+    );
+    assert!(
+        !temp_home
+            .path()
+            .join(".config/fish/functions/wt.fish")
+            .exists(),
+        "nothing should be written to ~/.config/fish when $XDG_CONFIG_HOME points elsewhere"
+    );
+}
