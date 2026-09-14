@@ -215,9 +215,12 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
 /// that rule, so nothing about it is restated here.
 ///
 /// [`Xdg`] rather than `choose_base_strategy`, which resolves `%APPDATA%` on
-/// Windows: fish has no `%APPDATA%` notion on any platform, and where it runs
-/// on Windows at all it is under an environment that supplies a POSIX `$HOME`.
-/// The two strategies are the same everywhere else.
+/// Windows: fish has no `%APPDATA%` notion on any platform, so one directory
+/// holds the wrapper and the completion there too. It isn't one a Windows fish
+/// reads — `Xdg::new` takes its home from `std::env::home_dir`, which is
+/// `%USERPROFILE%` there and, since Rust 1.85, deliberately not the POSIX
+/// `$HOME` a Cygwin or MSYS fish runs under. The two strategies are the same
+/// everywhere else.
 ///
 /// Every path fish itself reads goes through this one function — the wrapper
 /// (`config_paths`) and the completion (`completion_path`) — because they have
