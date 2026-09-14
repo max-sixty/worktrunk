@@ -3294,4 +3294,28 @@ fn test_configure_shell_fish_honors_xdg_config_home(repo: TestRepo, temp_home: T
             .exists(),
         "nothing should be written to ~/.config/fish when $XDG_CONFIG_HOME points elsewhere"
     );
+
+    // Uninstall scans the same directory install wrote to, so what install
+    // creates is what uninstall can remove.
+    let mut uninstall = wt_command();
+    repo.configure_wt_cmd(&mut uninstall);
+    set_temp_home_env(&mut uninstall, temp_home.path());
+    uninstall.env("XDG_CONFIG_HOME", &xdg_config);
+    uninstall.env("SHELL", "/bin/fish");
+    uninstall
+        .args(["config", "shell", "uninstall", "fish", "--yes"])
+        .current_dir(repo.root_path());
+
+    let output = uninstall.output().expect("uninstall command should run");
+    assert!(
+        output.status.success(),
+        "uninstall failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(!wrapper.exists(), "uninstall should remove {wrapper:?}");
+    assert!(
+        !completion.exists(),
+        "uninstall should remove {completion:?}"
+    );
 }

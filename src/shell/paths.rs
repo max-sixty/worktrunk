@@ -3,7 +3,7 @@
 //! This module handles locating shell configuration files (e.g., `.bashrc`, `.zshrc`)
 //! and completion directories for different shells.
 
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+use etcetera::base_strategy::{BaseStrategy, Xdg, choose_base_strategy};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -210,20 +210,26 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
 }
 
 /// The directory fish reads its configuration from — fish's own
-/// `$__fish_config_dir`: `$XDG_CONFIG_HOME/fish` when that variable is set,
-/// otherwise `~/.config/fish`. That is what `etcetera`'s base strategy already
-/// resolves, so the rule isn't restated here.
+/// `$__fish_config_dir`: `$XDG_CONFIG_HOME/fish` when that variable holds an
+/// absolute path, otherwise `~/.config/fish`. `etcetera`'s [`Xdg`] strategy is
+/// that rule, so nothing about it is restated here.
 ///
-/// Every fish path goes through this one function — the wrapper
-/// ([`config_paths`]), the completion ([`completion_path`]) and the deprecated
-/// `conf.d` file ([`legacy_fish_conf_d_path`]) — because they have to agree.
-/// Resolving the wrapper's directory separately from the completion's put the
-/// wrapper under `~/.config/fish` whenever `$XDG_CONFIG_HOME` pointed anywhere
-/// else, which fish never reads, while the completion landed in the directory
-/// it does read; install reported success for both and `wt` was never defined.
-fn fish_config_dir(home: &std::path::Path) -> PathBuf {
-    choose_base_strategy()
-        .map(|strategy| strategy.config_dir())
+/// [`Xdg`] rather than `choose_base_strategy`, which resolves `%APPDATA%` on
+/// Windows: fish has no `%APPDATA%` notion on any platform, and where it runs
+/// on Windows at all it is under an environment that supplies a POSIX `$HOME`.
+/// The two strategies are the same everywhere else.
+///
+/// Every path fish itself reads goes through this one function — the wrapper
+/// ([`config_paths`]) and the completion ([`completion_path`]) — because they
+/// have to agree. Resolving the wrapper's directory separately from the
+/// completion's put the wrapper under `~/.config/fish` whenever
+/// `$XDG_CONFIG_HOME` pointed anywhere else, which fish never reads, while the
+/// completion landed in the directory it does read; install reported success
+/// for both and `wt` was never defined. [`legacy_fish_conf_d_path`] is
+/// deliberately not one of these — see its own note.
+pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
+    Xdg::new()
+        .map(|xdg| xdg.config_dir())
         .unwrap_or_else(|_| home.join(".config"))
         .join("fish")
 }
@@ -293,9 +299,20 @@ pub(super) fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf
 /// This caused issues with Homebrew PATH setup (see issue #566). We now install to
 /// `functions/{cmd}.fish` instead. This method returns the legacy path so install/uninstall
 /// can clean it up.
+///
+/// Hardcoded to `~/.config`, unlike [`fish_config_dir`], because this names a
+/// file worktrunk *wrote*, not a file fish reads: the write was hardcoded for
+/// as long as it existed, and install removes what this resolves to whole and
+/// unread. Resolving it through `$XDG_CONFIG_HOME` would both stop finding the
+/// stranded file and start deleting a `conf.d/{cmd}.fish` in the directory fish
+/// actually loads — one worktrunk never wrote and whose contents are never
+/// read. Uninstall's directory scan is gated on worktrunk-managed content and
+/// carries no such constraint.
 pub(super) fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
     let home = home_dir_required()?;
-    Ok(fish_config_dir(&home)
+    Ok(home
+        .join(".config")
+        .join("fish")
         .join("conf.d")
         .join(format!("{}.fish", cmd)))
 }

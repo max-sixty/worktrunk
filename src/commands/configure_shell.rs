@@ -1327,7 +1327,11 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
     for &shell in &shells {
         match shell {
             Shell::Fish => {
-                let functions_dir = home.join(".config").join("fish").join("functions");
+                // The functions directory follows fish's own config dir, so
+                // uninstall scans where install writes. `conf.d` stays pinned
+                // to `~/.config`: worktrunk only ever wrote the legacy wrapper
+                // there (see `legacy_fish_conf_d_path`).
+                let functions_dir = shell::fish_config_dir(&home).join("functions");
                 let confd_dir = home.join(".config").join("fish").join("conf.d");
 
                 let canonical =
@@ -1414,7 +1418,7 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
     let mut completion_results = Vec::new();
     let mut completion_not_found = Vec::new();
     if shells.contains(&Shell::Fish) {
-        let completions_dir = home.join(".config").join("fish").join("completions");
+        let completions_dir = shell::fish_config_dir(&home).join("completions");
         let completions =
             scan_managed_files(&completions_dir, "fish", |c| c.contains(COMPLETION_MARKER))?;
         if completions.is_empty() {
