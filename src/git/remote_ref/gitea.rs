@@ -380,9 +380,12 @@ fn content_has_any_login(content: &str) -> bool {
 /// column from `wt list --full` and sending `wt switch pr:<n>` to GitHub for a
 /// self-hosted host tea is logged in to.
 ///
-/// `Xdg` specifically, not `choose_base_strategy`: tea reads `~/.config` on
-/// every platform, where the chosen strategy would pick `%APPDATA%` on
-/// Windows.
+/// `Xdg` specifically, not `choose_base_strategy`: tea honors `$XDG_CONFIG_HOME`
+/// on every platform and this keeps that. Its *default* is
+/// `github.com/adrg/xdg`'s — `~/Library/Application Support` on macOS,
+/// `%LOCALAPPDATA%` on Windows, `~/.config` elsewhere — so only the Linux
+/// default is matched here; `choose_base_strategy` would pick
+/// `~/Library/Preferences` and `%APPDATA%`, matching tea on neither.
 fn read_tea_config() -> Option<String> {
     let primary = Xdg::new()
         .ok()
