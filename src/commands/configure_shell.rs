@@ -1327,16 +1327,33 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
     for &shell in &shells {
         match shell {
             Shell::Fish => {
-                // The functions directory follows fish's own config dir, so
-                // uninstall scans where install writes. `conf.d` stays pinned
-                // to `~/.config`: worktrunk only ever wrote the legacy wrapper
-                // there (see `legacy_fish_conf_d_path`).
+                // The canonical directory follows fish's own config dir, so
+                // uninstall scans where install writes. The `~/.config/fish`
+                // directories are where worktrunk wrote before it resolved
+                // `$XDG_CONFIG_HOME` — scanned as well so a wrapper stranded
+                // by an older install is still removed, and skipped entirely
+                // when they're the same directory. Every scan is gated on
+                // worktrunk-managed content, so the wider search reaches only
+                // files worktrunk wrote.
                 let functions_dir = shell::fish_config_dir(&home).join("functions");
+                let stranded_functions_dir = home.join(".config").join("fish").join("functions");
                 let confd_dir = home.join(".config").join("fish").join("conf.d");
 
                 let canonical =
                     scan_managed_files(&functions_dir, "fish", is_worktrunk_managed_content)?;
-                let legacy = scan_managed_files(&confd_dir, "fish", is_worktrunk_managed_content)?;
+                let mut legacy = Vec::new();
+                if stranded_functions_dir != functions_dir {
+                    legacy.extend(scan_managed_files(
+                        &stranded_functions_dir,
+                        "fish",
+                        is_worktrunk_managed_content,
+                    )?);
+                }
+                legacy.extend(scan_managed_files(
+                    &confd_dir,
+                    "fish",
+                    is_worktrunk_managed_content,
+                )?);
                 let found_any = !canonical.is_empty() || !legacy.is_empty();
 
                 for (path, content) in &canonical {
@@ -1418,9 +1435,18 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
     let mut completion_results = Vec::new();
     let mut completion_not_found = Vec::new();
     if shells.contains(&Shell::Fish) {
+        // Same two directories as the wrappers above, for the same reason.
         let completions_dir = shell::fish_config_dir(&home).join("completions");
-        let completions =
+        let stranded_completions_dir = home.join(".config").join("fish").join("completions");
+        let mut completions =
             scan_managed_files(&completions_dir, "fish", |c| c.contains(COMPLETION_MARKER))?;
+        if stranded_completions_dir != completions_dir {
+            completions.extend(scan_managed_files(
+                &stranded_completions_dir,
+                "fish",
+                |c| c.contains(COMPLETION_MARKER),
+            )?);
+        }
         if completions.is_empty() {
             completion_not_found.push((Shell::Fish, completions_dir));
         }

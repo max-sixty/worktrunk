@@ -3295,6 +3295,19 @@ fn test_configure_shell_fish_honors_xdg_config_home(repo: TestRepo, temp_home: T
         "nothing should be written to ~/.config/fish when $XDG_CONFIG_HOME points elsewhere"
     );
 
+    // A wrapper a pre-fix worktrunk stranded under `~/.config/fish`: never
+    // loaded by fish, but worktrunk-managed, so uninstall still reaches it.
+    let stranded_dir = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&stranded_dir).unwrap();
+    let stranded = stranded_dir.join("wt.fish");
+    let init =
+        worktrunk::shell::ShellInit::with_prefix(worktrunk::shell::Shell::Fish, "wt".to_string());
+    fs::write(
+        &stranded,
+        format!("{}\n", init.generate_fish_wrapper().unwrap()),
+    )
+    .unwrap();
+
     // Uninstall scans the same directory install wrote to, so what install
     // creates is what uninstall can remove.
     let mut uninstall = wt_command();
@@ -3317,5 +3330,9 @@ fn test_configure_shell_fish_honors_xdg_config_home(repo: TestRepo, temp_home: T
     assert!(
         !completion.exists(),
         "uninstall should remove {completion:?}"
+    );
+    assert!(
+        !stranded.exists(),
+        "uninstall should remove the stranded wrapper at {stranded:?}"
     );
 }
