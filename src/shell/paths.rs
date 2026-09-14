@@ -27,8 +27,12 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 const TEST_NU_VENDOR_AUTOLOAD_ENV: &str = "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR";
 
 /// Reported when neither `nu` nor `nu-config` can name Nushell's
-/// vendor-autoload directory, which takes a home directory neither can find.
-const NO_NU_VENDOR_AUTOLOAD_DIR: &str = "Cannot determine Nushell's vendor-autoload directory. Set $HOME (Unix) or $USERPROFILE (Windows)";
+/// vendor-autoload directory.
+///
+/// It names what failed rather than a variable to set: every caller reaches
+/// this past [`home_dir_required`], so `$HOME` / `$USERPROFILE` already
+/// resolved by the time it can fire.
+const NO_NU_VENDOR_AUTOLOAD_DIR: &str = "Cannot determine Nushell's vendor-autoload directory: neither `nu` nor nu-config could resolve one";
 
 /// The Nushell directories worktrunk resolves from `nu`, queried at most once
 /// per process.
@@ -100,24 +104,53 @@ fn nu_dirs() -> NuDirs {
 ///
 /// Delegates to `nu-config`, the crate Nushell itself resolves these paths
 /// with: [`resolve_paths`](nu_config::resolve_paths) applies Nushell's own
-/// rules for `$XDG_DATA_HOME`, `$XDG_DATA_DIRS`, the platform data directory
-/// and `$NU_VENDOR_AUTOLOAD_DIR`, and its last entry is the user-writable one
-/// — the same expression [`nu_dirs`] asks `nu` for. Nothing about Nushell's
-/// layout is restated here, so the rules can't drift out of sync.
+/// rules and this takes its last entry — the same expression [`nu_dirs`] asks
+/// `nu` for, and the one worktrunk writes its wrapper to. Nothing about
+/// Nushell's layout is restated here, so the rules can't drift out of sync.
+///
+/// In practice that entry is `$XDG_DATA_HOME` when absolute and the platform
+/// data directory otherwise, each with `nushell/vendor/autoload` appended —
+/// what the hand-written fallback this replaced computed. The earlier entries
+/// nu-config resolves (`$XDG_DATA_DIRS`, macOS's `/Library/Application
+/// Support`) are system-wide and never the write target. The one entry that
+/// displaces the data-home one is `$NU_VENDOR_AUTOLOAD_DIR`, which nu-config
+/// appends last so a user or admin can override it.
 ///
 /// It answers for the `nu-config` release pinned in `Cargo.toml` rather than
 /// for the installed `nu`, which is why [`nu_dirs`] is still preferred when
 /// `nu` is on PATH; this is the offline fallback, and the one answer asking
 /// the tool can't give.
 ///
-/// `None` only when no home directory is discoverable. Both callers reach here
-/// via [`home_dir_required`], which already failed in that case, so there is no
-/// last-resort path to guess.
-fn nushell_vendor_autoload_fallback() -> Option<PathBuf> {
+/// `None` when nu-config can determine neither a platform config directory
+/// ([`nu_config::ConfigError::ConfigDirNotFound`]) nor a home directory
+/// ([`nu_config::ConfigError::NoHomeDir`]). On Unix both key on `$HOME`, which
+/// [`home_dir_required`] has already accepted at every call site; on Windows
+/// they can disagree, because `home` falls back to `%USERPROFILE%` while
+/// `dirs::config_dir` has no fallback past the known-folder call.
+///
+/// Takes the environment seam rather than reading the process environment
+/// directly so tests can pin the answer with [`nu_config::TestEnv`].
+fn nushell_vendor_autoload_fallback(env: &impl nu_config::EnvAccess) -> Option<PathBuf> {
     let (dirs, _warnings) =
-        nu_config::resolve_paths(&nu_config::SystemEnv, &nu_config::CliOverrides::default())
-            .ok()?;
+        nu_config::resolve_paths(env, &nu_config::CliOverrides::default()).ok()?;
     dirs.vendor_autoload_dirs.last().cloned()
+}
+
+/// The Nushell vendor-autoload directory worktrunk writes its wrapper to.
+///
+/// `nu`'s own answer when it could be queried, else
+/// [`nushell_vendor_autoload_fallback`]'s for the same expression. Both absent
+/// is the state described there — unreachable on Unix past
+/// [`home_dir_required`], reachable on Windows — so this errors rather than
+/// guessing a path Nushell would never autoload.
+fn nushell_write_target(
+    queried: Option<PathBuf>,
+    fallback: Option<PathBuf>,
+) -> Result<PathBuf, std::io::Error> {
+    queried.or(fallback).ok_or(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        NO_NU_VENDOR_AUTOLOAD_DIR,
+    ))
 }
 
 /// Legacy `<config-dir>/vendor/autoload` directories where older worktrunk
@@ -166,7 +199,7 @@ pub fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     candidates.extend(dirs.vendor_autoload.clone());
     // Also listed when `nu` answered, in case it was queryable at install time
     // but not now; identical to the entry above when it wasn't, and deduped.
-    candidates.extend(nushell_vendor_autoload_fallback());
+    candidates.extend(nushell_vendor_autoload_fallback(&nu_config::SystemEnv));
     candidates.extend(legacy_nushell_autoload_dirs(
         home,
         dirs.default_config.as_deref(),
@@ -322,14 +355,11 @@ pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf,
             // Return the canonical vendor-autoload path (same as config): what
             // `nu` reports, else nu-config's answer for the same expression.
             let dirs = nu_dirs();
-            dirs.vendor_autoload
-                .clone()
-                .or_else(nushell_vendor_autoload_fallback)
-                .ok_or(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    NO_NU_VENDOR_AUTOLOAD_DIR,
-                ))?
-                .join(format!("{}.nu", cmd))
+            nushell_write_target(
+                dirs.vendor_autoload.clone(),
+                nushell_vendor_autoload_fallback(&nu_config::SystemEnv),
+            )?
+            .join(format!("{}.nu", cmd))
         }
         super::Shell::PowerShell => {
             // PowerShell doesn't use a separate completion file - completions are
@@ -343,6 +373,7 @@ pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_parse_nu_path() {
@@ -359,17 +390,90 @@ mod tests {
         assert_eq!(parse_nu_path("  \n"), None);
     }
 
+    /// The delegated fallback resolves `$XDG_DATA_HOME`, not a config dir.
+    ///
+    /// nu-config owns the rule; what worktrunk depends on is the value of the
+    /// last `vendor-autoload-dirs` entry — a `vendor/autoload` directory under
+    /// the data home, never a bare config dir (the shape of issue #2878). Driven
+    /// through `TestEnv` so the answer is the injected environment's rather than
+    /// whatever the test runner happens to export.
     #[test]
-    fn test_nushell_vendor_autoload_fallback_is_a_vendor_autoload_dir() {
-        let dir = nushell_vendor_autoload_fallback()
-            .expect("nu-config should resolve a vendor-autoload dir when $HOME is set");
-        // nu-config owns the rule; what worktrunk depends on is that the last
-        // entry is a `vendor/autoload` directory, never a bare config dir (the
-        // shape of issue #2878).
-        assert!(
-            dir.ends_with("vendor/autoload"),
-            "fallback should be a vendor/autoload dir: {dir:?}"
+    fn test_nushell_vendor_autoload_fallback_resolves_xdg_data_home() {
+        let root = std::env::temp_dir().join("wt-nu-fallback");
+        let env = nu_config::TestEnv::new(HashMap::from([
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                root.join("config").to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_DATA_HOME".to_string(),
+                root.join("data").to_string_lossy().into_owned(),
+            ),
+        ]))
+        .with_home_dir(root.clone());
+
+        assert_eq!(
+            nushell_vendor_autoload_fallback(&env),
+            Some(root.join("data").join("nushell/vendor/autoload")),
+            "the last entry should be the data-home vendor/autoload dir"
         );
+    }
+
+    /// `$NU_VENDOR_AUTOLOAD_DIR` is the one entry that displaces the data-home
+    /// one — nu-config appends it last, so `nu` would report it too.
+    #[test]
+    fn test_nushell_vendor_autoload_fallback_honors_nu_vendor_autoload_dir() {
+        let root = std::env::temp_dir().join("wt-nu-fallback-override");
+        let override_dir = root.join("vendor-override");
+        let env = nu_config::TestEnv::new(HashMap::from([
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                root.join("config").to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_DATA_HOME".to_string(),
+                root.join("data").to_string_lossy().into_owned(),
+            ),
+            (
+                "NU_VENDOR_AUTOLOAD_DIR".to_string(),
+                override_dir.to_string_lossy().into_owned(),
+            ),
+        ]))
+        .with_home_dir(root.clone());
+
+        assert_eq!(nushell_vendor_autoload_fallback(&env), Some(override_dir));
+    }
+
+    /// With no home directory to resolve from, nu-config answers nothing and
+    /// the write target is an error rather than a guessed path.
+    #[test]
+    fn test_nushell_vendor_autoload_fallback_without_a_home() {
+        let env = nu_config::TestEnv::new(HashMap::new());
+        assert_eq!(nushell_vendor_autoload_fallback(&env), None);
+    }
+
+    #[test]
+    fn test_nushell_write_target_prefers_the_queried_dir() {
+        let queried = PathBuf::from("/opt/nu/vendor/autoload");
+        let fallback = PathBuf::from("/home/user/.local/share/nushell/vendor/autoload");
+        assert_eq!(
+            nushell_write_target(Some(queried.clone()), Some(fallback.clone()))
+                .expect("a queried dir is a write target"),
+            queried,
+            "the path nu reports should be used verbatim"
+        );
+        assert_eq!(
+            nushell_write_target(None, Some(fallback.clone()))
+                .expect("the fallback is a write target"),
+            fallback
+        );
+    }
+
+    #[test]
+    fn test_nushell_write_target_errors_when_neither_answers() {
+        let err = nushell_write_target(None, None)
+            .expect_err("no answer should be an error, not a guessed path");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]
