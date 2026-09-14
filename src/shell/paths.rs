@@ -29,10 +29,12 @@ const TEST_NU_VENDOR_AUTOLOAD_ENV: &str = "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR
 /// Reported when neither `nu` nor `nu-config` can name Nushell's
 /// vendor-autoload directory.
 ///
-/// It names what failed rather than a variable to set: every caller reaches
-/// this past [`home_dir_required`], so `$HOME` / `$USERPROFILE` already
-/// resolved by the time it can fire.
-const NO_NU_VENDOR_AUTOLOAD_DIR: &str = "Cannot determine Nushell's vendor-autoload directory: neither `nu` nor nu-config could resolve one";
+/// It points at `nu` rather than at `$HOME` / `$USERPROFILE`: every caller
+/// reaches this past [`home_dir_required`], so those already resolved, and
+/// querying `nu` is the one answer that does not go through the
+/// [`nu_config::resolve_paths`] call that just failed.
+const NO_NU_VENDOR_AUTOLOAD_DIR: &str =
+    "Cannot determine Nushell's vendor-autoload directory. Put nu on PATH so worktrunk can ask it";
 
 /// The Nushell directories worktrunk resolves from `nu`, queried at most once
 /// per process.
@@ -444,10 +446,15 @@ mod tests {
         assert_eq!(nushell_vendor_autoload_fallback(&env), Some(override_dir));
     }
 
-    /// With no home directory to resolve from, nu-config answers nothing and
-    /// the write target is an error rather than a guessed path.
+    /// With no platform config directory to resolve from, nu-config answers
+    /// nothing and the write target is an error rather than a guessed path.
+    ///
+    /// `TestEnv::new` leaves `config_dir()` `None`, so `resolve_paths` stops at
+    /// [`nu_config::ConfigError::ConfigDirNotFound`] before the home lookup —
+    /// the Windows-reachable half of the two errors documented on the
+    /// fallback, not `NoHomeDir`.
     #[test]
-    fn test_nushell_vendor_autoload_fallback_without_a_home() {
+    fn test_nushell_vendor_autoload_fallback_without_a_config_dir() {
         let env = nu_config::TestEnv::new(HashMap::new());
         assert_eq!(nushell_vendor_autoload_fallback(&env), None);
     }
