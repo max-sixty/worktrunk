@@ -407,11 +407,20 @@ impl Repository {
 
         // The paths the branch changed. `diff-tree` without `-M`, like the
         // branch-side patch below, so a rename lists both its old and its new
-        // path — exactly the paths that patch covers. NUL-separated so any
-        // filename survives.
-        let branch_paths =
-            self.run_command(&["diff-tree", "-r", "-z", "--name-only", &merge_base, branch])?;
-        let branch_paths: Vec<&str> = branch_paths.split('\0').filter(|p| !p.is_empty()).collect();
+        // path — exactly the paths that patch covers. NUL-separated and kept
+        // as raw bytes so any filename survives: `run_command`'s lossy UTF-8
+        // decode would turn a non-UTF-8 name into U+FFFD, a pathspec that
+        // matches nothing.
+        let args = ["diff-tree", "-r", "-z", "--name-only", &merge_base, branch];
+        let output = self.run_command_output(&args)?;
+        if !output.status.success() {
+            return Err(crate::git::CommandError::from_failed_output("git", &args, &output).into());
+        }
+        let branch_paths: Vec<&[u8]> = output
+            .stdout
+            .split(|&b| b == b'\0')
+            .filter(|p| !p.is_empty())
+            .collect();
         if branch_paths.is_empty() {
             return Ok(false);
         }
@@ -425,16 +434,21 @@ impl Repository {
         // `--literal-pathspecs` stops `*`, `?`, `[` or a leading `:` in a
         // filename from acting as pathspec magic; `--full-history` stops
         // history simplification from dropping a commit that reached the
-        // target through the side of a merge. `--reverse` lists them oldest
-        // first, for the cap below. A path containing a line break can't be
-        // written one per line, so that branch falls back to every commit in
-        // the range.
-        let mut rev_list_input = format!("{merge_base}..{target}\n");
-        if !branch_paths.iter().any(|p| p.contains(['\n', '\r'])) {
-            rev_list_input.push_str("--\n");
+        // target through the side of a merge, and `--no-merges` then drops
+        // the merges themselves: `diff-tree` emits no patch for a merge and a
+        // squash merge has one parent, so a merge could only take a cap slot.
+        // `--reverse` lists them oldest first, for the cap below. A path
+        // containing a line break can't be written one per line, so that
+        // branch falls back to every commit in the range.
+        let mut rev_list_input = format!("{merge_base}..{target}\n").into_bytes();
+        if !branch_paths
+            .iter()
+            .any(|p| p.iter().any(|b| matches!(b, b'\n' | b'\r')))
+        {
+            rev_list_input.extend_from_slice(b"--\n");
             for path in &branch_paths {
-                rev_list_input.push_str(path);
-                rev_list_input.push('\n');
+                rev_list_input.extend_from_slice(path);
+                rev_list_input.push(b'\n');
             }
         }
         let candidates = self.run_command_with_stdin(
@@ -442,10 +456,11 @@ impl Repository {
                 "--literal-pathspecs",
                 "rev-list",
                 "--full-history",
+                "--no-merges",
                 "--reverse",
                 "--stdin",
             ],
-            rev_list_input.into_bytes(),
+            rev_list_input,
         )?;
 
         // Bound the patch-id work to the oldest candidates. Every candidate
@@ -1117,6 +1132,10 @@ mod patch_id_tests {
     /// `D`, so every pad is a real change to it. `SameFile` pads before the
     /// squash are followed by one more commit restoring `A`, so the squash is
     /// still `A → B`.
+    ///
+    /// `path` is written into the stream as is, so a name fast-import can't
+    /// take bare — a line break, non-UTF-8 bytes — goes in C-quoted
+    /// (`"calf\351.txt"`).
     fn build(test: &TestRepo, path: &str, before: Pads, after: Pads) {
         let mut s = String::new();
         s.push_str("blob\nmark :10\ndata 1\nA\n");
@@ -1267,13 +1286,14 @@ mod patch_id_tests {
     #[test]
     fn branch_paths_are_literal_not_pathspec_magic() {
         let test = TestRepo::new();
-        // As a pathspec, `*` matches `other` too, which would make every pad
-        // a candidate and push the squash past the oldest
-        // PATCH_ID_SCAN_MAX_COMMITS. Taken literally it matches only the file
-        // named `*`.
+        // As a pathspec, `[o]the[r]` matches `other` too, which would make
+        // every pad a candidate and push the squash past the oldest
+        // PATCH_ID_SCAN_MAX_COMMITS. Taken literally it matches only the
+        // file named `[o]the[r]`. Not `*`, which pins the same thing but which
+        // git on Windows rejects outright: `fatal: invalid path '*'`.
         build(
             &test,
-            "*",
+            "[o]the[r]",
             Pads(PATCH_ID_SCAN_MAX_COMMITS, Padding::OtherFile),
             NO_PADS,
         );
@@ -1281,6 +1301,62 @@ mod patch_id_tests {
         assert!(
             is_squash_merged(&test),
             "a filename must be matched literally, not as a glob"
+        );
+    }
+
+    // Git for Windows refuses control characters in paths, and a Windows
+    // checkout can't hold a non-UTF-8 name, so these two are Unix-only.
+
+    #[test]
+    #[cfg(unix)]
+    fn non_utf8_branch_paths_still_filter() {
+        let test = TestRepo::new();
+        // `café.txt` in Latin-1. A lossy decode would pass U+FFFD to
+        // `rev-list`, filter the squash out, and miss it; with the pads on
+        // `other`, falling back to the whole range would push it past the
+        // cap too. Only the raw bytes find it.
+        build(
+            &test,
+            r#""calf\351.txt""#,
+            Pads(PATCH_ID_SCAN_MAX_COMMITS, Padding::OtherFile),
+            NO_PADS,
+        );
+
+        assert!(
+            is_squash_merged(&test),
+            "a non-UTF-8 filename must reach the path filter byte for byte"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn branch_path_with_line_break_scans_whole_range() {
+        let test = TestRepo::new();
+        // Written one per line, `new\nline` would become the two pathspecs
+        // `new` and `line`, which match nothing — so the branch falls back
+        // to every commit in the range, which finds the squash.
+        build(&test, r#""new\nline""#, NO_PADS, NO_PADS);
+
+        assert!(
+            is_squash_merged(&test),
+            "a path with a line break must fall back to the whole range, not a split pathspec"
+        );
+    }
+
+    #[test]
+    fn branch_that_changes_nothing_is_not_squash_merged() {
+        let test = TestRepo::new();
+        std::fs::write(test.path().join("file"), "A\n").unwrap();
+        test.run_git(&["add", "file"]);
+        test.run_git(&["commit", "-m", "base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        test.run_git(&["commit", "--allow-empty", "-m", "no change"]);
+        test.run_git(&["checkout", "-b", "target", "main"]);
+        test.run_git(&["commit", "--allow-empty", "-m", "also no change"]);
+
+        assert!(
+            !is_squash_merged(&test),
+            "a branch with no changes has no patch to match"
         );
     }
 
