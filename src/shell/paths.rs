@@ -220,13 +220,13 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
 /// The two strategies are the same everywhere else.
 ///
 /// Every path fish itself reads goes through this one function — the wrapper
-/// ([`config_paths`]) and the completion ([`completion_path`]) — because they
-/// have to agree. Resolving the wrapper's directory separately from the
-/// completion's put the wrapper under `~/.config/fish` whenever
-/// `$XDG_CONFIG_HOME` pointed anywhere else, which fish never reads, while the
-/// completion landed in the directory it does read; install reported success
-/// for both and `wt` was never defined. [`legacy_fish_conf_d_path`] is
-/// deliberately not one of these — see its own note.
+/// (`config_paths`) and the completion (`completion_path`) — because they have
+/// to agree. Resolving the wrapper's directory separately from the completion's
+/// put the wrapper under `~/.config/fish` whenever `$XDG_CONFIG_HOME` pointed
+/// anywhere else, which fish never reads, while the completion landed in the
+/// directory it does read; install reported success for both and `wt` was never
+/// defined. `legacy_fish_conf_d_path` is deliberately not one of these — see
+/// its own note.
 pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
     Xdg::new()
         .map(|xdg| xdg.config_dir())
