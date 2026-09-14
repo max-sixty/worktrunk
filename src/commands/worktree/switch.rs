@@ -882,7 +882,11 @@ fn setup_fork_branch(
                 branch: branch.to_string(),
                 conflicting,
             },
-            None => worktree_creation_error(&e, branch.to_string(), None),
+            // No leftover-branch hint on this path: `wt switch pr:N` is the
+            // re-run, and it adopts or prefixes the branch on its own terms
+            // (see this function's docstring), so naming the ref would point at
+            // a recovery that isn't the one to take.
+            None => worktree_creation_error(&e, branch.to_string(), None, false),
         }
     })?;
 
@@ -1178,10 +1182,12 @@ fn execute_switch(
                             }
                             .into());
                         }
+                        let leftover = *create_branch && failed_add_left_branch(repo, &branch);
                         return Err(worktree_creation_error(
                             &e,
                             branch.clone(),
                             base_branch.clone(),
+                            leftover,
                         )
                         .into());
                     }
@@ -1356,10 +1362,14 @@ fn detect_branch_namespace_conflict(repo: &Repository, branch: &str) -> Option<S
 
 /// Build a `GitError::WorktreeCreationFailed` from a failed `git worktree add`,
 /// extracting the underlying command output for the error message.
+///
+/// `leftover_branch` says whether the failed add left its `-b` branch behind
+/// (see [`failed_add_left_branch`]); it only adds a hint naming the branch.
 fn worktree_creation_error(
     err: &anyhow::Error,
     branch: String,
     base_branch: Option<String>,
+    leftover_branch: bool,
 ) -> GitError {
     let (output, command) = Repository::extract_failed_command(err);
     GitError::WorktreeCreationFailed {
@@ -1367,7 +1377,37 @@ fn worktree_creation_error(
         base_branch,
         error: output,
         command,
+        leftover_branch,
     }
+}
+
+/// Whether a failed `git worktree add -b <branch>` left the branch behind.
+///
+/// Git writes the ref before it populates the worktree and unwinds only what it
+/// registered, so a failure in between — an index it can't write, a path whose
+/// leading directories it can't create — ends with the branch present and
+/// nothing checked out on it. The next `wt switch --create <branch>` then
+/// reports `Branch … already exists`, which reads as a fresh name collision
+/// rather than as fallout from the first failure (issue #4108).
+///
+/// Read-only on purpose: `wt` names the leftover, it never deletes it. A branch
+/// is the user's, and the rollback this would otherwise be is the one #3984
+/// removed — its did-we-create-it reasoning force-deleted a branch `wt` had not
+/// created. A hint costs nothing and leaves the choice where it belongs.
+///
+/// Only the `--create` path asks. Without `--create` the leftover branch is
+/// what a re-run wants anyway, so there is nothing to explain.
+///
+/// The worktree lookup goes through a fresh [`Repository`]: the failed add may
+/// still have registered one, and `repo` cached its inventory before the
+/// command ran (see the caching contract in `git/repository/mod.rs`).
+fn failed_add_left_branch(repo: &Repository, branch: &str) -> bool {
+    if !repo.branch(branch).exists_locally().unwrap_or(false) {
+        return false;
+    }
+    Repository::at(repo.discovery_path())
+        .and_then(|fresh| fresh.worktree_for_branch(branch))
+        .is_ok_and(|worktree| worktree.is_none())
 }
 
 /// Format the last fetch time as a self-contained phrase for error hint parentheticals.
