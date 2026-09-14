@@ -126,7 +126,7 @@ const MIN_COLS_FOR_RIGHT_LAYOUT: f64 = 80.0;
 /// The share is exact from 12 rows up. Below that, skim floors a non-fullscreen
 /// viewport at its `--min-height` (default 10, capped by the terminal) —
 /// `rect_with_min_height` in skim 5.7.0's `src/tui/backend.rs`, applied from
-/// `Skim::init` and inert before 5.7.0 — so skim paints exactly one row more
+/// `Skim::init_tui` and inert before 5.7.0 — so skim paints exactly one row more
 /// than this returns, scrolling the terminal up to claim it. That row falls to
 /// the list: the `down:{height}` band `spec_for` formats is sized against this
 /// budget, and on a terminal that short the floors (`MIN_PREVIEW_LINES`,
