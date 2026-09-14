@@ -1135,7 +1135,7 @@ mod patch_id_tests {
     ///
     /// `path` is written into the stream as is, so a name fast-import can't
     /// take bare — a line break, non-UTF-8 bytes — goes in C-quoted
-    /// (`"calf\351.txt"`).
+    /// (`"\351t\351.txt"`).
     fn build(test: &TestRepo, path: &str, before: Pads, after: Pads) {
         let mut s = String::new();
         s.push_str("blob\nmark :10\ndata 1\nA\n");
@@ -1311,13 +1311,14 @@ mod patch_id_tests {
     #[cfg(unix)]
     fn non_utf8_branch_paths_still_filter() {
         let test = TestRepo::new();
-        // `café.txt` in Latin-1. A lossy decode would pass U+FFFD to
-        // `rev-list`, filter the squash out, and miss it; with the pads on
-        // `other`, falling back to the whole range would push it past the
-        // cap too. Only the raw bytes find it.
+        // `été.txt` in Latin-1 — the literal below is `\351t\351.txt`, and
+        // a lone `\351` byte is not valid UTF-8. A lossy decode would pass
+        // U+FFFD to `rev-list`, filter the squash out, and miss it; with the
+        // pads on `other`, falling back to the whole range would push it past
+        // the cap too. Only the raw bytes find it.
         build(
             &test,
-            r#""calf\351.txt""#,
+            r#""\351t\351.txt""#,
             Pads(PATCH_ID_SCAN_MAX_COMMITS, Padding::OtherFile),
             NO_PADS,
         );
