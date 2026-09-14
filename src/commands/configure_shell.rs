@@ -1339,21 +1339,14 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
                 let stranded_functions_dir = home.join(".config").join("fish").join("functions");
                 let confd_dir = home.join(".config").join("fish").join("conf.d");
 
-                let canonical =
-                    scan_managed_files(&functions_dir, "fish", is_worktrunk_managed_content)?;
+                let scan =
+                    |dir: &Path| scan_managed_files(dir, "fish", is_worktrunk_managed_content);
+                let canonical = scan(&functions_dir)?;
                 let mut legacy = Vec::new();
                 if stranded_functions_dir != functions_dir {
-                    legacy.extend(scan_managed_files(
-                        &stranded_functions_dir,
-                        "fish",
-                        is_worktrunk_managed_content,
-                    )?);
+                    legacy.extend(scan(&stranded_functions_dir)?);
                 }
-                legacy.extend(scan_managed_files(
-                    &confd_dir,
-                    "fish",
-                    is_worktrunk_managed_content,
-                )?);
+                legacy.extend(scan(&confd_dir)?);
                 let found_any = !canonical.is_empty() || !legacy.is_empty();
 
                 for (path, content) in &canonical {
@@ -1438,14 +1431,10 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
         // Same two directories as the wrappers above, for the same reason.
         let completions_dir = shell::fish_config_dir(&home).join("completions");
         let stranded_completions_dir = home.join(".config").join("fish").join("completions");
-        let mut completions =
-            scan_managed_files(&completions_dir, "fish", |c| c.contains(COMPLETION_MARKER))?;
+        let scan = |dir: &Path| scan_managed_files(dir, "fish", |c| c.contains(COMPLETION_MARKER));
+        let mut completions = scan(&completions_dir)?;
         if stranded_completions_dir != completions_dir {
-            completions.extend(scan_managed_files(
-                &stranded_completions_dir,
-                "fish",
-                |c| c.contains(COMPLETION_MARKER),
-            )?);
+            completions.extend(scan(&stranded_completions_dir)?);
         }
         if completions.is_empty() {
             completion_not_found.push((Shell::Fish, completions_dir));
