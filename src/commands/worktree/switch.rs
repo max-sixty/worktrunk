@@ -1402,12 +1402,10 @@ fn worktree_creation_error(
 /// still have registered one, and `repo` cached its inventory before the
 /// command ran (see the caching contract in `git/repository/mod.rs`).
 fn failed_add_left_branch(repo: &Repository, branch: &str) -> bool {
-    if !repo.branch(branch).exists_locally().unwrap_or(false) {
-        return false;
-    }
-    Repository::at(repo.discovery_path())
-        .and_then(|fresh| fresh.worktree_for_branch(branch))
-        .is_ok_and(|worktree| worktree.is_none())
+    repo.branch(branch).exists_locally().unwrap_or(false)
+        && Repository::at(repo.discovery_path())
+            .and_then(|fresh| fresh.worktree_for_branch(branch))
+            .is_ok_and(|worktree| worktree.is_none())
 }
 
 /// Format the last fetch time as a self-contained phrase for error hint parentheticals.

@@ -1222,23 +1222,22 @@ impl GitError {
                         format_bash_with_gutter(&cmd.command)
                     )?;
                 }
-                if *leftover_branch {
-                    // `git worktree add -b` writes the ref before it populates
-                    // the worktree, so the branch outlives a failure in
-                    // between. Naming it here is what keeps the next
-                    // `--create` run's `Branch … already exists` from reading
-                    // as a fresh name collision.
-                    let escaped = escape(Cow::Borrowed(branch.as_str()));
-                    let switch_cmd = suggest_command("switch", &[branch], &[]);
-                    write!(
-                        f,
-                        "\n{}",
-                        hint_message(cformat!(
-                            "Branch <underline>{branch}</> was created before the failure, with no worktree; to delete it, run <underline>git branch -d -- {escaped}</>; to use it, run <underline>{switch_cmd}</>"
-                        ))
-                    )?;
+                if !*leftover_branch {
+                    return Ok(());
                 }
-                Ok(())
+                // `git worktree add -b` writes the ref before it populates the
+                // worktree, so the branch outlives a failure in between. Naming
+                // it here is what keeps the next `--create` run's `Branch …
+                // already exists` from reading as a fresh name collision.
+                let escaped = escape(Cow::Borrowed(branch.as_str()));
+                let switch_cmd = suggest_command("switch", &[branch], &[]);
+                write!(
+                    f,
+                    "\n{}",
+                    hint_message(cformat!(
+                        "Branch <underline>{branch}</> was created before the failure, with no worktree; to delete it, run <underline>git branch -d -- {escaped}</>; to use it, run <underline>{switch_cmd}</>"
+                    ))
+                )
             }
 
             GitError::BranchNamespaceConflict {
