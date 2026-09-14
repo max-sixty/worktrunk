@@ -2925,14 +2925,15 @@ fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_ho
     );
 }
 
-/// Uninstall finds a wrapper under `$XDG_DATA_HOME`, the data-dir candidate
-/// `nushell_data_dir_fallback` derives when `nu` can't be queried.
+/// Uninstall finds a wrapper under `$XDG_DATA_HOME`, the candidate worktrunk
+/// falls back to when `nu` can't be queried.
 ///
-/// An absolute `XDG_DATA_HOME` wins over `dirs::data_dir()` on every platform,
-/// matching `nu_path::data_dir`. Only macOS and Windows discriminate: `dirs`
-/// reads the variable itself on Linux, so there the assertion holds with or
-/// without `nushell_data_dir_fallback`'s own branch, while on macOS it
-/// separates `$XDG_DATA_HOME` from `~/Library/Application Support`.
+/// That fallback is `nu-config`'s own `resolve_paths`, so this pins the
+/// delegation end-to-end rather than restating Nushell's rule: an absolute
+/// `XDG_DATA_HOME` wins over the platform data directory on every platform.
+/// Only macOS and Windows discriminate — `dirs` reads the variable itself on
+/// Linux, so there the assertion holds either way, while on macOS it separates
+/// `$XDG_DATA_HOME` from `~/Library/Application Support`.
 #[rstest]
 fn test_uninstall_nushell_finds_wrapper_under_xdg_data_home(repo: TestRepo, temp_home: TempDir) {
     let home = canonical_temp_home(&temp_home);

@@ -92,44 +92,28 @@ fn nu_dirs() -> NuDirs {
         .clone()
 }
 
-/// Fallback for Nushell's `$nu.data-dir` when `nu` can't be queried.
+/// `$nu.vendor-autoload-dirs | last` computed without spawning `nu`.
 ///
-/// Mirrors Nushell's own `resolve_xdg_base` (`crates/nu-config/src/resolve.rs`):
-/// `XDG_DATA_HOME` wins on every platform when it is absolute, otherwise
-/// `dirs::data_dir()` (`~/Library/Application Support` on macOS, `%APPDATA%` on
-/// Windows, `~/.local/share` on Linux). Nushell appends `nushell`.
+/// Delegates to `nu-config`, the crate Nushell itself resolves these paths
+/// with: [`resolve_paths`](nu_config::resolve_paths) applies Nushell's own
+/// rules for `$XDG_DATA_HOME`, `$XDG_DATA_DIRS`, the platform data directory
+/// and `$NU_VENDOR_AUTOLOAD_DIR`, and its last entry is the user-writable one
+/// — the same expression [`nu_dirs`] asks `nu` for. Nothing about Nushell's
+/// layout is restated here, so the rules can't drift out of sync.
 ///
-/// The one XDG read worktrunk still spells out, because it is Nushell's rule
-/// rather than the spec's: etcetera's `Xdg::data_dir()` applies the same
-/// absolute-only filter but falls back to `~/.local/share` everywhere, which is
-/// the wrong directory on macOS and Windows, and the native strategies that get
-/// those right ignore `XDG_DATA_HOME`.
-fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-    {
-        return xdg.join("nushell");
-    }
-    dirs::data_dir()
-        .unwrap_or_else(|| home.join(".local").join("share"))
-        .join("nushell")
-}
-
-/// The Nushell vendor-autoload directory worktrunk writes its wrapper to.
+/// It answers for the `nu-config` release pinned in `Cargo.toml` rather than
+/// for the installed `nu`, which is why [`nu_dirs`] is still preferred when
+/// `nu` is on PATH; this is the offline fallback, and the one answer asking
+/// the tool can't give.
 ///
-/// Prefers the path `nu` reports (`$nu.vendor-autoload-dirs | last`); otherwise
-/// reconstructs `<data-dir>/vendor/autoload`.
-fn nushell_vendor_autoload_dir(
-    home: &std::path::Path,
-    queried: Option<&std::path::Path>,
-) -> PathBuf {
-    match queried {
-        Some(dir) => dir.to_path_buf(),
-        None => nushell_data_dir_fallback(home)
-            .join("vendor")
-            .join("autoload"),
-    }
+/// `None` only when no home directory is discoverable. Both callers reach here
+/// via [`home_dir_required`], which already failed in that case, so there is no
+/// last-resort path to guess.
+fn nushell_vendor_autoload_fallback() -> Option<PathBuf> {
+    let (dirs, _warnings) =
+        nu_config::resolve_paths(&nu_config::SystemEnv, &nu_config::CliOverrides::default())
+            .ok()?;
+    dirs.vendor_autoload_dirs.last().cloned()
 }
 
 /// Legacy `<config-dir>/vendor/autoload` directories where older worktrunk
@@ -170,20 +154,15 @@ fn legacy_nushell_autoload_dirs(
 /// order.
 ///
 /// The first entry is the canonical write target (the current vendor-autoload
-/// dir); the rest are the data-dir fallback and the legacy config-dir locations
+/// dir); the rest are the offline fallback and the legacy config-dir locations
 /// kept so install/uninstall can clean up stranded files.
 pub fn nushell_autoload_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     let dirs = nu_dirs();
-    let mut candidates = vec![nushell_vendor_autoload_dir(
-        home,
-        dirs.vendor_autoload.as_deref(),
-    )];
-    // New-style fallback, in case `nu` was queryable at install time but not now.
-    candidates.push(
-        nushell_data_dir_fallback(home)
-            .join("vendor")
-            .join("autoload"),
-    );
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    candidates.extend(dirs.vendor_autoload.clone());
+    // Also listed when `nu` answered, in case it was queryable at install time
+    // but not now; identical to the entry above when it wasn't, and deduped.
+    candidates.extend(nushell_vendor_autoload_fallback());
     candidates.extend(legacy_nushell_autoload_dirs(
         home,
         dirs.default_config.as_deref(),
@@ -336,9 +315,18 @@ pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf,
         }
         super::Shell::Nushell => {
             // Nushell completions are defined inline in the init script.
-            // Return the canonical vendor-autoload path (same as config).
+            // Return the canonical vendor-autoload path (same as config): what
+            // `nu` reports, else nu-config's answer for the same expression.
             let dirs = nu_dirs();
-            nushell_vendor_autoload_dir(&home, dirs.vendor_autoload.as_deref())
+            dirs.vendor_autoload
+                .clone()
+                .or_else(nushell_vendor_autoload_fallback)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Cannot determine Nushell's vendor-autoload directory. Set $HOME (Unix) or $USERPROFILE (Windows)",
+                    )
+                })?
                 .join(format!("{}.nu", cmd))
         }
         super::Shell::PowerShell => {
@@ -370,25 +358,16 @@ mod tests {
     }
 
     #[test]
-    fn test_nushell_vendor_autoload_dir_prefers_queried() {
-        let home = PathBuf::from("/home/user");
-        let queried = PathBuf::from("/opt/nu/vendor/autoload");
-        assert_eq!(
-            nushell_vendor_autoload_dir(&home, Some(&queried)),
-            queried,
-            "the path nu reports should be used verbatim"
-        );
-    }
-
-    #[test]
-    fn test_nushell_vendor_autoload_dir_fallback_under_data_dir() {
-        let home = PathBuf::from("/home/user");
-        let dir = nushell_vendor_autoload_dir(&home, None);
-        // Fallback must land under `<data-dir>/nushell/vendor/autoload`, never
-        // under the *config* dir (the bug this fixes).
+    fn test_nushell_vendor_autoload_fallback_is_a_vendor_autoload_dir() {
+        let Some(dir) = nushell_vendor_autoload_fallback() else {
+            panic!("nu-config should resolve a vendor-autoload dir when $HOME is set");
+        };
+        // nu-config owns the rule; what worktrunk depends on is that the last
+        // entry is a `vendor/autoload` directory, never a bare config dir (the
+        // shape of issue #2878).
         assert!(
-            dir.ends_with("nushell/vendor/autoload"),
-            "fallback should be under <data>/nushell/vendor/autoload: {dir:?}"
+            dir.ends_with("vendor/autoload"),
+            "fallback should be a vendor/autoload dir: {dir:?}"
         );
     }
 

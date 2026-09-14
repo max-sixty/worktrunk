@@ -83,7 +83,7 @@ dependencies = [
  "ratatui-core",
  "simdutf8",
  "smallvec",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -844,6 +844,16 @@ dependencies = [
 
 [[package]]
 name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core 0.21.3",
+ "darling_macro 0.21.3",
+]
+
+[[package]]
+name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
@@ -857,6 +867,20 @@ name = "darling_core"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
 dependencies = [
  "fnv",
  "ident_case",
@@ -886,6 +910,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
  "darling_core 0.20.11",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core 0.21.3",
  "quote",
  "syn 2.0.117",
 ]
@@ -985,6 +1020,18 @@ dependencies = [
  "rustc_version",
  "syn 2.0.117",
  "unicode-xid",
+]
+
+[[package]]
+name = "derive_setters"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7e6f6fa1f03c14ae082120b84b3c7fbd7b8588d924cf2d7c3daf9afd49df8b9"
+dependencies = [
+ "darling 0.21.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1782,7 +1829,7 @@ checksum = "bde5057d6143cc94e861d90f591b9303d6716c6b9602309150bd068853c10899"
 dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2073,6 +2120,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "nu-config"
+version = "0.115.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "219459c5f5ee857447d19c989fd3aa44b6e56f8b8e38fc2a17a476f76f3178da"
+dependencies = [
+ "derive_more",
+ "derive_setters",
+ "dirs",
+ "nu-path",
+ "thiserror 2.0.20",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nu-path"
+version = "0.115.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c089f4e8b5e67dfa45b468549477faaa2d68258cd9ffbb44d55a54384341c37e"
+dependencies = [
+ "dirs",
+ "omnipath",
+ "pwd",
+ "ref-cast",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2248,6 +2321,12 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
 ]
+
+[[package]]
+name = "omnipath"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80adb31078122c880307e9cdfd4e3361e6545c319f9b9dcafcb03acd3b51a575"
 
 [[package]]
 name = "once_cell"
@@ -2629,6 +2708,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pwd"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72c71c0c79b9701efe4e1e4b563b2016dd4ee789eb99badcb09d61ac4b92e4a2"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2720,7 +2809,7 @@ dependencies = [
  "palette",
  "serde",
  "strum",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.2",
@@ -2826,7 +2915,7 @@ checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
 dependencies = [
  "getrandom 0.2.17",
  "libredox",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3327,7 +3416,7 @@ dependencies = [
  "roff",
  "shell-quote",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "thread_local",
  "tokio",
  "tokio-util",
@@ -3502,7 +3591,7 @@ dependencies = [
  "lazy-regex",
  "minimad",
  "serde",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "unicode-width 0.1.14",
 ]
 
@@ -3603,11 +3692,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.18"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
 dependencies = [
- "thiserror-impl 2.0.18",
+ "thiserror-impl 2.0.20",
 ]
 
 [[package]]
@@ -3623,13 +3712,13 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.18"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.1",
 ]
 
 [[package]]
@@ -3902,7 +3991,7 @@ checksum = "662316ecd27166f79e18865429638c05194aee76a7bc374136d844f05d778f74"
 dependencies = [
  "regex",
  "streaming-iterator",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "tree-sitter",
 ]
 
@@ -4645,7 +4734,7 @@ dependencies = [
  "log",
  "os_pipe",
  "rustix",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "tree_magic_mini",
  "wayland-backend",
  "wayland-client",
@@ -4687,6 +4776,7 @@ dependencies = [
  "minijinja",
  "nix 0.31.3",
  "normalize-path",
+ "nu-config",
  "once_cell",
  "open",
  "osc8",
@@ -4745,7 +4835,7 @@ dependencies = [
  "ansi-escape-sequences",
  "regex",
  "string-width",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

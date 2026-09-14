@@ -178,6 +178,15 @@ crossbeam-channel = "0.5"
 crossterm = { version = "0.29", optional = true }
 indexmap = { version = "2.14", features = ["serde"] }
 etcetera = "0.11"
+# Nushell's own path-resolution crate. `wt config shell install nu` writes its
+# wrapper to `$nu.vendor-autoload-dirs | last`, which it asks a running `nu` for;
+# this answers the same expression when `nu` isn't on PATH — the one case asking
+# the tool can't cover — so worktrunk restates none of Nushell's rules for
+# `$XDG_DATA_HOME`, `$XDG_DATA_DIRS`, the platform data directory or
+# `$NU_VENDOR_AUTOLOAD_DIR`. Version-locked to a Nushell release, so it answers
+# for the pinned version rather than the installed one; that is why the query
+# stays preferred.
+nu-config = "0.115"
 # `log` is still used pervasively for application logging; events flow into
 # `tracing` via `tracing-log::LogTracer` (CLI binary only).
 log = "0.4.31"
