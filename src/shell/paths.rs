@@ -26,6 +26,10 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 /// `WORKTRUNK_TEST_*` overrides consulted by `Shell::is_installed`.
 const TEST_NU_VENDOR_AUTOLOAD_ENV: &str = "WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR";
 
+/// Reported when neither `nu` nor `nu-config` can name Nushell's
+/// vendor-autoload directory, which takes a home directory neither can find.
+const NO_NU_VENDOR_AUTOLOAD_DIR: &str = "Cannot determine Nushell's vendor-autoload directory. Set $HOME (Unix) or $USERPROFILE (Windows)";
+
 /// The Nushell directories worktrunk resolves from `nu`, queried at most once
 /// per process.
 ///
@@ -321,12 +325,10 @@ pub(super) fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf,
             dirs.vendor_autoload
                 .clone()
                 .or_else(nushell_vendor_autoload_fallback)
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Cannot determine Nushell's vendor-autoload directory. Set $HOME (Unix) or $USERPROFILE (Windows)",
-                    )
-                })?
+                .ok_or(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    NO_NU_VENDOR_AUTOLOAD_DIR,
+                ))?
                 .join(format!("{}.nu", cmd))
         }
         super::Shell::PowerShell => {
@@ -359,9 +361,8 @@ mod tests {
 
     #[test]
     fn test_nushell_vendor_autoload_fallback_is_a_vendor_autoload_dir() {
-        let Some(dir) = nushell_vendor_autoload_fallback() else {
-            panic!("nu-config should resolve a vendor-autoload dir when $HOME is set");
-        };
+        let dir = nushell_vendor_autoload_fallback()
+            .expect("nu-config should resolve a vendor-autoload dir when $HOME is set");
         // nu-config owns the rule; what worktrunk depends on is that the last
         // entry is a `vendor/autoload` directory, never a bare config dir (the
         // shape of issue #2878).
