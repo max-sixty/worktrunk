@@ -15,7 +15,9 @@ updates:
     labels: []
 
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/*"
     commit-message:
       prefix: "chore: "
     schedule:
