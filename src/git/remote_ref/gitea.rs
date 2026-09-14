@@ -378,8 +378,8 @@ fn content_has_any_login(content: &str) -> bool {
 /// tea config then goes unread, so [`is_authed_for`] and [`has_any_login`]
 /// report no Gitea login: `wt list --full` drops the CI column for the repo
 /// and `wt switch pr:<n>` picks GitHub for a self-hosted host tea is logged
-/// in to. `legacy_nushell_autoload_dirs` in `shell/paths.rs` applies the same
-/// absolute-only rule to the same variable.
+/// in to. `nushell_data_dir_fallback` in `shell/paths.rs` applies the same
+/// absolute-only rule to `$XDG_DATA_HOME`.
 ///
 /// Takes the raw value rather than reading it, so the rule is unit-testable
 /// without mutating the process environment.
