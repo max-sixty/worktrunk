@@ -99,11 +99,8 @@ fn nu_dirs() -> NuDirs {
 /// macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux). Nushell appends
 /// `nushell`.
 fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        let path = PathBuf::from(xdg);
-        if path.is_absolute() {
-            return path.join("nushell");
-        }
+    if let Some(xdg) = crate::path::xdg_base_dir("XDG_DATA_HOME") {
+        return xdg.join("nushell");
     }
     dirs::data_dir()
         .unwrap_or_else(|| home.join(".local").join("share"))
@@ -141,8 +138,12 @@ fn legacy_nushell_autoload_dirs(
     if let Some(dir) = default_config {
         dirs.push(dir.to_path_buf());
     }
-    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        dirs.push(PathBuf::from(xdg_config).join("nushell"));
+    // Absolute-only, as `nushell_data_dir_fallback` reads `XDG_DATA_HOME`: an
+    // exported-but-empty or relative value would put a bare
+    // `nushell/vendor/autoload` into the stranded-file search, which then looks
+    // under the invocation directory instead of a config dir.
+    if let Some(xdg_config) = crate::path::xdg_base_dir("XDG_CONFIG_HOME") {
+        dirs.push(xdg_config.join("nushell"));
     }
     dirs.push(home.join(".config").join("nushell"));
     if let Ok(strategy) = choose_base_strategy() {

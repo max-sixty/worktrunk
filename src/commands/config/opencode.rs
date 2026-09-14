@@ -26,17 +26,17 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 /// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::pi`.
 /// An empty value taken at face value yields the relative path `plugins/`, so
 /// the install writes the plugin into whatever directory `wt` was run from.
+/// `$XDG_CONFIG_HOME` gets the stricter XDG rule via
+/// [`worktrunk::path::xdg_base_dir`] — a relative value is invalid there too,
+/// and lands the plugin in the same wrong place an empty one would.
 fn opencode_plugins_dir() -> Result<PathBuf> {
     let config_dir = if let Some(dir) = std::env::var("OPENCODE_CONFIG_DIR")
         .ok()
         .filter(|s| !s.is_empty())
     {
         PathBuf::from(dir)
-    } else if let Some(xdg) = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
-        PathBuf::from(xdg).join("opencode")
+    } else if let Some(xdg) = worktrunk::path::xdg_base_dir("XDG_CONFIG_HOME") {
+        xdg.join("opencode")
     } else {
         worktrunk::path::home_dir()
             .context("Could not determine home directory")?

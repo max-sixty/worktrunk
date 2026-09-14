@@ -367,33 +367,17 @@ fn content_has_any_login(content: &str) -> bool {
     })
 }
 
-/// `$XDG_CONFIG_HOME` as a config base directory, or `None` when the variable
-/// can't name one and the `$HOME/.config` default should be used instead.
-///
-/// The [XDG base directory spec] makes both exclusions: an unset *or empty*
-/// value means the default, and a relative path is invalid and must be
-/// ignored. Taken at face value either one resolves the search below against
-/// whatever directory `wt` was invoked from — `tea/config.yml` under the
-/// user's repository rather than `~/.config/tea/config.yml`. The user's real
-/// tea config then goes unread, so [`is_authed_for`] and [`has_any_login`]
-/// report no Gitea login: `wt list --full` drops the CI column for the repo
-/// and `wt switch pr:<n>` picks GitHub for a self-hosted host tea is logged
-/// in to. `nushell_data_dir_fallback` in `shell/paths.rs` applies the same
-/// absolute-only rule to `$XDG_DATA_HOME`.
-///
-/// Takes the raw value rather than reading it, so the rule is unit-testable
-/// without mutating the process environment.
-///
-/// [XDG base directory spec]: https://specifications.freedesktop.org/basedir-spec/latest/
-fn xdg_config_base(raw: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
-    raw.map(std::path::PathBuf::from)
-        .filter(|path| path.is_absolute())
-}
-
 /// Read tea's config.yml, honoring `$XDG_CONFIG_HOME` and the legacy
 /// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
+///
+/// `$XDG_CONFIG_HOME` goes through [`crate::path::xdg_base_dir`], so an
+/// exported-but-empty or relative value falls through to `~/.config` rather
+/// than resolving `tea/config.yml` against the invocation directory — which
+/// would leave the user's tea logins unread, dropping the Gitea CI column from
+/// `wt list --full` and sending `wt switch pr:<n>` to GitHub for a self-hosted
+/// host tea is logged in to.
 fn read_tea_config() -> Option<String> {
-    let xdg = xdg_config_base(std::env::var_os("XDG_CONFIG_HOME"));
+    let xdg = crate::path::xdg_base_dir("XDG_CONFIG_HOME");
     let home = crate::path::home_dir();
 
     let primary = xdg
@@ -668,32 +652,5 @@ mod tests {
         assert!(!content_has_any_login(""));
         assert!(!content_has_any_login("logins: []\n"));
         assert!(!content_has_any_login("url: gitea.com\n"));
-    }
-
-    /// Regression guard: an exported-but-empty (or relative) `XDG_CONFIG_HOME`
-    /// used to be taken at face value, so `read_tea_config` looked for a
-    /// relative `tea/config.yml` — resolved against whatever directory `wt` was
-    /// invoked from — and never fell through to `~/.config/tea/config.yml`.
-    /// The user's tea logins then went unseen, so `wt list --full` dropped the
-    /// Gitea CI column and `wt switch pr:<n>` picked the wrong forge CLI for a
-    /// self-hosted host.
-    #[test]
-    fn test_xdg_config_base_ignores_empty_and_relative_values() {
-        use std::ffi::OsString;
-
-        // An absolute value is the config base.
-        let absolute = std::env::temp_dir();
-        assert!(absolute.is_absolute(), "temp_dir is absolute: {absolute:?}");
-        assert_eq!(
-            xdg_config_base(Some(OsString::from(&absolute))),
-            Some(absolute)
-        );
-
-        // Unset, empty, and relative all mean "use the `$HOME/.config`
-        // default", which is what `None` selects in `read_tea_config`.
-        assert_eq!(xdg_config_base(None), None);
-        assert_eq!(xdg_config_base(Some(OsString::from(""))), None);
-        assert_eq!(xdg_config_base(Some(OsString::from("config"))), None);
-        assert_eq!(xdg_config_base(Some(OsString::from("./config"))), None);
     }
 }
