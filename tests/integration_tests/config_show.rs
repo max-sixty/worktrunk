@@ -2754,6 +2754,55 @@ fn test_opencode_install_treats_empty_config_dir_as_unset(temp_home: TempDir) {
     );
 }
 
+/// A relative `$XDG_CONFIG_HOME` is ignored, as the XDG base directory spec
+/// requires, rather than resolved against the invocation directory.
+///
+/// Regression guard for the same shape as the empty `OPENCODE_CONFIG_DIR`
+/// above, one rung down the precedence: `$XDG_CONFIG_HOME` filtered only the
+/// empty string, so `XDG_CONFIG_HOME=relative-config` made the install target
+/// `relative-config/opencode/plugins/worktrunk.ts` — written under whatever
+/// directory `wt` was run from, and read back from there by
+/// `is_plugin_installed()`, so the install reported success while OpenCode
+/// never saw the plugin.
+///
+/// Out-of-process, so `.env()` sets the child's environment and this races
+/// nothing else in the binary.
+#[rstest]
+fn test_opencode_install_ignores_relative_xdg_config_home(temp_home: TempDir) {
+    let run_dir = temp_home.path().join("run-from-here");
+    fs::create_dir_all(&run_dir).unwrap();
+
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env_remove("OPENCODE_CONFIG_DIR");
+    cmd.env("XDG_CONFIG_HOME", "relative-config");
+    cmd.current_dir(&run_dir);
+    cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    // The relative value is discarded, so the `$HOME/.config/opencode` default
+    // applies — the same target the unset case reaches.
+    let plugin_path = canonical_home.join(".config/opencode/plugins/worktrunk.ts");
+    assert!(
+        plugin_path.exists(),
+        "Plugin should fall through to $HOME/.config, but not found at: {}",
+        plugin_path.display(),
+    );
+    assert!(
+        !run_dir.join("relative-config").exists(),
+        "Plugin must not be written relative to the invocation directory"
+    );
+}
+
 /// Install prompt declined (no `--yes`, piped stdin → empty → declined).
 /// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
 #[rstest]
