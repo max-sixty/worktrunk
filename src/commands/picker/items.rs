@@ -910,13 +910,19 @@ struct Tab {
 
 /// Longest preview body handed to skim, in lines.
 ///
-/// skim keeps the pane's line count in a `u16` and `unwrap()`s the conversion
-/// (`total_lines` in skim 5.6.5's `src/tui/preview.rs`), so a body over 65,535
-/// lines aborts the whole process instead of rendering — the picker paints,
-/// then dies once the preview lands (#3958). A `git diff <default>...<branch>`
-/// on a long-lived branch clears that on its own. The cap sits under the
-/// ceiling rather than at it because the body isn't the whole pane: the tab bar
-/// and this notice ride above it and count toward the same total.
+/// skim scrolls the pane through ratatui's `Paragraph::scroll`, whose offset is
+/// a `u16` (`render_text` in skim 5.7.0's `src/tui/preview.rs` clamps with
+/// `u16::try_from(self.scroll_y).unwrap_or(u16::MAX)`), so a body over 65,535
+/// lines renders a tail the user can never scroll to and is given no sign of.
+/// A `git diff <default>...<branch>` on a long-lived branch clears that on its
+/// own. The cap sits under the ceiling rather than at it because the body isn't
+/// the whole pane: the tab bar and this notice ride above it and count toward
+/// the same total.
+///
+/// Through skim 5.6.6 the same ceiling was a `u16` line *count* that skim
+/// `unwrap()`ed, so an oversized body aborted the process instead — the picker
+/// painted, then died once the preview landed (#3958). 5.7.0 widened
+/// `total_lines` to `usize`, leaving the scroll offset as the live limit.
 const MAX_PREVIEW_LINES: usize = 60_000;
 
 /// Cap a preview body at [`MAX_PREVIEW_LINES`], returning the body to render
@@ -2885,11 +2891,12 @@ mod tests {
     }
 
     #[test]
-    fn preview_caps_a_pane_longer_than_skim_can_count() {
-        // skim keeps the pane's line count in a `u16` and unwraps the
-        // conversion, so handing it a longer pane aborts the picker rather than
-        // rendering (#3958). A `git diff <default>...<branch>` on a long-lived
-        // branch clears 65,535 lines on its own.
+    fn preview_caps_a_pane_longer_than_skim_can_scroll() {
+        // skim's scroll offset is a `u16`, so the tail of a longer pane is
+        // unreachable and unannounced (#3958, where the same ceiling was a line
+        // count skim unwrapped and the picker aborted outright). A `git diff
+        // <default>...<branch>` on a long-lived branch clears 65,535 lines on
+        // its own.
         let cache: PreviewCache = Arc::new(DashMap::new());
         let row = worktree_test_row("feature", Arc::clone(&cache), None);
         cache.insert(
@@ -2905,7 +2912,7 @@ mod tests {
         let head = pane.lines().take(6).collect::<Vec<_>>().join("\n");
         assert!(
             lines < u16::MAX as usize,
-            "pane must stay countable by skim's u16: {lines} lines"
+            "pane must stay inside skim's u16 scroll range: {lines} lines"
         );
         assert!(
             head.contains("Preview truncated"),
