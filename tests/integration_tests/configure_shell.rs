@@ -2925,6 +2925,68 @@ fn test_uninstall_nushell_cleans_all_candidate_locations(repo: TestRepo, temp_ho
     );
 }
 
+/// Uninstall finds a wrapper under `$XDG_DATA_HOME`, the data-dir candidate
+/// `nushell_data_dir_fallback` derives when `nu` can't be queried.
+///
+/// An absolute `XDG_DATA_HOME` wins over `dirs::data_dir()` on every platform,
+/// matching `nu_path::data_dir`. Only macOS and Windows discriminate: `dirs`
+/// reads the variable itself on Linux, so there the assertion holds with or
+/// without `nushell_data_dir_fallback`'s own branch, while on macOS it
+/// separates `$XDG_DATA_HOME` from `~/Library/Application Support`.
+#[rstest]
+fn test_uninstall_nushell_finds_wrapper_under_xdg_data_home(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    // Distinct from the pinned canonical dir, so the stranded wrapper can only
+    // be found by way of the data-dir candidate.
+    let xdg_data = home.join("xdg-data");
+    let canonical_dir = home.join(".local/share/nushell/vendor/autoload");
+    let canonical = canonical_dir.join("wt.nu");
+
+    let configure = |cmd: &mut std::process::Command| {
+        repo.configure_wt_cmd(cmd);
+        set_temp_home_env(cmd, temp_home.path());
+        cmd.env("XDG_DATA_HOME", &xdg_data);
+        cmd.env("WORKTRUNK_TEST_NU_VENDOR_AUTOLOAD_DIR", &canonical_dir);
+        cmd.env("SHELL", "/bin/nu");
+    };
+
+    // Install to the pinned canonical dir, then strand a copy under
+    // `$XDG_DATA_HOME` — the shape an older worktrunk, or a `nu` that was
+    // queryable at install time and isn't now, leaves behind.
+    let mut install_cmd = wt_command();
+    configure(&mut install_cmd);
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    let stranded_dir = xdg_data.join("nushell/vendor/autoload");
+    fs::create_dir_all(&stranded_dir).unwrap();
+    let stranded = stranded_dir.join("wt.nu");
+    fs::copy(&canonical, &stranded).unwrap();
+
+    let mut cmd = wt_command();
+    configure(&mut cmd);
+    cmd.args(["config", "shell", "uninstall", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !stranded.exists(),
+        "Wrapper under $XDG_DATA_HOME should be deleted: {stranded:?}"
+    );
+}
+
 /// Test that WORKTRUNK_TEST_POWERSHELL_ENV=1 triggers PowerShell auto-detection.
 /// This simulates the Windows behavior where we detect PowerShell when SHELL is not set.
 #[rstest]
