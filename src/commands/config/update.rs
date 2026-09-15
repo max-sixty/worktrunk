@@ -75,6 +75,29 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
         }
     }
 
+    // A preview authorizes migrating the content it was computed from. An edit
+    // that completes while the prompt is open would be replaced by that earlier
+    // snapshot, so re-read each config and fail rather than publish a stale
+    // migration. Every candidate is checked before any is written, so one
+    // superseded config can't leave the other half-applied. The window between
+    // this check and the rename stays open to a non-cooperating editor, the same
+    // boundary the shell-config writes accept.
+    for candidate in &candidates {
+        let current = std::fs::read_to_string(&candidate.config_path).with_context(|| {
+            format!(
+                "Failed to re-read {}",
+                candidate.info.label().to_lowercase()
+            )
+        })?;
+        if current != candidate.original {
+            bail!(cformat!(
+                "{} changed @ <bold>{}</> since the preview; re-run <bold>wt config update</> to migrate the current contents",
+                candidate.info.label(),
+                format_path_for_display(&candidate.config_path)
+            ));
+        }
+    }
+
     for candidate in &candidates {
         // Preserve approved-commands before rewriting config (migrated content
         // drops them; approvals.toml becomes the authoritative source). Abort

@@ -8398,3 +8398,51 @@ fn switch_base_accepts_worktree_path(mut repo: TestRepo) {
         "--base should resolve the worktree path to its branch: {stderr}"
     );
 }
+
+#[rstest]
+fn test_switch_create_names_branch_left_by_failed_worktree_add(repo: TestRepo) {
+    // `git worktree add -b` writes the branch ref before it populates the
+    // worktree, so a failure in between leaves the branch with nothing checked
+    // out on it (issue #4108). A regular file where the worktree's leading
+    // directories would go is the portable way to fail git exactly there.
+    repo.write_test_config(r#"worktree-path = "blocked/{{ branch | sanitize }}""#);
+    fs::write(repo.root_path().join("blocked"), "not a directory").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "stranded"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "switch --create should fail when git cannot create the worktree"
+    );
+
+    // The branch git left behind is what makes a retry with --create report
+    // "already exists"; the first failure has to name it.
+    let branches = repo.git_output(&["branch", "--list", "stranded"]);
+    assert!(
+        branches.contains("stranded"),
+        "expected git to leave the branch behind, got: {branches:?}"
+    );
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !worktrees.contains("refs/heads/stranded"),
+        "expected no worktree on the leftover branch, got: {worktrees:?}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains("Branch stranded was created before the failure, with no worktree"),
+        "expected the failure to name the leftover branch, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("git branch -d -- stranded"),
+        "expected a delete suggestion for the leftover branch, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("wt switch stranded"),
+        "expected a recovery suggestion for the leftover branch, got: {stderr}"
+    );
+}
