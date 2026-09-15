@@ -326,6 +326,9 @@ fn binding_targets(rest: &str, targets_end_at: TargetsEndAt) -> Vec<&str> {
                 in_targets = false;
             }
             ',' if targets_end_at == TargetsEndAt::AssignPairs && depth == 0 => in_targets = true,
+            // A `set` block's filter chain is value, not target:
+            // `{% set x | default(repo_root) %}…{% endset %}` binds only `x`.
+            '|' if depth == 0 => in_targets = false,
             _ => {}
         }
         cursor += ch.len_utf8();
@@ -2781,6 +2784,12 @@ timeout = 30
             normalize_template_vars("{% set a = 1, repo_root %}{{ repo_root }}"),
             "{% set a = 1, repo_path %}{{ repo_path }}"
         );
+        // A `set` block's filter chain is value too: only `x` is bound, so
+        // the argument and the later global both migrate.
+        assert_eq!(
+            normalize_template_vars("{% set x | default(repo_root) %}b{% endset %}{{ repo_root }}"),
+            "{% set x | default(repo_path) %}b{% endset %}{{ repo_path }}"
+        );
         // The squash-template migration this must not regress.
         assert_eq!(
             normalize_template_vars("{% for c in commits %}{{ c }}{% endfor %}"),
@@ -3822,6 +3831,8 @@ hostname = "forge.example"
             "worktree-path = \"{% raw %}{% set repo_root = 'x' %}{% endraw %}{{ repo_root }}\"\n",
             // the comma after a `set`'s `=` starts a tuple value, not a target
             "worktree-path = \"{% set a = 1, repo_root %}{{ repo_root }}\"\n",
+            // a `set` block's filter chain is value, not target
+            "worktree-path = \"{% set x | default(repo_root) %}b{% endset %}{{ repo_root }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
