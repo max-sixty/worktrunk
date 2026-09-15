@@ -222,4 +222,4 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Releases
 
-Use the `release` skill (version bump, changelog, crates.io publish, GitHub release). It writes every changelog entry from the commits since the last tag, so other PRs leave `CHANGELOG.md` untouched.
+Use the `release` skill (version bump, changelog, crates.io publish, GitHub release). It writes every changelog entry from the commits since the last tag, so other PRs leave `CHANGELOG.md` untouched; a PR that already carries an entry drops it rather than resolving a conflict on it.
