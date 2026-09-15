@@ -76,8 +76,10 @@ impl UserConfig {
                         nested_preserve,
                     );
                 }
-                // Existing inline table, desired standard table: compare contents
-                // to preserve the user's inline formatting when nothing changed
+                // Existing inline table, desired standard table: merge into a
+                // table view so the same nested preservation applies as in the
+                // standard-table branch, then write back only if that changed
+                // something — an untouched inline table keeps its formatting.
                 Some(existing_item)
                     if existing_item.is_inline_table() && desired_item.is_table() =>
                 {
@@ -86,8 +88,15 @@ impl UserConfig {
                         .unwrap()
                         .clone()
                         .into_table();
-                    if !Self::tables_equal(&as_table, desired_item.as_table().unwrap()) {
-                        *existing_item = desired_item.clone();
+                    let mut merged = as_table.clone();
+                    let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
+                    Self::merge_tables(
+                        &mut merged,
+                        desired_item.as_table().unwrap(),
+                        nested_preserve,
+                    );
+                    if !Self::tables_equal(&as_table, &merged) {
+                        *existing_item = toml_edit::Item::Table(merged);
                     }
                 }
                 Some(existing_item) => {

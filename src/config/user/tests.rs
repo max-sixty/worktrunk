@@ -3682,6 +3682,68 @@ future-per-project = "value"
 }
 
 #[test]
+fn test_save_to_existing_file_preserves_unknown_keys_in_inline_table() {
+    // An unknown key inside an *inline* section must survive a save just as it
+    // does inside a standard `[merge]` table. The inline branch of the merge
+    // used to replace the whole item, so the unknown key went with it.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "merge = { squash = false, future-option = true }\n",
+    )
+    .unwrap();
+
+    let mut config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.skip_shell_integration_prompt = true;
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key inside an inline table should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "the unrelated change should still be written: {saved}"
+    );
+    // Nothing in the inline table changed, so its formatting survives too.
+    assert!(
+        saved.contains("merge = { squash = false, future-option = true }"),
+        "unchanged inline table should keep its formatting: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_unknown_keys_when_inline_table_changes() {
+    // Same preservation when a known value inside the inline table does change:
+    // `squash` is rewritten, `future-option` stays.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "merge = { squash = false, future-option = true }\n",
+    )
+    .unwrap();
+
+    let mut config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.merge.squash = Some(true);
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key should survive a changed inline table: {saved}"
+    );
+    assert!(
+        saved.contains("squash = true"),
+        "changed value should be written: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
     // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
