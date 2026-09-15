@@ -1642,7 +1642,7 @@ pub fn compute_migrated_content(content: &str) -> String {
 /// Render the `Proposed diff:` block for a migration, or a warning line when
 /// git cannot produce the patch.
 ///
-/// The three outcomes of [`format_migration_diff`] stay distinct here: an
+/// The three outcomes of `format_migration_diff` stay distinct here: an
 /// identical pair renders nothing, a differing pair renders the patch, and a
 /// git failure renders a warning rather than disappearing. Both consumers
 /// (`wt config show` and `wt config update`) go through this so neither can
