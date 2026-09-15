@@ -247,7 +247,7 @@ fn test_saving_config_mutation_preserves_toml_comments() {
     let initial_content = r#"# User preferences for worktrunk
 # These comments should be preserved after saving
 
-worktree-path = "../{{ main_worktree }}.{{ branch }}"  # inline comment should also be preserved
+worktree-path = "../{{ repo }}.{{ branch }}"  # inline comment should also be preserved
 
 # LLM commit generation settings
 [commit.generation]

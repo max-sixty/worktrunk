@@ -178,12 +178,11 @@ pub use deprecation::{
 };
 pub use deprecation::{DeprecationKind, Deprecations};
 pub use expansion::{
-    ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
-    TemplateContext, TemplateExpandError, ValidationScope, VarScope, VarsMode,
-    alias_context_filter, base_vars, expand_template, format_alias_variables,
-    format_base_variables, format_hook_variables, redact_credentials, referenced_vars_for_config,
-    referenced_vars_for_templates, sanitize_branch_name, sanitize_db, short_hash,
-    template_environment, template_references_var, validate_list_column_template,
+    ACTIVE_VARS, ALIAS_ARGS_KEY, EXEC_BASE_VARS, REPO_VARS, TemplateContext, TemplateExpandError,
+    ValidationScope, VarScope, VarsMode, alias_context_filter, base_vars, expand_template,
+    format_alias_variables, format_base_variables, format_hook_variables, redact_credentials,
+    referenced_vars_for_config, referenced_vars_for_templates, sanitize_branch_name, sanitize_db,
+    short_hash, template_environment, template_references_var, validate_list_column_template,
     validate_template, validate_template_syntax, vars_available_in, vars_map_to_value,
 };
 pub use hooks::HooksConfig;
@@ -249,7 +248,7 @@ mod tests {
     fn test_format_worktree_path() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+            worktree_path: Some("{{ repo }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -264,7 +263,7 @@ mod tests {
     fn test_format_worktree_path_custom_template() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
+            worktree_path: Some("{{ repo }}-{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -279,7 +278,7 @@ mod tests {
     fn test_format_worktree_path_only_branch() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
+            worktree_path: Some(".worktrees/{{ repo }}/{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -295,7 +294,7 @@ mod tests {
         let test = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
+            worktree_path: Some("{{ repo }}.{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -310,9 +309,7 @@ mod tests {
     fn test_format_worktree_path_with_multiple_slashes() {
         let test = test_repo();
         let config = UserConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+            worktree_path: Some(".worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -328,9 +325,7 @@ mod tests {
         let test = test_repo();
         // Windows-style path separators should also be sanitized
         let config = UserConfig {
-            worktree_path: Some(
-                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-            ),
+            worktree_path: Some(".worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -346,7 +341,7 @@ mod tests {
         let test = test_repo();
         // {{ branch }} without filter gives raw branch name
         let config = UserConfig {
-            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
+            worktree_path: Some("{{ repo }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -520,10 +515,10 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         let test = test_repo();
         let mut vars = HashMap::new();
-        vars.insert("main_worktree", "myrepo");
+        vars.insert("repo", "myrepo");
         vars.insert("branch", "feature-x");
         let result = expand_template(
-            "../{{ main_worktree }}.{{ branch }}",
+            "../{{ repo }}.{{ branch }}",
             &vars,
             ShellEscapeMode::Posix,
             &test.repo,
@@ -542,10 +537,10 @@ task2 = "echo 'Task 2 running' > task2.txt"
         // Use {{ branch | sanitize }} filter for filesystem-safe paths
         // shell_escape=false to test filter in isolation (shell escaping tested separately)
         let mut vars = HashMap::new();
-        vars.insert("main_worktree", "myrepo");
+        vars.insert("repo", "myrepo");
         vars.insert("branch", "feature/foo");
         let result = expand_template(
-            "{{ main_worktree }}/{{ branch | sanitize }}",
+            "{{ repo }}/{{ branch | sanitize }}",
             &vars,
             ShellEscapeMode::Literal,
             &test.repo,
@@ -555,10 +550,10 @@ task2 = "echo 'Task 2 running' > task2.txt"
         assert_eq!(result, "myrepo/feature-foo");
 
         let mut vars = HashMap::new();
-        vars.insert("main_worktree", "myrepo");
+        vars.insert("repo", "myrepo");
         vars.insert("branch", r"feat\bar");
         let result = expand_template(
-            ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
+            ".worktrees/{{ repo }}/{{ branch | sanitize }}",
             &vars,
             ShellEscapeMode::Literal,
             &test.repo,
@@ -573,11 +568,11 @@ task2 = "echo 'Task 2 running' > task2.txt"
         use std::collections::HashMap;
 
         let mut vars = HashMap::new();
-        vars.insert("worktree", "/path/to/worktree");
-        vars.insert("repo_root", "/path/to/repo");
+        vars.insert("worktree_path", "/path/to/worktree");
+        vars.insert("repo_path", "/path/to/repo");
 
         let result = expand_template(
-            "{{ repo_root }}/target -> {{ worktree }}/target",
+            "{{ repo_path }}/target -> {{ worktree_path }}/target",
             &vars,
             ShellEscapeMode::Posix,
             &test_repo().repo,
@@ -674,7 +669,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     #[test]
     fn test_user_hooks_config_parsing() {
         let toml_str = r#"
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
+worktree-path = "../{{ repo }}.{{ branch }}"
 
 [post-start]
 log = "echo '{{ repo }}' >> ~/.log"
@@ -705,7 +700,7 @@ lint = "cargo clippy"
     #[test]
     fn test_user_hooks_config_single_command() {
         let toml_str = r#"
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
+worktree-path = "../{{ repo }}.{{ branch }}"
 post-start = "npm install"
 "#;
         let config: UserConfig = toml::from_str(toml_str).unwrap();

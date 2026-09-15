@@ -8,6 +8,8 @@
 
 - **Interactive prompts no longer open with a blank line**: `wt config shell install`, `wt config plugins claude install`, and the commit-message setup offer at the top of `wt merge` all began with one. A prompt that follows other output keeps the blank line separating it.
 
+- **Nothing supplies the deprecated template variables any more**: `{{ commits }}` in a squash template, and `{{ repo_root }}`, `{{ worktree }}`, `{{ main_worktree }}`, and `{{ main_worktree_path }}` everywhere else, were each still resolved at render time alongside the name that replaced them. All five are gone from the renderers, leaving one current name per value. A config that still uses an old name keeps working and keeps warning: the deprecation layer rewrites all five on every load, before the config is parsed — the same plain identifier rename `wt config update` writes into the file. ([#2984](https://github.com/max-sixty/worktrunk/issues/2984))
+
 - **`wt config update --output <path>` confirms the write**: it now prints `✓ Wrote user config migration @ ~/migrated.toml`, so a command whose only effect is the file it wrote now says where that file is. Writing to stdout with `--output=-` stays silent, since the artifact is right there. ([#4053](https://github.com/max-sixty/worktrunk/pull/4053))
 
 ### Fixed

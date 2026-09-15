@@ -16,10 +16,12 @@ use minijinja::value::{Enumerator, Object, Value};
 ///
 /// It renders as its bare subject (`{{ detail }}` yields the subject line) so a
 /// template that iterates the list and prints the loop variable directly
-/// behaves exactly like the deprecated `commits` list of subject strings. That
-/// equivalence is what lets `wt config update` migrate a `commits` template to
-/// `commit_details` as a plain identifier rename — no shape-changing hand edits
-/// (see #2984). The `.subject` and `.body` properties remain available for
+/// behaves exactly like the retired `commits` list of subject strings. That
+/// equivalence is what lets the deprecation layer rewrite a `commits` template
+/// to `commit_details` as a plain identifier rename — on every load, and in the
+/// file itself via `wt config update` — with no shape-changing hand edits (see
+/// #2984 and `RETIRED_VARS`). The `.subject` and `.body` properties remain
+/// available for
 /// templates that want the structured form, and because minijinja coerces an
 /// object to a string via its `render`, string filters (`{{ c | upper }}`)
 /// operate on the subject too.
@@ -584,9 +586,11 @@ enum TemplateType {
 ///   subject when printed bare and exposes `.subject` / `.body` properties.
 ///   Capped at [`MAX_SQUASH_COMMITS`]; the older tail is represented by one
 ///   synthetic "(N earlier commits omitted)" entry.
-/// - `commits`: Commit subjects being squashed (deprecated — see #2984;
-///   `wt config update` rewrites it to `commit_details`)
 /// - `target_branch`: Target branch for merge
+///
+/// The retired `commits` variable is not supplied: the deprecation layer
+/// rewrites it to `commit_details` before serde parses the config, so an
+/// unmigrated template still renders its commit list (see `RETIRED_VARS`).
 fn build_prompt(
     config: &CommitGenerationConfig,
     template_type: TemplateType,
@@ -621,15 +625,14 @@ fn build_prompt(
 
     // Reverse commits so they're in chronological order (oldest first).
     //
-    // `commits` (a list of bare subject strings) is deprecated in favor of
-    // `commit_details` (see #2984). The deprecation warning and the
-    // `wt config update` rewrite both go through the standard config
-    // deprecation framework (`DEPRECATED_VARS`), so nothing is detected or
-    // warned here — `commits` is simply still rendered for templates that
-    // haven't migrated yet. The rename is safe because each `commit_details`
-    // element renders as its subject (see `CommitDetailValue`), so a migrated
-    // `{% for c in commit_details %}{{ c }}` reads identically to the old
-    // `{% for c in commits %}{{ c }}`.
+    // `commit_details` is the only commit list supplied. The retired `commits`
+    // variable (a list of bare subject strings) is handled entirely by the
+    // config deprecation layer (`RETIRED_VARS`), which rewrites it to
+    // `commit_details` on every load and warns, so an unmigrated template
+    // arrives here already renamed — nothing is detected or warned here. The
+    // rename is safe because each `commit_details` element renders as its
+    // subject (see `CommitDetailValue`), so `{% for c in commit_details %}{{ c
+    // }}` reads identically to the old `{% for c in commits %}{{ c }}`.
     //
     // The list is capped at `MAX_SQUASH_COMMITS` — the one prompt input the
     // diff budget doesn't bound. Details arrive newest-first, so the newest
@@ -647,10 +650,6 @@ fn build_prompt(
     let details_chronological: Vec<&CommitMessageDetail> = synthetic_tail
         .iter()
         .chain(kept_details.iter().rev())
-        .collect();
-    let commits_chronological: Vec<&String> = details_chronological
-        .iter()
-        .map(|detail| &detail.subject)
         .collect();
     let commit_details_chronological: Vec<Value> = details_chronological
         .iter()
@@ -680,7 +679,6 @@ fn build_prompt(
             branch => context.branch,
             recent_commits => context.recent_commits.unwrap_or(&empty_commits),
             repo => context.repo_name,
-            commits => &commits_chronological,
             commit_details => &commit_details_chronological,
             target_branch => context.target_branch.unwrap_or(""),
         })?)
@@ -705,7 +703,6 @@ fn build_prompt(
         branch => context.branch,
         recent_commits => context.recent_commits.unwrap_or(&empty_commits),
         repo => context.repo_name,
-        commits => commits_chronological,
         commit_details => commit_details_chronological,
         target_branch => context.target_branch.unwrap_or(""),
         user_guidance => user_guidance,
@@ -1131,8 +1128,9 @@ mod tests {
 
     /// A `commit_details` element renders as its bare subject and exposes
     /// `.subject` / `.body`. This is the equivalence that lets the
-    /// `commits` → `commit_details` rename be a mechanical identifier rewrite
-    /// (see #2984 and `CommitDetailValue`).
+    /// `commits` → `commit_details` rename be a mechanical identifier rewrite,
+    /// which is what the config deprecation layer applies on every load now
+    /// that nothing supplies `commits` (see #2984 and `CommitDetailValue`).
     #[test]
     fn test_commit_detail_value_render_and_properties() {
         assert_eq!(render_with_detail("{{ c }}", "Add a", "body a"), "Add a");
@@ -1630,7 +1628,7 @@ mod tests {
             command: None,
             template: None,
             squash_template: Some(
-                "Target: {{ target_branch }}\n{% for c in commits %}{{ c }}\n{% endfor %}"
+                "Target: {{ target_branch }}\n{% for c in commit_details %}{{ c }}\n{% endfor %}"
                     .to_string(),
             ),
             template_append: None,
@@ -1699,7 +1697,7 @@ mod tests {
         let config = CommitGenerationConfig {
             command: None,
             template: None,
-            squash_template: Some("{% for x in commits %}{{ x }".to_string()),
+            squash_template: Some("{% for x in commit_details %}{{ x }".to_string()),
             template_append: None,
         };
         let commit_details = vec![];
@@ -1729,7 +1727,7 @@ mod tests {
             command: None,
             template: None,
             squash_template: Some(
-                "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commits %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
+                "Repo: {{ repo }}\nBranch: {{ branch }}\nTarget: {{ target_branch }}\nDiff: {{ git_diff }}\n{% for c in commit_details %}{{ c }}\n{% endfor %}{% for r in recent_commits %}style: {{ r }}\n{% endfor %}"
                     .to_string(),
             ),
             template_append: None,
@@ -1827,14 +1825,14 @@ Diff follows:
             command: None,
             template: None,
             squash_template: Some(
-                r#"Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}
-{% if commits | length > 1 -%}
+                r#"Squashing {{ commit_details | length }} commit(s) from {{ branch }} to {{ target_branch }}
+{% if commit_details | length > 1 -%}
 Multiple commits detected:
-{%- for c in commits %}
+{%- for c in commit_details %}
   {{ loop.index }}/{{ loop.length }}: {{ c }}
 {%- endfor %}
 {%- else -%}
-Single commit: {{ commits[0] }}
+Single commit: {{ commit_details[0] }}
 {%- endif %}"#
                     .to_string(),
             ),
@@ -1886,7 +1884,7 @@ Single commit: {{ commits[0] }}
         let config = CommitGenerationConfig {
             command: None,
             template: Some(
-                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit subjects: {{ commits | length }}\nCommit details: {{ commit_details | length }}"
+                "Branch: {{ branch }}\nTarget: {{ target_branch }}\nCommit details: {{ commit_details | length }}"
                     .to_string(),
             ),
             squash_template: None,
@@ -1897,10 +1895,7 @@ Single commit: {{ commits[0] }}
         assert!(result.is_ok());
         let prompt = result.unwrap();
         // Squash-specific variables are empty for regular commits
-        assert_eq!(
-            prompt,
-            "Branch: feature\nTarget: \nCommit subjects: 0\nCommit details: 0"
-        );
+        assert_eq!(prompt, "Branch: feature\nTarget: \nCommit details: 0");
     }
 
     // Tests for diff filtering

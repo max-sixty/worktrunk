@@ -1639,7 +1639,7 @@ pub fn handle_show_theme() {
     eprintln!(
         "{}",
         format_bash_with_gutter(
-            "eval \"$(wt config shell init bash)\"\necho 'This is a long command that will wrap to the next line when the terminal is narrow enough to require wrapping.'\necho 'hello\nworld'\ncargo build --release &&\ncargo test\ncp {{ repo_root }}/target {{ worktree }}/target"
+            "eval \"$(wt config shell init bash)\"\necho 'This is a long command that will wrap to the next line when the terminal is narrow enough to require wrapping.'\necho 'hello\nworld'\ncargo build --release &&\ncargo test\ncp {{ repo_path }}/target {{ worktree_path }}/target"
         )
     );
 
