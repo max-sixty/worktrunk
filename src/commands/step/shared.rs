@@ -217,6 +217,7 @@ fn list_ignored_entries(
         .args(args)
         .current_dir(worktree_path)
         .context(context)
+        .scrub_git_discovery_env()
         .run()
         .context("Failed to run git ls-files")?;
 
