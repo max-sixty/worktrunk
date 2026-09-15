@@ -681,19 +681,62 @@ fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Dep
 /// Scope walk: apply `f` mutably to the top-level table (scope
 /// `None`) and to each `[projects."key"]` table (scope `Some(key)`), returning
 /// whether any scope reported a change.
+///
+/// Both the `projects` container and each entry inside it can be written as a
+/// standard table or inline (`"host/org/repo" = { merge = { no-ff = true } }`),
+/// and `toml_edit` surfaces those as different node types. Every rule routed
+/// through this walk sees the same scopes either way: an inline entry is
+/// migrated through a table view and written back inline, so a shape the user
+/// chose can't decide whether their config gets migrated. The alternative —
+/// skipping inline entries — leaves a deprecated key unmigrated at a path serde
+/// has no alias for, which drops the setting from the typed config on load.
 fn for_each_config_table_mut(
     doc: &mut toml_edit::DocumentMut,
     mut f: impl FnMut(Option<&str>, &mut toml_edit::Table) -> bool,
 ) -> bool {
     let mut modified = f(None, doc.as_table_mut());
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (key, value) in projects.iter_mut() {
-            if let Some(table) = value.as_table_mut() {
-                modified |= f(Some(key.get()), table);
+    match doc.get_mut("projects") {
+        Some(toml_edit::Item::Table(projects)) => {
+            for (key, entry) in projects.iter_mut() {
+                let scope = key.get();
+                modified |= match entry {
+                    toml_edit::Item::Table(table) => f(Some(scope), table),
+                    toml_edit::Item::Value(value) => migrate_inline_scope(scope, value, &mut f),
+                    _ => false,
+                };
             }
         }
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(projects))) => {
+            for (key, entry) in projects.iter_mut() {
+                modified |= migrate_inline_scope(key.get(), entry, &mut f);
+            }
+        }
+        _ => {}
     }
     modified
+}
+
+/// Apply `f` to an inline `[projects."key"]` entry through a table view,
+/// writing the result back inline only when `f` reported a change so an
+/// untouched entry keeps its original formatting.
+///
+/// That write-back is what `f` owes in return: a rule that mutates the scope
+/// table while reporting no change keeps its edit on the standard-table path
+/// and loses it here, so the shape would decide the outcome again — the bug
+/// this walk exists to close.
+fn migrate_inline_scope<F>(scope: &str, entry: &mut toml_edit::Value, f: &mut F) -> bool
+where
+    F: FnMut(Option<&str>, &mut toml_edit::Table) -> bool,
+{
+    let toml_edit::Value::InlineTable(inline) = entry else {
+        return false;
+    };
+    let mut as_table = inline.clone().into_table();
+    if !f(Some(scope), &mut as_table) {
+        return false;
+    }
+    *inline = as_table.into_inline_table();
+    true
 }
 
 /// Keys `[switch.picker]` accepts — the destination of the `[select]` rename.
@@ -3489,6 +3532,13 @@ hostname = "forge.example"
             // list.task-timeout-ms, section and inline forms
             "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
             "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
+            // the project scope itself written inline, and the whole
+            // `projects` container written inline: the scope walk reaches
+            // both, so the shape doesn't decide whether a rule fires
+            "[projects]\n\"github.com/u/r\" = { merge = { no-ff = true } }\n",
+            "[projects]\n\"github.com/u/r\" = { list = { task-timeout-ms = 500 } }\n",
+            "[projects]\n\"github.com/u/r\" = { select = { timeout-ms = 500 } }\n",
+            "projects = { \"github.com/u/r\" = { switch = { no-cd = true } } }\n",
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
@@ -4603,6 +4653,79 @@ no-ff = true
         let result = migrate_content(content);
         assert!(result.contains("ff = false"), "Should migrate: {result}");
         assert!(!result.contains("no-ff"), "Should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_no_ff_inline_project_scope() {
+        // A project entry written inline is the same config as the section
+        // form, so it migrates the same way. `UserProjectOverrides` has no
+        // `no-ff` alias, so an unmigrated key is dropped from the typed value
+        // on load — the setting would silently stop applying.
+        let content = "[projects]\n\"github.com/user/repo\" = { merge = { no-ff = true } }\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "should migrate: {result}");
+        assert!(!result.contains("no-ff"), "should remove no-ff: {result}");
+
+        let config = crate::config::UserConfig::load_from_str(content).unwrap();
+        assert_eq!(
+            config.projects["github.com/user/repo"].merge.ff,
+            Some(false),
+            "the migrated setting should reach the typed config"
+        );
+    }
+
+    #[test]
+    fn test_migrate_no_ff_fully_inline_projects_table() {
+        // ...including when the `projects` container itself is inline.
+        let content = "projects = { \"github.com/user/repo\" = { merge = { no-ff = true } } }\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "should migrate: {result}");
+        assert!(!result.contains("no-ff"), "should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_leaves_unrelated_inline_project_keys_alone() {
+        // The table round-trip an inline scope goes through must not disturb
+        // keys no rule touched, and an entry no rule changed keeps its shape.
+        let content = "[projects]\n\"a/b\" = { worktree-path = \"../{{ branch }}\" }\n\"c/d\" = { merge = { no-ff = true, squash = true } }\n";
+        let result = migrate_content(content);
+        assert!(
+            result.contains("\"a/b\" = { worktree-path = \"../{{ branch }}\" }"),
+            "untouched entry should keep its formatting: {result}"
+        );
+        assert!(result.contains("squash = true"), "should keep: {result}");
+        assert!(result.contains("ff = false"), "should migrate: {result}");
+    }
+
+    #[test]
+    fn test_migrate_leaves_project_entries_that_are_not_tables_alone() {
+        // A project entry can be hand-written as something other than a table.
+        // The scope walk has no scope to offer a rule there, so it skips the
+        // entry and leaves the text for serde's own type error and the
+        // unknown-field check — it must not panic or rewrite.
+        for (content, untouched) in [
+            // a scalar entry
+            (
+                "[projects]\n\"a/b\" = \"scalar\"\n[merge]\nno-ff = true\n",
+                "\"a/b\" = \"scalar\"\n",
+            ),
+            // an array-of-tables entry
+            (
+                "[[projects.\"a/b\"]]\nno-ff = true\n[merge]\nno-ff = true\n",
+                "[[projects.\"a/b\"]]\nno-ff = true\n",
+            ),
+        ] {
+            let result = migrate_content(content);
+            assert!(
+                result.contains(untouched),
+                "the entry should survive unrewritten: {result}"
+            );
+            // The top-level rule still fires, so the walk itself ran.
+            assert!(
+                result.contains("ff = false"),
+                "top-level scope should still migrate: {result}"
+            );
+        }
     }
 
     #[test]
