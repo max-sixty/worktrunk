@@ -121,12 +121,19 @@ impl UserConfig {
         }
     }
 
+    /// Compare two Values for equality, ignoring formatting.
+    ///
+    /// Every `Value` variant needs an arm: an unmatched pair falls through to
+    /// `false`, and in the inline-table branch of `merge_tables` "not equal"
+    /// is what rewrites the user's inline section as a standard table.
     fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
         use toml_edit::Value;
         match (a, b) {
             (Value::String(a), Value::String(b)) => a.value() == b.value(),
             (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
             (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
+            (Value::Float(a), Value::Float(b)) => a.value() == b.value(),
+            (Value::Datetime(a), Value::Datetime(b)) => a.value() == b.value(),
             (Value::InlineTable(a), Value::InlineTable(b)) => {
                 a.len() == b.len()
                     && a.iter()

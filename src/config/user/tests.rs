@@ -3821,6 +3821,33 @@ fn test_save_to_rewrites_blank_line_separated_inline_section_as_parseable_toml()
 }
 
 #[test]
+fn test_save_to_existing_file_preserves_inline_table_with_float_and_datetime() {
+    // Every `Value` variant needs an arm in `values_equal`: a pair it doesn't
+    // match falls through to "not equal", which reports an untouched inline
+    // section as changed and expands it to a standard table. Floats and
+    // datetimes only reach a user config as unknown keys — a typo, or a field
+    // from a newer wt — which is exactly what the inline branch preserves.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "merge = { squash = false, future-timeout = 1.5, future-since = 1979-05-27 }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.skip_shell_integration_prompt = true;
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains(original.trim_end()),
+        "unchanged inline table should keep its formatting: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "the unrelated change should still be written: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
     // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
