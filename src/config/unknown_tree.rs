@@ -111,15 +111,16 @@ where
 fn seed_schema_skeleton<C: WorktrunkConfig>(reserialized: &mut toml::Table) {
     seed_keys(reserialized, C::valid_top_level_keys());
 
-    let Some((scope_key, entry_keys)) = C::valid_scoped_keys() else {
-        return;
-    };
-    let Some(toml::Value::Table(entries)) = reserialized.get_mut(scope_key) else {
-        return;
-    };
-    for (_, entry) in entries.iter_mut() {
-        if let toml::Value::Table(entry_table) = entry {
-            seed_keys(entry_table, entry_keys);
+    // The top-level pass above already put `scope_key` in place as an empty
+    // table where the round-trip omitted it, so this lookup finds the scoped
+    // map whether or not any entry survived serialization.
+    if let Some((scope_key, entry_keys)) = C::valid_scoped_keys()
+        && let Some(toml::Value::Table(entries)) = reserialized.get_mut(scope_key)
+    {
+        for (_, entry) in entries.iter_mut() {
+            if let toml::Value::Table(entry_table) = entry {
+                seed_keys(entry_table, entry_keys);
+            }
         }
     }
 }
