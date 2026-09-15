@@ -1639,36 +1639,101 @@ pub fn compute_migrated_content(content: &str) -> String {
     }
 }
 
+/// Render the `Proposed diff:` block for a migration, or a warning line when
+/// git cannot produce the patch.
+///
+/// The three outcomes of [`format_migration_diff`] stay distinct here: an
+/// identical pair renders nothing, a differing pair renders the patch, and a
+/// git failure renders a warning rather than disappearing. Both consumers
+/// (`wt config show` and `wt config update`) go through this so neither can
+/// present a failed diff as "no changes"; the migration itself is computed in
+/// memory and is unaffected, so a broken renderer degrades the preview rather
+/// than failing the command.
+///
+/// Returns a string ending in a newline, or empty when there is nothing to show.
+pub fn format_migration_diff_block(original: &str, migrated: &str, label: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    match format_migration_diff(original, migrated, label) {
+        Ok(Some(diff)) => {
+            let _ = writeln!(out, "{}", info_message("Proposed diff:"));
+            let _ = writeln!(out, "{diff}");
+        }
+        Ok(None) => {}
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "{}",
+                warning_message("Could not render the proposed diff")
+            );
+            let _ = writeln!(out, "{}", format_with_gutter(&e.to_string(), None));
+        }
+    }
+    out
+}
+
 /// Render a colored unified diff between `original` and `migrated`, with
 /// `label` shown as the file name in the diff header (e.g. `config.toml`).
 ///
 /// Uses a private tempdir containing two files named `<label>/current` and
 /// `<label>/migrated`; `git diff --no-index` is invoked from inside that
 /// tempdir so the diff header shows clean relative paths. The tempdir is
-/// dropped on return. Returns `None` when the contents match.
-pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Option<String> {
-    let dir = tempfile::tempdir().expect("failed to create tempdir for migration diff");
+/// dropped on return. Returns `Ok(None)` when the contents match.
+///
+/// `--no-ext-diff` keeps the patch worktrunk's own: a user's `diff.external`
+/// program would otherwise be handed these two temp files and could emit
+/// something that isn't a patch, block on a GUI, or die and take the preview
+/// with it.
+///
+/// `git diff --no-index` exits 0 when the files match and 1 when they differ,
+/// so those two are the answer and anything else is a failure. Branching on
+/// stdout alone conflated "no changes" with "git refused to run" — the shape
+/// this guards against (#4118).
+fn format_migration_diff(
+    original: &str,
+    migrated: &str,
+    label: &str,
+) -> anyhow::Result<Option<String>> {
+    let dir = tempfile::tempdir().context("failed to create tempdir for migration diff")?;
     let subdir = dir.path().join(label);
-    std::fs::create_dir(&subdir).expect("failed to create subdir in fresh tempdir");
-    let current = subdir.join("current");
-    let migrated_path = subdir.join("migrated");
-    std::fs::write(&current, original).expect("failed to write current config to tempfile");
-    std::fs::write(&migrated_path, migrated).expect("failed to write migrated config to tempfile");
+    std::fs::create_dir(&subdir).context("failed to create subdir in fresh tempdir")?;
+    std::fs::write(subdir.join("current"), original)
+        .context("failed to write current config to tempfile")?;
+    std::fs::write(subdir.join("migrated"), migrated)
+        .context("failed to write migrated config to tempfile")?;
 
     let output = Cmd::new("git")
-        .args(["diff", "--no-index", "--color=always", "-U3", "--"])
+        .args([
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--color=always",
+            "-U3",
+            "--",
+        ])
         .arg(format!("{label}/current"))
         .arg(format!("{label}/migrated"))
         .current_dir(dir.path())
         .run()
-        .expect("git diff --no-index failed");
+        .context("failed to run git diff --no-index")?;
 
-    // git diff --no-index exits 1 when files differ, which is expected.
-    let diff_output = String::from_utf8_lossy(&output.stdout);
-    if diff_output.is_empty() {
-        return None;
+    match output.status.code() {
+        Some(0) => Ok(None),
+        Some(1) => Ok(Some(format_with_gutter(
+            String::from_utf8_lossy(&output.stdout).trim_end(),
+            None,
+        ))),
+        code => {
+            let exit_info = code.map_or_else(
+                || "killed by signal".to_string(),
+                |c| format!("exit code {c}"),
+            );
+            anyhow::bail!(
+                "git diff --no-index, {exit_info}\n{}",
+                String::from_utf8_lossy(&output.stderr).trim_end()
+            )
+        }
     }
-    Some(format_with_gutter(diff_output.trim_end(), None))
 }
 
 /// Format deprecation warning lines (without apply hints or diff).
@@ -1838,10 +1903,11 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "config".to_string());
-    if let Some(diff) = format_migration_diff(original_content, &migrated, &label) {
-        let _ = writeln!(out, "{}", info_message("Proposed diff:"));
-        let _ = writeln!(out, "{diff}");
-    }
+    out.push_str(&format_migration_diff_block(
+        original_content,
+        &migrated,
+        &label,
+    ));
 
     out
 }

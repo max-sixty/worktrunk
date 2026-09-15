@@ -7125,3 +7125,57 @@ fn test_project_config_path_env_var_half_anchored_errors(repo: TestRepo) {
         );
     }
 }
+
+/// A deprecated config whose migration diff `wt config show` renders.
+const DEPRECATED_CONFIG_FOR_DIFF: &str = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+
+/// Worktrunk renders its own migration patch, so a user's `diff.external`
+/// program must not be consulted — a broken or interactive one would otherwise
+/// replace or suppress the proposed diff.
+#[rstest]
+fn test_config_show_migration_diff_ignores_external_diff(repo: TestRepo) {
+    fs::write(repo.test_config_path(), DEPRECATED_CONFIG_FOR_DIFF).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show"])
+        // Appended to the hermetic test git config (keys 0 and 1).
+        .env("GIT_CONFIG_COUNT", "3")
+        .env("GIT_CONFIG_KEY_2", "diff.external")
+        .env("GIT_CONFIG_VALUE_2", "wt-nonexistent-external-diff")
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let stdout = raw.ansi_strip();
+    assert!(
+        stdout.contains("Proposed diff:") && stdout.contains("{{ repo }}"),
+        "expected the migration patch, got:\n{stdout}"
+    );
+}
+
+/// A `git diff --no-index` that fails outright must not read as "no changes":
+/// the preview says so instead of silently dropping the patch.
+#[rstest]
+fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
+    fs::write(repo.test_config_path(), DEPRECATED_CONFIG_FOR_DIFF).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "show"])
+        // An unparseable `diff.*` value fails git after option parsing, which
+        // `--no-ext-diff` cannot prevent.
+        .env("GIT_CONFIG_COUNT", "3")
+        .env("GIT_CONFIG_KEY_2", "diff.algorithm")
+        .env("GIT_CONFIG_VALUE_2", "wt-nonexistent-diff-algorithm")
+        .output()
+        .unwrap();
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let stdout = raw.ansi_strip();
+    assert!(
+        stdout.contains("Could not render the proposed diff"),
+        "expected the failure to be reported, got:\n{stdout}"
+    );
+}

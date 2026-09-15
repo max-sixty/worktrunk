@@ -12,7 +12,8 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
     ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
-    copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
+    copy_approved_commands_to_approvals_file, format_deprecation_warnings,
+    format_migration_diff_block,
 };
 use worktrunk::git::{Repository, resolve_input_path};
 use worktrunk::path::{format_path_for_display, paths_match};
@@ -221,10 +222,11 @@ fn format_update_preview(candidate: &UpdateCandidate) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "config".to_string());
-    if let Some(diff) = format_migration_diff(&candidate.original, &candidate.migrated, &label) {
-        let _ = writeln!(out, "{}", info_message("Proposed diff:"));
-        let _ = writeln!(out, "{diff}");
-    }
+    out.push_str(&format_migration_diff_block(
+        &candidate.original,
+        &candidate.migrated,
+        &label,
+    ));
     out
 }
 
