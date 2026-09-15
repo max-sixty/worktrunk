@@ -624,7 +624,10 @@ Project config normally lives in `.config/wt.toml`, committed and shared. Some s
 
 Any key under the `worktrunk.config.` prefix in git config becomes project config. Strip the prefix; what remains is the exact TOML key path from the sections above:
 
-{{ terminal(cmd="git config worktrunk.config.post-start 'pnpm install'|||git config worktrunk.config.list.url 'http://localhost:3000'") }}
+```console
+$ git config worktrunk.config.post-start 'pnpm install'
+$ git config worktrunk.config.list.url 'http://localhost:3000'
+```
 
 `.git/config` is local to the repository and never committed, so these keys stay on one machine — and every linked worktree sees them, because the local scope lives in the shared git dir. `--global` puts a key in every repository. Git's normal precedence applies: local overrides global, and conditional includes work.
 
@@ -642,7 +645,9 @@ Setting `WORKTRUNK_PROJECT_CONFIG_PATH` — even to an empty value — disables 
 
 To list the matching git keys with their scope and origin file (inside a linked worktree this can also show worktree-scoped keys, which worktrunk does not read):
 
-{{ terminal(cmd="git config --show-scope --show-origin --get-regexp '^worktrunk\.config\.'") }}
+```console
+$ git config --show-scope --show-origin --get-regexp '^worktrunk\.config\.'
+```
 
 # Shell Integration
 

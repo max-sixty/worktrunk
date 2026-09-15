@@ -288,7 +288,9 @@ impl ProjectConfig {
             .map_err(|e| ConfigError(format!("Failed to read git config: {e}")))?;
         if !git_pairs.is_empty() {
             super::git_source::warn_superseded_project_file(repo);
-            return Ok(Some(super::git_source::project_config_from_git(&git_pairs)?));
+            return Ok(Some(super::git_source::project_config_from_git(
+                &git_pairs,
+            )?));
         }
 
         let (contents, config_path) = match repo
