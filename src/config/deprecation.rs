@@ -199,12 +199,14 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
 /// `{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}` reports
 /// `repo_root` even though the last use reads the local. The rewriter has no
 /// scope tracking and would rename both. A deprecated name that is bound
-/// anywhere is therefore dropped from the replacement set: the template is
-/// left alone and keeps warning, which the user can act on, rather than
-/// quietly rendering something else.
+/// anywhere is therefore dropped from the replacement set — and because
+/// detection reads that same set, such a template neither migrates nor
+/// warns. Losing the warning is the price of not quietly rendering
+/// something else.
 fn template_bound_names(template: &str) -> HashSet<&str> {
     let mut bound = HashSet::new();
     let mut cursor = 0;
+    let mut in_raw = false;
     while let Some((tag_start, kind)) = find_next_template_tag(template, cursor) {
         let body_start = tag_start + 2;
         let close_delim = match kind {
@@ -225,7 +227,15 @@ fn template_bound_names(template: &str) -> HashSet<&str> {
         // changes nothing.
         let Some(tag_end) = tag_end else { break };
         if kind == TemplateTagKind::Block {
-            bound.extend(template_block_bindings(&template[body_start..tag_end]));
+            let body = &template[body_start..tag_end];
+            match template_block_name(body) {
+                // `{% raw %}` content is literal text to MiniJinja, so a tag
+                // inside one binds nothing — the same state the rewriter keeps.
+                Some("raw") => in_raw = true,
+                Some("endraw") => in_raw = false,
+                _ if !in_raw => bound.extend(template_block_bindings(body)),
+                _ => {}
+            }
         }
         cursor = tag_end + close_delim.len();
     }
@@ -241,16 +251,11 @@ fn template_bound_names(template: &str) -> HashSet<&str> {
 /// parameter lists to this match.
 ///
 /// Only the binding keywords are inspected — `{% if repo_root %}` reads a name
-/// rather than binding it. Over-reporting is the safe direction here: a name
-/// this returns is left unmigrated and keeps its warning, while one it misses
-/// would be renamed at a use that no longer refers to the global.
+/// rather than binding it. Over-reporting is the safer direction: a name this
+/// returns is left unmigrated and stops warning, while one it misses would be
+/// renamed at a use that no longer refers to the global.
 fn template_block_bindings(body: &str) -> Vec<&str> {
-    let body = body.strip_prefix('-').unwrap_or(body);
-    let body = body.strip_suffix('-').unwrap_or(body).trim();
-    let split = body
-        .find(|c: char| !is_template_identifier_char(c))
-        .unwrap_or(body.len());
-    let (keyword, rest) = body.split_at(split);
+    let (keyword, rest) = split_block_keyword(body);
     match keyword {
         // `{% set a, b = expr %}`, `{% set a %}…{% endset %}`,
         // `{% with a = 1, b = 2 %}`
@@ -366,11 +371,25 @@ fn find_next_template_tag(template: &str, from: usize) -> Option<(usize, Templat
 }
 
 fn template_block_name(body: &str) -> Option<&str> {
-    let body = body.strip_prefix('-').unwrap_or(body).trim_start();
-    let end = body
+    let (keyword, _) = split_block_keyword(body);
+    (!keyword.is_empty()).then_some(keyword)
+}
+
+/// A block tag's body split into its leading keyword and the rest.
+///
+/// MiniJinja spells whitespace control `-` *or* `+` (`Whitespace::from_byte`
+/// maps both, one trimming and one preserving), and accepts either on both
+/// ends of a tag. Stripping only `-` left `{%+ raw %}` unrecognized — its
+/// literal contents were rewritten — and `{%+ set x = … %}` binding nothing,
+/// so the name it shadows was renamed at every use. Both readers of a block
+/// keyword go through here so that stays one answer.
+fn split_block_keyword(body: &str) -> (&str, &str) {
+    let body = body.strip_prefix(['-', '+']).unwrap_or(body);
+    let body = body.strip_suffix(['-', '+']).unwrap_or(body).trim();
+    let split = body
         .find(|c: char| !is_template_identifier_char(c))
         .unwrap_or(body.len());
-    (end > 0).then_some(&body[..end])
+    body.split_at(split)
 }
 
 fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) -> (String, bool) {
@@ -2610,6 +2629,9 @@ timeout = 30
             r#"{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}"#,
             r#"{{ repo_root }}{% for repo_root in items %}{{ repo_root }}{% endfor %}"#,
             r#"{{ repo_root }}{% with repo_root = "local" %}{{ repo_root }}{% endwith %}"#,
+            // `+` is whitespace control just as `-` is, on either end
+            r#"{{ repo_root }}{%+ set repo_root = "local" %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% set repo_root = "local" +%}{{ repo_root }}"#,
         ] {
             let result = normalize_template_vars(template);
             assert!(
@@ -2622,6 +2644,24 @@ timeout = 30
                 "a template left unrewritten must not warn: {template}"
             );
         }
+    }
+
+    /// `{% raw %}` content is literal text to MiniJinja, so a binding-shaped
+    /// tag inside one binds nothing and must not hold back a real use outside
+    /// it. The raw contents are left exactly as written, `+` whitespace
+    /// control included.
+    #[test]
+    fn test_normalize_ignores_raw_block_contents() {
+        assert_eq!(
+            normalize_template_vars(
+                r#"{% raw %}{% set repo_root = "x" %}{% endraw %}{{ repo_root }}"#
+            ),
+            r#"{% raw %}{% set repo_root = "x" %}{% endraw %}{{ repo_path }}"#
+        );
+        assert_eq!(
+            normalize_template_vars("{{ repo_root }}{%+ raw %}{{ repo_root }}{%+ endraw %}"),
+            "{{ repo_path }}{%+ raw %}{{ repo_root }}{%+ endraw %}"
+        );
     }
 
     /// A tag the scanner can't terminate leaves the whole template
@@ -3640,6 +3680,8 @@ hostname = "forge.example"
             // a deprecated name a block binds is not the global, so the
             // rewriter leaves the whole template alone
             "worktree-path = \"{{ repo_root }}{% set repo_root = 'x' %}{{ repo_root }}\"\n",
+            // `+` is whitespace control too, so the binding still counts
+            "worktree-path = \"{{ repo_root }}{%+ set repo_root = 'x' %}{{ repo_root }}\"\n",
         ];
         for content in untouched {
             assert!(
@@ -3680,6 +3722,8 @@ hostname = "forge.example"
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
             // a `}}` inside a quoted string doesn't end the tag
             "worktree-path = '{{ \"}} \" ~ repo_root }}'\n",
+            // a binding-shaped tag inside `{% raw %}` binds nothing
+            "worktree-path = \"{% raw %}{% set repo_root = 'x' %}{% endraw %}{{ repo_root }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
