@@ -3744,6 +3744,36 @@ fn test_save_to_existing_file_preserves_unknown_keys_when_inline_table_changes()
 }
 
 #[test]
+fn test_save_to_existing_file_preserves_nested_inline_table_formatting() {
+    // An inline section whose child is itself an inline table must keep its
+    // formatting when nothing inside it changed. `values_equal` had no
+    // `InlineTable` arm, so two identical inline tables never compared equal
+    // and the whole section was rewritten as a standard table.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "commit = { generation = { command = \"summarize\" } }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.skip_shell_integration_prompt = true;
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("commit = { generation = { command = \"summarize\" } }"),
+        "unchanged nested inline table should keep its formatting: {saved}"
+    );
+    assert!(
+        !saved.contains("[commit"),
+        "should not be expanded to a standard table: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "the unrelated change should still be written: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
     // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value

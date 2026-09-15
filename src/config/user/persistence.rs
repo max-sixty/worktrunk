@@ -126,6 +126,11 @@ impl UserConfig {
             (Value::String(a), Value::String(b)) => a.value() == b.value(),
             (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
             (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
+            (Value::InlineTable(a), Value::InlineTable(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .all(|(k, v)| b.get(k).is_some_and(|bv| Self::values_equal(v, bv)))
+            }
             (Value::Array(a), Value::Array(b)) => {
                 a.len() == b.len()
                     && a.iter()
