@@ -149,9 +149,18 @@ pub fn project_config_from_git(pairs: &[(String, String)]) -> Result<ProjectConf
     );
 
     let mut config: ProjectConfig = toml::from_str(&rendered).map_err(|e| {
+        // `e`'s line/column index the rendered document, which the user never
+        // wrote — name the keys it was built from so the error leads back to a
+        // `git config` key. Keys only, no values: this message reaches the `-vv`
+        // bundle as the diagnostic's `context`.
+        let keys: Vec<String> = pairs
+            .iter()
+            .map(|(key, _)| format!("{GIT_CONFIG_PREFIX}{key}"))
+            .collect();
         ConfigError(format!(
-            "{} from {GIT_CONFIG_SOURCE_LABEL} failed to parse:\n{e}",
+            "{} from {GIT_CONFIG_SOURCE_LABEL} failed to parse:\n{e}\nFrom: {}",
             ConfigFileKind::Project.label(),
+            keys.join(", "),
         ))
     })?;
     config.source = ProjectConfigSource::GitConfig;
