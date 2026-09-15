@@ -46,8 +46,9 @@ impl UserConfig {
     /// - Keys in desired but not existing: inserted
     /// - Keys in existing but not desired: removed (unless in `preserve`)
     /// - Both standard tables: recurse (preserves existing formatting and comments)
-    /// - Existing inline table, desired standard table: compare contents, preserve
-    ///   inline format when semantically equal
+    /// - Existing inline table, desired standard table: merge through the same
+    ///   recursive path, so nested `preserve` applies; the inline format is kept
+    ///   when that merge changed nothing
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
     fn merge_tables(
@@ -66,6 +67,29 @@ impl UserConfig {
 
         let empty_tree = UnknownTree::default();
         for (key, desired_item) in desired.iter() {
+            // Existing inline table, desired standard table: merge into a table
+            // view so the same nested preservation applies as in the
+            // standard-table branch, then write back only if that changed
+            // something — an untouched inline table keeps its formatting.
+            if desired_item.is_table()
+                && let Some(as_table) = existing
+                    .get(key)
+                    .and_then(|item| item.as_inline_table())
+                    .map(|inline| inline.clone().into_table())
+            {
+                let mut merged = as_table.clone();
+                let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
+                Self::merge_tables(
+                    &mut merged,
+                    desired_item.as_table().unwrap(),
+                    nested_preserve,
+                );
+                if !Self::tables_equal(&as_table, &merged) {
+                    crate::config::replace_inline_with_table(existing, key, merged);
+                }
+                continue;
+            }
+
             match existing.get_mut(key) {
                 // Both standard tables: recurse
                 Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
@@ -75,20 +99,6 @@ impl UserConfig {
                         desired_item.as_table().unwrap(),
                         nested_preserve,
                     );
-                }
-                // Existing inline table, desired standard table: compare contents
-                // to preserve the user's inline formatting when nothing changed
-                Some(existing_item)
-                    if existing_item.is_inline_table() && desired_item.is_table() =>
-                {
-                    let as_table = existing_item
-                        .as_inline_table()
-                        .unwrap()
-                        .clone()
-                        .into_table();
-                    if !Self::tables_equal(&as_table, desired_item.as_table().unwrap()) {
-                        *existing_item = desired_item.clone();
-                    }
                 }
                 Some(existing_item) => {
                     if !Self::items_equal(existing_item, desired_item) {
@@ -111,19 +121,44 @@ impl UserConfig {
         }
     }
 
+    /// Compare two Values for equality, ignoring formatting.
+    ///
+    /// A variant with no arm of its own answers "not equal" for a value that
+    /// never changed, and in the inline-table branch of `merge_tables` "not
+    /// equal" is what rewrites the user's inline section as a standard table.
+    /// So the mismatched-variant arm spells out every variant instead of using
+    /// `_`: adding one to `toml_edit::Value` is then a compile error here
+    /// rather than a section that silently stops keeping its formatting.
     fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
         use toml_edit::Value;
         match (a, b) {
             (Value::String(a), Value::String(b)) => a.value() == b.value(),
             (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
             (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
+            (Value::Float(a), Value::Float(b)) => a.value() == b.value(),
+            (Value::Datetime(a), Value::Datetime(b)) => a.value() == b.value(),
+            (Value::InlineTable(a), Value::InlineTable(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .all(|(k, v)| b.get(k).is_some_and(|bv| Self::values_equal(v, bv)))
+            }
             (Value::Array(a), Value::Array(b)) => {
                 a.len() == b.len()
                     && a.iter()
                         .zip(b.iter())
                         .all(|(a, b)| Self::values_equal(a, b))
             }
-            _ => false,
+            // Two different variants. Exhaustive on purpose — see above.
+            (
+                Value::String(_)
+                | Value::Integer(_)
+                | Value::Float(_)
+                | Value::Boolean(_)
+                | Value::Datetime(_)
+                | Value::Array(_)
+                | Value::InlineTable(_),
+                _,
+            ) => false,
         }
     }
 

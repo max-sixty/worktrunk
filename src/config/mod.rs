@@ -155,6 +155,41 @@ pub fn is_user_project_override_key(key: &str) -> bool {
         .any(|k| k == key)
 }
 
+/// Replace a key's inline-table value with a standard table, carrying the key's
+/// leading decor onto the table header.
+///
+/// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
+/// preceded the line — comments, blank lines — plus the space before `=`. A
+/// standard table renders that decor *inside* its brackets, so leaving it in
+/// place writes `[# comment\nmerge ]`: a config file wt can no longer parse,
+/// and the user's own comment is what breaks it. Move the prefix to the header
+/// and drop the rest.
+///
+/// Both places that rewrite a table the user wrote inline go through here — the
+/// save-path merge in `user::persistence`, and `ensure_standard_table_parent`
+/// in `deprecation`, which has no choice but to convert because TOML forbids
+/// extending an inline table with a later subtable. The value's own decor (a
+/// trailing comment after the closing brace) is still dropped by
+/// `InlineTable::into_table`.
+pub(crate) fn replace_inline_with_table(
+    existing: &mut toml_edit::Table,
+    key: &str,
+    mut table: toml_edit::Table,
+) {
+    let prefix = existing
+        .key(key)
+        .and_then(|k| k.leaf_decor().prefix())
+        .filter(|prefix| prefix.as_str() != Some(""))
+        .cloned();
+    if let Some(prefix) = prefix {
+        table.decor_mut().set_prefix(prefix);
+    }
+    if let Some(mut key_mut) = existing.key_mut(key) {
+        key_mut.leaf_decor_mut().clear();
+    }
+    existing[key] = toml_edit::Item::Table(table);
+}
+
 // Re-export public types
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};

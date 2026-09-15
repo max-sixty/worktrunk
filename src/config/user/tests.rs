@@ -3682,6 +3682,172 @@ future-per-project = "value"
 }
 
 #[test]
+fn test_save_to_existing_file_preserves_unknown_keys_in_inline_table() {
+    // An unknown key inside an *inline* section must survive a save just as it
+    // does inside a standard `[merge]` table. The inline branch of the merge
+    // used to replace the whole item, so the unknown key went with it.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "merge = { squash = false, future-option = true }\n",
+    )
+    .unwrap();
+
+    let mut config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.skip_shell_integration_prompt = true;
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key inside an inline table should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "the unrelated change should still be written: {saved}"
+    );
+    // Nothing in the inline table changed, so its formatting survives too.
+    assert!(
+        saved.contains("merge = { squash = false, future-option = true }"),
+        "unchanged inline table should keep its formatting: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_unknown_keys_when_inline_table_changes() {
+    // Same preservation when a known value inside the inline table does change:
+    // `squash` is rewritten, `future-option` stays.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "merge = { squash = false, future-option = true }\n",
+    )
+    .unwrap();
+
+    let mut config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.merge.squash = Some(true);
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key should survive a changed inline table: {saved}"
+    );
+    assert!(
+        saved.contains("squash = true"),
+        "changed value should be written: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_nested_inline_table_formatting() {
+    // An inline section whose child is itself an inline table must keep its
+    // formatting when nothing inside it changed. `values_equal` had no
+    // `InlineTable` arm, so two identical inline tables never compared equal
+    // and the whole section was rewritten as a standard table.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "commit = { generation = { command = \"summarize\" } }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.skip_shell_integration_prompt = true;
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("commit = { generation = { command = \"summarize\" } }"),
+        "unchanged nested inline table should keep its formatting: {saved}"
+    );
+    assert!(
+        !saved.contains("[commit"),
+        "should not be expanded to a standard table: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "the unrelated change should still be written: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_rewrites_commented_inline_section_as_parseable_toml() {
+    // Changing a value inside an inline section rewrites it as a standard
+    // table. The key's decor — the comment above it and the space before `=` —
+    // renders inside the table header, so the comment used to land between the
+    // brackets and the file wt wrote back no longer parsed.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "# why squash is off\nmerge = { squash = false, future-option = true }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.merge.squash = Some(true);
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    UserConfig::load_from_str(&saved)
+        .unwrap_or_else(|e| panic!("saved config must still parse: {e}\n{saved}"));
+    assert!(
+        saved.contains("# why squash is off\n[merge]"),
+        "the comment belongs above the header, not inside it: {saved}"
+    );
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key should survive: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_rewrites_blank_line_separated_inline_section_as_parseable_toml() {
+    // Same decor path with no comment: a blank line before the inline section
+    // is prefix decor too, and rendered inside the brackets it broke the file.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "skip-shell-integration-prompt = true\n\nmerge = { squash = false }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.merge.squash = Some(true);
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    let reloaded = UserConfig::load_from_str(&saved)
+        .unwrap_or_else(|e| panic!("saved config must still parse: {e}\n{saved}"));
+    assert_eq!(reloaded.merge.squash, Some(true));
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_inline_table_with_float_and_datetime() {
+    // Every `Value` variant needs an arm in `values_equal`: a pair it doesn't
+    // match falls through to "not equal", which reports an untouched inline
+    // section as changed and expands it to a standard table. Floats and
+    // datetimes only reach a user config as unknown keys — a typo, or a field
+    // from a newer wt — which is exactly what the inline branch preserves.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "merge = { squash = false, future-timeout = 1.5, future-since = 1979-05-27 }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.skip_shell_integration_prompt = true;
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains(original.trim_end()),
+        "unchanged inline table should keep its formatting: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "the unrelated change should still be written: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
     // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
