@@ -549,10 +549,14 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
         // Zsh
         home.join(".zshrc"),
         zdotdir_or_home(&home).join(".zshrc"),
-        // Fish functions/ (current location)
-        home.join(".config/fish/functions")
+        // Fish functions/ (current location) — fish's own config dir, so
+        // detection reads the file install wrote.
+        super::paths::fish_config_dir(&home)
+            .join("functions")
             .join(format!("{cmd}.fish")),
-        // Fish conf.d (legacy location - for detecting existing installs)
+        // Fish conf.d (legacy location - for detecting existing installs).
+        // Pinned to `~/.config`, matching `legacy_fish_conf_d_path`: that is
+        // where worktrunk wrote it, and `wt config show` compares the two.
         home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 
