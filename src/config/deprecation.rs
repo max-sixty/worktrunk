@@ -880,6 +880,12 @@ fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
 /// Inline tables can deserialize like tables, but TOML forbids extending them
 /// with later subtables. Convert before inserting migrated nested sections so
 /// existing inline parent fields survive alongside the new child table.
+///
+/// The conversion goes through [`super::replace_inline_with_table`] so the
+/// key's leading comments and blank lines land above the header rather than
+/// inside its brackets. These rules run on the load path, so a header the key's
+/// decor broke is a config file that stops parsing on every command, not just
+/// one `wt config update` writes back.
 fn ensure_standard_table_parent<'a>(
     table: &'a mut toml_edit::Table,
     key: &str,
@@ -890,11 +896,14 @@ fn ensure_standard_table_parent<'a>(
         table.insert(key, toml_edit::Item::Table(parent));
     }
 
-    let item = table.get_mut(key)?;
-    if let Some(inline) = item.as_inline_table().cloned() {
-        *item = toml_edit::Item::Table(inline.into_table());
+    if let Some(inline) = table
+        .get(key)
+        .and_then(|item| item.as_inline_table())
+        .cloned()
+    {
+        super::replace_inline_with_table(table, key, inline.into_table());
     }
-    item.as_table_mut()
+    table.get_mut(key)?.as_table_mut()
 }
 
 /// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
@@ -4166,6 +4175,61 @@ pager = "delta --paging=never"
         assert!(
             !result.contains("[select]"),
             "Should remove [select]: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_commented_inline_parent_keeps_the_config_loadable() {
+        // The parent has to become a standard table before `[commit.generation]`
+        // can be added, and the key's decor — the comment above it — renders
+        // inside the header brackets. Left there it wrote
+        // `[# my commit settings\ncommit ]`, and because this rule runs before
+        // serde on every load, the user's config stopped parsing entirely.
+        let content = r#"# my commit settings
+commit = { stage = "tracked" }
+commit-generation = { command = "llm" }
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("# my commit settings\n[commit]"),
+            "the comment belongs above the header, not inside it: {result}"
+        );
+
+        let config = crate::config::UserConfig::load_from_str(content)
+            .unwrap_or_else(|e| panic!("config must still load: {e}\n{result}"));
+        assert_eq!(config.commit.stage, Some(crate::config::StageMode::Tracked));
+        assert_eq!(
+            config
+                .commit
+                .generation
+                .and_then(|generation| generation.command)
+                .as_deref(),
+            Some("llm"),
+        );
+    }
+
+    #[test]
+    fn test_migrate_inline_parent_after_blank_line_keeps_the_config_loadable() {
+        // Same decor path with no comment: a blank line before the inline
+        // section is prefix decor too, which makes any inline section past the
+        // first line of the file a candidate.
+        let content = r#"skip-shell-integration-prompt = true
+
+switch = { cd = false }
+
+[select]
+pager = "delta"
+"#;
+        let config = crate::config::UserConfig::load_from_str(content)
+            .unwrap_or_else(|e| panic!("config must still load: {e}"));
+        assert_eq!(config.switch.cd, Some(false));
+        assert_eq!(
+            config
+                .switch
+                .picker
+                .and_then(|picker| picker.pager)
+                .as_deref(),
+            Some("delta"),
         );
     }
 

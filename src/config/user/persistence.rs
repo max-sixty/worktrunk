@@ -85,7 +85,7 @@ impl UserConfig {
                     nested_preserve,
                 );
                 if !Self::tables_equal(&as_table, &merged) {
-                    Self::replace_inline_with_table(existing, key, merged);
+                    crate::config::replace_inline_with_table(existing, key, merged);
                 }
                 continue;
             }
@@ -110,34 +110,6 @@ impl UserConfig {
                 }
             }
         }
-    }
-
-    /// Replace an inline-table value with a standard table, carrying the key's
-    /// leading decor onto the table header.
-    ///
-    /// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
-    /// preceded the line — comments, blank lines — plus the space before `=`. A
-    /// standard table renders that decor *inside* its brackets, so leaving it in
-    /// place writes `[# comment\nmerge ]`: a config file wt can no longer parse,
-    /// and the user's own comment is what breaks it. Move the prefix to the
-    /// header and drop the rest.
-    fn replace_inline_with_table(
-        existing: &mut toml_edit::Table,
-        key: &str,
-        mut table: toml_edit::Table,
-    ) {
-        let prefix = existing
-            .key(key)
-            .and_then(|k| k.leaf_decor().prefix())
-            .filter(|prefix| prefix.as_str() != Some(""))
-            .cloned();
-        if let Some(prefix) = prefix {
-            table.decor_mut().set_prefix(prefix);
-        }
-        if let Some(mut key_mut) = existing.key_mut(key) {
-            key_mut.leaf_decor_mut().clear();
-        }
-        existing[key] = toml_edit::Item::Table(table);
     }
 
     /// Compare two Items for value equality, ignoring formatting and comments.
