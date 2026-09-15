@@ -257,27 +257,75 @@ fn template_bound_names(template: &str) -> HashSet<&str> {
 fn template_block_bindings(body: &str) -> Vec<&str> {
     let (keyword, rest) = split_block_keyword(body);
     match keyword {
-        // `{% set a, b = expr %}`, `{% set a %}…{% endset %}`,
+        // `{% set a, (b, c) = expr %}`, `{% set a %}…{% endset %}`,
         // `{% with a = 1, b = 2 %}`
-        "set" | "with" => binding_targets(rest),
-        // `{% for a, b in expr %}` — the bindings sit before the `in`.
-        "for" => binding_targets(rest.split_once(" in ").map_or(rest, |(lhs, _)| lhs)),
+        "set" | "with" => binding_targets(rest, TargetsEndAt::Assign),
+        "for" => binding_targets(rest, TargetsEndAt::In),
         _ => Vec::new(),
     }
 }
 
-/// Split a comma-separated binding list into the identifiers it binds,
-/// dropping anything that isn't a bare identifier (an `= expr` right-hand
-/// side, an unpacking expression).
-fn binding_targets(list: &str) -> Vec<&str> {
-    list.split(',')
-        .filter_map(|part| {
-            let name = part.split('=').next().unwrap_or("").trim();
-            (name.starts_with(is_template_identifier_start)
-                && name.chars().all(is_template_identifier_char))
-            .then_some(name)
-        })
-        .collect()
+/// What separates a binding tag's targets from its values.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetsEndAt {
+    /// `{% for a, (b, c) in expr %}` — the `in` keyword, once.
+    In,
+    /// `{% set a, b = expr %}`, `{% with a = 1, b = 2 %}` — each `=`, with a
+    /// top-level comma starting the next pair's target.
+    Assign,
+}
+
+/// The identifiers a binding tag's target list binds.
+///
+/// MiniJinja's `parse_assignment` accepts arbitrarily nested parenthesized
+/// tuples — `{% for (a, (b, c)) in … %}` — so the targets are gathered by
+/// scanning the target region for identifiers rather than by splitting it on
+/// commas, which read `(repo_root` as "not a bare identifier" and bound
+/// nothing. A shape this doesn't model contributes extra names, leaving a
+/// template unmigrated; a missed one gets renamed at a use that no longer
+/// refers to the global, so the scan errs toward collecting.
+///
+/// A dotted target binds nothing — `{% set repo_root.x = … %}` mutates an
+/// attribute of the global, so neither half of the path is a binding.
+fn binding_targets(rest: &str, targets_end_at: TargetsEndAt) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut depth = 0usize;
+    let mut in_targets = true;
+    let mut cursor = 0;
+    while let Some(ch) = rest.get(cursor..).and_then(|s| s.chars().next()) {
+        if ch == '"' || ch == '\'' {
+            cursor = quoted_template_string_end(rest, cursor, ch);
+            continue;
+        }
+        if is_template_identifier_start(ch) {
+            let end = identifier_end(rest, cursor);
+            let name = &rest[cursor..end];
+            if targets_end_at == TargetsEndAt::In && depth == 0 && name == "in" {
+                in_targets = false;
+            } else if in_targets
+                && !rest[..cursor].trim_end().ends_with('.')
+                && !rest[end..].trim_start().starts_with('.')
+            {
+                names.push(name);
+            }
+            cursor = end;
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if targets_end_at == TargetsEndAt::Assign
+                && depth == 0
+                && !rest[cursor..].starts_with("==") =>
+            {
+                in_targets = false;
+            }
+            ',' if targets_end_at == TargetsEndAt::Assign && depth == 0 => in_targets = true,
+            _ => {}
+        }
+        cursor += ch.len_utf8();
+    }
+    names
 }
 
 fn rewrite_template_var_identifiers(
@@ -2632,6 +2680,14 @@ timeout = 30
             // `+` is whitespace control just as `-` is, on either end
             r#"{{ repo_root }}{%+ set repo_root = "local" %}{{ repo_root }}"#,
             r#"{{ repo_root }}{% set repo_root = "local" +%}{{ repo_root }}"#,
+            // parenthesized tuple targets, which MiniJinja's `parse_assignment`
+            // accepts for all three keywords and nests arbitrarily
+            r#"{{ repo_root }}{% for (repo_root, x) in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% for (a, (repo_root, x)) in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% set (repo_root, x) = items %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% with (repo_root, x) = items %}{{ repo_root }}{% endwith %}"#,
+            // the second pair of a multi-assignment `with`
+            r#"{{ repo_root }}{% with a = 1, repo_root = 2 %}{{ repo_root }}{% endwith %}"#,
         ] {
             let result = normalize_template_vars(template);
             assert!(
@@ -2691,6 +2747,31 @@ timeout = 30
         assert_eq!(
             normalize_template_vars("{% set p = repo_root %}{{ p }}"),
             "{% set p = repo_path %}{{ p }}"
+        );
+        // A value region the target scan must not claim: a `for` filter, a
+        // comparison whose `=` is not an assignment, a collection literal.
+        assert_eq!(
+            normalize_template_vars("{% for x in items if repo_root %}{{ x }}{% endfor %}"),
+            "{% for x in items if repo_path %}{{ x }}{% endfor %}"
+        );
+        assert_eq!(
+            normalize_template_vars(r#"{% set a = repo_root == "x" %}{{ a }}"#),
+            r#"{% set a = repo_path == "x" %}{{ a }}"#
+        );
+        assert_eq!(
+            normalize_template_vars("{% with a = [repo_root, 1] %}{{ a }}{% endwith %}"),
+            "{% with a = [repo_path, 1] %}{{ a }}{% endwith %}"
+        );
+        // A dotted target mutates an attribute of the global rather than
+        // binding it, so the global still migrates.
+        assert_eq!(
+            normalize_template_vars("{% set repo_root.x = 1 %}{{ repo_root }}"),
+            "{% set repo_path.x = 1 %}{{ repo_path }}"
+        );
+        // The squash-template migration this must not regress.
+        assert_eq!(
+            normalize_template_vars("{% for c in commits %}{{ c }}{% endfor %}"),
+            "{% for c in commit_details %}{{ c }}{% endfor %}"
         );
     }
 
@@ -3682,6 +3763,8 @@ hostname = "forge.example"
             "worktree-path = \"{{ repo_root }}{% set repo_root = 'x' %}{{ repo_root }}\"\n",
             // `+` is whitespace control too, so the binding still counts
             "worktree-path = \"{{ repo_root }}{%+ set repo_root = 'x' %}{{ repo_root }}\"\n",
+            // a parenthesized tuple target binds just as a bare one does
+            "worktree-path = \"{{ repo_root }}{% for (repo_root, x) in items %}{{ repo_root }}{% endfor %}\"\n",
         ];
         for content in untouched {
             assert!(
