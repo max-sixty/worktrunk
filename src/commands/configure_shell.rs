@@ -1327,7 +1327,12 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
     for &shell in &shells {
         match shell {
             Shell::Fish => {
-                let functions_dir = home.join(".config").join("fish").join("functions");
+                // Uninstall follows fish's own config dir, so it scans the
+                // directory install writes to. A wrapper an older worktrunk
+                // left under `~/.config/fish` while `$XDG_CONFIG_HOME` pointed
+                // elsewhere is not chased: fish never loaded it, so it is not
+                // integration to remove.
+                let functions_dir = shell::fish_config_dir(&home).join("functions");
                 let confd_dir = home.join(".config").join("fish").join("conf.d");
 
                 let canonical =
@@ -1414,7 +1419,7 @@ fn scan_for_uninstall(shell_filter: Option<Shell>) -> Result<UninstallScanResult
     let mut completion_results = Vec::new();
     let mut completion_not_found = Vec::new();
     if shells.contains(&Shell::Fish) {
-        let completions_dir = home.join(".config").join("fish").join("completions");
+        let completions_dir = shell::fish_config_dir(&home).join("completions");
         let completions =
             scan_managed_files(&completions_dir, "fish", |c| c.contains(COMPLETION_MARKER))?;
         if completions.is_empty() {

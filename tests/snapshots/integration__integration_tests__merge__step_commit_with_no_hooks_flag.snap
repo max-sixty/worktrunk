@@ -63,7 +63,7 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Skipping pre-commit hooks (--no-hooks)
 [33m▲[39m [33mAuto-staging 2 untracked paths:[39m
-[107m [0m .config/
+[107m [0m .config/wt.toml
 [107m [0m file1.txt
 [36m◎[39m [36mGenerating commit message and committing changes... [90m(2 files, [32m+2[39m[39m[90m)[39m[39m
 [107m [0m [1mfeat: add file[22m

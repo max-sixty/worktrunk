@@ -18,15 +18,25 @@
 
 - **`wt merge` no longer deletes a worktree locked with `git worktree lock`**: the merge completes and prints `Worktree preserved (locked)`. Every Worktrunk removal refuses a locked worktree, even with `--force`; run `git worktree unlock <path>` first. ([#4073](https://github.com/max-sixty/worktrunk/pull/4073), thanks @Duang777)
 
+- **Removal no longer discards untracked files hidden by `status.showUntrackedFiles = no`**: under that setting, a worktree holding only untracked files looked clean, so `wt remove`, `wt merge`, and `wt step prune` removed it without `--force`. Safety checks now always count untracked files, and auto-staging warnings list every file they stage. ([#4111](https://github.com/max-sixty/worktrunk/pull/4111), thanks @Duang777)
+
+- **`wt remove` and `wt merge` check the right worktree under an inherited `GIT_DIR`**: run from a `!wt` git alias or a git hook, which pass `GIT_DIR` down, `wt remove` could delete a dirty worktree without `--force`, and `wt merge` could refuse a clean merge. Both now check the worktree they act on. ([#4082](https://github.com/max-sixty/worktrunk/pull/4082), thanks @Duang777)
+
 - **`wt config shell install` no longer tells an already-wrapped shell to restart**: reinstalling from a shell with the wrapper loaded, such as after a version bump, printed `↳ Restart shell to activate shell integration`. ([#4059](https://github.com/max-sixty/worktrunk/pull/4059))
 
 - **Plugin status and uninstall checks ask the agent CLIs**: `wt config show` could list an installed Claude Code plugin or Gemini CLI extension as not installed, and `wt config plugins claude|codex uninstall` could report success over a marketplace still configured. A repeat Claude uninstall now runs both removals instead of stopping at `Plugin not installed`. ([#4048](https://github.com/max-sixty/worktrunk/pull/4048), [#4054](https://github.com/max-sixty/worktrunk/pull/4054))
 
 - **`wt switch` recovers from a removed worktree in a bare repository**: `wt switch` and the picker showed git's "cannot resolve CWD" error instead, and the removed-directory message lacked `wt switch ^`. ([#4067](https://github.com/max-sixty/worktrunk/pull/4067))
 
+- **`wt config shell install fish` puts the wrapper where fish reads it under a custom `$XDG_CONFIG_HOME`**: the wrapper always went to `~/.config/fish/functions/`, so install reported success while `wt switch` changed no directory. On Windows, the fish completion moves from `%APPDATA%\fish\completions` to the wrapper's directory. ([#4107](https://github.com/max-sixty/worktrunk/pull/4107))
+
 - **`wt config shell install` migrates a deprecated `conf.d` fish wrapper when `~/.config/fish/functions` is missing**: before, only `wt config shell install fish` migrated it. `wt config show` now reports that wrapper even when fish isn't on `PATH`. ([#4059](https://github.com/max-sixty/worktrunk/pull/4059))
 
+- **`wt config update` no longer overwrites a config edited while its prompt is open**: it wrote the pre-prompt snapshot over the newer file and reported success. It now fails with the path and leaves the newer file; re-running previews the current contents. ([#4127](https://github.com/max-sixty/worktrunk/pull/4127))
+
 - **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: that config, common with GitHub Enterprise and self-hosted GitLab, kept the deprecated key with no deprecation warning. ([#4061](https://github.com/max-sixty/worktrunk/pull/4061))
+
+- **A deprecated config section the migration can't rewrite now warns**: `select = not a table`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121))
 
 - **`wt config plugins opencode install` no longer writes the plugin into the current directory**: with `OPENCODE_CONFIG_DIR` set but empty, it wrote `plugins/worktrunk.ts` there, typically inside a repository, reporting success though OpenCode never saw it. An empty value now counts as unset. ([#4084](https://github.com/max-sixty/worktrunk/pull/4084))
 
