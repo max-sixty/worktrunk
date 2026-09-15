@@ -68,3 +68,5 @@ exit_code: 1
 [107m [0m 2 | exclude = "target"
 [107m [0m   |           ^^^^^^^^
 [107m [0m invalid type: string "target", expected a sequence
+[107m [0m 
+[107m [0m From: worktrunk.config.step.copy-ignored.exclude
