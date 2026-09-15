@@ -101,10 +101,32 @@ where
 }
 
 /// Seed `reserialized` with every schema-valid top-level key as an empty
-/// table so `diff_tables` treats valid-but-omitted sections as known.
+/// table so `diff_tables` treats valid-but-omitted sections as known, then do
+/// the same one level down inside each entry of the scoped map
+/// ([`WorktrunkConfig::valid_scoped_keys`] — `projects` in user config).
+///
+/// Both levels need it for the same reason: a section equal to its default is
+/// skipped during serialization, so it is missing from the round-tripped view
+/// `diff_tables` compares against and would be reported as unknown.
 fn seed_schema_skeleton<C: WorktrunkConfig>(reserialized: &mut toml::Table) {
-    for key in C::valid_top_level_keys() {
-        reserialized
+    seed_keys(reserialized, C::valid_top_level_keys());
+
+    let Some((scope_key, entry_keys)) = C::valid_scoped_keys() else {
+        return;
+    };
+    let Some(toml::Value::Table(entries)) = reserialized.get_mut(scope_key) else {
+        return;
+    };
+    for (_, entry) in entries.iter_mut() {
+        if let toml::Value::Table(entry_table) = entry {
+            seed_keys(entry_table, entry_keys);
+        }
+    }
+}
+
+fn seed_keys(table: &mut toml::Table, keys: &[String]) {
+    for key in keys {
+        table
             .entry(key.clone())
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
     }
@@ -407,6 +429,49 @@ b = 2
     fn project_config_detects_user_only_key() {
         let tree = parsed::<ProjectConfig>("skip-shell-integration-prompt = true\n");
         assert!(tree.keys.contains("skip-shell-integration-prompt"));
+    }
+
+    #[test]
+    fn empty_per_project_section_is_known() {
+        // `[projects."<id>".list]` is valid and accepted on load. It equals
+        // its default, so it serializes away and is missing from the
+        // round-trip — the skeleton has to put it back one level down too.
+        let tree = parsed::<UserConfig>("[projects.\"example.com/org/repo\".list]\n");
+        assert!(tree.is_empty(), "unexpected unknown keys: {tree:?}");
+        assert!(
+            collect_unknown_warnings::<UserConfig>("[projects.\"example.com/org/repo\".list]\n")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn unknown_key_in_per_project_scope_still_warns() {
+        // The skeleton seeds only schema-valid keys, so a genuine unknown in
+        // the same scope keeps its warning — as does one nested inside a
+        // known section, and a user key that has no per-project form.
+        for (content, expected) in [
+            (
+                "[projects.\"example.com/org/repo\".nonsense]\n",
+                "projects.example.com/org/repo.nonsense",
+            ),
+            (
+                "[projects.\"example.com/org/repo\".list]\nbogus = 1\n",
+                "projects.example.com/org/repo.list.bogus",
+            ),
+            (
+                "[projects.\"example.com/org/repo\"]\nskip-shell-integration-prompt = true\n",
+                "projects.example.com/org/repo.skip-shell-integration-prompt",
+            ),
+        ] {
+            let warnings = collect_unknown_warnings::<UserConfig>(content);
+            assert!(
+                warnings.iter().any(|w| matches!(
+                    w,
+                    UnknownWarning::NestedUnknown { path } if path == expected
+                )),
+                "expected {expected} to warn, got {warnings:?} for:\n{content}"
+            );
+        }
     }
 
     #[test]

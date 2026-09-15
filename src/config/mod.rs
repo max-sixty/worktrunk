@@ -46,6 +46,19 @@ pub trait WorktrunkConfig:
     /// All valid top-level keys for this config type, derived from JsonSchema.
     fn valid_top_level_keys() -> &'static [String];
 
+    /// A top-level key whose entries are themselves schema-typed tables,
+    /// paired with the valid keys for one entry — `projects` in user config,
+    /// nothing in project config.
+    ///
+    /// A section inside such an entry serializes away when it equals its
+    /// default, exactly as a top-level section does, so the skeleton
+    /// `seed_schema_skeleton` builds has to reach one level further down for
+    /// it. Without that, `[projects."<id>".list]` — valid, and accepted on
+    /// load — reads back as an unknown field.
+    fn valid_scoped_keys() -> Option<(&'static str, &'static [String])> {
+        None
+    }
+
     /// Check if a key would be valid in this config type.
     fn is_valid_key(key: &str) -> bool {
         Self::valid_top_level_keys().iter().any(|k| k == key)
@@ -63,6 +76,15 @@ impl WorktrunkConfig for UserConfig {
         use std::sync::OnceLock;
         static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
         VALID_KEYS.get_or_init(user::valid_user_config_keys)
+    }
+
+    fn valid_scoped_keys() -> Option<(&'static str, &'static [String])> {
+        use std::sync::OnceLock;
+        static SCOPED_KEYS: OnceLock<Vec<String>> = OnceLock::new();
+        Some((
+            "projects",
+            SCOPED_KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>),
+        ))
     }
 }
 
