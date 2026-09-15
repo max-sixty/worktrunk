@@ -36,7 +36,7 @@
 
 - **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: that config, common with GitHub Enterprise and self-hosted GitLab, kept the deprecated key with no deprecation warning. ([#4061](https://github.com/max-sixty/worktrunk/pull/4061))
 
-- **A deprecated config section the migration can't rewrite now warns**: `select = not a table`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121))
+- **A deprecated config section the migration can't rewrite now warns**: `select = "not a table"`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121))
 
 - **`wt config plugins opencode install` no longer writes the plugin into the current directory**: with `OPENCODE_CONFIG_DIR` set but empty, it wrote `plugins/worktrunk.ts` there, typically inside a repository, reporting success though OpenCode never saw it. An empty value now counts as unset. ([#4084](https://github.com/max-sixty/worktrunk/pull/4084))
 
