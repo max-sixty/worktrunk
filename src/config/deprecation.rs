@@ -2121,7 +2121,10 @@ pub fn scope_to_repo_note(other_description: &str, key: &str) -> Option<&'static
 
 /// Classification of an unknown config key for warning purposes.
 pub enum UnknownKeyKind {
-    /// Deprecated key in its correct config type — deprecation system handles it
+    /// Deprecated key in its correct config type — the deprecation system
+    /// owns the message. Registration is all this says: whether the migration
+    /// actually ran is the caller's to check (see `collect_unknown_warnings`),
+    /// since a declined rewrite leaves the key unread and unreported.
     DeprecatedHandled,
     /// Deprecated key in the wrong config type
     DeprecatedWrongConfig {
@@ -5102,6 +5105,75 @@ ff = true
             "[commit-generation]\ncommand = \"llm\"\n",
             &path,
             ConfigFileKind::Project,
+        );
+    }
+
+    /// A deprecated section the migration declined to rewrite still carries
+    /// live user intent that nothing reads, so the unknown-field channel has
+    /// to speak for it — the deprecation channel stays silent by design when
+    /// the rewrite is unsafe.
+    #[test]
+    fn test_unmigrated_deprecated_section_warns_as_unknown() {
+        use crate::config::{UnknownWarning, UserConfig, collect_unknown_warnings};
+
+        // Malformed: `select` is a scalar, so `migrate_select_table` leaves it
+        // alone rather than dropping the user's value.
+        let warnings = collect_unknown_warnings::<UserConfig>("select = \"not a table\"\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::TopLevelUnknown { key }] if key == "select"
+            ),
+            "expected select → unknown field, got {warnings:?}"
+        );
+
+        // Destination already occupied: the rewrite is skipped so it cannot
+        // clobber the live `[switch.picker]`, leaving `[select]` read by
+        // nobody.
+        let warnings = collect_unknown_warnings::<UserConfig>(
+            "[switch.picker]\npager = \"delta\"\n\n[select]\npreview = \"p\"\n",
+        );
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::TopLevelUnknown { key }] if key == "select"
+            ),
+            "expected occupied-destination select → unknown field, got {warnings:?}"
+        );
+
+        // A scalar occupant (`switch = "x"`) is a *type* error for a known
+        // field, so the round-trip analysis is unreliable and serde's own
+        // message is the diagnostic — this channel stays out of it.
+        assert!(
+            collect_unknown_warnings::<UserConfig>("switch = \"x\"\n\n[select]\npreview = \"p\"\n")
+                .is_empty(),
+            "a type error belongs to serde, not the unknown-field channel"
+        );
+
+        // An empty deprecated section contributes no config; it stays silent.
+        assert!(
+            collect_unknown_warnings::<UserConfig>("[select]\n").is_empty(),
+            "empty [select] must stay silent"
+        );
+
+        // A section the migration did rewrite is handled — no second warning
+        // from this channel.
+        assert!(
+            collect_unknown_warnings::<UserConfig>("[select]\npager = \"delta\"\n").is_empty(),
+            "migrated [select] must not warn"
+        );
+
+        // The rule is the registry's, not `select`'s: a malformed
+        // `commit-generation` is skipped by its own migration and needs the
+        // same fallback. (`ci` is exempt — it is still a live
+        // `ProjectConfig` field, so its leftovers already warn per key.)
+        let warnings = collect_unknown_warnings::<UserConfig>("commit-generation = \"keep me\"\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::TopLevelUnknown { key }] if key == "commit-generation"
+            ),
+            "expected malformed commit-generation → unknown field, got {warnings:?}"
         );
     }
 

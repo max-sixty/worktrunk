@@ -95,7 +95,7 @@ Surface the full adjudicated list and get explicit sign-off before tagging. Do n
 
 ## CHANGELOG Review
 
-Check commits since last release for missing entries:
+Draft entries from the commits since the last release:
 
 ```bash
 git log v<last-version>..HEAD --oneline
