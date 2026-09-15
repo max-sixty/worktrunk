@@ -106,21 +106,42 @@ type ServerInput = { directory: string };
 type HookInput = { event: { type: string } };
 
 function server({ directory }: ServerInput) {
+  // The host dispatches `event` without awaiting it, so a `set` can still be
+  // running when the teardown below clears. Chaining every call onto one
+  // promise is what puts the `clear` last; `disposed` drops the events the
+  // host can still deliver, since it unsubscribes after calling `dispose`.
+  let pending: Promise<void> = Promise.resolve();
+  let disposed = false;
+  const enqueue = (args: string[]): Promise<void> => {
+    pending = pending.then(() => marker(directory, args));
+    return pending;
+  };
+
   return {
+    // The host runs this when it tears the plugin instance down, which is what
+    // a normal session exit does. `session.deleted` below only fires when a
+    // session is explicitly deleted, so without `dispose` the last `set` stays
+    // the final state and `wt list` shows a finished session as still active.
+    // Part of the hook interface since 1.16, the floor the `server` path targets.
+    dispose: async () => {
+      disposed = true;
+      await enqueue(["clear"]);
+    },
     // OpenCode 1.16+ filters events to this plugin's directory before calling
     // the hook, so there is nothing to match on here. 1.15.x does not — it fans
     // every bus event to every plugin instance — so the marker there follows the
     // worktree the instance was created for, whichever session is active.
     event: async ({ event }: HookInput) => {
+      if (disposed) return;
       switch (event.type) {
         case "session.status":
-          await marker(directory, ["set", WORKING]);
+          await enqueue(["set", WORKING]);
           break;
         case "session.idle":
-          await marker(directory, ["set", WAITING]);
+          await enqueue(["set", WAITING]);
           break;
         case "session.deleted":
-          await marker(directory, ["clear"]);
+          await enqueue(["clear"]);
           break;
       }
     },
