@@ -123,3 +123,41 @@ fn test_config_update_rejects_preview_stale_at_apply(repo: TestRepo) {
         "the edit made while the prompt was open should survive"
     );
 }
+
+/// Removing the config while the prompt is open is the same staleness, at its
+/// limit: the command fails rather than recreating the file from the preview.
+#[rstest]
+fn test_config_update_rejects_config_removed_at_apply(repo: TestRepo) {
+    let config_path = repo.test_config_path().to_path_buf();
+    fs::write(
+        &config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let callback_path = config_path.clone();
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["config", "update"],
+        repo.root_path(),
+        &repo.test_env_vars(),
+        None,
+    );
+    let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", move |_| {
+        fs::remove_file(&callback_path).unwrap();
+    });
+
+    assert_ne!(
+        exit_code, 0,
+        "applying a preview of a removed config should fail:\n{output}"
+    );
+    assert!(
+        output.contains("Failed to re-read user config"),
+        "failure should name the unreadable config:\n{output}"
+    );
+    assert!(
+        !config_path.exists(),
+        "the removed config should not be recreated from the preview"
+    );
+}
