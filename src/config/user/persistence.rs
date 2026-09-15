@@ -46,8 +46,9 @@ impl UserConfig {
     /// - Keys in desired but not existing: inserted
     /// - Keys in existing but not desired: removed (unless in `preserve`)
     /// - Both standard tables: recurse (preserves existing formatting and comments)
-    /// - Existing inline table, desired standard table: compare contents, preserve
-    ///   inline format when semantically equal
+    /// - Existing inline table, desired standard table: merge through the same
+    ///   recursive path, so nested `preserve` applies; the inline format is kept
+    ///   when that merge changed nothing
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
     fn merge_tables(
@@ -66,6 +67,29 @@ impl UserConfig {
 
         let empty_tree = UnknownTree::default();
         for (key, desired_item) in desired.iter() {
+            // Existing inline table, desired standard table: merge into a table
+            // view so the same nested preservation applies as in the
+            // standard-table branch, then write back only if that changed
+            // something — an untouched inline table keeps its formatting.
+            if desired_item.is_table()
+                && let Some(as_table) = existing
+                    .get(key)
+                    .and_then(|item| item.as_inline_table())
+                    .map(|inline| inline.clone().into_table())
+            {
+                let mut merged = as_table.clone();
+                let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
+                Self::merge_tables(
+                    &mut merged,
+                    desired_item.as_table().unwrap(),
+                    nested_preserve,
+                );
+                if !Self::tables_equal(&as_table, &merged) {
+                    Self::replace_inline_with_table(existing, key, merged);
+                }
+                continue;
+            }
+
             match existing.get_mut(key) {
                 // Both standard tables: recurse
                 Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
@@ -75,29 +99,6 @@ impl UserConfig {
                         desired_item.as_table().unwrap(),
                         nested_preserve,
                     );
-                }
-                // Existing inline table, desired standard table: merge into a
-                // table view so the same nested preservation applies as in the
-                // standard-table branch, then write back only if that changed
-                // something — an untouched inline table keeps its formatting.
-                Some(existing_item)
-                    if existing_item.is_inline_table() && desired_item.is_table() =>
-                {
-                    let as_table = existing_item
-                        .as_inline_table()
-                        .unwrap()
-                        .clone()
-                        .into_table();
-                    let mut merged = as_table.clone();
-                    let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
-                    Self::merge_tables(
-                        &mut merged,
-                        desired_item.as_table().unwrap(),
-                        nested_preserve,
-                    );
-                    if !Self::tables_equal(&as_table, &merged) {
-                        *existing_item = toml_edit::Item::Table(merged);
-                    }
                 }
                 Some(existing_item) => {
                     if !Self::items_equal(existing_item, desired_item) {
@@ -109,6 +110,34 @@ impl UserConfig {
                 }
             }
         }
+    }
+
+    /// Replace an inline-table value with a standard table, carrying the key's
+    /// leading decor onto the table header.
+    ///
+    /// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
+    /// preceded the line — comments, blank lines — plus the space before `=`. A
+    /// standard table renders that decor *inside* its brackets, so leaving it in
+    /// place writes `[# comment\nmerge ]`: a config file wt can no longer parse,
+    /// and the user's own comment is what breaks it. Move the prefix to the
+    /// header and drop the rest.
+    fn replace_inline_with_table(
+        existing: &mut toml_edit::Table,
+        key: &str,
+        mut table: toml_edit::Table,
+    ) {
+        let prefix = existing
+            .key(key)
+            .and_then(|k| k.leaf_decor().prefix())
+            .filter(|prefix| prefix.as_str() != Some(""))
+            .cloned();
+        if let Some(prefix) = prefix {
+            table.decor_mut().set_prefix(prefix);
+        }
+        if let Some(mut key_mut) = existing.key_mut(key) {
+            key_mut.leaf_decor_mut().clear();
+        }
+        existing[key] = toml_edit::Item::Table(table);
     }
 
     /// Compare two Items for value equality, ignoring formatting and comments.

@@ -3774,6 +3774,53 @@ fn test_save_to_existing_file_preserves_nested_inline_table_formatting() {
 }
 
 #[test]
+fn test_save_to_rewrites_commented_inline_section_as_parseable_toml() {
+    // Changing a value inside an inline section rewrites it as a standard
+    // table. The key's decor — the comment above it and the space before `=` —
+    // renders inside the table header, so the comment used to land between the
+    // brackets and the file wt wrote back no longer parsed.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "# why squash is off\nmerge = { squash = false, future-option = true }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.merge.squash = Some(true);
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    UserConfig::load_from_str(&saved)
+        .unwrap_or_else(|e| panic!("saved config must still parse: {e}\n{saved}"));
+    assert!(
+        saved.contains("# why squash is off\n[merge]"),
+        "the comment belongs above the header, not inside it: {saved}"
+    );
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key should survive: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_rewrites_blank_line_separated_inline_section_as_parseable_toml() {
+    // Same decor path with no comment: a blank line before the inline section
+    // is prefix decor too, and rendered inside the brackets it broke the file.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "skip-shell-integration-prompt = true\n\nmerge = { squash = false }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.merge.squash = Some(true);
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    let reloaded = UserConfig::load_from_str(&saved)
+        .unwrap_or_else(|e| panic!("saved config must still parse: {e}\n{saved}"));
+    assert_eq!(reloaded.merge.squash, Some(true));
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
     // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
