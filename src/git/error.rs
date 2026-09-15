@@ -503,6 +503,11 @@ pub enum GitError {
         error: String,
         /// The git command that failed, shown separately from git output
         command: Option<FailedCommand>,
+        /// `git worktree add -b <branch>` created the ref and then failed, so
+        /// the branch is present with nothing checked out on it. Adds a hint
+        /// naming the leftover; see `failed_add_left_branch` in
+        /// `commands/worktree/switch.rs` for why nothing deletes it.
+        leftover_branch: bool,
     },
     /// A new branch can't be created because its name collides with the
     /// directory namespace of an existing branch. Git stores refs as file
@@ -1200,7 +1205,13 @@ impl GitError {
                 )
             }
 
-            GitError::WorktreeCreationFailed { error, command, .. } => {
+            GitError::WorktreeCreationFailed {
+                branch,
+                error,
+                command,
+                leftover_branch,
+                ..
+            } => {
                 let title = self.title();
                 write!(f, "{}", format_error_block(error_message(&title), error))?;
                 if let Some(cmd) = command {
@@ -1211,7 +1222,22 @@ impl GitError {
                         format_bash_with_gutter(&cmd.command)
                     )?;
                 }
-                Ok(())
+                if !*leftover_branch {
+                    return Ok(());
+                }
+                // `git worktree add -b` writes the ref before it populates the
+                // worktree, so the branch outlives a failure in between. Naming
+                // it here is what keeps the next `--create` run's `Branch …
+                // already exists` from reading as a fresh name collision.
+                let escaped = escape(Cow::Borrowed(branch.as_str()));
+                let switch_cmd = suggest_command("switch", &[branch], &[]);
+                write!(
+                    f,
+                    "\n{}",
+                    hint_message(cformat!(
+                        "Branch <underline>{branch}</> was created before the failure, with no worktree; to delete it, run <underline>git branch -d -- {escaped}</>; to use it, run <underline>{switch_cmd}</>"
+                    ))
+                )
             }
 
             GitError::BranchNamespaceConflict {
@@ -2407,6 +2433,7 @@ mod tests {
             base_branch: Some("main".into()),
             error: "git error".into(),
             command: None,
+            leftover_branch: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
@@ -2418,6 +2445,7 @@ mod tests {
             base_branch: None,
             error: "git error".into(),
             command: None,
+            leftover_branch: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m[39m
@@ -2432,12 +2460,32 @@ mod tests {
                 command: "git worktree add /path -b feature main".into(),
                 exit_info: "exit code 128".into(),
             }),
+            leftover_branch: false,
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
         [107m [0m fatal: ref exists
         [2m↳[22m [2mFailed command, [4mexit code 128[24m:[22m
         [107m [0m [2m[0m[2m[34mgit[0m[2m worktree add /path [0m[2m[36m-b[0m[2m feature main[0m
+        ");
+    }
+
+    #[test]
+    fn snapshot_worktree_creation_failed_leftover_branch() {
+        // `git worktree add -b` wrote the ref and then failed, so the branch
+        // outlives the command with nothing checked out on it. The hint names
+        // it so the next `--create` run's "already exists" reads as fallout.
+        let err = GitError::WorktreeCreationFailed {
+            branch: "feature/auth".into(),
+            base_branch: Some("main".into()),
+            error: "fatal: could not create leading directories".into(),
+            command: None,
+            leftover_branch: true,
+        };
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31mFailed to create worktree for [1mfeature/auth[22m from base [1mmain[22m[39m
+        [107m [0m fatal: could not create leading directories
+        [2m↳[22m [2mBranch [4mfeature/auth[24m was created before the failure, with no worktree; to delete it, run [4mgit branch -d -- feature/auth[24m; to use it, run [4mwt switch feature/auth[24m[22m
         ");
     }
 
