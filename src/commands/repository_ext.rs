@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use super::worktree::{RemovalPlan, SharedBranchCheckout};
-use anyhow::{Context, bail};
+use anyhow::bail;
 use color_print::cformat;
 use worktrunk::git::{
     BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
-    parse_porcelain_z, parse_untracked_files,
+    parse_porcelain_z,
 };
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, format_with_gutter, suggest_command, warning_message};
+use worktrunk::styling::suggest_command;
 
 /// Target for worktree removal.
 #[derive(Debug)]
@@ -31,9 +31,6 @@ pub enum RemoveTarget {
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
 pub trait RepositoryCliExt {
-    /// Warn about untracked files being auto-staged.
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
-
     /// Prepare the removal of whichever worktree or branch [`RemoveTarget`]
     /// names.
     ///
@@ -99,15 +96,6 @@ pub trait RepositoryCliExt {
 }
 
 impl RepositoryCliExt for Repository {
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
-        // `-uall` overrides the user's display preference and expands untracked
-        // directories so the warning names every path `git add -A` will stage.
-        let status = self
-            .run_command(&["status", "--porcelain", "-z", "-uall"])
-            .context("Failed to get status")?;
-        warn_about_untracked_files(&status)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
@@ -619,26 +607,6 @@ pub(crate) fn check_not_default_branch(
     Ok(())
 }
 
-/// Warn about untracked files that will be auto-staged.
-pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
-    let files = parse_untracked_files(status_output);
-    if files.is_empty() {
-        return Ok(());
-    }
-
-    let count = files.len();
-    let path_word = if count == 1 { "path" } else { "paths" };
-    eprintln!(
-        "{}",
-        warning_message(format!("Auto-staging {count} untracked {path_word}:"))
-    );
-
-    let joined_files = files.join("\n");
-    eprintln!("{}", format_with_gutter(&joined_files, None));
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,153 +688,5 @@ mod tests {
             worktrunk::path::paths_match(&found.path, &survivor),
             "only the canonical target path may be excluded"
         );
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_modified_staged() {
-        // "M  file.txt\0" - staged modification
-        let output = "M  file.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_modified_unstaged() {
-        // " M file.txt\0" - unstaged modification (this was the bug case)
-        let output = " M file.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_modified_both() {
-        // "MM file.txt\0" - both staged and unstaged
-        let output = "MM file.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_untracked() {
-        // "?? new.txt\0" - untracked file
-        let output = "?? new.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["new.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_rename() {
-        // "R  new.txt\0old.txt\0" - rename includes both paths
-        let output = "R  new.txt\0old.txt\0";
-        let result = parse_porcelain_z(output);
-        assert_eq!(result, vec!["new.txt", "old.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_copy() {
-        // "C  copy.txt\0original.txt\0" - copy includes both paths
-        let output = "C  copy.txt\0original.txt\0";
-        let result = parse_porcelain_z(output);
-        assert_eq!(result, vec!["copy.txt", "original.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_multiple_files() {
-        // Multiple files with different statuses
-        let output = " M file1.txt\0M  file2.txt\0?? untracked.txt\0R  new.txt\0old.txt\0";
-        let result = parse_porcelain_z(output);
-        assert_eq!(
-            result,
-            vec![
-                "file1.txt",
-                "file2.txt",
-                "untracked.txt",
-                "new.txt",
-                "old.txt"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_filename_with_spaces() {
-        // "M  file with spaces.txt\0"
-        let output = "M  file with spaces.txt\0";
-        assert_eq!(parse_porcelain_z(output), vec!["file with spaces.txt"]);
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_empty() {
-        assert_eq!(parse_porcelain_z(""), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_short_entry_skipped() {
-        // Entry too short to have path (malformed, shouldn't happen in practice)
-        let output = "M\0";
-        assert_eq!(parse_porcelain_z(output), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_parse_porcelain_z_rename_missing_old_path() {
-        // Rename without old path (malformed, but should handle gracefully)
-        let output = "R  new.txt\0";
-        let result = parse_porcelain_z(output);
-        // Should include new.txt, old path is simply not added
-        assert_eq!(result, vec!["new.txt"]);
-    }
-
-    #[test]
-    fn test_parse_untracked_files_single() {
-        assert_eq!(parse_untracked_files("?? new.txt\0"), vec!["new.txt"]);
-    }
-
-    #[test]
-    fn test_parse_untracked_files_multiple() {
-        assert_eq!(
-            parse_untracked_files("?? file1.txt\0?? file2.txt\0?? file3.txt\0"),
-            vec!["file1.txt", "file2.txt", "file3.txt"]
-        );
-    }
-
-    #[test]
-    fn test_parse_untracked_files_ignores_modified() {
-        // Only untracked files should be collected
-        assert_eq!(
-            parse_untracked_files(" M modified.txt\0?? untracked.txt\0"),
-            vec!["untracked.txt"]
-        );
-    }
-
-    #[test]
-    fn test_parse_untracked_files_ignores_staged() {
-        assert_eq!(
-            parse_untracked_files("M  staged.txt\0?? untracked.txt\0"),
-            vec!["untracked.txt"]
-        );
-    }
-
-    #[test]
-    fn test_parse_untracked_files_empty() {
-        assert!(parse_untracked_files("").is_empty());
-    }
-
-    #[test]
-    fn test_parse_untracked_files_skips_rename_old_path() {
-        // Rename entries have old path as second NUL-separated field
-        // Should only have untracked file, not the rename paths
-        assert_eq!(
-            parse_untracked_files("R  new.txt\0old.txt\0?? untracked.txt\0"),
-            vec!["untracked.txt"]
-        );
-    }
-
-    #[test]
-    fn test_parse_untracked_files_with_spaces() {
-        assert_eq!(
-            parse_untracked_files("?? file with spaces.txt\0"),
-            vec!["file with spaces.txt"]
-        );
-    }
-
-    #[test]
-    fn test_parse_untracked_files_no_untracked() {
-        // All files are tracked (modified, staged, etc.)
-        assert!(parse_untracked_files(" M file1.txt\0M  file2.txt\0").is_empty());
     }
 }

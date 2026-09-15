@@ -108,7 +108,7 @@ impl GridSlot {
     /// collect exiting without a skeleton (zero items, error) — the rows then
     /// render freeform rather than never, and with no shown-branch set every PR
     /// lists (nothing to dedup against).
-    fn wait(&self, timeout: Duration) -> Option<Skeleton> {
+    pub(super) fn wait(&self, timeout: Duration) -> Option<Skeleton> {
         let (slot, _) = self
             .ready
             .wait_timeout_while(self.slot.lock().unwrap(), timeout, |s| s.is_none())
@@ -253,15 +253,16 @@ pub(super) struct PrsShared {
     /// that — so PR rows always land after the worktree rows, never in the
     /// reserved header slot.
     pub shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
-    /// This spawn's identity token (see [`SpawnGeneration`]), gating every
-    /// cross-spawn effect this thread has: the whole row batch is dropped
-    /// once superseded (see the bail in [`fetch_and_stream`]), the append
-    /// into `shared_items` re-checks inside the lock so a stale forge call
-    /// from a pre-refresh spawn (whose skim channel is already dropped)
-    /// can't pollute the list a newer spawn rebuilt, and the per-row
-    /// `log`/`comments` fetches carry it so their fills can't land in the
-    /// preview cache a refresh cleared.
+    /// This refresh's identity token (see [`SpawnGeneration`]). It gates
+    /// row/shortcut publication; the per-row `log`/`comments` fetches carry it
+    /// so their fills can't land in the preview cache a later refresh cleared.
     pub spawn_gen: SpawnGeneration,
+}
+
+impl PrsShared {
+    fn publication_is_current(&self) -> bool {
+        self.spawn_gen.is_current()
+    }
 }
 
 /// Stream the open PRs/MRs into the picker, then clear the header's "loading…"
@@ -350,7 +351,7 @@ fn fetch_and_stream(
     // subprocesses) whose fills all drop at the generation check, plus a
     // doomed append below. Drop the whole batch instead. The check inside
     // the `shared_items` lock below stays authoritative for the append.
-    if !shared.spawn_gen.is_current() {
+    if !shared.publication_is_current() {
         return;
     }
 
@@ -380,39 +381,31 @@ fn fetch_and_stream(
     // deferred preview fetches (commit log) on `COLLECT_POOL` — the row-list
     // call carries only the cheap description, so the heavier per-PR panes load
     // off-thread and `preview()` reads them from the shared cache.
-    let items: Vec<Arc<dyn SkimItem>> = entries
+    let rows: Vec<_> = entries
         .into_iter()
         .map(|entry| {
             spawn_pr_previews(orchestrator, &shared.spawn_gen, &entry, layout.preview_dims);
-            // Shortcut lookup for this row: `alt-y` copies the PR/MR head
-            // branch, `alt-o` opens its already-known web URL. Re-checked
-            // inside the lock like the `shared_items` append below — an
-            // `alt-r` landing mid-build must not write this spawn's entries
-            // into the table the new spawn rebuilt.
-            {
-                let mut table = shared.shortcut_table.lock().unwrap();
-                if shared.spawn_gen.is_current() {
-                    table.insert(
-                        entry.output_token(),
-                        RowShortcutData {
-                            branch: Some(entry.head_branch.clone()),
-                            url: RowUrl::Static(entry.url.clone()),
-                            // A `--prs` row has no local worktree to remove,
-                            // so `alt-x` can't morph it.
-                            morph: None,
-                        },
-                    );
-                }
-            }
-            Arc::new(listed_pr_row(
+            let shortcut = (
+                entry.output_token(),
+                RowShortcutData {
+                    branch: Some(entry.head_branch.clone()),
+                    url: RowUrl::Static(entry.url.clone()),
+                    // A `--prs` row has no local worktree to remove, so
+                    // `alt-x` can't morph it.
+                    morph: None,
+                },
+            );
+            let item = Arc::new(listed_pr_row(
                 &entry,
                 grid.as_ref(),
                 layout.list_width,
                 Arc::clone(&orchestrator.cache),
                 Arc::clone(orchestrator.notifier()),
-            )) as Arc<dyn SkimItem>
+            )) as Arc<dyn SkimItem>;
+            (item, shortcut)
         })
         .collect();
+    let (items, shortcuts): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
 
     // Record the PR rows in the picker's shared list so an `alt-x` removal's
     // pool rebuild (`resync_pool`) keeps them — they reach skim through its own
@@ -425,13 +418,29 @@ fn fetch_and_stream(
     // spawn's `on_skeleton` overwrite, which holds the same lock (its
     // generation bump precedes its overwrite). Ordered before `tx.send` so the
     // rows reach `shared_items` no later than they reach skim's pool.
-    {
-        let mut list = shared.shared_items.lock().unwrap();
-        if shared.spawn_gen.is_current() {
-            list.extend(items.iter().map(Arc::clone));
-        }
+    if publish_pr_rows(shared, &items, shortcuts) {
+        let _ = tx.send(items);
     }
-    let _ = tx.send(items);
+}
+
+/// Atomically append PR rows and their shortcut metadata if this stream still
+/// represents the current picker state.
+///
+/// Lock order matches skeleton publication and successful alt-x
+/// reconciliation: shared rows first, shortcut table second.
+fn publish_pr_rows(
+    shared: &PrsShared,
+    items: &[Arc<dyn SkimItem>],
+    shortcuts: Vec<(String, RowShortcutData)>,
+) -> bool {
+    let mut list = shared.shared_items.lock().unwrap();
+    let mut table = shared.shortcut_table.lock().unwrap();
+    if !shared.publication_is_current() {
+        return false;
+    }
+    list.extend(items.iter().map(Arc::clone));
+    table.extend(shortcuts);
+    true
 }
 
 /// Build a listed `--prs` row: a [`PickerRow`] with a change-request subject and a static
@@ -1948,6 +1957,79 @@ mod tests {
 
         assert!(!loading.load(Ordering::Relaxed), "loading flag cleared");
         assert!(matches!(rrx.try_recv(), Ok(Event::Render)), "render poked");
+    }
+
+    #[test]
+    fn stale_pr_rows_do_not_publish_after_refresh() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let orchestrator = PreviewOrchestrator::new(test.repo.clone(), Arc::new(OnceLock::new()));
+        let shared = PrsShared {
+            grid_slot: Arc::new(GridSlot::new()),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            shared_items: Arc::new(Mutex::new(Vec::new())),
+            spawn_gen: orchestrator.generation(),
+        };
+        orchestrator.refresh(test.repo.clone());
+
+        let stale_items: Vec<Arc<dyn SkimItem>> = vec![Arc::new("pr:42".to_string())];
+        let stale_shortcuts = vec![(
+            "pr:42".to_string(),
+            RowShortcutData {
+                branch: Some("feature".to_string()),
+                url: RowUrl::Static(Some("https://example.com/pr/42".to_string())),
+                morph: None,
+            },
+        )];
+
+        assert!(!publish_pr_rows(&shared, &stale_items, stale_shortcuts));
+        assert!(shared.shared_items.lock().unwrap().is_empty());
+        assert!(shared.shortcut_table.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pr_rows_collected_before_removal_publish_after_reconciliation() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let orchestrator = PreviewOrchestrator::new(test.repo.clone(), Arc::new(OnceLock::new()));
+        let current_row: Arc<dyn SkimItem> = Arc::new("current".to_string());
+        let shared = PrsShared {
+            grid_slot: Arc::new(GridSlot::new()),
+            shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::from([(
+                "current".to_string(),
+                RowShortcutData {
+                    branch: Some("current".to_string()),
+                    url: RowUrl::Static(None),
+                    morph: None,
+                },
+            )]))),
+            shared_items: Arc::new(Mutex::new(vec![current_row])),
+            spawn_gen: orchestrator.generation(),
+        };
+
+        // A successful alt-x reconciliation after this PR stream started is
+        // unrelated to the PR batch. The current spawn must still append it.
+        let stale_items: Vec<Arc<dyn SkimItem>> = vec![Arc::new("pr:42".to_string())];
+        let stale_shortcuts = vec![(
+            "pr:42".to_string(),
+            RowShortcutData {
+                branch: Some("feature".to_string()),
+                url: RowUrl::Static(Some("https://example.com/pr/42".to_string())),
+                morph: None,
+            },
+        )];
+
+        assert!(
+            publish_pr_rows(&shared, &stale_items, stale_shortcuts),
+            "row reconciliation must not discard an unrelated PR batch"
+        );
+        let rows = shared.shared_items.lock().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].output().as_ref(), "current");
+        assert_eq!(rows[1].output().as_ref(), "pr:42");
+        drop(rows);
+        let shortcuts = shared.shortcut_table.lock().unwrap();
+        assert_eq!(shortcuts.len(), 2);
+        assert!(shortcuts.contains_key("current"));
+        assert!(shortcuts.contains_key("pr:42"));
     }
 
     #[test]

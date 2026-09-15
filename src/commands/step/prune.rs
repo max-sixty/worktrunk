@@ -360,8 +360,13 @@ fn try_remove(
     } else {
         RemovalExecution::Background(BackgroundFallbackMode::SynchronousForNonCurrent)
     };
-    let fate = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    let outcome = handle_remove_output(&plan, execution, ctx.hook_plan, true, &mut announcer)?;
+    if outcome.preserved_lock_reason().is_some() {
+        announcer.flush()?;
+        return Ok(None);
+    }
     announcer.flush()?;
+    let fate = outcome.branch_fate();
     let branch_deleted = fate.deleted();
     // A branch-only candidate that kept its branch removed nothing at all —
     // unless the removal pruned a stale worktree entry, a removal worth

@@ -1387,11 +1387,13 @@ To avoid killing work the user did not mean to kill, two guards keep `--reap` co
 - **Interactive processes are spared.** A process holding a controlling terminal — an interactive shell, or a terminal editor such as `vim` with unsaved buffers — is never reaped. Only detached processes remain candidates.
 - **Discovery is by working directory only.** A process that started in the worktree and later changed directory, or a daemon that reparented to `init`, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [`wt step tether`](/step/#wt-step-tether), which kills the whole process group when the worktree is removed.
 
-Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
+Reaping runs after `pre-remove` hooks and their lock check, but before the worktree directory is touched. A hook that locks the worktree therefore preserves both the worktree and its processes. Reaping is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, worktree_outcome, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` and no `worktree_outcome` for a branch-only removal.
+
+`worktree_outcome` is `removed` when removal completes, `deferred` when the legacy background fallback is still running, or `preserved_locked` when a `pre-remove` hook locks the worktree.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -1407,7 +1409,7 @@ Reaping runs before the worktree directory is touched, so it is independent of f
 
 ## Hooks
 
-`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](/hook/) for configuration.
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). A hook can preserve the worktree by running `git worktree lock`; the command succeeds without deleting the worktree or running post-removal hooks. `post-remove` hooks run after removal. See [`wt hook`](/hook/) for configuration.
 
 ## Detached HEAD worktrees
 
@@ -1492,8 +1494,8 @@ $ wt merge --no-commit --no-rebase
 3. **Rebase** — Rebases onto target, skipping when nothing needs replaying ([`wt step rebase`](/step/#wt-step-rebase) gives the conditions). A conflict stops the merge with the rebase left open in the worktree, to resolve or abort. With `--no-rebase`, the graph produced by earlier commit/squash steps is preserved and the target must be able to fast-forward to its tip.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](/hook/).
 5. **Merge** — Fast-forward merge to the target branch ([`wt step push`](/step/#wt-step-push)). With `--no-ff`, a merge commit is created instead — semi-linear history after the default rebase, while explicit `--no-rebase` preserves the graph produced by earlier steps before adding the merge commit. Non-fast-forward merges are rejected.
-6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch, in the primary worktree, or locked, the worktree is preserved.
+6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort; a hook that runs `git worktree lock` preserves the worktree instead.
+7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch, in the primary worktree, or locked before or during `pre-remove`, the worktree is preserved.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Combining both flags preserves the exact source graph and requires the target to be its ancestor. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
@@ -1631,7 +1633,7 @@ The most common creation hook is `post-start` — it runs background tasks (dev 
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
 | `post-merge` | Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree |
-| `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state. Runs in the worktree being removed |
+| `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state, or locking the worktree to preserve it. Runs in the worktree being removed |
 | `post-remove` | Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree |
 
 During `wt merge`, the blocking hooks run in this order: pre-commit → pre-merge → pre-remove. The `post-*` hooks all start together once the merge finishes, each in the worktree it is anchored on — post-merge, post-switch and post-remove in the destination, post-commit in the worktree the commit was made in. A merge that removes that worktree reports `post-commit` as skipped instead of running it — the worktree is gone by the time the hook would start. Use `pre-remove` for work that must finish there, or `--no-remove` to keep the worktree. See [`wt merge`](/merge/#pipeline) for the complete pipeline.

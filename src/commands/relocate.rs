@@ -34,7 +34,7 @@ use worktrunk::styling::{
 };
 
 use super::backup;
-use super::commit::{CommitGenerator, StageMode};
+use super::commit::{CommitGenerator, StageMode, stage_with_untracked_warning};
 use super::worktree::compute_worktree_path;
 
 // ============================================================================
@@ -321,14 +321,14 @@ pub fn validate_candidates(
                     });
                     continue;
                 }
+                // Stage all changes. `stage` refuses an unmerged index first —
+                // `git add -A` over an unresolved conflict would otherwise
+                // commit the `<<<<<<<` markers.
+                stage_with_untracked_warning(&worktree, StageMode::All)?;
                 eprintln!(
                     "{}",
                     progress_message(cformat!("Committing changes in <bold>{branch}</>..."))
                 );
-                // Stage all changes. `stage` refuses an unmerged index first —
-                // `git add -A` over an unresolved conflict would otherwise
-                // commit the `<<<<<<<` markers.
-                worktree.stage(StageMode::All)?;
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
                 let commit_config = config.commit_generation(project_id.as_deref());

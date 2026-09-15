@@ -1,19 +1,104 @@
+use std::collections::HashSet;
+
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommitGenerationConfig;
+use worktrunk::git::{CommandError, WorkingTree};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
+    warning_message,
 };
+use worktrunk::utils::escape_filename_for_terminal;
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::hooks::{HookAnnouncer, execute_hook};
-use super::repository_ext::warn_about_untracked_files;
 use super::template_vars::TemplateVars;
 
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
+
+/// Stage changes, then disclose every newly added index path before commit.
+pub(crate) fn stage_with_untracked_warning(
+    worktree: &WorkingTree<'_>,
+    stage_mode: StageMode,
+) -> anyhow::Result<()> {
+    if stage_mode == StageMode::All {
+        let previously_staged = staged_added_paths(worktree)?
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let stage_result = worktree.stage(stage_mode);
+        match staged_added_paths(worktree) {
+            Ok(staged_after) => {
+                let auto_staged = staged_after
+                    .into_iter()
+                    .filter(|path| !previously_staged.contains(path))
+                    .collect::<Vec<_>>();
+                warn_about_untracked_files(&auto_staged)?;
+            }
+            Err(_) if stage_result.is_err() => return stage_result,
+            Err(error) => return Err(error),
+        }
+        return stage_result;
+    }
+    worktree.stage(stage_mode)
+}
+
+fn staged_added_paths(worktree: &WorkingTree<'_>) -> anyhow::Result<Vec<Vec<u8>>> {
+    let args = [
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+        "--diff-filter=A",
+        "--no-renames",
+        "--no-relative",
+        "--ignore-submodules=none",
+    ];
+    let output = worktree
+        .run_command_output(&args)
+        .context("Failed to inspect staged additions")?;
+    if !output.status.success() {
+        return Err(CommandError::from_failed_output("git", &args, &output).into());
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == b'\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| path.to_vec())
+        .collect())
+}
+
+/// Warn about untracked files that will be auto-staged.
+fn warn_about_untracked_files(files: &[Vec<u8>]) -> anyhow::Result<()> {
+    const MAX_SHOWN: usize = 10;
+
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let count = files.len();
+    let path_word = if count == 1 { "path" } else { "paths" };
+    eprintln!(
+        "{}",
+        warning_message(format!("Auto-staging {count} untracked {path_word}:"))
+    );
+
+    let mut shown = files
+        .iter()
+        .take(MAX_SHOWN)
+        .map(|path| escape_filename_for_terminal(path))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if count > MAX_SHOWN {
+        let remaining = count - MAX_SHOWN;
+        shown.push_str(&format!("\nand {remaining} more"));
+    }
+    eprintln!("{}", format_with_gutter(&shown, None));
+
+    Ok(())
+}
 
 /// Outcome of a successful commit operation. Returned so callers (e.g.
 /// `step commit --format=json`) can render structured output.
@@ -257,17 +342,10 @@ impl CommitOptions<'_> {
             )?;
         }
 
-        if self.stage_mode == StageMode::All {
-            let status = wt
-                .run_command(&["status", "--porcelain", "-z", "-uall"])
-                .context("Failed to get status")?;
-            warn_about_untracked_files(&status)?;
-        }
-
         // Stage changes based on mode. Re-gated inside `stage`: the refusal
         // above ran before the pre-commit hooks, and a hook is free to leave
         // unmerged paths behind.
-        wt.stage(self.stage_mode)?;
+        stage_with_untracked_warning(&wt, self.stage_mode)?;
 
         let effective_config = self.ctx.commit_generation();
         // Skip the approval gate when the LLM isn't configured — the fallback

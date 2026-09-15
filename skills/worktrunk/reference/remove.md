@@ -96,11 +96,13 @@ To avoid killing work the user did not mean to kill, two guards keep `--reap` co
 - **Interactive processes are spared.** A process holding a controlling terminal — an interactive shell, or a terminal editor such as `vim` with unsaved buffers — is never reaped. Only detached processes remain candidates.
 - **Discovery is by working directory only.** A process that started in the worktree and later changed directory, or a daemon that reparented to `init`, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [`wt step tether`](https://worktrunk.dev/step/#wt-step-tether), which kills the whole process group when the worktree is removed.
 
-Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
+Reaping runs after `pre-remove` hooks and their lock check, but before the worktree directory is touched. A hook that locks the worktree therefore preserves both the worktree and its processes. Reaping is independent of foreground/background removal and the `--force` flag. Unix only; on Windows `--reap` is rejected.
 
 ## JSON output
 
-`--format=json` prints one object per removal to stdout: `{kind, branch, path, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` for a branch-only removal.
+`--format=json` prints one object per removal to stdout: `{kind, branch, path, worktree_outcome, branch_outcome, branch_checked_out_at}` for a worktree, with `pruned` in place of `path` and no `worktree_outcome` for a branch-only removal.
+
+`worktree_outcome` is `removed` when removal completes, `deferred` when the legacy background fallback is still running, or `preserved_locked` when a `pre-remove` hook locks the worktree.
 
 `branch_outcome` names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -116,7 +118,7 @@ Reaping runs before the worktree directory is touched, so it is independent of f
 
 ## Hooks
 
-`pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](https://worktrunk.dev/hook/) for configuration.
+`pre-remove` hooks run before the worktree is deleted (with access to worktree files). A hook can preserve the worktree by running `git worktree lock`; the command succeeds without deleting the worktree or running post-removal hooks. `post-remove` hooks run after removal. See [`wt hook`](https://worktrunk.dev/hook/) for configuration.
 
 ## Detached HEAD worktrees
 

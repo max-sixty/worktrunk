@@ -11,12 +11,15 @@ use worktrunk::git::{BranchDeletionMode, ErrorExt, GitError, Repository, Resolve
 use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::{RemoveArgs, SwitchFormat};
-use crate::output::{BackgroundFallbackMode, RemovalExecution, handle_remove_output, print_json};
+use crate::output::{
+    BackgroundFallbackMode, RemovalExecution, execute_pre_remove_hook, handle_remove_output,
+    handle_remove_output_after_pre_remove, print_json,
+};
 
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::{BranchFate, RemovalPlan};
+use super::worktree::{RemovalOutcome, RemovalPlan};
 use super::{RemoveTarget, flag_pair};
 
 /// The execution mode `--foreground` selects; the background default falls
@@ -245,6 +248,50 @@ fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
     let _ = (result, reap_enabled);
 }
 
+fn execute_removal_plan(
+    repo: &Repository,
+    plan: &RemovalPlan,
+    execution: RemovalExecution,
+    hook_plan: &ApprovedHookPlan,
+    quiet: bool,
+    announcer: &mut HookAnnouncer<'_>,
+    reap: bool,
+) -> anyhow::Result<RemovalOutcome> {
+    if !reap {
+        return handle_remove_output(plan, execution, hook_plan, quiet, announcer);
+    }
+
+    let RemovalPlan::Worktree {
+        main_path,
+        worktree_path,
+        changed_directory,
+        branch_name,
+        force_worktree,
+        ..
+    } = plan
+    else {
+        return handle_remove_output(plan, execution, hook_plan, quiet, announcer);
+    };
+
+    execute_pre_remove_hook(
+        main_path,
+        worktree_path,
+        *changed_directory,
+        branch_name.as_deref(),
+        hook_plan,
+    )?;
+    let worktree = repo.worktree_at(worktree_path);
+    worktree.ensure_holds_this_worktree()?;
+    if worktree.lock_reason()?.is_some() {
+        return handle_remove_output_after_pre_remove(plan, execution, hook_plan, quiet, announcer);
+    }
+    if !force_worktree {
+        worktree.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
+    }
+    maybe_reap_result(plan, true);
+    handle_remove_output_after_pre_remove(plan, execution, hook_plan, quiet, announcer)
+}
+
 /// Entry point for the `wt remove` command.
 ///
 /// # Command flow
@@ -254,7 +301,8 @@ fn maybe_reap_result(result: &RemovalPlan, reap_enabled: bool) {
 /// 2. **Approve hooks** (`pre-remove`, `post-remove`, `post-switch`) if
 ///    running interactively and any hooks are configured.
 /// 3. **Dispatch to `handle_remove_output`** per target. For each, the output
-///    handler runs `pre-remove` hooks in the worktree, then either:
+///    handler runs `pre-remove` hooks in the worktree. A hook-created worktree
+///    lock preserves the worktree and skips post-removal hooks; otherwise:
 ///    - **Foreground** (`--foreground`): stop fsmonitor → rename into
 ///      `.git/wt/trash/<name>-<timestamp>/` → prune metadata → delete branch
 ///      → synchronous `remove_dir_all` on the staged directory.
@@ -374,19 +422,19 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                     yes,
                 )?;
 
-                maybe_reap_result(&result, args.reap);
-
                 let mut announcer = HookAnnouncer::new(&repo, false);
-                let fate = handle_remove_output(
+                let outcome = execute_removal_plan(
+                    &repo,
                     &result,
                     removal_execution(args.foreground),
                     &plan,
                     false,
                     &mut announcer,
+                    args.reap,
                 )?;
                 announcer.flush()?;
                 if json_mode {
-                    let json = serde_json::json!([result.to_json(fate)]);
+                    let json = serde_json::json!([result.to_json(&outcome)]);
                     print_json(&json)?;
                 }
                 // Fire-and-forget repo-wide internal cleanup (stale trash +
@@ -435,29 +483,30 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
-                let run = |result: &RemovalPlan| -> anyhow::Result<BranchFate> {
-                    maybe_reap_result(result, args.reap);
+                let run = |result: &RemovalPlan| -> anyhow::Result<RemovalOutcome> {
                     let mut announcer = HookAnnouncer::new(&repo, show_branch);
-                    let fate = handle_remove_output(
+                    let outcome = execute_removal_plan(
+                        &repo,
                         result,
                         removal_execution(args.foreground),
                         &plan,
                         false,
                         &mut announcer,
+                        args.reap,
                     )?;
                     announcer.flush()?;
-                    Ok(fate)
+                    Ok(outcome)
                 };
-                // Fates in execution order, which is also the JSON order below.
-                let mut fates = Vec::new();
+                // Outcomes in execution order, which is also the JSON order below.
+                let mut outcomes = Vec::new();
                 for result in &plans.others {
-                    fates.push(run(result)?);
+                    outcomes.push(run(result)?);
                 }
                 for result in &plans.branch_only {
-                    fates.push(run(result)?);
+                    outcomes.push(run(result)?);
                 }
                 if let Some(ref result) = plans.current {
-                    fates.push(run(result)?);
+                    outcomes.push(run(result)?);
                 }
 
                 if json_mode {
@@ -466,8 +515,8 @@ pub fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> 
                         .iter()
                         .chain(&plans.branch_only)
                         .chain(plans.current.as_ref())
-                        .zip(fates)
-                        .map(|(removal, fate)| removal.to_json(fate))
+                        .zip(outcomes)
+                        .map(|(removal, outcome)| removal.to_json(&outcome))
                         .collect();
                     print_json(&json_items)?;
                 }

@@ -185,11 +185,13 @@ To avoid killing work the user did not mean to kill, two guards keep [2m--reap
 - [1mInteractive processes are spared.[0m A process holding a controlling terminal — an interactive shell, or a terminal editor such as [2mvim[0m with unsaved buffers — is never reaped. Only detached processes remain candidates.
 - [1mDiscovery is by working directory only.[0m A process that started in the worktree and later changed directory, or a daemon that reparented to [2minit[0m, no longer reports a directory under the worktree and is not found. To reliably reap those, launch them with [2mwt step tether[0m, which kills the whole process group when the worktree is removed.
 
-Reaping runs before the worktree directory is touched, so it is independent of foreground/background removal and the [2m--force[0m flag. Unix only; on Windows [2m--reap[0m is rejected.
+Reaping runs after [2mpre-remove[0m hooks and their lock check, but before the worktree directory is touched. A hook that locks the worktree therefore preserves both the worktree and its processes. Reaping is independent of foreground/background removal and the [2m--force[0m flag. Unix only; on Windows [2m--reap[0m is rejected.
 
 [1m[32mJSON output[0m
 
-[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m for a branch-only removal.
+[2m--format=json[0m prints one object per removal to stdout: [2m{kind, branch, path, worktree_outcome, branch_outcome, branch_checked_out_at}[0m for a worktree, with [2mpruned[0m in place of [2mpath[0m and no [2mworktree_outcome[0m for a branch-only removal.
+
+[2mworktree_outcome[0m is [2mremoved[0m when removal completes, [2mdeferred[0m when the legacy background fallback is still running, or [2mpreserved_locked[0m when a [2mpre-remove[0m hook locks the worktree.
 
 [2mbranch_outcome[0m names what happened to the branch, so a caller can tell a deletion the removal declined from one it was never asked to make:
 
@@ -205,7 +207,7 @@ Reaping runs before the worktree directory is touched, so it is independent of f
 
 [1m[32mHooks[0m
 
-[2mpre-remove[0m hooks run before the worktree is deleted (with access to worktree files). [2mpost-remove[0m hooks run after removal. See [2mwt hook[0m for configuration.
+[2mpre-remove[0m hooks run before the worktree is deleted (with access to worktree files). A hook can preserve the worktree by running [2mgit worktree lock[0m; the command succeeds without deleting the worktree or running post-removal hooks. [2mpost-remove[0m hooks run after removal. See [2mwt hook[0m for configuration.
 
 [1m[32mDetached HEAD worktrees[0m
 

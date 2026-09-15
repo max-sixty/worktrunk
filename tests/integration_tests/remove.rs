@@ -2326,6 +2326,121 @@ approved-commands = ["{hook}"]
     );
 }
 
+/// A `pre-remove` hook may lock the worktree after planning to veto deletion.
+/// Both execution modes should treat that new lock as a successful preserve,
+/// matching merge cleanup; a lock present before planning still fails earlier.
+#[rstest]
+#[case::foreground(&["--foreground"])]
+#[case::background(&[])]
+fn test_pre_remove_hook_lock_preserves_worktree(
+    mut repo: TestRepo,
+    #[case] execution_args: &[&str],
+) {
+    let hook = "git worktree lock --reason hook .";
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add pre-remove hook");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = [{hook:?}]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-lock");
+    let output = repo
+        .wt_command()
+        .arg("remove")
+        .args(execution_args)
+        .arg("feature-hook-lock")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a hook-created lock should preserve the worktree; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "the locked worktree must be preserved"
+    );
+    repo.run_git(&["rev-parse", "--verify", "refs/heads/feature-hook-lock"]);
+    assert!(
+        stderr.contains("Worktree preserved (locked: hook)"),
+        "the preservation state must be reported; stderr:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_pre_remove_hook_lock_without_reason_is_reported(mut repo: TestRepo) {
+    let hook = "git worktree lock .";
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add pre-remove hook");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = [{hook:?}]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-lock-no-reason");
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-hook-lock-no-reason"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a hook-created lock should preserve the worktree; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "the locked worktree must be preserved"
+    );
+    assert!(
+        stderr.contains("Worktree preserved (locked)"),
+        "the reasonless preservation state must be reported; stderr:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_pre_remove_hook_lock_skips_reap(mut repo: TestRepo) {
+    let hook = "git worktree lock --reason hook .";
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add pre-remove hook");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = [{hook:?}]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-lock-reap");
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--reap", "feature-hook-lock-reap"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a hook-created lock should preserve the worktree; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "the locked worktree must be preserved"
+    );
+    assert!(
+        stderr.contains("Worktree preserved (locked: hook)"),
+        "the preservation state must be reported; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("processes to reap") && !stderr.contains("Reaping "),
+        "reaping must not run when the hook preserves the worktree; stderr:\n{stderr}"
+    );
+}
+
 #[rstest]
 fn test_pre_remove_hook_new_commit_retains_branch_in_background_remove(mut repo: TestRepo) {
     use crate::common::wait_for_worktree_removed;
@@ -3526,6 +3641,113 @@ fn block_staged_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std:
     staged_path
 }
 
+#[cfg(unix)]
+fn write_recreating_git_wrapper(bin_dir: &Path, real_git: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_slash_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = worktree ] && [ "$2" = remove ]; then
+    (
+        while test -e "$WT_TEST_RECREATE_PATH"; do :; done
+        mkdir -p -- "$WT_TEST_RECREATE_PATH"
+        : > "$WT_TEST_RECREATE_READY"
+        sleep 1
+        rmdir -- "$WT_TEST_RECREATE_PATH"
+        rm -f -- "$WT_TEST_RECREATE_READY"
+    ) </dev/null >/dev/null 2>&1 &
+    watcher=$!
+    {real_git} "$@"
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        while test ! -e "$WT_TEST_RECREATE_READY"; do :; done
+    else
+        kill "$watcher" 2>/dev/null || :
+    fi
+    exit "$status"
+fi
+exec {real_git} "$@"
+"#
+    );
+    let wrapper = bin_dir.join("git");
+    fs::write(&wrapper, script).unwrap();
+    let mut permissions = fs::metadata(&wrapper).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(wrapper, permissions).unwrap();
+}
+
+/// `post-switch` runs at the destination immediately, while `post-remove`
+/// waits for the legacy detached fallback to finish deleting the old worktree.
+/// Removing the current worktree gives that fallback a deterministic one-second
+/// delay before `git worktree remove`.
+#[cfg(unix)]
+#[rstest]
+fn test_remove_background_fallback_waits_only_before_post_remove(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-hook-order");
+    let staged_path = block_staged_rename(&repo, &worktree_path);
+    let wrapper_dir = tempfile::tempdir().unwrap();
+    write_recreating_git_wrapper(wrapper_dir.path(), &which::which("git").unwrap());
+    let mut paths: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+    paths.insert(0, wrapper_dir.path().to_path_buf());
+    let wrapped_path = std::env::join_paths(paths).unwrap();
+    let post_remove_marker = repo.root_path().join("post-remove-order");
+    let post_switch_marker = repo.root_path().join("post-switch-order");
+    let recreate_ready = repo.root_path().join("recreate-ready");
+
+    let worktree = shell_escape::unix::escape(worktree_path.to_slash_lossy());
+    let post_remove = shell_escape::unix::escape(post_remove_marker.to_slash_lossy());
+    let post_switch = shell_escape::unix::escape(post_switch_marker.to_slash_lossy());
+    repo.write_test_config(&format!(
+        r#"[post-remove]
+order = "if test -e {worktree}; then printf present; else printf absent; fi > {post_remove}"
+
+[post-switch]
+order = "if test -e {worktree}; then printf present; else printf absent; fi > {post_switch}"
+"#
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-hook-order", "--force-delete", "--yes"])
+        .current_dir(&worktree_path)
+        .env("PATH", wrapped_path)
+        .env("WT_TEST_RECREATE_PATH", &worktree_path)
+        .env("WT_TEST_RECREATE_READY", &recreate_ready)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt remove should start the legacy fallback:\n{stderr}"
+    );
+
+    crate::common::wait_for_file_content(&post_switch_marker);
+    assert_eq!(
+        fs::read_to_string(&post_switch_marker).unwrap(),
+        "present",
+        "post-switch must run at the destination without waiting for old worktree removal"
+    );
+
+    crate::common::wait_for_file_content(&post_remove_marker);
+    assert_eq!(
+        fs::read_to_string(&post_remove_marker).unwrap(),
+        "present",
+        "post-remove must follow removal completion even if the old path is reused"
+    );
+    let completion_markers =
+        crate::common::resolve_git_common_dir(repo.root_path()).join("wt/removal-markers");
+    assert!(
+        fs::read_dir(completion_markers).unwrap().next().is_none(),
+        "successful fallback removal must consume its completion marker"
+    );
+
+    crate::common::wait_for("recreated path removed", || !worktree_path.exists());
+    let _ = std::fs::remove_file(&staged_path);
+}
+
 /// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
 /// in the legacy `git worktree remove && git branch -D` command.
 #[rstest]
@@ -4113,6 +4335,107 @@ fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
     );
 }
 
+/// `submodule.<name>.ignore=all` is a display preference, not permission to
+/// delete modifications inside an initialized submodule. This is especially
+/// important because Worktrunk must internally force Git's worktree removal
+/// when initialized submodules are present.
+#[rstest]
+fn test_remove_refuses_dirty_submodule_hidden_by_user_config(mut repo: TestRepo) {
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source-hidden");
+    fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
+    fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
+
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    let worktree_path = repo.add_worktree("feature-submod-hidden-dirty");
+    let output = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    repo.run_git(&["config", "submodule.submod.ignore", "all"]);
+    let changed_file = worktree_path.join("submod/sub.txt");
+    fs::write(&changed_file, "DIRTIED\n").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args(["status", "--porcelain"])
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides the dirty submodule"
+    );
+    let forced = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args(["status", "--porcelain", "--ignore-submodules=none"])
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&forced.stdout).contains("submod"),
+        "the explicit safety query must reveal the dirty submodule"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-submod-hidden-dirty"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "remove must refuse a dirty submodule hidden by config; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("submod"),
+        "the refusal must name the dirty submodule; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "the hidden dirty submodule's worktree must be preserved"
+    );
+    assert_eq!(
+        fs::read_to_string(changed_file).unwrap(),
+        "DIRTIED\n",
+        "the hidden submodule change must remain recoverable"
+    );
+}
+
 /// Restore write permissions recursively so TempDir cleanup succeeds.
 #[cfg(unix)]
 fn restore_dir_permissions(dir: &std::path::Path) {
@@ -4250,6 +4573,45 @@ fn test_remove_json(mut repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+#[rstest]
+fn test_remove_json_reports_hook_preserved_worktree(mut repo: TestRepo) {
+    let hook = "git worktree lock --reason hook .";
+    repo.write_project_config(&format!("pre-remove = {hook:?}"));
+    repo.commit("Add pre-remove hook");
+    let worktree_path = repo.add_worktree("feature-preserved");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "feature-preserved",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "remove should succeed:\n{stderr}");
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "feature-preserved");
+    assert_eq!(
+        items[0]["worktree_outcome"], "preserved_locked",
+        "JSON must distinguish a preserved worktree from a completed removal:\n{stderr}"
+    );
+    assert_eq!(items[0]["branch_outcome"], "not_attempted");
+    assert!(
+        worktree_path.exists(),
+        "the JSON outcome must agree with the preserved worktree"
+    );
 }
 
 #[rstest]
@@ -4502,6 +4864,11 @@ fn test_remove_fallback_warns_when_no_cas_tail(mut repo: TestRepo) {
         json.as_array().unwrap()[0]["branch_outcome"],
         "retained_unmerged",
         "a survival known in the foreground is not a deferral:\n{stderr}",
+    );
+    assert_eq!(
+        json.as_array().unwrap()[0]["worktree_outcome"],
+        "deferred",
+        "the detached fallback must not report worktree removal as completed:\n{stderr}",
     );
     // The branch survives with the hook's commit as its tip; the worktree
     // directory itself is the detached process's job, so it isn't asserted.

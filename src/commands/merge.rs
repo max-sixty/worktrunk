@@ -4,22 +4,24 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{MergeConfig, UserConfig};
-use worktrunk::git::Repository;
+use worktrunk::git::{CommandError, GitError, Repository, WorkingTree, parse_untracked_files};
 use worktrunk::styling::{eprintln, info_message};
+use worktrunk::utils::escape_filename_for_terminal;
 
 use crate::output::print_json;
 
 use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
-use super::commit::{CommitOptions, HookGate};
+use super::commit::{CommitOptions, HookGate, StageMode};
 use super::context::CommandEnv;
 use super::flag_pair;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder, execute_planned_hook};
 use super::hooks::HookAnnouncer;
 use super::template_vars::TemplateVars;
 use super::worktree::{
-    FinishAfterMergeArgs, MergeOperations, PushKind, finish_after_merge, handle_no_ff_merge,
-    handle_push,
+    FinishAfterMergeArgs, MergeOperations, MergeRemovalDisposition, PushKind,
+    ensure_merge_removal_is_clean, finish_after_merge, handle_no_ff_merge, handle_push,
+    merge_removal_disposition,
 };
 
 /// Tri-state CLI overrides for the six `wt merge` boolean flags. `None` =
@@ -105,7 +107,7 @@ fn approve_merge_plan(
     commit: bool,
     verify: bool,
     will_remove: bool,
-    squash_enabled: bool,
+    will_create_commit: bool,
     yes: bool,
 ) -> anyhow::Result<Option<ApprovedHookPlan>> {
     let pid = Some(project_id);
@@ -124,7 +126,6 @@ fn approve_merge_plan(
     // are listed only so the single prompt is complete; their anchor is never
     // looked up.
     let mut feature_hooks = Vec::new();
-    let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
     if commit && will_create_commit {
         feature_hooks.push(HookType::PreCommit);
         feature_hooks.push(HookType::PostCommit);
@@ -147,6 +148,39 @@ fn approve_merge_plan(
     }
 
     builder.finish().approve(pid, yes)
+}
+
+/// Whether merge should enter its auto-commit phase for the selected stage mode.
+///
+/// `tracked` considers tracked worktree changes; `none` considers only the
+/// existing index. Both ignore untracked files they deliberately leave alone.
+fn should_auto_commit(worktree: &WorkingTree<'_>, stage_mode: StageMode) -> anyhow::Result<bool> {
+    let untracked_arg = match stage_mode {
+        StageMode::All => "--untracked-files=normal",
+        StageMode::Tracked => "--untracked-files=no",
+        // `none` stages nothing from the worktree, so only the index counts.
+        StageMode::None => return worktree.has_staged_changes(),
+    };
+    let status = worktree.run_command(&[
+        "status",
+        "--porcelain",
+        untracked_arg,
+        // Internal submodule dirt cannot be staged in the superproject.
+        // A changed gitlink remains visible with this mode.
+        "--ignore-submodules=dirty",
+    ])?;
+    Ok(!status.trim().is_empty())
+}
+
+fn untracked_files(worktree: &WorkingTree<'_>) -> anyhow::Result<Vec<Vec<u8>>> {
+    let args = ["status", "--porcelain", "-z", "--untracked-files=normal"];
+    let output = worktree
+        .run_command_output(&args)
+        .context("Failed to inspect untracked files")?;
+    if !output.status.success() {
+        return Err(CommandError::from_failed_output("git", &args, &output).into());
+    }
+    Ok(parse_untracked_files(&output.stdout))
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
@@ -276,6 +310,30 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // pre-remove/post-remove hooks in the batch approval prompt.
     let on_target = current_branch == target_branch;
     let remove_requested = remove && !on_target;
+    let removal_will_run =
+        merge_removal_disposition(repo, &current_branch, &target_branch, remove)?
+            == MergeRemovalDisposition::Remove;
+
+    // Non-all stage modes deliberately leave untracked files behind. Refuse
+    // before updating the target branch when merge would then remove this
+    // worktree; the final removal guard remains the race-safe backstop.
+    let residual_untracked = if commit && removal_will_run && stage_mode != StageMode::All {
+        untracked_files(&current_wt)?
+    } else {
+        Vec::new()
+    };
+    if !residual_untracked.is_empty() {
+        return Err(GitError::UncommittedChanges {
+            action: Some("merge and remove worktree".into()),
+            branch: Some(current_branch),
+            force_hint: false,
+            dirty_files: residual_untracked
+                .into_iter()
+                .map(|path| format!("?? {}", escape_filename_for_terminal(&path)))
+                .collect(),
+        }
+        .into());
+    }
 
     // Build and approve the frozen hook plan once, at the gate. Every covered
     // hook (`pre-merge` / `post-merge` / `pre-remove` / `post-remove` /
@@ -285,6 +343,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // One anchor for every feature-worktree hook: the canonical root, the same
     // value `finish_after_merge` records as `RemovalPlan::worktree_path`.
     let feature_root = current_wt.root()?;
+    let will_create_commit = should_auto_commit(&current_wt, stage_mode)? || squash_enabled;
     let plan = approve_merge_plan(
         repo,
         config,
@@ -294,7 +353,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         commit,
         verify,
         remove_requested,
-        squash_enabled,
+        will_create_commit,
         yes,
     )?;
     let approved = plan.is_some();
@@ -341,7 +400,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // The project commit-append is gated independently of hook approval:
     // declining it drops only the append, never the (possibly already-approved)
     // hooks. Mirrors the standalone `wt step commit` path via the shared gate.
-    let will_create_commit = current_wt.is_dirty()? || squash_enabled;
     let llm_configured = env
         .config
         .commit_generation(Some(&project_id))
@@ -354,7 +412,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let guidance = super::step::PreApprovedGuidance::Resolved(project_append);
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if commit && current_wt.is_dirty()? {
+    let committed = if commit && will_create_commit {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
@@ -437,6 +495,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         )?;
     }
 
+    // Re-check immediately before the target ref update. Staging cannot absorb
+    // changes inside submodules, and state may change while hook approval or
+    // pre-merge hooks run. Cleanup repeats this gate as the race-safe backstop.
+    let removal_disposition =
+        merge_removal_disposition(repo, &current_branch, &target_branch, remove)?;
+    ensure_merge_removal_is_clean(repo, &current_branch, &removal_disposition)?;
+
     // Merge to target branch
     let operations = Some(MergeOperations {
         committed,
@@ -461,6 +526,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             target_branch: &target_branch,
             target_worktree_path: target_worktree_path.as_deref(),
             remove,
+            removal_disposition,
             verify,
             yes,
             plan: &plan,

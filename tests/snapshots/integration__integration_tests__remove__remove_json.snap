@@ -8,6 +8,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
     "branch_checked_out_at": null,
     "branch_outcome": "deleted",
     "kind": "worktree",
-    "path": "<PATH>"
+    "path": "<PATH>",
+    "worktree_outcome": "removed"
   }
 ]

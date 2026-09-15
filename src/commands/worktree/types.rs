@@ -213,6 +213,49 @@ pub enum BranchFate {
     Deferred,
 }
 
+/// Executed result of a [`RemovalPlan`].
+///
+/// `Completed` means the worktree removal finished in this process. `Deferred`
+/// means a detached fallback owns the removal. Their [`BranchFate`] describes
+/// the branch side. `PreservedLocked` means a `pre-remove` hook locked the
+/// worktree after planning, so neither the worktree nor branch was removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovalOutcome {
+    Completed(BranchFate),
+    Deferred(BranchFate),
+    PreservedLocked { reason: Option<String> },
+}
+
+impl RemovalOutcome {
+    pub fn branch_fate(&self) -> BranchFate {
+        match self {
+            Self::Completed(fate) | Self::Deferred(fate) => *fate,
+            Self::PreservedLocked { .. } => BranchFate::NotAttempted,
+        }
+    }
+
+    /// Whether the removal path was started, including a detached fallback
+    /// whose completion this process cannot observe.
+    pub fn removal_started(&self) -> bool {
+        !matches!(self, Self::PreservedLocked { .. })
+    }
+
+    pub fn preserved_lock_reason(&self) -> Option<Option<&str>> {
+        match self {
+            Self::Completed(_) | Self::Deferred(_) => None,
+            Self::PreservedLocked { reason } => Some(reason.as_deref()),
+        }
+    }
+
+    fn worktree_json_outcome(&self) -> &'static str {
+        match self {
+            Self::Completed(_) => "removed",
+            Self::Deferred(_) => "deferred",
+            Self::PreservedLocked { .. } => "preserved_locked",
+        }
+    }
+}
+
 /// Why a deletion attempt left the branch in place.
 ///
 /// The distinctions matter to whoever is told about them: `Raced` is the one
@@ -413,14 +456,12 @@ impl RemovalPlan {
 
     /// Convert to a JSON value for structured output.
     ///
-    /// `fate` is what execution reported back, and `branch_outcome` names it
-    /// directly (via [`BranchFate::json_outcome`]) so the payload states what
-    /// happened rather than what the plan hoped. It replaced a
-    /// `branch_deleted` boolean, which could not distinguish a CAS the ref
-    /// moved under from a retention the caller asked for, and reported a
-    /// detached deletion nobody watched as an accomplished one.
-    pub fn to_json(&self, fate: BranchFate) -> serde_json::Value {
-        let branch_outcome = fate.json_outcome();
+    /// `outcome` is what execution reported back. `worktree_outcome`
+    /// distinguishes a completed removal from hook-requested preservation,
+    /// while `branch_outcome` names its [`BranchFate`] directly so the payload
+    /// states what happened rather than what the plan hoped.
+    pub fn to_json(&self, outcome: &RemovalOutcome) -> serde_json::Value {
+        let branch_outcome = outcome.branch_fate().json_outcome();
         match self {
             RemovalPlan::Worktree {
                 worktree_path,
@@ -431,6 +472,7 @@ impl RemovalPlan {
                 "kind": "worktree",
                 "branch": branch_name,
                 "path": worktree_path,
+                "worktree_outcome": outcome.worktree_json_outcome(),
                 "branch_outcome": branch_outcome,
                 "branch_checked_out_at": branch_checked_out_at.as_ref().map(|c| &c.path),
             }),

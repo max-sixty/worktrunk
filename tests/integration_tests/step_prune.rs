@@ -1362,6 +1362,36 @@ fn test_prune_runs_pre_remove_hook(mut repo: TestRepo) {
     assert!(!wt_path.exists(), "the merged worktree should be removed");
 }
 
+/// A `pre-remove` hook can preserve a prune candidate by locking it after the
+/// scan. The candidate must not be counted in the removal summary.
+#[rstest]
+fn test_prune_pre_remove_hook_lock_preserves_worktree(mut repo: TestRepo) {
+    let wt_path = repo.add_worktree("merged");
+    repo.commit("Advance default branch");
+    repo.write_project_config(r#"pre-remove = "git worktree lock --reason hook .""#);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a hook-created lock should preserve the prune candidate; stderr:\n{stderr}"
+    );
+    assert!(wt_path.exists(), "the locked worktree must be preserved");
+    assert!(
+        stderr.contains("Worktree preserved (locked: hook)"),
+        "the preservation state must be reported; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Removed 1 worktree"),
+        "a preserved candidate must not be counted as removed; stderr:\n{stderr}"
+    );
+}
+
 /// A declined orphan deletion removed nothing, so nothing is counted.
 ///
 /// The scan selects both `carrier` (worktree, integrated) and `orphan`

@@ -112,6 +112,49 @@ fn test_relocate_locked_worktree(repo: TestRepo) {
     );
 }
 
+/// Git's porcelain output quotes lock reasons before relocate renders them;
+/// raw controls must never reappear in the terminal output.
+#[rstest]
+fn test_relocate_locked_worktree_reason_is_terminal_safe(repo: TestRepo) {
+    use ansi_str::AnsiStr;
+
+    let wrong_path = worktree_parent(&repo).join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+    let reason = "trusted\nforged\x1b]8;;https://example.com\x07link\x1b]8;;\x07\u{202e}tail";
+    repo.run_git(&[
+        "worktree",
+        "lock",
+        "--reason",
+        reason,
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+
+    assert!(
+        output.status.success(),
+        "relocate should succeed:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("trusted\nforged") && !stderr.contains("\x1b]8;;https://example.com"),
+        "lock reason must not inject lines or terminal hyperlinks: {stderr:?}"
+    );
+    assert!(wrong_path.exists(), "locked worktree must not move");
+}
+
 /// Test mixed success and skip (covers "Relocated X, skipped Y" output)
 #[rstest]
 fn test_relocate_mixed_success_and_skip(repo: TestRepo) {
@@ -345,6 +388,71 @@ command = "cat > {} && echo 'chore: auto-commit before relocate'"
     assert!(
         prompt.contains("dirty.txt") && prompt.contains("+uncommitted changes"),
         "the prompt must carry the committed worktree's diff; got:\n{prompt}"
+    );
+}
+
+/// `--commit` uses `git add -A`, so the warning must override Git's display
+/// preference just like the dirty check does.
+#[rstest]
+fn test_relocate_commit_warns_about_untracked_files_hidden_by_user_config(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+
+    fs::create_dir(wrong_path.join("nested")).unwrap();
+    fs::write(wrong_path.join("nested/first.txt"), "first").unwrap();
+    fs::write(wrong_path.join("nested/second.txt"), "second").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&wrong_path)
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides both files"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--commit"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'chore: include hidden files'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "relocate should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto-staging 2 untracked paths:")
+            && stderr.contains("nested/first.txt")
+            && stderr.contains("nested/second.txt"),
+        "relocate must disclose every hidden file it auto-stages; stderr:\n{stderr}"
+    );
+
+    let expected_path = parent.join("repo.feature");
+    let committed = repo
+        .git_command()
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&expected_path)
+        .run()
+        .unwrap();
+    let committed = String::from_utf8_lossy(&committed.stdout);
+    assert!(
+        committed.contains("nested/first.txt") && committed.contains("nested/second.txt"),
+        "both hidden files should be committed after disclosure; tree:\n{committed}"
     );
 }
 

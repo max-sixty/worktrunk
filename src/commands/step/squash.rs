@@ -14,10 +14,11 @@ use super::super::command_approval::{
     approve_commit_template_append, approve_or_skip, resolve_template_for_preview,
 };
 use super::super::command_executor::FailureStrategy;
-use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
+use super::super::commit::{
+    CommitGenerator, CommitOutcome, HookGate, StageMode, stage_with_untracked_warning,
+};
 use super::super::context::CommandEnv;
 use super::super::hooks::{HookAnnouncer, execute_hook};
-use super::super::repository_ext::RepositoryCliExt;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
 
@@ -159,10 +160,7 @@ pub fn handle_squash(
     let template_vars = TemplateVars::new().with_target(&integration_target);
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
-    if stage_mode == StageMode::All {
-        repo.warn_if_auto_staging_untracked()?;
-    }
-    wt.stage(stage_mode)?;
+    stage_with_untracked_warning(&wt, stage_mode)?;
 
     // Run pre-commit hooks (user first, then project).
     if hooks.run() {

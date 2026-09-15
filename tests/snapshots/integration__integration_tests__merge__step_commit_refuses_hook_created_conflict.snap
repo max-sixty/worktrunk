@@ -62,7 +62,5 @@ exit_code: 1
 ----- stderr -----
 [36m◎[39m [36mRunning pre-commit project hook[39m
 [107m [0m [2m[0m[2m[34mgit[0m[2m merge side [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1 || [0m[2m[34mtrue[0m
-[0m[33m▲[39m [33mAuto-staging 1 untracked path:[39m
-[107m [0m other.txt
-[31m✗[39m [31mCannot commit: 1 path with unresolved conflicts[39m
+[0m[31m✗[39m [31mCannot commit: 1 path with unresolved conflicts[39m
 [107m [0m conflict.txt

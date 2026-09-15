@@ -38,6 +38,82 @@ fn make_path_with_mock_bin(bin_dir: &Path) -> (String, String) {
     (path_var_name, new_path)
 }
 
+#[cfg(unix)]
+fn write_late_untracked_git_wrapper(dir: &Path, real_git: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in
+  "status --porcelain -z -uall"|"diff --cached --name-only -z --diff-filter=A --no-renames --no-relative --ignore-submodules=none")
+    if [ ! -e "$WT_TEST_MARKER" ]; then
+      output="$WT_TEST_MARKER.output"
+      {real_git} "$@" >"$output"
+      status=$?
+      : >"$WT_TEST_MARKER"
+      printf 'created during staging\\n' >"$WT_TEST_LATE_FILE"
+      cat "$output"
+      rm -f "$output"
+      exit "$status"
+    fi
+    ;;
+esac
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    fs::write(&path, script).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn write_fail_second_staged_additions_git_wrapper(dir: &Path, real_git: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$*" = "diff --cached --name-only -z --diff-filter=A --no-renames --no-relative --ignore-submodules=none" ]; then
+  if [ -e "$WT_TEST_MARKER" ]; then
+    printf 'forced staged-additions inspection failure\n' >&2
+    exit 77
+  fi
+  : >"$WT_TEST_MARKER"
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    fs::write(&path, script).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn write_unlock_before_update_ref_git_wrapper(dir: &Path, real_git: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = "update-ref" ] && [ ! -e "$WT_TEST_MARKER" ]; then
+  {real_git} -C "$WT_TEST_REPO" worktree unlock "$WT_TEST_FEATURE"
+  : >"$WT_TEST_MARKER"
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    fs::write(&path, script).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn snapshot_merge_with_env(
     test_name: &str,
     repo: &TestRepo,
@@ -71,6 +147,58 @@ fn create_untracked_files_hidden_by_user_config(repo: &TestRepo, worktree: &Path
         hidden.stdout.is_empty(),
         "the fixture must demonstrate that the user setting hides both files"
     );
+}
+
+fn create_dirty_submodule_worktree(repo: &mut TestRepo, branch: &str) -> (PathBuf, PathBuf) {
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source-dirty");
+    fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
+    fs::write(sub_source.join("sub.txt"), "base\n").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "submodule base"]);
+
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    let feature_wt =
+        repo.add_worktree_with_commit(branch, "feature.txt", "feature\n", "add feature");
+    let output = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let changed_file = feature_wt.join("submod/sub.txt");
+    fs::write(&changed_file, "DIRTIED\n").unwrap();
+    (feature_wt, changed_file)
 }
 
 fn assert_hidden_untracked_auto_staging_warning(output: &std::process::Output, command: &str) {
@@ -227,6 +355,76 @@ fn test_merge_preserves_locked_worktree_no_reason(merge_scenario: (TestRepo, Pat
     );
 }
 
+/// A locked worktree is retained after merge, so a stage mode that deliberately
+/// leaves untracked files behind must not be rejected by the removal-only guard.
+#[rstest]
+fn test_merge_non_all_stage_mode_preserves_untracked_in_locked_worktree(
+    merge_scenario: (TestRepo, PathBuf),
+) {
+    let (repo, feature_wt) = merge_scenario;
+    repo.lock_worktree("feature", Some("agent still running"));
+    fs::write(feature_wt.join("precious.txt"), "untracked work").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-squash", "--stage=none", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "locked worktree should merge while retaining untracked files; stderr:\n{stderr}"
+    );
+    assert!(feature_wt.exists(), "locked worktree must be retained");
+    assert!(
+        feature_wt.join("precious.txt").exists(),
+        "untracked file must remain in the retained worktree"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_merge_freezes_locked_worktree_preservation_before_target_update(
+    merge_scenario: (TestRepo, PathBuf),
+) {
+    let (repo, feature_wt) = merge_scenario;
+    repo.lock_worktree("feature", Some("agent still running"));
+    let precious = feature_wt.join("precious.txt");
+    fs::write(&precious, "untracked work").unwrap();
+    let source_tip = repo.git_output(&["rev-parse", "feature"]);
+
+    let wrapper_dir = tempfile::tempdir().unwrap();
+    write_unlock_before_update_ref_git_wrapper(wrapper_dir.path(), &which::which("git").unwrap());
+    let marker = wrapper_dir.path().join("wrapper-ran");
+    let (path_name, path_value) = make_path_with_mock_bin(wrapper_dir.path());
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-squash", "--stage=none", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .env(path_name, path_value)
+        .env("WT_TEST_MARKER", &marker)
+        .env("WT_TEST_REPO", repo.root_path())
+        .env("WT_TEST_FEATURE", &feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        marker.exists(),
+        "the git wrapper must unlock before the target update"
+    );
+    assert!(
+        output.status.success(),
+        "the frozen locked disposition must preserve the worktree; stderr:\n{stderr}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), source_tip);
+    assert!(feature_wt.exists());
+    assert!(precious.exists());
+}
+
 #[rstest]
 fn test_merge_already_on_target(repo: TestRepo) {
     // Already on main branch (repo root)
@@ -252,6 +450,35 @@ fn test_merge_from_primary_worktree_to_other_branch(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
     drop(feature_wt); // we don't need the path; we'll run from main
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["feature"], None));
+}
+
+#[rstest]
+fn test_merge_non_all_stage_mode_preserves_untracked_in_primary_worktree(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+    drop(feature_wt);
+    fs::write(repo.root_path().join("precious.txt"), "untracked work").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "feature",
+            "--no-squash",
+            "--stage=none",
+            "--no-hooks",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "primary worktree should merge while retaining untracked files; stderr:\n{stderr}"
+    );
+    assert!(
+        repo.root_path().join("precious.txt").exists(),
+        "untracked file must remain in the primary worktree"
+    );
 }
 
 #[rstest]
@@ -1729,6 +1956,486 @@ fn test_merge_no_commit_refuses_untracked_files_hidden_by_user_config(mut repo: 
     );
 }
 
+/// A non-`all` stage mode deliberately leaves untracked files alone. Discovering
+/// a file hidden by `status.showUntrackedFiles` must not send merge into a
+/// commit path that the selected stage mode cannot populate.
+#[rstest]
+#[case("tracked")]
+#[case("none")]
+fn test_merge_non_all_stage_modes_ignore_hidden_untracked_files(
+    mut repo: TestRepo,
+    #[case] stage: &str,
+) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "committed.txt",
+        "committed content",
+        "Add committed file",
+    );
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(feature_wt.join("precious.txt"), "uncommitted work").unwrap();
+
+    let stage_arg = format!("--stage={stage}");
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--no-remove",
+            "--no-hooks",
+            &stage_arg,
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "merge with --stage={stage} should ignore untracked-only changes; stderr:\n{stderr}"
+    );
+    assert!(
+        feature_wt.join("precious.txt").exists(),
+        "the untracked file must stay in the retained feature worktree"
+    );
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("?? precious.txt"),
+        "the selected stage mode must leave the hidden untracked file uncommitted"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        repo.git_output(&["rev-parse", "feature"]),
+        "the committed feature history should still merge"
+    );
+}
+
+/// `--stage=none` commits only the existing index. An unstaged tracked edit
+/// must not send merge into an empty commit attempt when the worktree remains.
+#[rstest]
+fn test_merge_stage_none_ignores_unstaged_tracked_changes_in_retained_worktree(
+    merge_scenario: (TestRepo, PathBuf),
+) {
+    let (repo, feature_wt) = merge_scenario;
+    fs::write(feature_wt.join("feature.txt"), "unstaged edit\n").unwrap();
+    let source_tip = repo.git_output(&["rev-parse", "feature"]);
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--no-remove",
+            "--no-hooks",
+            "--stage=none",
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "stage=none must ignore unstaged tracked edits; stderr:\n{stderr}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), source_tip);
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), source_tip);
+    assert_eq!(
+        fs::read_to_string(feature_wt.join("feature.txt")).unwrap(),
+        "unstaged edit\n",
+        "the retained worktree must keep the unstaged edit"
+    );
+}
+
+/// When merge will remove the source worktree, an untracked file excluded by
+/// the selected stage mode must stop the command before the target ref moves.
+#[rstest]
+#[case("tracked")]
+#[case("none")]
+fn test_merge_non_all_stage_modes_refuse_hidden_untracked_before_update(
+    mut repo: TestRepo,
+    #[case] stage: &str,
+) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "committed.txt",
+        "committed content",
+        "Add committed file",
+    );
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(feature_wt.join("precious.txt"), "uncommitted work").unwrap();
+
+    let target_tip = repo.git_output(&["rev-parse", "main"]);
+    let source_tip = repo.git_output(&["rev-parse", "feature"]);
+    let stage_arg = format!("--stage={stage}");
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-squash", "--no-hooks", &stage_arg])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse residual untracked files before updating refs; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("has uncommitted changes") && stderr.contains("precious.txt"),
+        "the early refusal must name the hidden untracked file; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_tip,
+        "the target branch must not move before the residual-change refusal"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), source_tip);
+    assert!(feature_wt.exists(), "the source worktree must be preserved");
+    assert!(
+        feature_wt.join("precious.txt").exists(),
+        "the hidden untracked file must remain recoverable"
+    );
+}
+
+/// The early removal gate should report only changes that the selected stage
+/// mode leaves behind. A tracked edit is handled by `--stage=tracked`, while an
+/// untracked file still blocks removal.
+#[rstest]
+fn test_merge_stage_tracked_refusal_reports_only_residual_untracked(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "tracked.txt",
+        "committed content",
+        "Add tracked file",
+    );
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(feature_wt.join("tracked.txt"), "tracked edit").unwrap();
+    fs::write(feature_wt.join("precious.txt"), "untracked work").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--no-hooks",
+            "--stage=tracked",
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse the residual untracked file; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("precious.txt"),
+        "the refusal must name the untracked file that blocks removal; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("tracked.txt"),
+        "the refusal must not list a tracked edit that --stage=tracked would commit; stderr:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_merge_stage_tracked_refusal_escapes_residual_untracked_paths(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "tracked.txt",
+        "committed content",
+        "Add tracked file",
+    );
+    let control_and_bidi = "control\nfake-error\t\u{1b}]0;spoofed-title\u{7}-\u{202e}txt.safe";
+    fs::write(feature_wt.join(control_and_bidi), "untracked work").unwrap();
+    fs::write(
+        feature_wt.join(r"control\nfake-error\t\u{1b}]0;spoofed-title\u{7}-\u{202e}txt.safe"),
+        "literal escapes",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--no-hooks",
+            "--stage=tracked",
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse residual untracked files; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(r"control\nfake-error\t\u{1b}]0;spoofed-title\u{7}-\u{202e}txt.safe")
+            && stderr.contains(
+                r"control\\nfake-error\\t\\u{1b}]0;spoofed-title\\u{7}-\\u{202e}txt.safe"
+            ),
+        "the refusal must distinguish escaped controls from literal escapes; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("\u{1b}]0;spoofed-title") && !stderr.contains('\u{202e}'),
+        "the refusal must not emit terminal or bidi controls; stderr:\n{stderr}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_merge_stage_tracked_refusal_escapes_non_utf8_residual_paths(mut repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "tracked.txt",
+        "committed content",
+        "Add tracked file",
+    );
+    fs::write(
+        feature_wt.join(OsString::from_vec(b"invalid-\xff.txt".to_vec())),
+        "invalid byte",
+    )
+    .unwrap();
+    fs::write(feature_wt.join(r"invalid-\xFF.txt"), "literal byte escape").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--no-hooks",
+            "--stage=tracked",
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse residual untracked files; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.matches(r"\xFF").count() == 2 && stderr.contains(r"invalid-\\xFF.txt"),
+        "the refusal must distinguish escaped bytes from a literal escape; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains('\u{fffd}'),
+        "the refusal must not collapse invalid filename bytes to replacement characters; stderr:\n{stderr}"
+    );
+}
+
+/// `diff.ignoreSubmodules=all` must not hide a staged gitlink from the
+/// stage-none commit decision.
+#[rstest]
+fn test_merge_stage_none_commits_gitlink_hidden_by_diff_config(mut repo: TestRepo) {
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source");
+    fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init", "-b", "main"]);
+    fs::write(sub_source.join("sub.txt"), "first\n").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "submodule first"]);
+
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(sub_source.join("sub.txt"), "second\n").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "submodule second"]);
+    let submodule_tip = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .current_dir(&sub_source)
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let submodule = feature_wt.join("submod");
+    repo.run_git_in(&submodule, &["fetch", "origin"]);
+    repo.run_git_in(&submodule, &["checkout", &submodule_tip]);
+    repo.run_git_in(&feature_wt, &["add", "submod"]);
+    repo.run_git(&["config", "diff.ignoreSubmodules", "all"]);
+
+    let hidden = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["diff", "--cached", "--quiet", "--exit-code"])
+        .run()
+        .unwrap();
+    assert!(
+        hidden.status.success(),
+        "the fixture must demonstrate that diff.ignoreSubmodules hides the staged gitlink"
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--stage=none",
+            "--no-remove",
+            "--no-hooks",
+        ])
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'chore: update submodule'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "merge should commit the staged gitlink; stderr:\n{stderr}"
+    );
+    let main_tree = repo.git_output(&["ls-tree", "main", "submod"]);
+    assert!(
+        main_tree.contains(&submodule_tip),
+        "main must contain the staged submodule update; tree:\n{main_tree}"
+    );
+}
+
+/// `git add -A` cannot absorb modifications inside an initialized submodule.
+/// When merge plans to remove the source worktree, that residual dirt must be
+/// rejected before the target ref moves.
+#[rstest]
+fn test_merge_refuses_dirty_submodule_before_target_update(mut repo: TestRepo) {
+    let (feature_wt, changed_file) =
+        create_dirty_submodule_worktree(&mut repo, "feature-submodule-dirty");
+    let target_tip = repo.git_output(&["rev-parse", "main"]);
+    let source_tip = repo.git_output(&["rev-parse", "feature-submodule-dirty"]);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse residual submodule dirt; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("has uncommitted changes") && stderr.contains("submod"),
+        "the refusal must name the dirty submodule; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_tip,
+        "target branch must not move before the residual-change refusal"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature-submodule-dirty"]),
+        source_tip
+    );
+    assert!(
+        feature_wt.exists(),
+        "source worktree must remain recoverable"
+    );
+    assert_eq!(
+        fs::read_to_string(changed_file).unwrap(),
+        "DIRTIED\n",
+        "dirty submodule content must remain recoverable"
+    );
+}
+
+#[rstest]
+#[case("all")]
+#[case("tracked")]
+fn test_merge_ignores_unstageable_submodule_dirt_when_retaining_worktree(
+    mut repo: TestRepo,
+    #[case] stage: &str,
+) {
+    let (feature_wt, changed_file) =
+        create_dirty_submodule_worktree(&mut repo, "feature-submodule-retained");
+    let source_tip = repo.git_output(&["rev-parse", "feature-submodule-retained"]);
+    let stage_arg = format!("--stage={stage}");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "merge",
+            "main",
+            "--no-squash",
+            "--no-remove",
+            "--no-hooks",
+            &stage_arg,
+        ])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "stage={stage} must not attempt an empty commit for internal submodule dirt; stderr:\n{stderr}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), source_tip);
+    assert_eq!(
+        fs::read_to_string(changed_file).unwrap(),
+        "DIRTIED\n",
+        "retained worktree must keep the dirty submodule content"
+    );
+}
+
 #[rstest]
 fn test_merge_no_commits(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
@@ -2316,6 +3023,48 @@ fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
 }
 
 #[rstest]
+#[case(
+    "git worktree lock --reason hook .",
+    "Worktree preserved (locked: hook)"
+)]
+#[case(
+    "git worktree lock --reason \"$(printf 'trusted\\nforged\\033]8;;https://example.com\\007link\\033]8;;\\007tail')\" .",
+    r"Worktree preserved (locked: trusted\nforged\u{1b}]8;;https://example.com\u{7}link\u{1b}]8;;\u{7}tail)"
+)]
+#[case("git worktree lock .", "Worktree preserved (locked)")]
+fn test_merge_pre_remove_lock_preserves_worktree(
+    mut repo: TestRepo,
+    #[case] hook_command: &str,
+    #[case] expected_message: &str,
+) {
+    repo.write_project_config(&format!("pre-remove = {hook_command:?}"));
+    repo.commit("Add pre-remove hook");
+
+    let branch = "feature-pre-remove-lock";
+    let feature_wt = repo.add_worktree_with_commit(branch, "feature.txt", "x", "feat: x");
+    let source_tip = repo.git_output(&["rev-parse", branch]);
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a pre-remove lock should preserve the worktree; stderr:\n{stderr}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), source_tip);
+    assert!(feature_wt.exists(), "locked worktree must be preserved");
+    assert!(
+        stderr.contains(expected_message),
+        "the preservation state must be reported; stderr:\n{stderr}"
+    );
+}
+
+#[rstest]
 fn test_merge_pre_remove_new_commit_keeps_branch(mut repo: TestRepo) {
     repo.write_project_config(
         r#"pre-remove = "sh -c 'printf late > late-commit.txt && git add late-commit.txt && git commit -m late-pre-remove'""#,
@@ -2687,6 +3436,240 @@ fn test_step_commit_auto_staging_warns_about_untracked_files_hidden_by_user_conf
         .output()
         .unwrap();
     assert_hidden_untracked_auto_staging_warning(&output, "step commit");
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_step_commit_discloses_file_created_during_staging(repo: TestRepo) {
+    let wrapper_dir = tempfile::tempdir().unwrap();
+    write_late_untracked_git_wrapper(wrapper_dir.path(), &which::which("git").unwrap());
+    let marker = wrapper_dir.path().join("wrapper-ran");
+    let late_file = repo.root_path().join("late-secret.txt");
+    let (path_name, path_value) = make_path_with_mock_bin(wrapper_dir.path());
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(path_name, path_value)
+        .env("WT_TEST_MARKER", &marker)
+        .env("WT_TEST_LATE_FILE", &late_file)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include late file'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "step commit should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        marker.exists(),
+        "the git wrapper must create the race fixture"
+    );
+    assert!(
+        stderr.contains("Auto-staging 1 untracked path:") && stderr.contains("late-secret.txt"),
+        "a file created after the initial inspection must still be disclosed; stderr:\n{stderr}"
+    );
+    assert!(
+        repo.git_output(&["show", "--format=", "--name-only", "HEAD"])
+            .lines()
+            .any(|path| path == "late-secret.txt"),
+        "the disclosed late file must be part of the commit"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_step_commit_preserves_staged_changes_when_post_stage_inspection_fails(repo: TestRepo) {
+    fs::write(repo.root_path().join("pending.txt"), "pending work\n").unwrap();
+    let initial_head = repo.git_output(&["rev-parse", "HEAD"]);
+
+    let wrapper_dir = tempfile::tempdir().unwrap();
+    write_fail_second_staged_additions_git_wrapper(
+        wrapper_dir.path(),
+        &which::which("git").unwrap(),
+    );
+    let marker = wrapper_dir.path().join("wrapper-ran");
+    let (path_name, path_value) = make_path_with_mock_bin(wrapper_dir.path());
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(path_name, path_value)
+        .env("WT_TEST_MARKER", &marker)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: should not commit'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "step commit must fail when it cannot inspect the staged result"
+    );
+    assert!(
+        marker.exists(),
+        "the wrapper must observe both index queries"
+    );
+    assert!(
+        stderr.contains("forced staged-additions inspection failure"),
+        "the inspection failure must be reported; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "HEAD"]),
+        initial_head,
+        "the failed inspection must prevent commit"
+    );
+    assert_eq!(
+        repo.git_output(&["diff", "--cached", "--name-only"]),
+        "pending.txt",
+        "successfully staged data must remain recoverable after the failure"
+    );
+}
+
+#[rstest]
+fn test_step_commit_auto_staging_warning_truncates_large_file_list(repo: TestRepo) {
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    let nested = repo.root_path().join("nested");
+    fs::create_dir(&nested).unwrap();
+    for index in 0..12 {
+        fs::write(nested.join(format!("file-{index:02}.txt")), "content").unwrap();
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include hidden files'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "step commit should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto-staging 12 untracked paths:")
+            && stderr.contains("nested/file-00.txt")
+            && stderr.contains("nested/file-09.txt")
+            && stderr.contains("and 2 more"),
+        "the warning must report the full count and a bounded preview; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("nested/file-10.txt") && !stderr.contains("nested/file-11.txt"),
+        "the warning must not print paths beyond the preview limit; stderr:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+fn test_step_commit_auto_staging_warning_escapes_control_characters(repo: TestRepo) {
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    let filename = "control\nfake-warning\t\u{1b}]0;spoofed-title\u{7}.txt";
+    let literal_escape = r"control\nfake-warning\t\u{1b}]0;spoofed-title\u{7}.txt";
+    fs::write(repo.root_path().join(filename), "content").unwrap();
+    fs::write(repo.root_path().join(literal_escape), "content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include unusual filename'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "step commit should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto-staging 2 untracked paths:")
+            && stderr.contains(r"control\\nfake-warning\\t\\u{1b}]0;spoofed-title\\u{7}.txt")
+            && stderr.contains(r"control\nfake-warning\t\u{1b}]0;spoofed-title\u{7}.txt"),
+        "the warning must distinguish literal escapes from escaped control characters; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("\u{1b}]0;spoofed-title"),
+        "the warning must not pass a filename's terminal control sequence through; stderr:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_step_commit_auto_staging_warning_escapes_bidi_controls(repo: TestRepo) {
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    let filename = "report\u{202e}txt.safe";
+    fs::write(repo.root_path().join(filename), "content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include bidi filename'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "step commit should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(r"report\u{202e}txt.safe"),
+        "the warning must render the bidi control as an explicit escape; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains('\u{202e}'),
+        "the warning must not pass a bidi control through to the terminal; stderr:\n{stderr}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_step_commit_auto_staging_warning_escapes_non_utf8_bytes(repo: TestRepo) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    let invalid = OsString::from_vec(b"invalid-\xff.txt".to_vec());
+    fs::write(repo.root_path().join(invalid), "content").unwrap();
+    fs::write(repo.root_path().join(r"invalid-\xFF.txt"), "content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include non-utf8 filename'",
+        )
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "step commit should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto-staging 2 untracked paths:")
+            && stderr.matches(r"\xFF").count() == 2
+            && stderr.contains(r"invalid-\\xFF.txt"),
+        "the warning must distinguish escaped bytes from a literal escape; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains('\u{fffd}'),
+        "the warning must not collapse invalid filename bytes to replacement characters; stderr:\n{stderr}"
+    );
 }
 
 #[rstest]

@@ -40,6 +40,72 @@ pub fn escape_controls(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Render a filename as terminal-safe text without losing non-UTF-8 bytes.
+///
+/// Backslashes are doubled so literal escape-looking names remain distinct
+/// from controls and invalid bytes that this function escapes.
+pub fn escape_filename_for_terminal(filename: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut escaped = String::with_capacity(filename.len());
+    let mut remaining = filename;
+    while !remaining.is_empty() {
+        match std::str::from_utf8(remaining) {
+            Ok(valid) => {
+                push_terminal_safe_text(&mut escaped, valid);
+                break;
+            }
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                let valid = std::str::from_utf8(&remaining[..valid_up_to])
+                    .expect("from_utf8 reported this prefix as valid");
+                push_terminal_safe_text(&mut escaped, valid);
+
+                let invalid = &remaining[valid_up_to..];
+                let invalid_len = error.error_len().unwrap_or(invalid.len());
+                for byte in &invalid[..invalid_len] {
+                    escaped.push('\\');
+                    escaped.push('x');
+                    escaped.push(HEX[(byte >> 4) as usize] as char);
+                    escaped.push(HEX[(byte & 0x0f) as usize] as char);
+                }
+                remaining = &invalid[invalid_len..];
+            }
+        }
+    }
+    escaped
+}
+
+/// Render one text value as a terminal-safe line.
+pub fn escape_text_for_terminal(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    push_terminal_safe_text(&mut escaped, text);
+    escaped
+}
+
+fn push_terminal_safe_text(escaped: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '\\' => escaped.push_str(r"\\"),
+            character if character.is_control() || is_bidi_control(character) => {
+                escaped.extend(character.escape_default())
+            }
+            character => escaped.push(character),
+        }
+    }
+}
+
+fn is_bidi_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Format a Unix timestamp as ISO 8601 UTC (e.g., "2025-01-01T00:00:00Z"),
 /// or `None` when the timestamp is out of chrono's representable range.
 ///
@@ -309,5 +375,25 @@ mod tests {
         // the formatter already cleaned without doubling the backslashes.
         let once = escape_controls("x\0y\x1bz").into_owned();
         assert_eq!(escape_controls(&once), once);
+    }
+
+    #[test]
+    fn escape_filename_for_terminal_preserves_non_utf8_bytes() {
+        assert_eq!(
+            escape_filename_for_terminal(b"invalid-\xff.txt"),
+            r"invalid-\xFF.txt"
+        );
+        assert_eq!(
+            escape_filename_for_terminal(br"invalid-\xFF.txt"),
+            r"invalid-\\xFF.txt"
+        );
+    }
+
+    #[test]
+    fn escape_text_for_terminal_escapes_controls_and_bidi() {
+        assert_eq!(
+            escape_text_for_terminal("lock\nreason\u{202e}\u{2066}"),
+            r"lock\nreason\u{202e}\u{2066}"
+        );
     }
 }

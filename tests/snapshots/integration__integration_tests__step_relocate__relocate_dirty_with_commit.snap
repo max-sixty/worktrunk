@@ -60,6 +60,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mAuto-staging 1 untracked path:[39m
+[107m [0m dirty.txt
 [36m◎[39m [36mCommitting changes in [1mfeature[22m...[39m
 [107m [0m [1mchore: auto-commit before relocate[22m
 [32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m

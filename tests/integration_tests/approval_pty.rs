@@ -8,7 +8,9 @@
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
 
-use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
+use crate::common::pty::{
+    build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted, exec_cmd_in_pty_prompted_with,
+};
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
 use rstest::rstest;
@@ -555,6 +557,53 @@ command = "cat >/dev/null && echo 'feat: test commit message'"
         "Should show merge-specific decline message. Output:\n{output}"
     );
     assert_no_spurious_no_hooks(&output);
+}
+
+/// The hook plan freezes whether a commit was approved before prompting. If a
+/// file appears during that prompt, merge must not update the target and only
+/// discover the residual change during worktree cleanup.
+#[rstest]
+fn test_merge_refuses_change_created_during_approval_before_target_update(mut repo: TestRepo) {
+    repo.write_project_config(r#"pre-merge = "true""#);
+    repo.commit("Add pre-merge config");
+    repo.write_test_config("");
+
+    let feature_wt = repo.add_worktree("feature-approval-race");
+    repo.commit_in_worktree(&feature_wt, "feature.txt", "feature\n", "add feature");
+    let target_tip = repo.git_output(&["rev-parse", "main"]);
+    let source_tip = repo.git_output(&["rev-parse", "feature-approval-race"]);
+    let late_file = feature_wt.join("late.txt");
+
+    let env_vars = test_env_vars_with_shell(&repo);
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["merge", "main", "--no-squash"],
+        &feature_wt,
+        &env_vars,
+        None,
+    );
+    let (output, exit_code) = exec_cmd_in_pty_prompted_with(cmd, &["y\n"], "[y/N", |_| {
+        std::fs::write(&late_file, "created during approval\n").unwrap();
+    });
+
+    assert_ne!(
+        exit_code, 0,
+        "merge must fail when an unapproved change appears; output:\n{output}"
+    );
+    assert!(
+        output.contains("has uncommitted changes") && output.contains("late.txt"),
+        "the refusal must name the late file; output:\n{output}"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "main"]),
+        target_tip,
+        "target branch must not move before the late-change refusal"
+    );
+    assert_eq!(
+        repo.git_output(&["rev-parse", "feature-approval-race"]),
+        source_tip
+    );
+    assert!(late_file.exists(), "late file must remain recoverable");
 }
 
 /// Project commit-message append must be approved before the LLM sees it.

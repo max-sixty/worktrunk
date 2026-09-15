@@ -57,6 +57,7 @@ use super::items::{
 use super::preview::PreviewMode;
 use super::preview_notify::PrStatusDelta;
 use super::preview_orchestrator::{PreviewOrchestrator, SpawnGeneration};
+use super::{RowMutationLog, replay_row_mutations};
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::{BranchScope, ItemKind, ListItem};
 
@@ -89,6 +90,11 @@ pub(super) struct PickerHandler {
     /// atomically in `on_skeleton` with this skeleton's worktree/branch rows;
     /// the `--prs` thread extends it with PR/MR rows. See [`ShortcutTable`].
     pub(super) shortcut_table: ShortcutTable,
+    /// Picker-lifetime alt-x mutations. A refresh captures a cursor when it
+    /// starts and replays later mutations into its collected snapshot before
+    /// publishing.
+    pub(super) row_mutations: RowMutationLog,
+    pub(super) row_mutation_cursor: usize,
     /// One `Arc<Mutex<String>>` per data row — same Arcs `PickerRow`
     /// holds. Set once in `on_skeleton`, read lock-free thereafter.
     pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
@@ -255,14 +261,41 @@ impl PickerHandler {
 fn collect_shown_branches(items: &[ListItem]) -> HashSet<String> {
     let mut shown = HashSet::new();
     for item in items {
-        let Some(name) = item.branch() else {
-            continue;
-        };
-        shown.insert(name.to_string());
-        if matches!(item.kind(), ItemKind::Branch(BranchScope::Remote))
-            && let Some((_, bare)) = name.split_once('/')
-        {
-            shown.insert(bare.to_string());
+        add_shown_branch(&mut shown, item);
+    }
+    shown
+}
+
+fn add_shown_branch(shown: &mut HashSet<String>, item: &ListItem) {
+    let Some(name) = item.branch() else {
+        return;
+    };
+    shown.insert(name.to_string());
+    if matches!(item.kind(), ItemKind::Branch(BranchScope::Remote))
+        && let Some((_, bare)) = name.split_once('/')
+    {
+        shown.insert(bare.to_string());
+    }
+}
+
+/// Rebuild the PR dedup set from rows that survived mutation replay.
+///
+/// A worktree removal may re-key its row to the branch token (morph) or remove
+/// both tokens (drop), so either the original token or the branch token proves
+/// that the source row is still present in the published shortcut snapshot.
+fn collect_published_branches(
+    items: &[Arc<ListItem>],
+    shortcuts: &HashMap<String, RowShortcutData>,
+) -> HashSet<String> {
+    let mut shown = HashSet::new();
+    for item in items {
+        let branch_name = item.branch_name();
+        let is_published = shortcuts.contains_key(&worktree_output_token(item, branch_name))
+            || item
+                .branch()
+                .is_some_and(|branch| shortcuts.contains_key(branch));
+        if is_published {
+            add_shown_branch(&mut shown, item);
         }
     }
     shown
@@ -287,7 +320,7 @@ impl PickerProgressHandler for PickerHandler {
         // call its rows could reach skim's channel first and a PR row would take the
         // reserved header slot (`header_lines(1)`), displacing the real header. The
         // grid is width-stable, so the brief extra wait costs nothing.
-        let shown_branches = collect_shown_branches(&items);
+        let mut shown_branches = collect_shown_branches(&items);
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
         let mut pr_slots: Vec<PrStatusSlot> = Vec::with_capacity(items.len());
@@ -482,25 +515,38 @@ impl PickerProgressHandler for PickerHandler {
         let _ = self
             .local_content_slots
             .set(local_content_slots.into_boxed_slice());
-        // The session-shared list and shortcut table take only the live
-        // spawn's rows: a superseded skeleton landing late (its collect
-        // thread scheduled after a rapid second `alt-r`'s spawn already
-        // published) would otherwise overwrite them with pre-refresh rows,
-        // and a later `alt-x` resync or `alt-y`/`alt-o` would act on those.
-        // Checked inside each lock so the check pairs with the live spawn's
-        // own overwrite — its generation bump precedes its publish.
-        {
+        // Publish rows and their shortcut metadata as one snapshot. The lock
+        // order matches successful alt-x reconciliation: shared rows first,
+        // shortcut table second, mutation log third. A collect pass can start
+        // before a removal completes, then finish after reconciliation has
+        // removed or morphed its stale worktree row. Replay those successful
+        // mutations into the incoming snapshot so the refresh can still
+        // publish without resurrecting the old row.
+        //
+        // Always send the committed shared snapshot to skim. A stale handler's
+        // own channel can still be the active reload channel, so dropping the
+        // send would leave reload waiting; sending its locally collected
+        // `skim_items` would reintroduce the stale row in skim even though the
+        // shared state correctly rejected it.
+        let published_items = {
             let mut list = self.shared_items.lock().unwrap();
-            if self.spawn_gen.is_current() {
-                *list = skim_items.clone();
-            }
-        }
-        {
             let mut table = self.shortcut_table.lock().unwrap();
+            let mutations = self.row_mutations.lock().unwrap();
             if self.spawn_gen.is_current() {
+                replay_row_mutations(
+                    &mut skim_items,
+                    &mut shortcut_map,
+                    &self.layout_slot,
+                    mutations
+                        .get(self.row_mutation_cursor..)
+                        .unwrap_or_default(),
+                );
+                shown_branches = collect_published_branches(&list_items, &shortcut_map);
+                *list = skim_items;
                 *table = shortcut_map;
             }
-        }
+            list.clone()
+        };
 
         // skim 4.x's item channel carries Vec batches; the skeleton is a single
         // batch. This append wakes skim's reader (`items_available`) and drives
@@ -512,7 +558,7 @@ impl PickerProgressHandler for PickerHandler {
         // releasing it here lets skim's reader stop polling the channel while
         // collect's remaining tasks grind on.
         if let Some(tx) = self.tx.lock().unwrap().take() {
-            let _ = tx.send(skim_items);
+            let _ = tx.send(published_items);
         }
 
         // Skeleton is in skim's channel; now wake the `--prs` thread (see the
@@ -696,6 +742,8 @@ mod tests {
             last_render_poke: Mutex::new(Instant::now()),
             shared_items: Arc::new(Mutex::new(Vec::new())),
             shortcut_table: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            row_mutations: Arc::new(Mutex::new(Vec::new())),
+            row_mutation_cursor: 0,
             rendered_slots: OnceLock::new(),
             pr_status_slots: OnceLock::new(),
             comments_fetched: OnceLock::new(),
@@ -1771,10 +1819,14 @@ mod tests {
         );
         handler.orchestrator.wait_for_idle();
 
-        // The rows still stream to this spawn's (dead) skim channel...
+        // The superseded spawn's (dead) skim channel receives the currently
+        // committed shared snapshot, never its own stale rows.
         let received = rx.recv().expect("skeleton batch");
-        assert_eq!(received.len(), 2, "header + row still sent");
-        // ...but nothing session-shared takes them.
+        assert!(
+            received.is_empty(),
+            "superseded skeleton must not stream stale rows"
+        );
+        // Nothing session-shared takes them either.
         assert!(
             handler.shared_items.lock().unwrap().is_empty(),
             "superseded skeleton must not overwrite the shared row list"
@@ -1787,6 +1839,122 @@ mod tests {
             handler.preview_cache.is_empty(),
             "superseded skeleton must not seed hints into the refreshed cache"
         );
+    }
+
+    /// A refresh that started before a successful alt-x removal can finish
+    /// after the removal's final reconciliation. Its spawn token is still
+    /// current, so it must replay the drop into its collected rows and publish
+    /// that reconciled snapshot instead of leaving the previous one on screen.
+    #[test]
+    fn current_skeleton_replays_drop_before_publication() {
+        let (handler, _test, rx) = make_handler();
+        let current_row: Arc<dyn SkimItem> = Arc::new("current".to_string());
+        handler
+            .shared_items
+            .lock()
+            .unwrap()
+            .push(Arc::clone(&current_row));
+        handler.shortcut_table.lock().unwrap().insert(
+            "current".to_string(),
+            RowShortcutData {
+                branch: Some("current".to_string()),
+                url: RowUrl::Static(None),
+                morph: None,
+            },
+        );
+
+        // This handler captured cursor 0 in `handler_with`; model a successful
+        // removal of the row this collect pass had already discovered.
+        handler
+            .row_mutations
+            .lock()
+            .unwrap()
+            .push(super::super::RowMutation::Drop {
+                worktree_token: "stale".to_string(),
+            });
+
+        handler.on_skeleton(
+            vec![ListItem::new_branch("abc".into(), "stale".into())],
+            vec!["stale".into()],
+            header("hdr"),
+            grid(),
+        );
+
+        let received = rx.recv().expect("fresh skeleton batch");
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].output().as_ref(), "");
+
+        let shared = handler.shared_items.lock().unwrap();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].output().as_ref(), "");
+        drop(shared);
+
+        let table = handler.shortcut_table.lock().unwrap();
+        assert!(table.is_empty());
+        assert!(!table.contains_key("current"));
+        assert!(!table.contains_key("stale"));
+        drop(table);
+
+        let skeleton = handler
+            .grid_slot
+            .wait(Duration::ZERO)
+            .expect("PR skeleton handoff");
+        assert!(
+            !skeleton.shown_branches.contains("stale"),
+            "a replayed drop must let the matching open PR remain visible"
+        );
+    }
+
+    /// The kept-branch sibling of the drop replay: a pre-removal worktree row
+    /// collected by the current refresh must publish as the surviving branch
+    /// row, with its shortcut entry re-keyed to the branch token.
+    #[test]
+    fn current_skeleton_replays_morph_before_publication() {
+        let (handler, _test, rx) = make_handler();
+        let path = std::path::PathBuf::from("/tmp/wt-morph-replay");
+        let item = as_worktree(
+            ListItem::new_branch("abc".into(), "feature".into()),
+            &path,
+            WorktreeData::default(),
+        );
+        let worktree_token = worktree_output_token(&item, "feature");
+        let layout = crate::commands::list::layout::calculate_layout_with_width(
+            std::slice::from_ref(&item),
+            &crate::commands::list::columns::all_tasks(),
+            crate::commands::list::layout::Destination {
+                width: 80,
+                link_style: crate::commands::list::layout::LinkStyle::Expanded,
+            },
+            std::path::Path::new("/tmp"),
+            crate::commands::list::layout::ColumnSelection {
+                custom: &[],
+                selected: None,
+            },
+            crate::commands::list::layout::RepoFacts {
+                has_remote: false,
+                url_template: None,
+                max_pr_number: None,
+            },
+        );
+        handler.provide_layout(&layout);
+        handler
+            .row_mutations
+            .lock()
+            .unwrap()
+            .push(super::super::RowMutation::Morph {
+                worktree_token: worktree_token.clone(),
+                branch: "feature".to_string(),
+                default_branch: Some("main".to_string()),
+            });
+
+        handler.on_skeleton(vec![item], vec!["+ feature".into()], header("hdr"), grid());
+
+        let received = rx.recv().expect("reconciled skeleton batch");
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[1].output().as_ref(), "feature");
+        let table = handler.shortcut_table.lock().unwrap();
+        assert!(!table.contains_key(&worktree_token));
+        assert!(table.contains_key("feature"));
     }
 
     /// A superseded handler's `maybe_spawn_comments` is fully inert. Its

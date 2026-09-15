@@ -28,7 +28,7 @@ The most common creation hook is `post-start` — it runs background tasks (dev 
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
 | `post-merge` | Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree |
-| `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state. Runs in the worktree being removed |
+| `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state, or locking the worktree to preserve it. Runs in the worktree being removed |
 | `post-remove` | Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree |
 
 During `wt merge`, the blocking hooks run in this order: pre-commit → pre-merge → pre-remove. The `post-*` hooks all start together once the merge finishes, each in the worktree it is anchored on — post-merge, post-switch and post-remove in the destination, post-commit in the worktree the commit was made in. A merge that removes that worktree reports `post-commit` as skipped instead of running it — the worktree is gone by the time the hook would start. Use `pre-remove` for work that must finish there, or `--no-remove` to keep the worktree. See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.

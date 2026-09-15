@@ -7,11 +7,12 @@
 //! 1. Capture the feature worktree's path + commit BEFORE removal — afterward
 //!    the worktree directory is gone, but post-merge hooks still need to
 //!    reference it via Active template overrides.
-//! 2. Decide whether to remove the feature worktree. Five conditions block
-//!    removal: `--no-remove`, on-target, primary-worktree, locked, and
-//!    default-branch. Otherwise `ensure_clean` gates removal and
-//!    `handle_remove_output` performs it (sharing the same code path as
-//!    `wt remove`).
+//! 2. Apply the removal disposition frozen before the target ref update.
+//!    `--no-remove`, on-target, primary-worktree, and a pre-existing lock retain
+//!    the worktree. Otherwise the approved `pre-remove` hook runs exactly once;
+//!    a lock it creates also retains the worktree. The default-branch and final
+//!    cleanliness gates then run before `handle_remove_output_after_pre_remove`
+//!    performs removal through the same path as `wt remove`.
 //! 3. Register the post-merge hook with the announcer. The caller owns
 //!    `flush()` because it's a command-level lifecycle operation, not part of
 //!    the finish sequence.
@@ -27,6 +28,7 @@ use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, Repository};
 use worktrunk::styling::{eprintln, info_message};
+use worktrunk::utils::escape_text_for_terminal;
 
 use super::types::{RemovalPlan, SharedBranchCheckout};
 use crate::commands::command_executor::CommandContext;
@@ -39,8 +41,8 @@ use crate::commands::repository_ext::{
 };
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
-    BackgroundFallbackMode, RemovalExecution, handle_remove_output, post_hook_display_path,
-    pre_hook_display_path,
+    BackgroundFallbackMode, RemovalExecution, execute_pre_remove_hook,
+    handle_remove_output_after_pre_remove, post_hook_display_path, pre_hook_display_path,
 };
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
@@ -50,11 +52,59 @@ pub struct FinishAfterMergeArgs<'a> {
     pub target_branch: &'a str,
     pub target_worktree_path: Option<&'a Path>,
     pub remove: bool,
+    pub removal_disposition: MergeRemovalDisposition,
     pub verify: bool,
     pub yes: bool,
     /// The frozen, approved hook plan. `post-merge` and the removal's
     /// `pre-remove` / `post-remove` / `post-switch` execute only from this.
     pub plan: &'a ApprovedHookPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MergeRemovalDisposition {
+    Disabled,
+    OnTarget,
+    PrimaryWorktree,
+    Locked(Option<String>),
+    Remove,
+}
+
+/// Resolve whether merge cleanup would remove the source worktree right now.
+pub(crate) fn merge_removal_disposition(
+    repo: &Repository,
+    current_branch: &str,
+    target_branch: &str,
+    remove: bool,
+) -> anyhow::Result<MergeRemovalDisposition> {
+    if !remove {
+        Ok(MergeRemovalDisposition::Disabled)
+    } else if current_branch == target_branch {
+        Ok(MergeRemovalDisposition::OnTarget)
+    } else if is_primary_worktree(repo)? {
+        Ok(MergeRemovalDisposition::PrimaryWorktree)
+    } else if let Some(reason) = repo.current_worktree().lock_reason()? {
+        Ok(MergeRemovalDisposition::Locked(reason))
+    } else {
+        Ok(MergeRemovalDisposition::Remove)
+    }
+}
+
+/// Fail before updating the target ref if cleanup would remove a dirty source.
+pub(crate) fn ensure_merge_removal_is_clean(
+    repo: &Repository,
+    current_branch: &str,
+    removal_disposition: &MergeRemovalDisposition,
+) -> anyhow::Result<()> {
+    if *removal_disposition == MergeRemovalDisposition::Remove {
+        check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
+        repo.current_worktree().ensure_clean(
+            "remove worktree after merge",
+            Some(current_branch),
+            false,
+        )?;
+    }
+
+    Ok(())
 }
 
 /// Run the post-merge finish sequence: capture feature identity, optionally
@@ -77,12 +127,11 @@ pub fn finish_after_merge(
         target_branch,
         target_worktree_path,
         remove,
+        removal_disposition,
         verify,
         yes,
         plan,
     } = args;
-
-    let on_target = current_branch == target_branch;
 
     // Destination: prefer the target branch's worktree; fall back to home path.
     let destination_path = match target_worktree_path {
@@ -113,95 +162,120 @@ pub fn finish_after_merge(
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
     // check_not_default_branch (Phase 3) are the same helpers both paths use.
-    let removed = if !remove {
-        eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
-        false
-    } else if on_target {
-        eprintln!(
-            "{}",
-            info_message("Worktree preserved (already on target branch)")
-        );
-        false
-    } else if is_primary_worktree(repo)? {
-        eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
-        false
-    } else if let Some(reason) = repo.current_worktree().lock_reason()? {
-        // `git worktree lock` is "don't remove this", not "don't merge".
-        // Merge already succeeded; skip cleanup the same way `--no-remove`
-        // and primary-worktree do. `stage_worktree_removal` also refuses a
-        // lock, so a path that skips this check still cannot trash the dir.
-        let msg = match reason {
-            Some(r) => format!("Worktree preserved (locked: {r})"),
-            None => "Worktree preserved (locked)".to_string(),
-        };
-        eprintln!("{}", info_message(msg));
+    let preserve_message = match removal_disposition {
+        MergeRemovalDisposition::Disabled => Some("Worktree preserved (--no-remove)".into()),
+        MergeRemovalDisposition::OnTarget => {
+            Some("Worktree preserved (already on target branch)".into())
+        }
+        MergeRemovalDisposition::PrimaryWorktree => {
+            Some("Worktree preserved (primary worktree)".into())
+        }
+        // The pre-update decision is frozen: unlocking after the target ref
+        // moves must not upgrade a retained worktree into removal.
+        MergeRemovalDisposition::Locked(Some(reason)) => Some(format!(
+            "Worktree preserved (locked: {})",
+            escape_text_for_terminal(&reason)
+        )),
+        MergeRemovalDisposition::Locked(None) => Some("Worktree preserved (locked)".into()),
+        MergeRemovalDisposition::Remove => None,
+    };
+
+    let removed = if let Some(message) = preserve_message {
+        eprintln!("{}", info_message(message));
         false
     } else {
-        // Phase 3: reject removing default branch (merge always uses SafeDelete).
-        check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
+        'removal: {
+            let current_wt = repo.current_worktree();
+            let worktree_root = current_wt.root()?;
 
-        let current_wt = repo.current_worktree();
-        current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
-
-        let worktree_root = current_wt.root()?;
-
-        // Merge reaches the same ref deletion `wt remove` does, so it asks the
-        // same question: is this branch checked out anywhere else? Merging is
-        // the likeliest way to meet a `--force` duplicate — the branch is
-        // integrated, so nothing else would stop the delete, and deleting it
-        // strands the duplicate at a null OID.
-        let branch_checked_out_at =
-            live_sibling_checkout(repo.list_worktrees()?, current_branch, &worktree_root).map(
-                |sibling| SharedBranchCheckout::new(&sibling.path, &BranchDeletionMode::SafeDelete),
-            );
-
-        // A retained branch has no deletion to justify, so the integration
-        // check is skipped rather than computed and discarded — same shape as
-        // `prepare_worktree_removal`'s Phase 5.
-        let (deletion_mode, display_target, integration_reason) = if branch_checked_out_at.is_some()
-        {
-            (BranchDeletionMode::Keep, None, None)
-        } else {
-            let (integration_reason, effective_target) = compute_integration_reason(
-                repo,
-                &repo.capture_refs()?,
+            execute_pre_remove_hook(
+                &destination_path,
+                &worktree_root,
+                true,
                 Some(current_branch),
-                Some(target_branch),
-                BranchDeletionMode::SafeDelete,
-            );
-            (
-                BranchDeletionMode::SafeDelete,
-                effective_target.or_else(|| Some(target_branch.to_string())),
-                integration_reason,
-            )
-        };
+                plan,
+            )?;
 
-        // No config snapshot: `pre-remove` / `post-remove` were selected and
-        // frozen into `plan` at the gate (anchored at `feature_path`), so the
-        // executor needs no config — it runs only the frozen `plan`.
-        let remove_result = RemovalPlan::Worktree {
-            main_path: destination_path.clone(),
-            worktree_path: worktree_root,
-            changed_directory: true,
-            branch_name: Some(current_branch.to_string()),
-            deletion_mode,
-            target_branch: display_target,
-            integration_reason,
-            force_worktree: false,
-            removed_commit: feature_commit.clone(),
-            branch_checked_out_at,
-        };
-        // The fate is dropped: merge's own reporting (`removed` in the JSON
-        // blob, the removal messages) doesn't itemize the branch, and the
-        // handler has already narrated any retention.
-        handle_remove_output(
-            &remove_result,
-            RemovalExecution::Background(BackgroundFallbackMode::Detached),
-            plan,
-            false,
-            announcer,
-        )?;
-        true
+            // A pre-remove hook may lock the worktree to keep it. Honor that
+            // request before emitting a cd directive or starting removal.
+            if let Some(reason) = current_wt.lock_reason()? {
+                let message = match reason {
+                    Some(reason) => format!(
+                        "Worktree preserved (locked: {})",
+                        escape_text_for_terminal(&reason)
+                    ),
+                    None => "Worktree preserved (locked)".into(),
+                };
+                eprintln!("{}", info_message(message));
+                break 'removal false;
+            }
+
+            // Phase 3: reject removing default branch (merge always uses SafeDelete).
+            check_not_default_branch(repo, current_branch, &BranchDeletionMode::SafeDelete)?;
+
+            current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
+
+            // Merge reaches the same ref deletion `wt remove` does, so it asks the
+            // same question: is this branch checked out anywhere else? Merging is
+            // the likeliest way to meet a `--force` duplicate — the branch is
+            // integrated, so nothing else would stop the delete, and deleting it
+            // strands the duplicate at a null OID.
+            let branch_checked_out_at =
+                live_sibling_checkout(repo.list_worktrees()?, current_branch, &worktree_root).map(
+                    |sibling| {
+                        SharedBranchCheckout::new(&sibling.path, &BranchDeletionMode::SafeDelete)
+                    },
+                );
+
+            // A retained branch has no deletion to justify, so the integration
+            // check is skipped rather than computed and discarded — same shape as
+            // `prepare_worktree_removal`'s Phase 5.
+            let (deletion_mode, display_target, integration_reason) =
+                if branch_checked_out_at.is_some() {
+                    (BranchDeletionMode::Keep, None, None)
+                } else {
+                    let (integration_reason, effective_target) = compute_integration_reason(
+                        repo,
+                        &repo.capture_refs()?,
+                        Some(current_branch),
+                        Some(target_branch),
+                        BranchDeletionMode::SafeDelete,
+                    );
+                    (
+                        BranchDeletionMode::SafeDelete,
+                        effective_target.or_else(|| Some(target_branch.to_string())),
+                        integration_reason,
+                    )
+                };
+
+            // No config snapshot: `pre-remove` / `post-remove` were selected and
+            // frozen into `plan` at the gate (anchored at `feature_path`), so the
+            // executor needs no config — it runs only the frozen `plan`.
+            let remove_result = RemovalPlan::Worktree {
+                main_path: destination_path.clone(),
+                worktree_path: worktree_root,
+                changed_directory: true,
+                branch_name: Some(current_branch.to_string()),
+                deletion_mode,
+                target_branch: display_target,
+                integration_reason,
+                force_worktree: false,
+                removed_commit: feature_commit.clone(),
+                branch_checked_out_at,
+            };
+            // Merge's `removed` flag means the removal path started; a
+            // hook-created lock is the one successful preservation outcome.
+            // Branch fate remains narrated by the shared handler.
+            let removed = handle_remove_output_after_pre_remove(
+                &remove_result,
+                RemovalExecution::Background(BackgroundFallbackMode::Detached),
+                plan,
+                false,
+                announcer,
+            )?
+            .removal_started();
+            break 'removal removed;
+        }
     };
 
     if verify {

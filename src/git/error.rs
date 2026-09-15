@@ -33,6 +33,7 @@ use crate::styling::{
     error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
     suggest_command,
 };
+use crate::utils::escape_text_for_terminal;
 
 /// Platform-specific reference type (PR vs MR).
 ///
@@ -850,7 +851,9 @@ impl GitError {
 
             GitError::WorktreeLocked { branch, reason, .. } => {
                 let reason_text = match reason {
-                    Some(r) if !r.is_empty() => format!(" ({r})"),
+                    Some(r) if !r.is_empty() => {
+                        format!(" ({})", escape_text_for_terminal(r))
+                    }
                     _ => String::new(),
                 };
                 cformat!("Cannot remove <bold>{branch}</>, worktree is locked{reason_text}")
@@ -2515,6 +2518,26 @@ mod tests {
         assert!(
             !display.contains("locked ("),
             "should not show parentheses without reason"
+        );
+
+        let err = GitError::WorktreeLocked {
+            branch: "feature".into(),
+            path: PathBuf::from("/tmp/repo.feature"),
+            reason: Some(
+                "trusted\nforged\x1b]8;;https://example.com\x07link\x1b]8;;\x07\u{202e}tail".into(),
+            ),
+        };
+        let display = err.render();
+        assert!(
+            display.contains(
+                r"trusted\nforged\u{1b}]8;;https://example.com\u{7}link\u{1b}]8;;\u{7}\u{202e}tail"
+            ),
+            "lock reason controls must be escaped: {display:?}"
+        );
+        assert!(
+            !display.contains("trusted\nforged")
+                && !display.contains("\x1b]8;;https://example.com"),
+            "lock reason must not inject lines or terminal hyperlinks: {display:?}"
         );
     }
 
