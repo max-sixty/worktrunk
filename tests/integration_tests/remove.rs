@@ -777,6 +777,66 @@ fn test_remove_by_name_dirty_target(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature-dirty"], None));
 }
 
+/// A user's status display preference must not weaken the destructive clean
+/// gate. Both execution paths ultimately rename the worktree into trash, so a
+/// false clean result would make the untracked file unrecoverable.
+#[rstest]
+#[case::foreground(&["--foreground"])]
+#[case::background(&[])]
+fn test_remove_refuses_untracked_files_hidden_by_user_config(
+    mut repo: TestRepo,
+    #[case] execution_args: &[&str],
+) {
+    let branch = "feature-hidden-untracked";
+    let worktree_path = repo.add_worktree(branch);
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(worktree_path.join("precious.txt"), "uncommitted work").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides the file"
+    );
+    let forced = repo
+        .git_command()
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .current_dir(&worktree_path)
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&forced.stdout).contains("?? precious.txt"),
+        "the explicit safety query must reveal the untracked file"
+    );
+
+    let output = repo
+        .wt_command()
+        .arg("remove")
+        .args(execution_args)
+        .arg(branch)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "remove must refuse a worktree with hidden untracked files; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("has uncommitted changes") && stderr.contains("precious.txt"),
+        "the dirty-worktree gate must explain the refusal; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.join("precious.txt").exists(),
+        "the hidden untracked file must remain recoverable"
+    );
+    assert_branch_exists(&repo, branch, true, &stderr);
+}
+
 /// An inherited `GIT_DIR` pinned to the invoking worktree makes
 /// `ensure_clean` compare the target's working tree against the invoking
 /// index. When those agree on a path, a genuinely dirty target reads as

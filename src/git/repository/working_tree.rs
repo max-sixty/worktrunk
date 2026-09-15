@@ -529,8 +529,11 @@ impl<'a> WorkingTree<'a> {
     /// 2. On large repos (70k+ files), this adds noticeable latency to every clean check
     /// 3. Users who use skip-worktree are power users who understand the implications
     /// 4. A warning wouldn't prevent data loss anyway — it's informational only
+    ///
+    /// Untracked files are always included, regardless of the user's
+    /// `status.showUntrackedFiles` display preference.
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
-        let stdout = self.run_command(&["status", "--porcelain"])?;
+        let stdout = self.run_command(&["status", "--porcelain", "--untracked-files=normal"])?;
         Ok(!stdout.trim().is_empty())
     }
 
@@ -541,7 +544,7 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&["status", "--porcelain"])?;
+        let stdout = self.run_command(&["status", "--porcelain", "--untracked-files=normal"])?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -1374,6 +1377,31 @@ mod tests {
         assert!(
             status.contains("?? hidden-by-config.txt"),
             "the shared status snapshot must override status.showUntrackedFiles=no: {status:?}"
+        );
+    }
+
+    #[test]
+    fn clean_checks_report_untracked_files_hidden_by_user_config() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["config", "status.showUntrackedFiles", "no"]);
+        std::fs::write(test.root_path().join("hidden-by-config.txt"), "loose\n").unwrap();
+
+        assert!(
+            test.git_output(&["status", "--porcelain"]).is_empty(),
+            "the fixture must demonstrate that the user setting hides the file"
+        );
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.current_worktree();
+
+        assert!(
+            wt.is_dirty().unwrap(),
+            "clean checks must not inherit status.showUntrackedFiles"
+        );
+        assert_eq!(
+            wt.dirty_files().unwrap(),
+            vec!["?? hidden-by-config.txt"],
+            "the destructive guard must name the hidden untracked file"
         );
     }
 

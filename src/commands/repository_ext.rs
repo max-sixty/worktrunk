@@ -100,9 +100,10 @@ pub trait RepositoryCliExt {
 
 impl RepositoryCliExt for Repository {
     fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
-        // Use -z for NUL-separated output to handle filenames with spaces/newlines
+        // `-uall` overrides the user's display preference and expands untracked
+        // directories so the warning names every path `git add -A` will stage.
         let status = self
-            .run_command(&["status", "--porcelain", "-z"])
+            .run_command(&["status", "--porcelain", "-z", "-uall"])
             .context("Failed to get status")?;
         warn_about_untracked_files(&status)
     }
