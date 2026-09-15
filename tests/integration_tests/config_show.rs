@@ -7164,7 +7164,7 @@ fn test_config_show_reports_failed_migration_diff(repo: TestRepo) {
     let output = repo
         .wt_command()
         .args(["config", "show"])
-        // An unparseable `diff.*` value fails git after option parsing, which
+        // An unparsable `diff.*` value fails git after option parsing, which
         // `--no-ext-diff` cannot prevent.
         .env("GIT_CONFIG_COUNT", "3")
         .env("GIT_CONFIG_KEY_2", "diff.algorithm")
