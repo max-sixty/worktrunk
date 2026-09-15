@@ -4694,6 +4694,31 @@ no-ff = true
     }
 
     #[test]
+    fn test_migrate_leaves_project_entries_that_are_not_tables_alone() {
+        // A project entry can be hand-written as something other than a table.
+        // The scope walk has no scope to offer a rule there, so it skips the
+        // entry and leaves the text for serde's own type error and the
+        // unknown-field check — it must not panic or rewrite.
+        for content in [
+            // a scalar entry
+            "[projects]\n\"a/b\" = \"scalar\"\n[merge]\nno-ff = true\n",
+            // an array-of-tables entry
+            "[[projects.\"a/b\"]]\nno-ff = true\n[merge]\nno-ff = true\n",
+        ] {
+            let result = migrate_content(content);
+            assert!(
+                result.contains("\"a/b\"") || result.contains("projects.\"a/b\""),
+                "the entry should survive: {result}"
+            );
+            // The top-level rule still fires, so the walk itself ran.
+            assert!(
+                result.contains("ff = false"),
+                "top-level scope should still migrate: {result}"
+            );
+        }
+    }
+
+    #[test]
     fn test_migrate_negated_bool_non_boolean_value_preserved() {
         // Non-boolean `no-ff` value should be left alone
         let content = "[merge]\nno-ff = \"not-a-bool\"\n";
