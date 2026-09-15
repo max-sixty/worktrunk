@@ -207,22 +207,23 @@ fn template_bound_names(template: &str) -> HashSet<&str> {
     let mut cursor = 0;
     while let Some((tag_start, kind)) = find_next_template_tag(template, cursor) {
         let body_start = tag_start + 2;
-        // A comment runs to its first `#}`; MiniJinja doesn't tokenize strings
-        // inside one, so it takes the plain scan the rewriter uses.
-        if kind == TemplateTagKind::Comment {
-            let Some(rel) = template[body_start..].find("#}") else {
-                break;
-            };
-            cursor = body_start + rel + 2;
-            continue;
-        }
         let close_delim = match kind {
             TemplateTagKind::Variable => "}}",
-            _ => "%}",
+            TemplateTagKind::Block => "%}",
+            TemplateTagKind::Comment => "#}",
         };
-        let Some(tag_end) = template_tag_end(template, body_start, close_delim) else {
-            break;
+        // A comment runs to its first `#}` — MiniJinja doesn't tokenize
+        // strings inside one — so it takes the plain scan the rewriter uses.
+        let tag_end = match kind {
+            TemplateTagKind::Comment => template[body_start..]
+                .find(close_delim)
+                .map(|rel| body_start + rel),
+            _ => template_tag_end(template, body_start, close_delim),
         };
+        // A tag this scanner can't terminate is one it must not guess at: the
+        // rewrite bails on the same tag, so reporting no further bindings
+        // changes nothing.
+        let Some(tag_end) = tag_end else { break };
         if kind == TemplateTagKind::Block {
             bound.extend(template_block_bindings(&template[body_start..tag_end]));
         }
@@ -232,6 +233,12 @@ fn template_bound_names(template: &str) -> HashSet<&str> {
 }
 
 /// The names one block tag binds in the surrounding scope.
+///
+/// `set`, `for`, and `with` are the binding statements this MiniJinja build
+/// has: `Cargo.toml` takes it with `default-features = false`, so `macro` and
+/// `call` are not statements at all and a template using one fails to parse
+/// before reaching here. Adding the `macros` feature would mean adding their
+/// parameter lists to this match.
 ///
 /// Only the binding keywords are inspected — `{% if repo_root %}` reads a name
 /// rather than binding it. Over-reporting is the safe direction here: a name
@@ -250,17 +257,6 @@ fn template_block_bindings(body: &str) -> Vec<&str> {
         "set" | "with" => binding_targets(rest),
         // `{% for a, b in expr %}` — the bindings sit before the `in`.
         "for" => binding_targets(rest.split_once(" in ").map_or(rest, |(lhs, _)| lhs)),
-        // `{% macro name(a, b) %}`, `{% call(a) other() %}` — the macro's own
-        // name and its parameters.
-        "macro" | "call" => {
-            let (before_params, params) = match rest.split_once('(') {
-                Some((before, after)) => (before, after.split(')').next().unwrap_or("")),
-                None => (rest, ""),
-            };
-            let mut names = binding_targets(before_params);
-            names.extend(binding_targets(params));
-            names
-        }
         _ => Vec::new(),
     }
 }
@@ -2614,7 +2610,6 @@ timeout = 30
             r#"{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}"#,
             r#"{{ repo_root }}{% for repo_root in items %}{{ repo_root }}{% endfor %}"#,
             r#"{{ repo_root }}{% with repo_root = "local" %}{{ repo_root }}{% endwith %}"#,
-            r#"{{ repo_root }}{% macro m(repo_root) %}{{ repo_root }}{% endmacro %}"#,
         ] {
             let result = normalize_template_vars(template);
             assert!(
@@ -2627,6 +2622,18 @@ timeout = 30
                 "a template left unrewritten must not warn: {template}"
             );
         }
+    }
+
+    /// A tag the scanner can't terminate leaves the whole template
+    /// unmigrated rather than guessing where it ends. `{% raw %}` content is
+    /// literal to MiniJinja, so a template can parse while holding something
+    /// this scanner reads as an unterminated tag.
+    #[test]
+    fn test_normalize_bails_on_a_tag_it_cannot_terminate() {
+        let template = r#"{{ repo_root }}{% raw %}{{ " {% endraw %}"#;
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "should not rewrite");
+        assert_eq!(result, template);
     }
 
     /// Binding detection only looks at the binding keywords — a deprecated
