@@ -50,7 +50,10 @@ impl UserConfig {
     ///   even when the file holds forward-compat keys inside it — a `[list]`
     ///   whose only contents are unknown, or the same one level down under
     ///   `[projects."<id>"]`. Dropping the section on that basis alone would
-    ///   strip exactly the data this merge exists to keep.
+    ///   strip exactly the data this merge exists to keep. A section kept that
+    ///   way is kept whole rather than pruned to what `preserve` records, so a
+    ///   schema-known key inside it survives too — reachable only from a caller
+    ///   that clears a value back to `None`, which no mutator does today.
     /// - Both standard tables: recurse (preserves existing formatting and comments)
     /// - Existing inline table, desired standard table: compare contents, preserve
     ///   inline format when semantically equal
