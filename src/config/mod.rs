@@ -79,12 +79,7 @@ impl WorktrunkConfig for UserConfig {
     }
 
     fn valid_scoped_keys() -> Option<(&'static str, &'static [String])> {
-        use std::sync::OnceLock;
-        static SCOPED_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-        Some((
-            "projects",
-            SCOPED_KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>),
-        ))
+        Some(("projects", user_project_override_keys()))
     }
 }
 
@@ -164,17 +159,26 @@ pub(crate) fn schema_property_names<T: schemars::JsonSchema>() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The top-level fields of a `[projects."<id>"]` table (the
+/// [`UserProjectOverrides`] schema), including the serde aliases
+/// [`schema_top_level_keys`] adds.
+///
+/// Two callers share it: [`is_user_project_override_key`] for the "scope it to
+/// this repo" note, and `UserConfig::valid_scoped_keys` for the round-trip
+/// skeleton in `unknown_tree`.
+fn user_project_override_keys() -> &'static [String] {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<Vec<String>> = OnceLock::new();
+    KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>)
+}
+
 /// Whether `key` is a top-level field of a `[projects."<id>"]` table (the
 /// [`UserProjectOverrides`] schema). Used to gate the "scope it to this repo"
 /// note: a misplaced user-config key only earns that advice when it can
 /// actually be placed under `[projects."<id>"]`. Root-only user settings such
 /// as `skip-shell-integration-prompt` are absent here and get no note.
 pub fn is_user_project_override_key(key: &str) -> bool {
-    use std::sync::OnceLock;
-    static KEYS: OnceLock<Vec<String>> = OnceLock::new();
-    KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>)
-        .iter()
-        .any(|k| k == key)
+    user_project_override_keys().iter().any(|k| k == key)
 }
 
 // Re-export public types

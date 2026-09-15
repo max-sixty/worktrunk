@@ -3030,6 +3030,44 @@ worktree-path = "drop-path"
 }
 
 #[test]
+fn test_save_to_existing_file_keeps_section_holding_only_unknown_keys() {
+    // A section equal to its default serializes away, so it is absent from the
+    // desired document even when the file holds forward-compat keys inside it.
+    // The stale-key sweep must not take the section — and those keys with it —
+    // on that basis. Both scopes: top-level and `[projects."<id>"]`.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[list]
+future-knob = 1
+
+[projects."example.com/org/repo".list]
+future-knob = 2
+"#,
+    )
+    .unwrap();
+
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "example.com/org/repo".to_string(),
+        UserProjectOverrides::default(),
+    );
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-knob = 1"),
+        "top-level unknown key stripped: {saved}"
+    );
+    assert!(
+        saved.contains("future-knob = 2"),
+        "per-project unknown key stripped: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_updates_commit_generation_command() {
     // The file already has a [commit.generation] table — the diff-based merge
     // updates the changed command in place while preserving unchanged keys.

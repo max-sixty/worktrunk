@@ -44,7 +44,13 @@ impl UserConfig {
     /// Recursively merge desired state into existing document.
     ///
     /// - Keys in desired but not existing: inserted
-    /// - Keys in existing but not desired: removed (unless in `preserve`)
+    /// - Keys in existing but not desired: removed, unless `preserve` marks the
+    ///   key itself unknown *or* records unknowns below it. A section that
+    ///   equals its default serializes away, so it is absent from `desired`
+    ///   even when the file holds forward-compat keys inside it — a `[list]`
+    ///   whose only contents are unknown, or the same one level down under
+    ///   `[projects."<id>"]`. Dropping the section on that basis alone would
+    ///   strip exactly the data this merge exists to keep.
     /// - Both standard tables: recurse (preserves existing formatting and comments)
     /// - Existing inline table, desired standard table: compare contents, preserve
     ///   inline format when semantically equal
@@ -58,7 +64,11 @@ impl UserConfig {
         let stale_keys: Vec<_> = existing
             .iter()
             .map(|(k, _)| k.to_string())
-            .filter(|k| !desired.contains_key(k) && !preserve.keys.contains(k))
+            .filter(|k| {
+                !desired.contains_key(k)
+                    && !preserve.keys.contains(k)
+                    && !preserve.nested.contains_key(k)
+            })
             .collect();
         for key in &stale_keys {
             existing.remove(key);
