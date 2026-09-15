@@ -46,6 +46,19 @@ pub trait WorktrunkConfig:
     /// All valid top-level keys for this config type, derived from JsonSchema.
     fn valid_top_level_keys() -> &'static [String];
 
+    /// A top-level key whose entries are themselves schema-typed tables,
+    /// paired with the valid keys for one entry — `projects` in user config,
+    /// nothing in project config.
+    ///
+    /// A section inside such an entry serializes away when it equals its
+    /// default, exactly as a top-level section does, so the skeleton
+    /// `seed_schema_skeleton` builds has to reach one level further down for
+    /// it. Without that, `[projects."<id>".list]` — valid, and accepted on
+    /// load — reads back as an unknown field.
+    fn valid_scoped_keys() -> Option<(&'static str, &'static [String])> {
+        None
+    }
+
     /// Check if a key would be valid in this config type.
     fn is_valid_key(key: &str) -> bool {
         Self::valid_top_level_keys().iter().any(|k| k == key)
@@ -63,6 +76,10 @@ impl WorktrunkConfig for UserConfig {
         use std::sync::OnceLock;
         static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
         VALID_KEYS.get_or_init(user::valid_user_config_keys)
+    }
+
+    fn valid_scoped_keys() -> Option<(&'static str, &'static [String])> {
+        Some(("projects", user_project_override_keys()))
     }
 }
 
@@ -142,17 +159,26 @@ pub(crate) fn schema_property_names<T: schemars::JsonSchema>() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The top-level fields of a `[projects."<id>"]` table (the
+/// [`UserProjectOverrides`] schema), including the serde aliases
+/// [`schema_top_level_keys`] adds.
+///
+/// Two callers share it: [`is_user_project_override_key`] for the "scope it to
+/// this repo" note, and `UserConfig::valid_scoped_keys` for the round-trip
+/// skeleton in `unknown_tree`.
+fn user_project_override_keys() -> &'static [String] {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<Vec<String>> = OnceLock::new();
+    KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>)
+}
+
 /// Whether `key` is a top-level field of a `[projects."<id>"]` table (the
 /// [`UserProjectOverrides`] schema). Used to gate the "scope it to this repo"
 /// note: a misplaced user-config key only earns that advice when it can
 /// actually be placed under `[projects."<id>"]`. Root-only user settings such
 /// as `skip-shell-integration-prompt` are absent here and get no note.
 pub fn is_user_project_override_key(key: &str) -> bool {
-    use std::sync::OnceLock;
-    static KEYS: OnceLock<Vec<String>> = OnceLock::new();
-    KEYS.get_or_init(schema_top_level_keys::<UserProjectOverrides>)
-        .iter()
-        .any(|k| k == key)
+    user_project_override_keys().iter().any(|k| k == key)
 }
 
 // Re-export public types
