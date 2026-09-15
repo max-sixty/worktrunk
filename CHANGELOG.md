@@ -42,6 +42,8 @@
 
 - **`wt config show` reports Claude Code's plugin and Gemini CLI's extension from those tools' own listings**: it read `installed_plugins.json` and the `~/.gemini/extensions/` directory, so a store either tool relocated read as an absence and the section said "not installed" over an installed plugin. Both answers now come from `claude plugin list --json` and `gemini extensions list -o json`. `wt config plugins claude uninstall` follows: it runs the plugin removal and the marketplace removal every time, each tolerating only the absence Claude Code itself reports, so it no longer exits early with `Plugin not installed` on a file read. ([#4054](https://github.com/max-sixty/worktrunk/pull/4054))
 
+- **A deprecated config section the migration declines to rewrite now warns instead of vanishing**: `select = "not a table"`, or a `[select]` whose `[switch.picker]` destination is already set, is left in place so the value isn't dropped — but the unknown-field check skipped it too, so nothing read the setting and nothing said so. It now reports `unknown field select (will be ignored)`. Empty legacy sections stay silent. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121))
+
 ## 0.77.0
 
 ### Improved
