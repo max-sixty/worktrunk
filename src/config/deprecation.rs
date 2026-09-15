@@ -184,10 +184,98 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
         return Vec::new();
     };
     let used_vars = parsed.undeclared_variables(false);
+    let bound = template_bound_names(template);
     DEPRECATED_VARS
         .iter()
         .copied()
-        .filter(|(old, _)| used_vars.contains(*old))
+        .filter(|(old, _)| used_vars.contains(*old) && !bound.contains(old))
+        .collect()
+}
+
+/// Every name a `{% … %}` block binds anywhere in `template`.
+///
+/// `undeclared_variables` answers whether a name is read before it is bound,
+/// not which of its occurrences are the global one, so
+/// `{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}` reports
+/// `repo_root` even though the last use reads the local. The rewriter has no
+/// scope tracking and would rename both. A deprecated name that is bound
+/// anywhere is therefore dropped from the replacement set: the template is
+/// left alone and keeps warning, which the user can act on, rather than
+/// quietly rendering something else.
+fn template_bound_names(template: &str) -> HashSet<&str> {
+    let mut bound = HashSet::new();
+    let mut cursor = 0;
+    while let Some((tag_start, kind)) = find_next_template_tag(template, cursor) {
+        let body_start = tag_start + 2;
+        // A comment runs to its first `#}`; MiniJinja doesn't tokenize strings
+        // inside one, so it takes the plain scan the rewriter uses.
+        if kind == TemplateTagKind::Comment {
+            let Some(rel) = template[body_start..].find("#}") else {
+                break;
+            };
+            cursor = body_start + rel + 2;
+            continue;
+        }
+        let close_delim = match kind {
+            TemplateTagKind::Variable => "}}",
+            _ => "%}",
+        };
+        let Some(tag_end) = template_tag_end(template, body_start, close_delim) else {
+            break;
+        };
+        if kind == TemplateTagKind::Block {
+            bound.extend(template_block_bindings(&template[body_start..tag_end]));
+        }
+        cursor = tag_end + close_delim.len();
+    }
+    bound
+}
+
+/// The names one block tag binds in the surrounding scope.
+///
+/// Only the binding keywords are inspected — `{% if repo_root %}` reads a name
+/// rather than binding it. Over-reporting is the safe direction here: a name
+/// this returns is left unmigrated and keeps its warning, while one it misses
+/// would be renamed at a use that no longer refers to the global.
+fn template_block_bindings(body: &str) -> Vec<&str> {
+    let body = body.strip_prefix('-').unwrap_or(body);
+    let body = body.strip_suffix('-').unwrap_or(body).trim();
+    let split = body
+        .find(|c: char| !is_template_identifier_char(c))
+        .unwrap_or(body.len());
+    let (keyword, rest) = body.split_at(split);
+    match keyword {
+        // `{% set a, b = expr %}`, `{% set a %}…{% endset %}`,
+        // `{% with a = 1, b = 2 %}`
+        "set" | "with" => binding_targets(rest),
+        // `{% for a, b in expr %}` — the bindings sit before the `in`.
+        "for" => binding_targets(rest.split_once(" in ").map_or(rest, |(lhs, _)| lhs)),
+        // `{% macro name(a, b) %}`, `{% call(a) other() %}` — the macro's own
+        // name and its parameters.
+        "macro" | "call" => {
+            let (before_params, params) = match rest.split_once('(') {
+                Some((before, after)) => (before, after.split(')').next().unwrap_or("")),
+                None => (rest, ""),
+            };
+            let mut names = binding_targets(before_params);
+            names.extend(binding_targets(params));
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Split a comma-separated binding list into the identifiers it binds,
+/// dropping anything that isn't a bare identifier (an `= expr` right-hand
+/// side, an unpacking expression).
+fn binding_targets(list: &str) -> Vec<&str> {
+    list.split(',')
+        .filter_map(|part| {
+            let name = part.split('=').next().unwrap_or("").trim();
+            (name.starts_with(is_template_identifier_start)
+                && name.chars().all(is_template_identifier_char))
+            .then_some(name)
+        })
         .collect()
 }
 
@@ -213,7 +301,7 @@ fn rewrite_template_var_identifiers(
                 continue;
             }
         };
-        let tag_end = template[body_start..].find(close_delim)? + body_start;
+        let tag_end = template_tag_end(template, body_start, close_delim)?;
         let full_tag_end = tag_end + close_delim.len();
 
         if tag_kind == TemplateTagKind::Block
@@ -318,6 +406,29 @@ fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) 
     }
 
     (out, changed)
+}
+
+/// The offset of `close_delim` that ends this tag, skipping any occurrence
+/// inside a quoted string.
+///
+/// MiniJinja tokenizes strings before it looks for the tag end, so a plain
+/// `find` disagrees with the parser that decided which variables are in scope.
+/// On `{{ "}} " ~ repo_root }}` that disagreement cut the tag at the quoted
+/// delimiter, leaving the real reference as outside-tag text (no migration) and
+/// exposing literal text in a later string to the rewriter (a changed
+/// template).
+fn template_tag_end(template: &str, body_start: usize, close_delim: &str) -> Option<usize> {
+    let mut cursor = body_start;
+    while let Some(ch) = template.get(cursor..).and_then(|s| s.chars().next()) {
+        if template[cursor..].starts_with(close_delim) {
+            return Some(cursor);
+        } else if ch == '"' || ch == '\'' {
+            cursor = quoted_template_string_end(template, cursor, ch);
+        } else {
+            cursor += ch.len_utf8();
+        }
+    }
+    None
 }
 
 fn quoted_template_string_end(body: &str, start: usize, quote: char) -> usize {
@@ -2469,6 +2580,73 @@ timeout = 30
         assert_eq!(result, template);
     }
 
+    /// A `}}` inside a quoted string does not end the tag. Scanning for the
+    /// first textual `}}` cut the tag short, so the real reference after the
+    /// string was never reached, and literal text in a later string was
+    /// rewritten as though it were a tag.
+    #[test]
+    fn test_normalize_ignores_delimiters_inside_quoted_strings() {
+        assert_eq!(
+            normalize_template_vars(r#"{{ "}} " ~ repo_root }}"#),
+            r#"{{ "}} " ~ repo_path }}"#
+        );
+        // The literal `{{ repo_root }}` inside the string is output text, not
+        // a reference; only the real tag after it changes.
+        assert_eq!(
+            normalize_template_vars(r#"{{ "}} {{ repo_root }}" }}{{ repo_root }}"#),
+            r#"{{ "}} {{ repo_root }}" }}{{ repo_path }}"#
+        );
+        // Same for a single-quoted string and a block tag.
+        assert_eq!(
+            normalize_template_vars(r#"{% if '%}' ~ repo_root %}x{% endif %}"#),
+            r#"{% if '%}' ~ repo_path %}x{% endif %}"#
+        );
+    }
+
+    /// A deprecated name that a block binds somewhere in the template is left
+    /// alone everywhere: the rewriter has no scope tracking, so renaming the
+    /// global reference would also rename the later local use. Not migrating
+    /// keeps the warning; renaming half a scope would change what renders.
+    #[test]
+    fn test_normalize_skips_names_bound_by_a_block() {
+        for template in [
+            // read as the global first, then rebound and read as the local
+            r#"{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% for repo_root in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% with repo_root = "local" %}{{ repo_root }}{% endwith %}"#,
+            r#"{{ repo_root }}{% macro m(repo_root) %}{{ repo_root }}{% endmacro %}"#,
+        ] {
+            let result = normalize_template_vars(template);
+            assert!(
+                matches!(result, Cow::Borrowed(_)),
+                "should not rewrite: {template}"
+            );
+            assert_eq!(result, template);
+            assert!(
+                detect_deprecations(&format!("worktree-path = \"{template}\"\n")).is_empty(),
+                "a template left unrewritten must not warn: {template}"
+            );
+        }
+    }
+
+    /// Binding detection only looks at the binding keywords — a deprecated
+    /// name merely *used* inside a block tag still migrates.
+    #[test]
+    fn test_normalize_rewrites_names_used_but_not_bound_in_blocks() {
+        assert_eq!(
+            normalize_template_vars("{% if repo_root %}{{ repo_root }}{% endif %}"),
+            "{% if repo_path %}{{ repo_path }}{% endif %}"
+        );
+        assert_eq!(
+            normalize_template_vars("{% for x in repo_root %}{{ x }}{% endfor %}"),
+            "{% for x in repo_path %}{{ x }}{% endfor %}"
+        );
+        assert_eq!(
+            normalize_template_vars("{% set p = repo_root %}{{ p }}"),
+            "{% set p = repo_path %}{{ p }}"
+        );
+    }
+
     /// Identifiers inside `{# #}` comments must not be rewritten.
     #[test]
     fn test_normalize_skips_comment_tags() {
@@ -3452,6 +3630,9 @@ hostname = "forge.example"
             "switch = \"x\"\n\n[select]\nheight = \"50%\"\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
+            // a deprecated name a block binds is not the global, so the
+            // rewriter leaves the whole template alone
+            "worktree-path = \"{{ repo_root }}{% set repo_root = 'x' %}{{ repo_root }}\"\n",
         ];
         for content in untouched {
             assert!(
@@ -3490,6 +3671,8 @@ hostname = "forge.example"
             "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
             "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
             "worktree-path = \"../{{ repo_root }}.{{ branch }}\"\n",
+            // a `}}` inside a quoted string doesn't end the tag
+            "worktree-path = '{{ \"}} \" ~ repo_root }}'\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
