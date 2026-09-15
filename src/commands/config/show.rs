@@ -149,7 +149,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             // Parse it tolerantly like the file path below — a broken source
             // sets `invalid` and reports null config rather than aborting the
             // report — and name it as the active source.
-            let git_pairs = repo.worktrunk_config_git_pairs().unwrap_or_default();
+            let git_pairs = repo.worktrunk_config_git_pairs()?;
             if !git_pairs.is_empty() {
                 let config = match worktrunk::config::render_git_source_toml(&git_pairs) {
                     Ok(rendered) => parse_json_config::<ProjectConfig>(&rendered)?,
