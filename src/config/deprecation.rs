@@ -1723,16 +1723,13 @@ fn format_migration_diff(
             String::from_utf8_lossy(&output.stdout).trim_end(),
             None,
         ))),
-        code => {
-            let exit_info = code.map_or_else(
-                || "killed by signal".to_string(),
-                |c| format!("exit code {c}"),
-            );
-            anyhow::bail!(
-                "git diff --no-index, {exit_info}\n{}",
-                String::from_utf8_lossy(&output.stderr).trim_end()
-            )
-        }
+        // `ExitStatus`'s own rendering covers a signal-killed child too, so
+        // there is no separate arm for one.
+        _ => anyhow::bail!(
+            "git diff --no-index, {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        ),
     }
 }
 
@@ -3926,6 +3923,30 @@ approved-commands = ["npm install"]
         let content = "this is { not valid toml";
         let result = remove_approved_commands_from_config(content);
         assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    /// The three outcomes the block renderer has to keep apart: identical
+    /// content, changed content, and (covered by the integration tests that
+    /// break `git diff`) a failure. Before #4118 a failure rendered as the
+    /// first of these.
+    #[test]
+    fn test_migration_diff_block_separates_identical_from_changed() {
+        let original = "worktree-path = \"../{{ repo }}.{{ branch }}\"\n";
+        assert_eq!(
+            format_migration_diff_block(original, original, "config.toml"),
+            "",
+            "identical content renders nothing"
+        );
+
+        let block = format_migration_diff_block(
+            original,
+            "worktree-path = \"../{{ repo }}.{{ branch | sanitize }}\"\n",
+            "config.toml",
+        );
+        assert!(
+            block.contains("Proposed diff:") && block.contains("sanitize"),
+            "changed content renders the patch, got:\n{block}"
+        );
     }
 
     #[test]
