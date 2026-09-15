@@ -237,6 +237,28 @@ pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
         .join("fish")
 }
 
+/// The directory worktrunk reads and writes zsh's rc file in: `$ZDOTDIR` when
+/// it holds an absolute path, otherwise `$HOME`.
+///
+/// zsh's rule is `$ZDOTDIR`, or `$HOME` when it is unset. The absolute-only
+/// guard on top is the same one this module already applies to
+/// `$XDG_DATA_HOME` ([`nushell_data_dir_fallback`]) and, through etcetera's
+/// [`Xdg`], to `$XDG_CONFIG_HOME` ([`fish_config_dir`]).
+///
+/// A non-absolute value resolves against the current directory, and that
+/// directory is `wt`'s: zsh resolves one against *zsh's* own startup
+/// directory, which `wt` has no way to know at install time. Honouring it
+/// would send install, and the whole-file rewrite `wt config shell uninstall`
+/// performs, to a file neither side meant — a `.zshrc` in a dotfiles checkout
+/// that happened to be the invocation directory. `$HOME` is also where
+/// `wt config show` reads back from, so install and detection agree.
+pub(super) fn zsh_config_dir(home: &std::path::Path) -> PathBuf {
+    std::env::var_os("ZDOTDIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.to_path_buf())
+}
+
 /// Rc/profile files scanned line-by-line for integration lines.
 ///
 /// Bash/Zsh/PowerShell integration is one line in an rc file, so these paths
@@ -249,12 +271,7 @@ pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> V
             // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
             vec![home.join(".bashrc")]
         }
-        super::Shell::Zsh => {
-            let zdotdir = std::env::var("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.to_path_buf());
-            vec![zdotdir.join(".zshrc")]
-        }
+        super::Shell::Zsh => vec![zsh_config_dir(home).join(".zshrc")],
         super::Shell::PowerShell => powershell_profile_paths(home),
         super::Shell::Fish | super::Shell::Nushell => Vec::new(),
     }
