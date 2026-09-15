@@ -230,13 +230,16 @@ $ wt switch --create feature-auth
 
 Starlight and Expressive Code create the frame and copy button. The Worktrunk
 plugin highlights `console` commands as Bash, renders `$ ` as a prompt, and
-makes mixed blocks copy only their commands. Comment lines and blank recipe
-separators remain copyable; captured output does not. Snapshot-backed output
-gets its exact ANSI roles from the generated style manifest, while hand-written
-output uses a conservative marker fallback. Generated Clap help fences carry
-the `wt-command-reference` marker, which the plugin expands into semantic
-command, option, value, and metadata roles. Committed Markdown must remain
-useful without the plugin.
+makes blocks copy their commands rather than their output. A block with one
+command copies it with its comment lines and blank recipe separators; a block
+with several gives each command its own copy button. Copied shell commands
+leave out trailing `#` comments, which zsh passes as arguments unless
+`interactivecomments` is set. Snapshot-backed output gets its exact ANSI roles
+from the generated style manifest, while hand-written output uses a
+conservative marker fallback. Generated Clap help fences carry the
+`wt-command-reference` marker, which the plugin expands into semantic command,
+option, value, and metadata roles. Committed Markdown must remain useful
+without the plugin.
 
 ### Web-only post-processing
 

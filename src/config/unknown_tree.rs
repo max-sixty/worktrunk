@@ -238,6 +238,10 @@ impl<'a> OtherStatus<'a> {
 /// [`nested_key_belongs_in`](crate::config::nested_key_belongs_in) redirects
 /// still fire.
 ///
+/// A deprecated top-level section is left to the deprecation channel only
+/// when migration removed it; one that survived non-empty is reported here
+/// (see the private `deprecated_key_declined` helper).
+///
 /// Returns an empty vec if either analysis is unreliable — the load path
 /// surfaces parse/type errors elsewhere.
 pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<UnknownWarning> {
@@ -250,6 +254,9 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
         UnknownAnalysis::Parsed(t) => t,
         UnknownAnalysis::Unreliable(_) => return Vec::new(),
     };
+    // `compute_unknown_tree` reached `Parsed` above, so this parse cannot
+    // fail; the fallback just keeps the path panic-free.
+    let migrated_root = migrated.parse::<toml::Table>().unwrap_or_default();
     // The same content viewed as the *other* config type: a nested key absent
     // from this tree is valid there. Unreliable → no generalized redirect.
     let other_analysis = compute_unknown_tree::<C::Other>(&migrated);
@@ -262,6 +269,9 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
     for key in &raw_tree.keys {
         use crate::config::UnknownKeyKind;
         let warning = match crate::config::classify_unknown_key::<C>(key) {
+            UnknownKeyKind::DeprecatedHandled if deprecated_key_declined(&migrated_root, key) => {
+                UnknownWarning::TopLevelUnknown { key: key.clone() }
+            }
             UnknownKeyKind::DeprecatedHandled => continue,
             UnknownKeyKind::DeprecatedWrongConfig {
                 other_description,
@@ -288,6 +298,28 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
         walk_nested::<C>(sub, key, other_root.descend(key), &mut out);
     }
     out
+}
+
+/// Whether `key` — a registered deprecated section — still carries config
+/// after migration.
+///
+/// [`classify_unknown_key`](crate::config::classify_unknown_key) answers from
+/// the registry alone: the name is deprecated, so the deprecation channel owns
+/// the message. That holds only when the rewrite actually ran. A migration
+/// that declines — a malformed scalar (`select = "x"`), a destination already
+/// occupied — deliberately leaves the key in place and emits nothing, and the
+/// documented handoff is for the unknown-field message to speak instead. Left
+/// suppressed, the setting is read by nobody and reported by no one.
+///
+/// An empty deprecated section is the one survivor that stays silent: it
+/// contributes no config, which is why the migration leaves it alone in the
+/// first place.
+fn deprecated_key_declined(migrated: &toml::Table, key: &str) -> bool {
+    match migrated.get(key) {
+        Some(toml::Value::Table(t)) => !t.is_empty(),
+        Some(_) => true,
+        None => false,
+    }
 }
 
 fn walk_nested<C: WorktrunkConfig>(

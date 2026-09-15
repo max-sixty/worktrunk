@@ -297,13 +297,26 @@ impl<'a> WorkingTree<'a> {
     ///
     /// Use this when you need to check exit codes directly (e.g., for commands
     /// where non-zero exit is not an error condition).
+    ///
+    /// Scrubs the inherited git-discovery vars
+    /// ([`INHERITED_GIT_PATH_VARS`](crate::shell_exec::INHERITED_GIT_PATH_VARS)).
+    /// This call relocates git into `self.path`; those vars are pinned to
+    /// the *invoking* worktree when `wt` runs with an inherited `GIT_DIR`
+    /// (a `!wt` git alias from a linked worktree is one source, and git
+    /// exports discovery vars to the hooks it spawns), so forwarding them
+    /// makes `status`, `rev-parse --git-dir`, and `read-tree` operate on the
+    /// wrong tree. A redirected repository's own `GIT_OBJECT_DIRECTORY` is
+    /// unaffected: `with_object_store_env` sets it after the scrub, and `Cmd`
+    /// applies env mutations in call order. Repo-level
+    /// [`Repository::run_command`] keeps the inherited context on purpose.
     pub fn run_command_output(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
         self.repo
             .with_object_store_env(
                 Cmd::new("git")
                     .args(args.iter().copied())
                     .current_dir(&self.path)
-                    .context(path_to_logging_context(&self.path)),
+                    .context(path_to_logging_context(&self.path))
+                    .scrub_git_discovery_env(),
             )
             .run()
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
@@ -516,8 +529,11 @@ impl<'a> WorkingTree<'a> {
     /// 2. On large repos (70k+ files), this adds noticeable latency to every clean check
     /// 3. Users who use skip-worktree are power users who understand the implications
     /// 4. A warning wouldn't prevent data loss anyway — it's informational only
+    ///
+    /// Untracked files are always included, regardless of the user's
+    /// `status.showUntrackedFiles` display preference.
     pub fn is_dirty(&self) -> anyhow::Result<bool> {
-        let stdout = self.run_command(&["status", "--porcelain"])?;
+        let stdout = self.run_command(&["status", "--porcelain", "--untracked-files=normal"])?;
         Ok(!stdout.trim().is_empty())
     }
 
@@ -528,7 +544,7 @@ impl<'a> WorkingTree<'a> {
     /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
     /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
     pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&["status", "--porcelain"])?;
+        let stdout = self.run_command(&["status", "--porcelain", "--untracked-files=normal"])?;
         Ok(stdout.lines().map(str::to_owned).collect())
     }
 
@@ -1237,6 +1253,12 @@ impl TempIndex {
     /// Wires `current_dir` to the worktree root, the worktree's logging
     /// context, and `GIT_INDEX_FILE`. The caller adds the subcommand and
     /// chooses `.run()` / `.stream()`.
+    ///
+    /// Scrubs the inherited git-discovery vars for the same reason
+    /// [`WorkingTree::run_command_output`] does, then sets its own
+    /// `GIT_INDEX_FILE` (and, for a redirected repository, its own object-store
+    /// vars) after the scrub — `Cmd` applies env mutations in call order, so
+    /// those sets survive it.
     pub(super) fn command<I, S>(&self, args: I) -> Cmd
     where
         I: IntoIterator<Item = S>,
@@ -1246,6 +1268,7 @@ impl TempIndex {
             .args(args)
             .current_dir(&self.worktree_root)
             .context(self.log_ctx.clone())
+            .scrub_git_discovery_env()
             .env("GIT_INDEX_FILE", self.path());
         match &self.object_store_environment {
             Some((directory, alternates)) => command
@@ -1354,6 +1377,31 @@ mod tests {
         assert!(
             status.contains("?? hidden-by-config.txt"),
             "the shared status snapshot must override status.showUntrackedFiles=no: {status:?}"
+        );
+    }
+
+    #[test]
+    fn clean_checks_report_untracked_files_hidden_by_user_config() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["config", "status.showUntrackedFiles", "no"]);
+        std::fs::write(test.root_path().join("hidden-by-config.txt"), "loose\n").unwrap();
+
+        assert!(
+            test.git_output(&["status", "--porcelain"]).is_empty(),
+            "the fixture must demonstrate that the user setting hides the file"
+        );
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.current_worktree();
+
+        assert!(
+            wt.is_dirty().unwrap(),
+            "clean checks must not inherit status.showUntrackedFiles"
+        );
+        assert_eq!(
+            wt.dirty_files().unwrap(),
+            vec!["?? hidden-by-config.txt"],
+            "the destructive guard must name the hidden untracked file"
         );
     }
 

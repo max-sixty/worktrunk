@@ -55,6 +55,38 @@ fn snapshot_merge_with_env(
     });
 }
 
+fn create_untracked_files_hidden_by_user_config(repo: &TestRepo, worktree: &Path) {
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::create_dir(worktree.join("nested")).unwrap();
+    fs::write(worktree.join("nested/first.txt"), "first").unwrap();
+    fs::write(worktree.join("nested/second.txt"), "second").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(worktree)
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides both files"
+    );
+}
+
+fn assert_hidden_untracked_auto_staging_warning(output: &std::process::Output, command: &str) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{command} should succeed; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto-staging 2 untracked paths:")
+            && stderr.contains("nested/first.txt")
+            && stderr.contains("nested/second.txt"),
+        "the warning must enumerate every hidden file that git add -A will stage; stderr:\n{stderr}"
+    );
+}
+
 #[rstest]
 fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
@@ -82,6 +114,49 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
         cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
         cmd
     });
+}
+
+/// A `!wt` alias from the feature worktree exports `GIT_DIR` as that
+/// worktree's private gitdir. `advance_target` then runs `read-tree -m -u`
+/// with `current_dir` on main; if the child still sees the inherited
+/// `GIT_DIR`, it writes feature's index and can leave main's worktree
+/// unsynced (or dirty) while still reporting success.
+#[rstest]
+fn test_merge_syncs_target_when_git_dir_names_the_source(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+    let git_dir = fs::read_to_string(feature_wt.join(".git")).unwrap();
+    let git_dir = PathBuf::from(git_dir.trim().strip_prefix("gitdir: ").unwrap());
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "main", "--no-remove", "--yes"])
+        .env("GIT_DIR", &git_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt merge must succeed when GIT_DIR names the source worktree.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("feature.txt")).unwrap_or_default(),
+        "feature content",
+        "the target worktree must receive the merged file",
+    );
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(repo.root_path())
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+        "the target worktree must be clean after the sync; got: {}",
+        String::from_utf8_lossy(&status.stdout),
+    );
 }
 
 #[rstest]
@@ -1592,6 +1667,68 @@ fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
     );
 }
 
+/// `status.showUntrackedFiles` controls presentation, not whether a destructive
+/// merge cleanup may discard files. `--no-commit` must reject the hidden file
+/// before changing either branch or removing the source worktree.
+#[rstest]
+fn test_merge_no_commit_refuses_untracked_files_hidden_by_user_config(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature",
+        "committed.txt",
+        "committed content",
+        "Add committed file",
+    );
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(feature_wt.join("precious.txt"), "uncommitted work").unwrap();
+
+    let hidden = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        hidden.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides the file"
+    );
+    let forced = repo
+        .git_command()
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&forced.stdout).contains("?? precious.txt"),
+        "the explicit safety query must reveal the untracked file"
+    );
+
+    let target_tip = repo.git_output(&["rev-parse", "main"]);
+    let source_tip = repo.git_output(&["rev-parse", "feature"]);
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-commit"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "merge must refuse hidden untracked files before cleanup; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("has uncommitted changes") && stderr.contains("precious.txt"),
+        "the dirty-worktree gate must explain the refusal; stderr:\n{stderr}"
+    );
+    assert_eq!(repo.git_output(&["rev-parse", "main"]), target_tip);
+    assert_eq!(repo.git_output(&["rev-parse", "feature"]), source_tip);
+    assert!(feature_wt.exists(), "failed merge must keep the worktree");
+    assert!(
+        feature_wt.join("precious.txt").exists(),
+        "the hidden untracked file must remain recoverable"
+    );
+}
+
 #[rstest]
 fn test_merge_no_commits(mut repo_with_main_worktree: TestRepo) {
     let repo = &mut repo_with_main_worktree;
@@ -2401,6 +2538,27 @@ fn test_step_squash_with_no_hooks_flag(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_step_squash_auto_staging_warns_about_untracked_files_hidden_by_user_config(
+    repo_with_multi_commit_feature: TestRepo,
+) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    create_untracked_files_hidden_by_user_config(repo, feature_wt);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks"])
+        .current_dir(feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'squash: include hidden files'",
+        )
+        .output()
+        .unwrap();
+    assert_hidden_untracked_auto_staging_warning(&output, "step squash");
+}
+
+#[rstest]
 fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
@@ -2513,6 +2671,22 @@ fn test_step_commit_with_no_hooks_flag(repo: TestRepo) {
         );
         cmd
     });
+}
+
+#[rstest]
+fn test_step_commit_auto_staging_warns_about_untracked_files_hidden_by_user_config(repo: TestRepo) {
+    create_untracked_files_hidden_by_user_config(&repo, repo.root_path());
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: include hidden files'",
+        )
+        .output()
+        .unwrap();
+    assert_hidden_untracked_auto_staging_warning(&output, "step commit");
 }
 
 #[rstest]

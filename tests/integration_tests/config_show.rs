@@ -2714,6 +2714,49 @@ fn test_opencode_install_defaults_to_home_dot_config(temp_home: TempDir) {
     );
 }
 
+/// An exported-but-empty `OPENCODE_CONFIG_DIR` reads as unset, not as a
+/// directory named `""`.
+///
+/// Regression guard: the empty value used to be taken at face value, so the
+/// install target collapsed to the relative path `plugins/worktrunk.ts` and
+/// the plugin was written into whatever directory `wt` was run from — with
+/// `is_plugin_installed()` then reading it back from there, so the install
+/// reported success while OpenCode never saw the plugin.
+#[rstest]
+fn test_opencode_install_treats_empty_config_dir_as_unset(temp_home: TempDir) {
+    let run_dir = temp_home.path().join("run-from-here");
+    fs::create_dir_all(&run_dir).unwrap();
+
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("OPENCODE_CONFIG_DIR", "");
+    cmd.current_dir(&run_dir);
+    cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    // set_temp_home_env sets XDG_CONFIG_HOME = $HOME/.config, which is the next
+    // rung down the precedence once the empty override is discarded.
+    let plugin_path = canonical_home.join(".config/opencode/plugins/worktrunk.ts");
+    assert!(
+        plugin_path.exists(),
+        "Plugin should fall through to the XDG path, but not found at: {}",
+        plugin_path.display(),
+    );
+    assert!(
+        !run_dir.join("plugins").exists(),
+        "Plugin must not be written relative to the invocation directory"
+    );
+}
+
 /// Install prompt declined (no `--yes`, piped stdin → empty → declined).
 /// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
 #[rstest]

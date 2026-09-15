@@ -89,6 +89,7 @@ fn worktree_errors_render() {
                 base_branch: Some("main".into()),
                 error: "fatal: '/tmp/repo.feature-y' already exists".into(),
                 command: None,
+                leftover_branch: false,
             }
             .render(),
         ),
@@ -104,6 +105,7 @@ fn worktree_errors_render() {
                     command: "git worktree add /tmp/repo.fix -b fix main".into(),
                     exit_info: "exit code 128".into(),
                 }),
+                leftover_branch: false,
             }
             .render(),
         ),

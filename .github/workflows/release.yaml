@@ -181,7 +181,7 @@ jobs:
         id: signpath
         if: contains(matrix.targets, 'x86_64-pc-windows-msvc') && steps.upload-unsigned-windows-artifact.outcome == 'success'
         continue-on-error: true
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
           organization-id: '56bf7020-7661-4b4e-ad77-b627278eaefd'

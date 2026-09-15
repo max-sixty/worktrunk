@@ -588,14 +588,26 @@ fn test_prune_min_age_passes(mut repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
-/// Prune skips worktrees with uncommitted changes
+/// Prune skips worktrees with uncommitted changes even when the user's status
+/// display preference hides the only untracked file.
 #[rstest]
 fn test_prune_skips_dirty(mut repo: TestRepo) {
     repo.commit("initial");
+    repo.run_git(&["config", "status.showUntrackedFiles", "no"]);
 
-    // Merged worktree with uncommitted changes — should be skipped
+    // Merged worktree with an untracked file hidden from bare status.
     let wt_path = repo.add_worktree("dirty-merged");
     std::fs::write(wt_path.join("scratch.txt"), "wip").unwrap();
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&wt_path)
+        .run()
+        .unwrap();
+    assert!(
+        status.stdout.is_empty(),
+        "the fixture must demonstrate that the user setting hides the file"
+    );
 
     // Clean merged worktree — should be pruned
     repo.add_worktree("clean-merged");
@@ -609,6 +621,11 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
 
     // Dirty worktree still exists
     assert!(wt_path.exists(), "Dirty worktree should be skipped");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("scratch.txt")).unwrap(),
+        "wip",
+        "the hidden untracked file must remain recoverable"
+    );
 
     // Clean worktree removed (non-current — no placeholder)
     let clean_path = repo.root_path().parent().unwrap().join("repo.clean-merged");
