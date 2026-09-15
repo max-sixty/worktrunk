@@ -243,8 +243,7 @@ pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
 /// zsh's rule is `$ZDOTDIR`, or `$HOME` when it is unset. The absolute-only
 /// guard on top is the same one this module already applies to
 /// `$XDG_DATA_HOME` ([`nushell_data_dir_fallback`]) and, through etcetera's
-/// [`Xdg`], to `$XDG_CONFIG_HOME` ([`fish_config_dir`]) — so zsh stops being
-/// the one variable read without it.
+/// [`Xdg`], to `$XDG_CONFIG_HOME` ([`fish_config_dir`]).
 ///
 /// A non-absolute value resolves against the current directory, and that
 /// directory is `wt`'s: zsh resolves one against *zsh's* own startup
