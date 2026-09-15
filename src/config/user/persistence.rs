@@ -123,9 +123,12 @@ impl UserConfig {
 
     /// Compare two Values for equality, ignoring formatting.
     ///
-    /// Every `Value` variant needs an arm: an unmatched pair falls through to
-    /// `false`, and in the inline-table branch of `merge_tables` "not equal"
-    /// is what rewrites the user's inline section as a standard table.
+    /// A variant with no arm of its own answers "not equal" for a value that
+    /// never changed, and in the inline-table branch of `merge_tables` "not
+    /// equal" is what rewrites the user's inline section as a standard table.
+    /// So the mismatched-variant arm spells out every variant instead of using
+    /// `_`: adding one to `toml_edit::Value` is then a compile error here
+    /// rather than a section that silently stops keeping its formatting.
     fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
         use toml_edit::Value;
         match (a, b) {
@@ -145,7 +148,17 @@ impl UserConfig {
                         .zip(b.iter())
                         .all(|(a, b)| Self::values_equal(a, b))
             }
-            _ => false,
+            // Two different variants. Exhaustive on purpose — see above.
+            (
+                Value::String(_)
+                | Value::Integer(_)
+                | Value::Float(_)
+                | Value::Boolean(_)
+                | Value::Datetime(_)
+                | Value::Array(_)
+                | Value::InlineTable(_),
+                _,
+            ) => false,
         }
     }
 
