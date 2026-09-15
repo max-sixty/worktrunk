@@ -698,18 +698,17 @@ fn for_each_config_table_mut(
     match doc.get_mut("projects") {
         Some(toml_edit::Item::Table(projects)) => {
             for (key, entry) in projects.iter_mut() {
-                let scope = key.get().to_string();
+                let scope = key.get();
                 modified |= match entry {
-                    toml_edit::Item::Table(table) => f(Some(&scope), table),
-                    toml_edit::Item::Value(value) => migrate_inline_scope(&scope, value, &mut f),
+                    toml_edit::Item::Table(table) => f(Some(scope), table),
+                    toml_edit::Item::Value(value) => migrate_inline_scope(scope, value, &mut f),
                     _ => false,
                 };
             }
         }
         Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(projects))) => {
             for (key, entry) in projects.iter_mut() {
-                let scope = key.get().to_string();
-                modified |= migrate_inline_scope(&scope, entry, &mut f);
+                modified |= migrate_inline_scope(key.get(), entry, &mut f);
             }
         }
         _ => {}
@@ -720,6 +719,11 @@ fn for_each_config_table_mut(
 /// Apply `f` to an inline `[projects."key"]` entry through a table view,
 /// writing the result back inline only when `f` reported a change so an
 /// untouched entry keeps its original formatting.
+///
+/// That write-back is what `f` owes in return: a rule that mutates the scope
+/// table while reporting no change keeps its edit on the standard-table path
+/// and loses it here, so the shape would decide the outcome again — the bug
+/// this walk exists to close.
 fn migrate_inline_scope<F>(scope: &str, entry: &mut toml_edit::Value, f: &mut F) -> bool
 where
     F: FnMut(Option<&str>, &mut toml_edit::Table) -> bool,
@@ -4699,16 +4703,22 @@ no-ff = true
         // The scope walk has no scope to offer a rule there, so it skips the
         // entry and leaves the text for serde's own type error and the
         // unknown-field check — it must not panic or rewrite.
-        for content in [
+        for (content, untouched) in [
             // a scalar entry
-            "[projects]\n\"a/b\" = \"scalar\"\n[merge]\nno-ff = true\n",
+            (
+                "[projects]\n\"a/b\" = \"scalar\"\n[merge]\nno-ff = true\n",
+                "\"a/b\" = \"scalar\"\n",
+            ),
             // an array-of-tables entry
-            "[[projects.\"a/b\"]]\nno-ff = true\n[merge]\nno-ff = true\n",
+            (
+                "[[projects.\"a/b\"]]\nno-ff = true\n[merge]\nno-ff = true\n",
+                "[[projects.\"a/b\"]]\nno-ff = true\n",
+            ),
         ] {
             let result = migrate_content(content);
             assert!(
-                result.contains("\"a/b\"") || result.contains("projects.\"a/b\""),
-                "the entry should survive: {result}"
+                result.contains(untouched),
+                "the entry should survive unrewritten: {result}"
             );
             // The top-level rule still fires, so the walk itself ran.
             assert!(
