@@ -188,7 +188,9 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
     DEPRECATED_VARS
         .iter()
         .copied()
-        .filter(|(old, _)| used_vars.contains(*old) && !bound.contains(old))
+        .filter(|(old, new)| {
+            used_vars.contains(*old) && !bound.contains(old) && !bound.contains(new)
+        })
         .collect()
 }
 
@@ -203,6 +205,12 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
 /// detection reads that same set, such a template neither migrates nor
 /// warns. Losing the warning is the price of not quietly rendering
 /// something else.
+///
+/// The *canonical* name is checked against this set too. Binding it captures
+/// the global use the rename produces: `{% for repo_path in items %}` around a
+/// `{{ repo_root }}` reads the global today and the loop variable once
+/// renamed. The same collision reaches every pair — `{% for commit_details in
+/// … %}{{ commits }}` is the squash-template shape of it.
 fn template_bound_names(template: &str) -> HashSet<&str> {
     let mut bound = HashSet::new();
     let mut cursor = 0;
@@ -2676,9 +2684,12 @@ timeout = 30
 
     /// A deprecated name that a block binds somewhere in the template is left
     /// alone everywhere: the rewriter has no scope tracking, so renaming the
-    /// global reference would also rename the later local use. The name is
-    /// dropped from the replacement set that detection reads too, so the
-    /// template stops warning as well — the price of not renaming half a scope.
+    /// global reference would also rename the later local use. Binding the
+    /// canonical name holds the rename back for the same reason from the other
+    /// side — the rename would walk a genuine global use into that binding.
+    /// Either way the pair is dropped from the replacement set that detection
+    /// reads too, so the template stops warning as well — the price of not
+    /// renaming half a scope.
     #[test]
     fn test_normalize_skips_names_bound_by_a_block() {
         for template in [
@@ -2697,6 +2708,18 @@ timeout = 30
             r#"{{ repo_root }}{% with (repo_root, x) = items %}{{ repo_root }}{% endwith %}"#,
             // the second pair of a multi-assignment `with`
             r#"{{ repo_root }}{% with a = 1, repo_root = 2 %}{{ repo_root }}{% endwith %}"#,
+            // `set`'s block form binds its target before the filter chain the
+            // `|` arm cuts the target region at
+            r#"{{ repo_root }}{% set repo_root %}b{% endset %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% set repo_root | default(1) %}b{% endset %}{{ repo_root }}"#,
+            // binding the *canonical* name captures the use the rename
+            // produces: `{{ repo_root }}` reads the global here and the local
+            // once it is spelled `repo_path`
+            r#"{{ repo_root }}{% set repo_path = "local" %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% for repo_path in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% with repo_path = "local" %}{{ repo_root }}{% endwith %}"#,
+            // the same collision in the squash template's pair
+            r#"{% for commit_details in items %}{{ commits }}{% endfor %}"#,
         ] {
             let result = normalize_template_vars(template);
             assert!(
