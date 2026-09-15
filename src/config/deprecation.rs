@@ -257,9 +257,10 @@ fn template_bound_names(template: &str) -> HashSet<&str> {
 fn template_block_bindings(body: &str) -> Vec<&str> {
     let (keyword, rest) = split_block_keyword(body);
     match keyword {
-        // `{% set a, (b, c) = expr %}`, `{% set a %}…{% endset %}`,
+        // `{% set a, (b, c) = expr %}`, `{% set a %}…{% endset %}`
+        "set" => binding_targets(rest, TargetsEndAt::Assign),
         // `{% with a = 1, b = 2 %}`
-        "set" | "with" => binding_targets(rest, TargetsEndAt::Assign),
+        "with" => binding_targets(rest, TargetsEndAt::AssignPairs),
         "for" => binding_targets(rest, TargetsEndAt::In),
         _ => Vec::new(),
     }
@@ -270,9 +271,13 @@ fn template_block_bindings(body: &str) -> Vec<&str> {
 enum TargetsEndAt {
     /// `{% for a, (b, c) in expr %}` — the `in` keyword, once.
     In,
-    /// `{% set a, b = expr %}`, `{% with a = 1, b = 2 %}` — each `=`, with a
-    /// top-level comma starting the next pair's target.
+    /// `{% set a, b = expr %}` — the first top-level `=`. MiniJinja's `set`
+    /// takes one assignment, so a top-level comma after it builds a tuple
+    /// *value* and starts no further target.
     Assign,
+    /// `{% with a = 1, b = 2 %}` — each `=`, with a top-level comma starting
+    /// the next pair's target.
+    AssignPairs,
 }
 
 /// The identifiers a binding tag's target list binds.
@@ -314,13 +319,13 @@ fn binding_targets(rest: &str, targets_end_at: TargetsEndAt) -> Vec<&str> {
         match ch {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
-            '=' if targets_end_at == TargetsEndAt::Assign
+            '=' if targets_end_at != TargetsEndAt::In
                 && depth == 0
                 && !rest[cursor..].starts_with("==") =>
             {
                 in_targets = false;
             }
-            ',' if targets_end_at == TargetsEndAt::Assign && depth == 0 => in_targets = true,
+            ',' if targets_end_at == TargetsEndAt::AssignPairs && depth == 0 => in_targets = true,
             _ => {}
         }
         cursor += ch.len_utf8();
@@ -2668,8 +2673,9 @@ timeout = 30
 
     /// A deprecated name that a block binds somewhere in the template is left
     /// alone everywhere: the rewriter has no scope tracking, so renaming the
-    /// global reference would also rename the later local use. Not migrating
-    /// keeps the warning; renaming half a scope would change what renders.
+    /// global reference would also rename the later local use. The name is
+    /// dropped from the replacement set that detection reads too, so the
+    /// template stops warning as well — the price of not renaming half a scope.
     #[test]
     fn test_normalize_skips_names_bound_by_a_block() {
         for template in [
@@ -2767,6 +2773,13 @@ timeout = 30
         assert_eq!(
             normalize_template_vars("{% set repo_root.x = 1 %}{{ repo_root }}"),
             "{% set repo_path.x = 1 %}{{ repo_path }}"
+        );
+        // `set` takes one assignment, so the comma after its `=` builds a
+        // tuple value — the name beside it reads the global and migrates,
+        // unlike the second pair of a `with`.
+        assert_eq!(
+            normalize_template_vars("{% set a = 1, repo_root %}{{ repo_root }}"),
+            "{% set a = 1, repo_path %}{{ repo_path }}"
         );
         // The squash-template migration this must not regress.
         assert_eq!(
@@ -3807,6 +3820,8 @@ hostname = "forge.example"
             "worktree-path = '{{ \"}} \" ~ repo_root }}'\n",
             // a binding-shaped tag inside `{% raw %}` binds nothing
             "worktree-path = \"{% raw %}{% set repo_root = 'x' %}{% endraw %}{{ repo_root }}\"\n",
+            // the comma after a `set`'s `=` starts a tuple value, not a target
+            "worktree-path = \"{% set a = 1, repo_root %}{{ repo_root }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
