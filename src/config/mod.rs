@@ -166,7 +166,7 @@ pub use deprecation::compute_migrated_content;
 pub use deprecation::copy_approved_commands_to_approvals_file;
 pub use deprecation::format_deprecation_details;
 pub use deprecation::format_deprecation_warnings;
-pub use deprecation::format_migration_diff;
+pub use deprecation::format_migration_diff_block;
 pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
