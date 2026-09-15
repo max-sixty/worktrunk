@@ -31,9 +31,11 @@
 //! git config, so order matters for `vars.*`), so a later command's expansion
 //! can run after an earlier command's child has already started.
 //!
-//! **Stdin**: every child receives its prepared context as JSON on stdin,
-//! matching the foreground hook convention. Commands that don't read stdin
-//! ignore it.
+//! **Stdin**: every child gets a closed stdin — this runner is detached, so
+//! there is no terminal to hand over and nothing to read. The foreground path
+//! inherits wt's stdin instead, so a step there can prompt (see
+//! `execute_shell_command` in `output/handlers.rs`). Every template variable
+//! reaches a step either way, through `{{ }}` expansion.
 //!
 //! ## Template freshness
 //!
@@ -122,9 +124,8 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 let log_file = create_command_log(&spec, &log_dir, &log_name)?;
                 let expanded =
                     expand_shell_template(&cmd.template, &cmd.context, &repo, &cmd.template_name)?;
-                let step_json = cmd.context_json();
                 let (mut child, mut trace) =
-                    spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
+                    spawn_shell_command(&expanded, &spec.worktree_path, log_file)?;
                 let status = wait_resolving(&mut child, &mut trace, &expanded)?;
                 if !status.success() {
                     return Err(failure_error(
@@ -143,16 +144,18 @@ pub fn run_pipeline() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Spawn a shell command with context JSON piped to stdin.
+/// Spawn a shell command with its output redirected to a log file.
 ///
 /// Uses `ShellConfig` for portable shell detection (Git Bash on Windows,
 /// `sh` on Unix). stdout/stderr are redirected to `log_file` so each
 /// command gets its own log. Returns the `Child` so the caller controls
 /// when to wait.
+///
+/// Stdin is closed: a detached step has no terminal, so a read returns EOF
+/// rather than blocking on one that isn't there.
 fn spawn_shell_command(
     expanded: &str,
     worktree_path: &Path,
-    context_json: &str,
     log_file: fs::File,
 ) -> anyhow::Result<(Child, CommandTrace)> {
     let shell = ShellConfig::get()?;
@@ -160,34 +163,25 @@ fn spawn_shell_command(
         .try_clone()
         .context("failed to clone log file handle")?;
     // Start the trace just before spawning; the caller resolves it once the
-    // child is waited on (see `wait_resolving`). The step is fed its own
-    // `context_json` on stdin, so mark it stdin-reading — the same command
-    // across worktrees isn't a duplicate (different per-worktree input).
-    let mut trace = CommandTrace::new(None, expanded).reads_stdin(true);
+    // child is waited on (see `wait_resolving`).
+    let mut trace = CommandTrace::new(None, expanded);
     let mut command = shell.command(expanded);
     command
         .current_dir(worktree_path)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_err));
     // Background hooks, like foreground ones, discover their repo from the
     // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
     // runner only ever executes hook pipelines, so the scrub is unconditional.
     scrub_git_discovery_env_vars(&mut command);
-    let mut child = match command.spawn() {
+    let child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);
             return Err(e).with_context(|| format!("failed to spawn: {expanded}"));
         }
     };
-
-    // Write context JSON to stdin, then drop to close the pipe.
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        // Ignore BrokenPipe — child may exit or close stdin early.
-        let _ = stdin.write_all(context_json.as_bytes());
-    }
 
     Ok((child, trace))
 }
@@ -244,9 +238,8 @@ fn run_concurrent_group(
             let log_file = create_command_log(spec, log_dir, &log_name)?;
             let expanded =
                 expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
-            let cmd_json = cmd.context_json();
             let (mut child, mut trace) =
-                spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
+                spawn_shell_command(&expanded, &spec.worktree_path, log_file)?;
             *cmd_index += 1;
 
             if serial {
