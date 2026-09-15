@@ -1666,7 +1666,10 @@ pub fn format_migration_diff_block(original: &str, migrated: &str, label: &str) 
                 "{}",
                 warning_message("Could not render the proposed diff")
             );
-            let _ = writeln!(out, "{}", format_with_gutter(&e.to_string(), None));
+            // `{e:#}` rather than `to_string()`: the git-failure arm bails with
+            // the whole payload, but a spawn or tempfile failure carries its
+            // cause one `.context` layer down, and plain Display drops it.
+            let _ = writeln!(out, "{}", format_with_gutter(&format!("{e:#}"), None));
         }
     }
     out
@@ -3931,6 +3934,12 @@ approved-commands = ["npm install"]
     /// first of these.
     #[test]
     fn test_migration_diff_block_separates_identical_from_changed() {
+        // This test spawns the real `git diff`, and no fixture constructor runs
+        // here to latch the floor for it — without this the child reads the
+        // developer's own global config, where a single unparsable `diff.*`
+        // value turns the first assertion into the failure arm.
+        crate::shell_exec::enable_hermetic_test_env();
+
         let original = "worktree-path = \"../{{ repo }}.{{ branch }}\"\n";
         assert_eq!(
             format_migration_diff_block(original, original, "config.toml"),
