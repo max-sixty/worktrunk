@@ -142,37 +142,57 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_exists, project_config, project_identifier) =
+    let (project_path, project_exists, project_config, project_identifier, project_source) =
         if let Some(repo) = repo.as_ref() {
-            let on_disk = repo.project_config_path()?;
-            let object_store = match &on_disk {
-                Some(path) if path.exists() => None,
-                _ => repo.default_branch_project_config_content(),
-            };
-            let object_store_exists = object_store.is_some();
-            let (path, config) = match &on_disk {
-                Some(path) if path.exists() => {
-                    let config = read_json_config::<ProjectConfig>(path)?;
-                    (on_disk.clone(), config)
+            // Experimental git-config source (#3454): when any `worktrunk.config.*`
+            // key exists it is the whole project config, with no on-disk path.
+            // Parse it tolerantly like the file path below — a broken source
+            // sets `invalid` and reports null config rather than aborting the
+            // report — and name it as the active source.
+            let git_pairs = repo.worktrunk_config_git_pairs()?;
+            if !git_pairs.is_empty() {
+                let config = match worktrunk::config::render_git_source_toml(&git_pairs) {
+                    Ok(rendered) => parse_json_config::<ProjectConfig>(&rendered)?,
+                    Err(_) => None,
+                };
+                if config.is_none() {
+                    invalid = true;
                 }
-                _ => match object_store {
-                    Some((contents, spec)) => {
-                        let config = parse_json_config::<ProjectConfig>(&contents)?;
-                        (Some(spec), config)
+                let identifier = repo.project_identifier().ok();
+                (None, true, config, identifier, Some("git-config"))
+            } else {
+                let on_disk = repo.project_config_path()?;
+                let object_store = match &on_disk {
+                    Some(path) if path.exists() => None,
+                    _ => repo.default_branch_project_config_content(),
+                };
+                let object_store_exists = object_store.is_some();
+                let (path, config) = match &on_disk {
+                    Some(path) if path.exists() => {
+                        let config = read_json_config::<ProjectConfig>(path)?;
+                        (on_disk.clone(), config)
                     }
-                    None => (on_disk.clone(), None),
-                },
-            };
-            if (on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists)
-                && config.is_none()
-            {
-                invalid = true;
+                    _ => match object_store {
+                        Some((contents, spec)) => {
+                            let config = parse_json_config::<ProjectConfig>(&contents)?;
+                            (Some(spec), config)
+                        }
+                        None => (on_disk.clone(), None),
+                    },
+                };
+                if (on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists)
+                    && config.is_none()
+                {
+                    invalid = true;
+                }
+                let identifier = repo.project_identifier().ok();
+                let exists =
+                    on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
+                let source = if exists { Some("file") } else { None };
+                (path, exists, config, identifier, source)
             }
-            let identifier = repo.project_identifier().ok();
-            let exists = on_disk.as_ref().is_some_and(|path| path.exists()) || object_store_exists;
-            (path, exists, config, identifier)
         } else {
-            (None, false, None, None)
+            (None, false, None, None, None)
         };
 
     let system_path = system_config_path().or_else(default_system_config_path);
@@ -199,10 +219,13 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         "project": {
             "path": project_path,
             // An invalid on-disk source still exists even though `config` is
-            // null. The object-store fallback counts as existing too, though
-            // its revision spec is not a filesystem path.
+            // null. The object-store and git-config sources count as existing
+            // too, though their spec/keys are not filesystem paths.
             "exists": project_exists,
             "identifier": project_identifier,
+            // "file" | "git-config" (experimental worktrunk.config.* source),
+            // absent when no config resolved.
+            "source": project_source,
             "config": project_config,
         },
         "system": {
@@ -928,6 +951,58 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
             writeln!(out, "{line}")?;
         }
         Ok(())
+    }
+
+    // Experimental git-config source (#3454), mirroring `ProjectConfig::load`:
+    // any `worktrunk.config.*` keys in the merged effective git config are the
+    // project config, and the file (when one resolves) is superseded. Rendered
+    // first so the section reports the source that actually runs. A failed
+    // read propagates rather than defaulting to empty — swallowing it would
+    // render the file as active while actual execution errors on the same
+    // read, and diagnostics must not disagree with execution. Returns the
+    // invalid flag like the file branch below.
+    let git_pairs = repo.worktrunk_config_git_pairs()?;
+    if !git_pairs.is_empty() {
+        let source = format!("@ {}", worktrunk::config::GIT_CONFIG_SOURCE_LABEL);
+        write_heading_and_identifier(out, repo, &source)?;
+        if let Some(superseded) = worktrunk::config::superseded_project_file_label(repo) {
+            // push_str, not writeln!(…)? — the write into a String is
+            // infallible, so `?` leaves an uncoverable error region.
+            out.push_str(
+                &warning_message(cformat!(
+                    "Project config file @ <bold>{superseded}</> is superseded by these keys"
+                ))
+                .to_string(),
+            );
+            out.push('\n');
+        }
+        out.push_str(
+            &hint_message(cformat!(
+                "To list the keys and their origins, run <underline>{}</>",
+                worktrunk::config::GIT_CONFIG_LIST_COMMAND
+            ))
+            .to_string(),
+        );
+        out.push('\n');
+        let mut invalid = false;
+        match worktrunk::config::render_git_source_toml(&git_pairs) {
+            Ok(rendered) => {
+                // Same validation rendering as the file branch below.
+                if let Err(e) = toml::from_str::<ProjectConfig>(&rendered) {
+                    invalid = true;
+                    writeln!(out, "{}", error_message("Invalid config"))?;
+                    writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+                } else {
+                    out.push_str(&warn_unknown_keys::<ProjectConfig>(&rendered));
+                }
+                writeln!(out, "{}", format_toml(&rendered))?;
+            }
+            Err(e) => {
+                invalid = true;
+                writeln!(out, "{}", error_message(e.to_string()))?;
+            }
+        }
+        return Ok(invalid);
     }
 
     // Match ProjectConfig::load's on-disk then object-store source order.
