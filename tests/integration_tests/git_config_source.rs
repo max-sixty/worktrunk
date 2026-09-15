@@ -497,6 +497,9 @@ fn test_diagnostic_report_omits_git_config_values(repo: TestRepo, temp_home: Tem
         "worktrunk.config.post-start",
         "echo diag-private-value",
     ]);
+    // A non-worktrunk key whose value must stay visible — proves the redaction
+    // is scoped to this namespace, not a blanket config scrub.
+    repo.run_git(&["config", "diag.visible.key", "VISIBLE-marker"]);
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -523,21 +526,34 @@ fn test_diagnostic_report_omits_git_config_values(repo: TestRepo, temp_home: Tem
         "config section should state values are omitted:\n{section}"
     );
 
-    // The value must not appear anywhere in the bundle — the bulk
-    // `git config --list -z` read redacts `worktrunk.config.*` values in its
-    // logged output, so the trace/subprocess sinks that would otherwise carry
-    // it are scrubbed too. The key name survives, and other config is intact.
-    for (label, path) in [
-        ("diagnostic.md", logs_dir.join("diagnostic.md")),
-        ("trace.log", logs_dir.join("trace.log")),
-        ("subprocess.log", logs_dir.join("subprocess.log")),
-    ] {
-        let Ok(contents) = fs::read_to_string(&path) else {
-            continue; // subprocess.log only exists at -vv; skip if absent
-        };
+    // subprocess.log is the uncapped sink a -vv run writes: it carries the full
+    // `git config --list -z` output. Prove the redaction actually ran on that
+    // path — the key name and `[REDACTED]` are present, the value is not — so
+    // absence-of-value is evidence of redaction, not of the listing missing.
+    // A non-worktrunk value stays visible, showing the scrub is scoped.
+    let subprocess =
+        fs::read_to_string(logs_dir.join("subprocess.log")).expect("-vv run writes subprocess.log");
+    assert!(
+        subprocess.contains("worktrunk.config.post-start"),
+        "redacted listing should still name the key:\n{subprocess}"
+    );
+    assert!(
+        subprocess.contains("[REDACTED]"),
+        "redacted listing should show [REDACTED] for the value:\n{subprocess}"
+    );
+    assert!(
+        subprocess.contains("VISIBLE-marker"),
+        "a non-worktrunk value should stay visible:\n{subprocess}"
+    );
+
+    // The private value must not appear anywhere in the bundle. Every file is
+    // required to exist so a missing log can't pass the check by default.
+    for name in ["diagnostic.md", "trace.log", "subprocess.log"] {
+        let contents = fs::read_to_string(logs_dir.join(name))
+            .unwrap_or_else(|_| panic!("{name} should exist after a -vv run"));
         assert!(
             !contents.contains("diag-private-value"),
-            "private value leaked into {label}:\n{contents}"
+            "private value leaked into {name}:\n{contents}"
         );
     }
 }

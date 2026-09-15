@@ -1768,11 +1768,17 @@ impl Cmd {
             self.timeout.is_none() && next.timeout.is_none(),
             "pipe_into does not support timeouts"
         );
-        // The source's own stdout is routed to the sink (empty capture), so its
-        // redactor only ever matters for the source-stage log below; the sink
-        // is a different program and logs unredacted. No config read uses
-        // pipe_into today — this keeps the field honored if one ever does.
-        let source_redact_stdout = self.redact_logged_stdout;
+        // The source's stdout is routed into the pipe (empty capture), so its
+        // redactor would be a no-op; the sink's stdout *is* captured and logged,
+        // but there's no correct place to apply the source's redactor to a
+        // different program's output. A redactor's whole job is keeping private
+        // bytes out of the bundle, so refuse rather than silently drop it —
+        // matching every other field pipe_into can't honor. No config read uses
+        // pipe_into today.
+        assert!(
+            self.redact_logged_stdout.is_none() && next.redact_logged_stdout.is_none(),
+            "pipe_into does not support redact_logged_stdout"
+        );
         assert!(
             self.external_label.is_none() && next.external_label.is_none(),
             "pipe_into does not support external() logging"
@@ -1941,11 +1947,12 @@ impl Cmd {
             // The source's own stdin (the commit list) is logged under `  < `,
             // symmetric with `run`. Only the intermediate diff stream — the
             // source's stdout, routed to the sink via OS pipe — stays out.
+            // `None`: the assert above rejects a redactor on either stage.
             record_captured(
                 &mut first_trace,
                 source_stdin.as_deref(),
                 &first_result,
-                source_redact_stdout,
+                None,
             );
 
             (first_result, second_result)
