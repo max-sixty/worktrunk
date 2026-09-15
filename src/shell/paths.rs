@@ -19,6 +19,22 @@ pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
+/// A directory named by another program's environment variable, honoured only
+/// when it is absolute.
+///
+/// `$ZDOTDIR`, `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME` each point some *other*
+/// program at a config directory. A relative or empty value resolves against
+/// the current directory, and that directory is `wt`'s — not the shell's, which
+/// `wt` has no way to know. Honouring it would send install, and the whole-file
+/// rewrite `wt config shell uninstall` performs, to a file neither side meant:
+/// a `.zshrc` in a dotfiles checkout that happened to be the invocation
+/// directory. Callers fall back to a path they can resolve themselves instead.
+fn absolute_env_dir(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
 /// Test override pinning the Nushell vendor-autoload directory.
 ///
 /// Set by integration tests so the install target is deterministic across
@@ -99,11 +115,8 @@ fn nu_dirs() -> NuDirs {
 /// macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux). Nushell appends
 /// `nushell`.
 fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        let path = PathBuf::from(xdg);
-        if path.is_absolute() {
-            return path.join("nushell");
-        }
+    if let Some(xdg) = absolute_env_dir("XDG_DATA_HOME") {
+        return xdg.join("nushell");
     }
     dirs::data_dir()
         .unwrap_or_else(|| home.join(".local").join("share"))
@@ -141,15 +154,7 @@ fn legacy_nushell_autoload_dirs(
     if let Some(dir) = default_config {
         dirs.push(dir.to_path_buf());
     }
-    // Absolute-only, as `nushell_data_dir_fallback` already reads
-    // `XDG_DATA_HOME`: an unset-but-exported (or relative) value would put a
-    // bare `nushell/vendor/autoload` into the stranded-file search, which then
-    // looks under the invocation directory instead of a config dir.
-    if let Some(xdg_config) = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-    {
+    if let Some(xdg_config) = absolute_env_dir("XDG_CONFIG_HOME") {
         dirs.push(xdg_config.join("nushell"));
     }
     dirs.push(home.join(".config").join("nushell"));
@@ -245,22 +250,20 @@ pub fn fish_config_dir(home: &std::path::Path) -> PathBuf {
         .join("fish")
 }
 
-/// The directory zsh reads its rc files from: `$ZDOTDIR`, or `$HOME` when that
-/// is unset **or empty**.
+/// The directory worktrunk reads and writes zsh's rc file in: `$ZDOTDIR` when
+/// it holds an absolute path, otherwise `$HOME`.
 ///
-/// The empty case is worktrunk's rule, not zsh's: zsh null-checks `ZDOTDIR`
-/// rather than testing it for emptiness, so an exported-but-empty value sends
-/// *zsh* to `/.zshrc`. `$HOME` is the only useful target left, and taking the
-/// empty value at face value would be worse still — the bare `.zshrc` resolves against
-/// whatever directory `wt` was invoked from: `wt config shell install` would
-/// append the integration line to a `.zshrc` sitting there (a dotfiles
-/// checkout being the obvious way to have one) and never touch the file zsh
-/// actually reads, while uninstall would rewrite that same wrong file whole.
-pub(super) fn zdotdir_or_home(home: &std::path::Path) -> PathBuf {
-    std::env::var("ZDOTDIR")
-        .ok()
-        .filter(|dir| !dir.is_empty())
-        .map_or_else(|| home.to_path_buf(), PathBuf::from)
+/// zsh's rule is `$ZDOTDIR`, or `$HOME` when it is unset. The absolute-only
+/// guard on top is [`absolute_env_dir`]'s, the same one this module already
+/// applies to `$XDG_DATA_HOME` ([`nushell_data_dir_fallback`]) and, through
+/// etcetera's [`Xdg`], to `$XDG_CONFIG_HOME` ([`fish_config_dir`]) — so zsh
+/// stops being the one variable read without it.
+///
+/// zsh resolves a non-absolute `$ZDOTDIR` against *zsh's* own startup
+/// directory, which `wt` has no way to know at install time. `$HOME` is also
+/// where `wt config show` reads back from, so install and detection agree.
+pub(super) fn zsh_config_dir(home: &std::path::Path) -> PathBuf {
+    absolute_env_dir("ZDOTDIR").unwrap_or_else(|| home.to_path_buf())
 }
 
 /// Rc/profile files scanned line-by-line for integration lines.
@@ -275,7 +278,7 @@ pub fn line_based_config_paths(shell: super::Shell, home: &std::path::Path) -> V
             // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
             vec![home.join(".bashrc")]
         }
-        super::Shell::Zsh => vec![zdotdir_or_home(home).join(".zshrc")],
+        super::Shell::Zsh => vec![zsh_config_dir(home).join(".zshrc")],
         super::Shell::PowerShell => powershell_profile_paths(home),
         super::Shell::Fish | super::Shell::Nushell => Vec::new(),
     }

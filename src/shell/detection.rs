@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use super::paths::{home_dir_required, powershell_profile_paths, zdotdir_or_home};
+use super::paths::{home_dir_required, powershell_profile_paths, zsh_config_dir};
 
 /// Detect if a line contains shell integration for a specific command.
 ///
@@ -548,7 +548,7 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
         home.join(".profile"),
         // Zsh
         home.join(".zshrc"),
-        zdotdir_or_home(&home).join(".zshrc"),
+        zsh_config_dir(&home).join(".zshrc"),
         // Fish functions/ (current location) — fish's own config dir, so
         // detection reads the file install wrote.
         super::paths::fish_config_dir(&home)

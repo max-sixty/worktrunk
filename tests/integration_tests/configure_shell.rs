@@ -3245,33 +3245,39 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
     );
 }
 
-/// An exported-but-empty `ZDOTDIR` resolves to `$HOME` — never to a bare
-/// relative `.zshrc`. (zsh itself would read `/.zshrc` there; `$HOME` is the
-/// useful target, and the file `wt config show` reads back from.)
+/// A `ZDOTDIR` that isn't an absolute path is ignored, and the zsh integration
+/// line lands in `$HOME/.zshrc`.
 ///
-/// Regression guard: the empty value used to be taken at face value, so the
-/// zsh config path collapsed to the relative `.zshrc` and install appended the
-/// integration line to a `.zshrc` in whatever directory `wt` was run from — a
-/// dotfiles checkout being the obvious way to have one — while the file zsh
-/// actually reads went untouched. Uninstall rewrites rc files whole, so the
-/// same resolution decides which file that rewrite lands on.
+/// Regression guard: the value used to be taken at face value, so an empty one
+/// collapsed zsh's config path to the relative `.zshrc` and a bare `dotfiles`
+/// to `dotfiles/.zshrc` — either way install appended the integration line
+/// under whatever directory `wt` was run from, a dotfiles checkout being the
+/// obvious way to have a `.zshrc` sitting there, while the file zsh reads went
+/// untouched. `wt config shell uninstall` rewrites rc files whole, so the same
+/// resolution decides which file that rewrite lands on.
 #[rstest]
-fn test_configure_shell_empty_zdotdir_uses_home(repo: TestRepo, temp_home: TempDir) {
+#[case::empty("")]
+#[case::relative("dotfiles")]
+fn test_configure_shell_non_absolute_zdotdir_uses_home(
+    #[case] zdotdir: &str,
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
     let home_zshrc = temp_home.path().join(".zshrc");
     fs::write(&home_zshrc, "# Existing config\n").unwrap();
 
-    // A decoy `.zshrc` in the invocation directory: with the empty value taken
-    // literally, this is the file the install would have edited.
-    let run_dir = temp_home.path().join("dotfiles");
-    fs::create_dir_all(&run_dir).unwrap();
-    let decoy_zshrc = run_dir.join(".zshrc");
+    // A decoy `.zshrc` where the unguarded value would have resolved: under the
+    // invocation directory, joined with `ZDOTDIR` itself.
+    let run_dir = temp_home.path().join("work");
+    let decoy_zshrc = run_dir.join(zdotdir).join(".zshrc");
+    fs::create_dir_all(decoy_zshrc.parent().unwrap()).unwrap();
     fs::write(&decoy_zshrc, "# Decoy\n").unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.env("SHELL", "/bin/zsh");
-    cmd.env("ZDOTDIR", "");
+    cmd.env("ZDOTDIR", zdotdir);
     cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
     cmd.args(["config", "shell", "install", "zsh", "--yes"]);
     cmd.current_dir(&run_dir);
@@ -3292,7 +3298,7 @@ fn test_configure_shell_empty_zdotdir_uses_home(repo: TestRepo, temp_home: TempD
     assert_eq!(
         fs::read_to_string(&decoy_zshrc).unwrap(),
         "# Decoy\n",
-        "the .zshrc in the invocation directory must be left alone"
+        "the .zshrc under the invocation directory must be left alone"
     );
 }
 
