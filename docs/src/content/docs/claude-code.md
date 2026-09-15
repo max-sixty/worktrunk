@@ -106,7 +106,7 @@ $ wt list
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-All four plugins clear the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. In every case, `wt config state marker clear` removes a marker manually.
+All five plugins clear the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs. In every case, `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 

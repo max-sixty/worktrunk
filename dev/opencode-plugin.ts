@@ -107,6 +107,14 @@ type HookInput = { event: { type: string } };
 
 function server({ directory }: ServerInput) {
   return {
+    // The host runs this when it tears the plugin instance down, which is what
+    // a normal session exit does. `session.deleted` below only fires when a
+    // session is explicitly deleted, so without `dispose` the last `set` stays
+    // the final state and `wt list` shows a finished session as still active.
+    // Part of the hook interface since 1.16, the floor the `server` path targets.
+    dispose: async () => {
+      await marker(directory, ["clear"]);
+    },
     // OpenCode 1.16+ filters events to this plugin's directory before calling
     // the hook, so there is nothing to match on here. 1.15.x does not — it fans
     // every bus event to every plugin instance — so the marker there follows the
