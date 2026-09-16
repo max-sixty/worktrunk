@@ -3157,6 +3157,25 @@ fn test_pi_install_honors_agent_dir_override(temp_home: TempDir) {
     let output = cmd.output().expect("install command should run");
     assert!(output.status.success(), "install failed: {output:?}");
     assert!(agent_dir.join("extensions/worktrunk.ts").exists());
+
+    // Pi expands a leading `~` in the override, so a quoted `~/…` lands under
+    // home rather than in a literal `~` directory beneath the cwd.
+    let cwd = tempfile::tempdir().unwrap();
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.current_dir(cwd.path());
+    cmd.env("PI_CODING_AGENT_DIR", "~/tilde-pi-agent");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    assert!(
+        temp_home
+            .path()
+            .join("tilde-pi-agent/extensions/worktrunk.ts")
+            .exists()
+    );
+    assert!(!cwd.path().join("~").exists());
 }
 
 /// Pi has no profile concept: the oh-my-pi profile variables must not move the

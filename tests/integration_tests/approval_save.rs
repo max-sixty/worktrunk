@@ -991,3 +991,61 @@ command = "llm -m claude-haiku-4.5"
     command = "llm -m claude-sonnet-4"
     "#);
 }
+
+/// A hook pipeline serializes in one spelling — one step as its lone table, more
+/// as an inline array — while the file may write `[[post-start]]` blocks (the
+/// documented form) or an inline array. An unrelated save must keep each
+/// pipeline in the file's spelling with its comments, changing only the steps
+/// the load rewrote (template migration renaming `repo_root`).
+#[test]
+fn test_saving_config_mutation_keeps_each_pipeline_spelling_and_its_comments() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"worktree-path = "../x"
+
+# start the dev server
+post-start = [{ server = "cd {{ repo_root }} && npm run dev" }]  # port 3000
+
+# announce the switch
+[[post-switch]]
+notify = "echo switched"
+
+# share the build cache, then install
+[[pre-start]]
+copy = "wt step copy-ignored"
+
+[[pre-start]]
+install = "cd {{ repo_root }} && pnpm install"  # after the copy
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    toml::from_str::<toml::Table>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    worktree-path = "../x"
+
+    # start the dev server
+    post-start = [{ server = "cd {{ repo_path }} && npm run dev" }]  # port 3000
+
+    # announce the switch
+    [[post-switch]]
+    notify = "echo switched"
+
+    # share the build cache, then install
+    [[pre-start]]
+    copy = "wt step copy-ignored"
+
+    [[pre-start]]
+    install = "cd {{ repo_path }} && pnpm install"  # after the copy
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}

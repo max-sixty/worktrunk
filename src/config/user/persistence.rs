@@ -9,6 +9,8 @@
 //! fields without manual wiring — if a struct field is serializable, save_to
 //! persists it.
 
+use std::borrow::Cow;
+
 use crate::config::ConfigError;
 
 use super::UserConfig;
@@ -71,6 +73,9 @@ impl UserConfig {
     /// - Existing inline table, desired standard table: merge through the same
     ///   recursive path, so the nested `base` applies; the inline format is kept
     ///   when that merge changed nothing
+    /// - A pipeline: compared in the spelling the file uses (see
+    ///   `in_existing_spelling`), as is its `base`; `[[…]]` blocks merge block by
+    ///   block
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
     fn merge_tables(
@@ -88,9 +93,11 @@ impl UserConfig {
         }
 
         for (key, desired_item) in desired.iter() {
-            let nested_base = base
+            let desired_item = &*Self::in_existing_spelling(existing.get(key), desired_item);
+            let base_item = base
                 .and_then(|b| b.get(key))
-                .and_then(toml_edit::Item::as_table);
+                .map(|item| Self::in_existing_spelling(existing.get(key), item));
+            let nested_base = base_item.as_deref().and_then(toml_edit::Item::as_table);
 
             // Existing inline table, desired standard table: merge into a table
             // view so the same nested preservation applies as in the
@@ -119,6 +126,27 @@ impl UserConfig {
                         nested_base,
                     );
                 }
+                // Both `[[…]]` blocks, as many of each: merge block by block, so
+                // each block keeps its comments and formatting
+                Some(toml_edit::Item::ArrayOfTables(blocks))
+                    if desired_item
+                        .as_array_of_tables()
+                        .is_some_and(|desired_blocks| desired_blocks.len() == blocks.len()) =>
+                {
+                    let desired_blocks = desired_item.as_array_of_tables().unwrap();
+                    let base_blocks = base_item
+                        .as_deref()
+                        .and_then(toml_edit::Item::as_array_of_tables);
+                    for (i, (block, desired_block)) in
+                        blocks.iter_mut().zip(desired_blocks.iter()).enumerate()
+                    {
+                        Self::merge_tables(
+                            block,
+                            desired_block,
+                            base_blocks.and_then(|b| b.get(i)),
+                        );
+                    }
+                }
                 Some(existing_item) => {
                     if !Self::items_equal(existing_item, desired_item) {
                         Self::replace_keeping_decor(existing_item, desired_item);
@@ -128,6 +156,46 @@ impl UserConfig {
                     existing[key] = desired_item.clone();
                 }
             }
+        }
+    }
+
+    /// Re-spell a desired hook pipeline the way the file already writes it.
+    ///
+    /// A pipeline serializes in one spelling whatever the file used: one step as
+    /// its lone table, more as an inline array of tables. The file may write
+    /// either as `[[post-start]]` blocks — the documented form — or as an inline
+    /// array. Compared as serialized, an untouched pipeline reads as changed on
+    /// every save, and the rewrite moves it to the serialized spelling and drops
+    /// the comments on its blocks. So desired steps become blocks where the file
+    /// has blocks, and a lone step becomes a one-element array where the file has
+    /// an inline array; anything else stays as serialized. Only a pipeline meets
+    /// its serialized form in these shapes, so the match keys on shape alone.
+    fn in_existing_spelling<'a>(
+        existing: Option<&toml_edit::Item>,
+        desired: &'a toml_edit::Item,
+    ) -> Cow<'a, toml_edit::Item> {
+        use toml_edit::{Array, ArrayOfTables, Item, Value};
+        match (existing, desired) {
+            (Some(Item::ArrayOfTables(_)), Item::Table(step)) => {
+                let mut blocks = ArrayOfTables::new();
+                blocks.push(step.clone());
+                Cow::Owned(Item::ArrayOfTables(blocks))
+            }
+            (Some(Item::ArrayOfTables(_)), Item::Value(Value::Array(steps)))
+                if steps.iter().all(Value::is_inline_table) =>
+            {
+                let mut blocks = ArrayOfTables::new();
+                for step in steps.iter().filter_map(Value::as_inline_table) {
+                    blocks.push(step.clone().into_table());
+                }
+                Cow::Owned(Item::ArrayOfTables(blocks))
+            }
+            (Some(Item::Value(Value::Array(_))), Item::Table(step)) => {
+                let mut steps = Array::new();
+                steps.push(step.clone().into_inline_table());
+                Cow::Owned(Item::Value(Value::Array(steps)))
+            }
+            _ => Cow::Borrowed(desired),
         }
     }
 
