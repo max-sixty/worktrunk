@@ -4250,7 +4250,9 @@ hi = "echo hi"
     let stderr = String::from_utf8_lossy(&refused.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("already exists; to overwrite it, add --yes"),
+        stderr.contains(
+            "already exists; to overwrite it with the project config migration, add --yes"
+        ),
         "stderr:\n{stderr}"
     );
 

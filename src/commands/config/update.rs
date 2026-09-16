@@ -194,10 +194,10 @@ fn write_migrated_output(
     };
 
     let output = resolve_input_path(output);
+    let label = candidate.info.label().to_lowercase();
     if paths_match(&output, &candidate.config_path) {
         bail!(cformat!(
-            "Cannot overwrite <bold>{}</> with <bold>--output</>; to apply the migration in place, run <bold>wt config update</>",
-            candidate.info.label().to_lowercase()
+            "Cannot overwrite <bold>{label}</> with <bold>--output</>; to apply the migration in place, run <bold>wt config update</>"
         ));
     }
     let display_path = format_path_for_display(&output);
@@ -209,13 +209,16 @@ fn write_migrated_output(
     if replace && !yes {
         if !std::io::stdin().is_terminal() {
             bail!(cformat!(
-                "{display_path} already exists; to overwrite it, add <bold>--yes</>"
+                "{display_path} already exists; to overwrite it with the {label} migration, add <bold>--yes</>"
             ));
         }
         if !approvals_warning.is_empty() {
             eprintln!();
         }
-        match prompt_yes_no_preview(&format!("Overwrite {display_path}?"), || {})? {
+        match prompt_yes_no_preview(
+            &format!("Overwrite {display_path} with the {label} migration?"),
+            || {},
+        )? {
             PromptResponse::Accepted => {}
             PromptResponse::Declined => {
                 eprintln!("{}", info_message("Update cancelled"));
@@ -233,10 +236,7 @@ fn write_migrated_output(
     written.with_context(|| format!("Failed to write output @ {display_path}"))?;
     eprintln!(
         "{}",
-        success_message(format!(
-            "Wrote {} migration @ {display_path}",
-            candidate.info.label().to_lowercase()
-        ))
+        success_message(format!("Wrote {label} migration @ {display_path}"))
     );
     Ok(())
 }

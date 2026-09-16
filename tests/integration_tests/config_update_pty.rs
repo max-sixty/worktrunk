@@ -181,17 +181,20 @@ fn exec_config_update_output_in_pty(
 }
 
 /// An existing `--output` destination is overwritten only once the prompt is
-/// accepted. The approvals warning is narration above the prompt, so a blank
-/// line separates the two.
+/// accepted. The prompt starts flush when nothing precedes it; the approvals
+/// warning is narration above it, so a blank line separates the two.
 #[rstest]
 fn test_config_update_output_overwrite_prompt(repo: TestRepo) {
+    let migrated = "worktree-path = \"../{{ repo }}.{{ branch }}\"\n";
+    let deprecated = "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n";
     fs::write(
         repo.test_config_path(),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
+        format!(
+            r#"{deprecated}
 [projects."github.com/user/repo"]
 approved-commands = ["npm test"]
-"#,
+"#
+        ),
     )
     .unwrap();
     let destination = repo.root_path().join("migrated.toml");
@@ -204,12 +207,10 @@ approved-commands = ["npm test"]
         "important user data\n"
     );
 
+    fs::write(repo.test_config_path(), deprecated).unwrap();
     let (accepted, exit_code) = exec_config_update_output_in_pty(&repo, "migrated.toml", "y\n");
     assert_eq!(exit_code, 0);
-    assert_eq!(
-        fs::read_to_string(&destination).unwrap(),
-        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n"
-    );
+    assert_eq!(fs::read_to_string(&destination).unwrap(), migrated);
 
     config_update_pty_settings(&repo).bind(|| {
         assert_snapshot!("config_update_output_overwrite_declined", &declined);
