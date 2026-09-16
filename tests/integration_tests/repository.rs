@@ -3,8 +3,10 @@
 use std::fs;
 use std::path::Path;
 
-use worktrunk::git::{InProgressOperation, RefType, Repository};
+use path_slash::PathExt as _;
+use worktrunk::git::{InProgressOperation, PlumbingDiff, RefType, Repository};
 
+use crate::common::source_scan::visit_files;
 use crate::common::{BareRepoTest, TestRepo};
 
 // =============================================================================
@@ -1250,6 +1252,41 @@ fn test_submodule_bump_survives_submodule_ignore() {
             .capture(["--name-only"])
             .unwrap()
             .contains("sub")
+    );
+}
+
+/// `PlumbingDiff::args` is the one place that spells a plumbing diff command,
+/// so no diff under `src/` or `tests/` can skip its submodule override. The
+/// needles come from `PlumbingDiff` too, so this guard spells none of them.
+#[test]
+fn test_plumbing_diffs_are_built_by_plumbing_diff() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let builder = root.join("src").join("git").join("diff.rs");
+    let needles = [PlumbingDiff::Tree, PlumbingDiff::Index, PlumbingDiff::Files]
+        .map(|diff| format!("\"{}\"", diff.args(&[])[0]));
+    let mut offenders = Vec::new();
+    for dir in ["src", "tests"] {
+        let scanned = visit_files(
+            &root.join(dir),
+            "rs",
+            "plumbing-diff scan",
+            &mut |path, contents| {
+                for needle in &needles {
+                    if path != builder && contents.contains(needle.as_str()) {
+                        let relative = path.strip_prefix(root).unwrap().to_slash_lossy();
+                        offenders.push(format!("{relative} spells {needle}"));
+                    }
+                }
+            },
+        );
+        assert!(
+            scanned > 0,
+            "the plumbing-diff scan read no files under {dir}"
+        );
+    }
+    assert!(
+        offenders.is_empty(),
+        "build these with PlumbingDiff::args: {offenders:#?}"
     );
 }
 

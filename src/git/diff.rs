@@ -177,33 +177,6 @@ mod tests {
 
     use super::*;
 
-    /// Plumbing diff commands are spelled only in [`PlumbingDiff::args`], so
-    /// none can skip its submodule override.
-    #[test]
-    fn plumbing_diffs_are_built_by_plumbing_diff() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let this_file = src.join("git").join("diff.rs");
-        let commands = ["\"diff-tree\"", "\"diff-index\"", "\"diff-files\""];
-        let mut spellings = Vec::new();
-        let mut dirs = vec![src];
-        while let Some(dir) = dirs.pop() {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if path.extension().is_some_and(|ext| ext == "rs") && path != this_file {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    spellings.extend(commands.map(|c| (text.contains(c), c, path.clone())));
-                }
-            }
-        }
-        spellings.retain(|(spelled, ..)| *spelled);
-        assert!(
-            spellings.is_empty(),
-            "build these with PlumbingDiff::args: {spellings:#?}"
-        );
-    }
-
     // ============================================================================
     // LineDiff Tests
     // ============================================================================
