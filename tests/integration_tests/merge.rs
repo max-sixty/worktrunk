@@ -2769,6 +2769,30 @@ fn test_step_commit_auto_staging_warns_about_untracked_files_hidden_by_user_conf
     assert_hidden_untracked_auto_staging_warning(&output, "step commit");
 }
 
+/// Ten paths fill the listing's ten rows. One more lists nine and counts the
+/// other two, so the hint never takes the row a single remaining path would
+/// have used.
+#[rstest]
+fn test_step_commit_auto_staging_caps_untracked_listing(
+    repo: TestRepo,
+    #[values(10, 11)] count: usize,
+) {
+    fs::create_dir(repo.root_path().join("generated")).unwrap();
+    for i in 1..=count {
+        fs::write(repo.root_path().join(format!("generated/{i:02}.txt")), "").unwrap();
+    }
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["commit"], None);
+    cmd.env(
+        "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+        "cat >/dev/null && echo 'feat: add generated files'",
+    );
+    assert_cmd_snapshot!(
+        format!("step_commit_auto_staging_caps_untracked_listing_{count}"),
+        cmd
+    );
+}
+
 #[rstest]
 fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
     fs::write(repo.root_path().join("tracked.txt"), "initial").expect("Failed to write file");
