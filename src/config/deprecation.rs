@@ -2945,6 +2945,60 @@ timeout = 30
         );
     }
 
+    /// A read is a read wherever the expression puts it, so every node the
+    /// walk descends through has to reach the `Expr::Var` underneath. One case
+    /// per shape the parser can produce.
+    #[test]
+    fn test_normalize_rewrites_reads_in_every_expression_shape() {
+        for (template, expected) in [
+            ("{{ items[repo_root:] }}", "{{ items[repo_path:] }}"),
+            (
+                "{{ items[:repo_root:worktree] }}",
+                "{{ items[:repo_path:worktree_path] }}",
+            ),
+            ("{{ items[repo_root] }}", "{{ items[repo_path] }}"),
+            ("{{ not repo_root }}", "{{ not repo_path }}"),
+            ("{{ -repo_root }}", "{{ -repo_path }}"),
+            (
+                "{{ repo_root ~ worktree }}",
+                "{{ repo_path ~ worktree_path }}",
+            ),
+            ("{{ repo_root is defined }}", "{{ repo_path is defined }}"),
+            (
+                "{{ repo_root | default(worktree) }}",
+                "{{ repo_path | default(worktree_path) }}",
+            ),
+            ("{{ dict(**repo_root) }}", "{{ dict(**repo_path) }}"),
+            ("{{ dict(*repo_root) }}", "{{ dict(*repo_path) }}"),
+            (
+                "{{ repo_root(worktree) }}",
+                "{{ repo_path(worktree_path) }}",
+            ),
+            (
+                "{% autoescape repo_root %}{{ worktree }}{% endautoescape %}",
+                "{% autoescape repo_path %}{{ worktree_path }}{% endautoescape %}",
+            ),
+            (
+                "{% filter upper %}{{ repo_root }}{% endfilter %}",
+                "{% filter upper %}{{ repo_path }}{% endfilter %}",
+            ),
+            (
+                "{% for x in items %}{% else %}{{ repo_root }}{% endfor %}",
+                "{% for x in items %}{% else %}{{ repo_path }}{% endfor %}",
+            ),
+            (
+                "{% if a %}{% else %}{{ repo_root }}{% endif %}",
+                "{% if a %}{% else %}{{ repo_path }}{% endif %}",
+            ),
+        ] {
+            assert_eq!(
+                normalize_template_vars(template),
+                expected,
+                "for: {template}"
+            );
+        }
+    }
+
     /// Identifiers inside `{# #}` comments must not be rewritten.
     #[test]
     fn test_normalize_skips_comment_tags() {
