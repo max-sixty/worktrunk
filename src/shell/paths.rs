@@ -148,12 +148,8 @@ fn legacy_nushell_autoload_dirs(
         dirs.push(dir.to_path_buf());
     }
     // etcetera's XDG strategy: `$XDG_CONFIG_HOME` when absolute, `~/.config`
-    // otherwise. Reading the variable directly would put a bare
-    // `nushell/vendor/autoload` into the stranded-file search when the value is
-    // empty or relative, which then looks under the invocation directory
-    // instead of a config dir. `~/.config` stays listed separately because an
-    // absolute `$XDG_CONFIG_HOME` makes `xdg.config_dir()` that directory,
-    // while `~/.config/nushell` is still a location older worktrunk wrote to.
+    // otherwise. `~/.config` stays listed on its own because an absolute
+    // `$XDG_CONFIG_HOME` displaces it, and older worktrunk wrote there too.
     if let Ok(xdg) = Xdg::new() {
         dirs.push(xdg.config_dir().join("nushell"));
     }

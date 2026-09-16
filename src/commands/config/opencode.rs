@@ -28,12 +28,10 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 /// An empty value taken at face value yields the relative path `plugins/`, so
 /// the install writes the plugin into whatever directory `wt` was run from.
 ///
-/// The two lower rungs are etcetera's XDG strategy, which is `$XDG_CONFIG_HOME`
-/// when it is absolute and `~/.config` otherwise — the spec's own exclusions,
-/// so an empty or relative value lands the plugin in the same wrong place an
-/// empty `OPENCODE_CONFIG_DIR` would. `Xdg` rather than `choose_base_strategy`
-/// keeps `~/.config` on Windows too, for the same reason the macOS path is
-/// avoided above.
+/// The two lower rungs are etcetera's XDG strategy — `$XDG_CONFIG_HOME` when
+/// absolute, `~/.config` otherwise — which rules out the same mistake for that
+/// variable. `Xdg` rather than `choose_base_strategy` keeps `~/.config` on
+/// Windows too, for the same reason the macOS path is avoided above.
 fn opencode_plugins_dir() -> Result<PathBuf> {
     let config_dir = if let Some(dir) = std::env::var("OPENCODE_CONFIG_DIR")
         .ok()
