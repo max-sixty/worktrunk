@@ -230,8 +230,8 @@ address the user. Imperatives like "Run", "Use", "Add" are fine — they're
 concise CLI idiom.
 
 ```rust
-// BAD - "Use 'wt merge' to rebase your changes onto main"
-// GOOD - "Use 'wt merge' to rebase onto main"
+// BAD - "To rebase your changes onto main, run wt merge"
+// GOOD - "To rebase onto main, run wt merge"
 ```
 
 **Avoid redundant parenthesized content:** Parenthesized text should add new
@@ -292,10 +292,10 @@ mentioned in the error message.
 ```rust
 // BAD - "it" refers to branch name in error message
 // Error: "Branch 'feature' not found"
-// Hint:  "Use --create to create it"
+// Hint:  "To create it, use --create"
 // GOOD - self-contained hint
 // Error: "Branch 'feature' not found"
-// Hint:  "Use --create to create a new branch"
+// Hint:  "To create a new branch, use --create"
 ```
 
 ## Heading Case
@@ -763,7 +763,7 @@ Use `eprintln!` with formatting functions. Use `cformat!` for inner styling:
 
 ```rust
 eprintln!("{}", success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")));
-eprintln!("{}", hint_message(cformat!("Run <underline>wt merge</> to continue")));
+eprintln!("{}", hint_message(cformat!("To continue, run <underline>wt merge</>")));
 ```
 
 **color-print tags:** `<bold>`, `<dim>`, `<underline>`, `<bright-black>`, `<red>`,
@@ -790,11 +790,11 @@ Never quote commands or branch names. Use styling to make them stand out:
 
 ```rust
 // GOOD - bold in normal context
-eprintln!("{}", info_message(cformat!("Use <bold>wt merge</> to continue")));
+eprintln!("{}", info_message(cformat!("To continue, use <bold>wt merge</>")));
 // GOOD - underline for commands in hints
-eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktrees")));
+eprintln!("{}", hint_message(cformat!("To see worktrees, run <underline>wt list</>")));
 // BAD - quoted commands
-eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
+eprintln!("{}", hint_message("To see worktrees, run 'wt list'"));
 ```
 
 ## Hyperlinks

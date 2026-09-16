@@ -359,7 +359,7 @@ impl Repository {
             "^" => self.default_branch().ok_or_else(|| {
                 GitError::Other {
                     message: cformat!(
-                        "Cannot determine default branch. Specify target explicitly or run <underline>wt config state default-branch set <bold>BRANCH</></>"
+                        "Cannot determine default branch; specify the target explicitly, or to configure one, run <bold>wt config state default-branch set BRANCH</>"
                     ),
                 }
                 .into()
