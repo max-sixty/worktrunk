@@ -33,8 +33,7 @@ pub fn step_diff(
 
     // Stream diff to stdout — git handles pager and coloring.
     wt.temp_index_with_untracked()?
-        .prepare_diff(merge_base)
-        .stream(extra_args)?;
+        .stream_diff(&merge_base, extra_args)?;
 
     Ok(())
 }

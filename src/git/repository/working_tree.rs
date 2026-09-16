@@ -690,7 +690,13 @@ impl<'a> WorkingTree<'a> {
     /// all.
     pub fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
         let output = self
-            .run_command(&["diff-files", "--name-only", "--diff-filter=U", "-z"])
+            .run_command(&[
+                "diff-files",
+                "--name-only",
+                "--diff-filter=U",
+                "-z",
+                "--ignore-submodules=none",
+            ])
             .context("Failed to list unmerged paths")?;
         Ok(output
             .split('\0')
@@ -885,8 +891,14 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout =
-            self.run_command(&["diff-index", "--shortstat", "--find-renames", "HEAD", "--"])?;
+        let stdout = self.run_command(&[
+            "diff-index",
+            "--shortstat",
+            "--find-renames",
+            "--ignore-submodules=none",
+            "HEAD",
+            "--",
+        ])?;
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
@@ -915,6 +927,7 @@ impl<'a> WorkingTree<'a> {
             "--numstat",
             "-z",
             "--find-renames",
+            "--ignore-submodules=none",
             "--end-of-options",
             "HEAD",
             "--",
@@ -1786,7 +1799,7 @@ mod tests {
         assert!(
             cmd_err
                 .command_string()
-                .starts_with("git diff-index --numstat -z --find-renames --end-of-options HEAD")
+                .starts_with("git diff-index --numstat -z --find-renames --ignore-submodules=none --end-of-options HEAD")
         );
     }
 

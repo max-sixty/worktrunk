@@ -26,17 +26,17 @@ enum DiffSides {
     Commits(String, String),
 }
 
-/// A fully specified diff whose execution can be captured or streamed.
+/// A fully specified diff that `wt` captures to parse, render, cache, or send
+/// to an LLM.
 ///
 /// Captures run git's plumbing (`diff-index`, `diff-tree`), which ignores
 /// `diff.external`, `diff.relative`, `color.ui=always`, and the prefix
-/// settings, so none of them can change what `wt` parses, renders, caches, or
-/// sends to an LLM. Captures restore the `git diff` defaults plumbing lacks:
-/// rename detection, textconv filters, and hiding intent-to-add entries from a
-/// staged diff. Plumbing's default output is the raw format, so every capture
-/// names the format it wants (`--patch`, `--stat`). [`Self::stream`] runs
-/// porcelain `git diff` instead: it hands the user git's own view, under their
-/// configuration and arguments.
+/// settings. Captures restore the `git diff` defaults plumbing lacks: rename
+/// detection, textconv filters, and hiding intent-to-add entries from a staged
+/// diff. They also override `submodule.<name>.ignore`, which plumbing still
+/// honors and which would hide a submodule bump. Plumbing's default output is
+/// the raw format, so every capture names the format it wants (`--patch`,
+/// `--stat`).
 ///
 /// A diff prepared from a [`TempIndex`] borrows it, so every read — a stat,
 /// then a patch — observes the same index state.
@@ -104,7 +104,11 @@ impl<'a> PreparedDiff<'a> {
             ]),
             DiffSides::Commits(..) => args.extend(["diff-tree".into(), "-r".into()]),
         }
-        args.extend(["--find-renames".into(), "--textconv".into()]);
+        args.extend([
+            "--find-renames".into(),
+            "--textconv".into(),
+            "--ignore-submodules=none".into(),
+        ]);
         args.extend(options.into_iter().map(Into::into));
         args.push("--end-of-options".into());
         args.extend(self.revisions());
@@ -136,18 +140,6 @@ impl<'a> PreparedDiff<'a> {
 
         let patch = self.capture(["--patch", "--color=always"])?;
         Ok(Some(format!("{stat}{patch}")))
-    }
-
-    /// Stream the diff, preserving `wt step diff`'s argument order so git owns
-    /// paging, coloring, and interpretation of caller-supplied arguments.
-    pub fn stream(&self, extra_args: &[String]) -> anyhow::Result<()> {
-        let mut args = vec!["diff".to_string()];
-        if let DiffSides::Staged(_) = self.sides {
-            args.push("--cached".to_string());
-        }
-        args.extend(self.revisions());
-        args.extend_from_slice(extra_args);
-        self.command(&args).stream()
     }
 }
 
@@ -224,6 +216,17 @@ impl TempIndex {
             source: DiffSource::TempIndex(self),
             sides: DiffSides::Staged(base.into()),
         }
+    }
+
+    /// Stream porcelain `git diff <base> <extra_args>` from the worktree's
+    /// files, seen through this index.
+    ///
+    /// Porcelain, unlike [`PreparedDiff`]: `wt step diff` hands the user git's
+    /// own view, so git owns paging, coloring, and the caller's arguments.
+    pub fn stream_diff(&self, base: &str, extra_args: &[String]) -> anyhow::Result<()> {
+        let mut args = vec!["diff".to_string(), base.to_string()];
+        args.extend_from_slice(extra_args);
+        self.command(args).stream()
     }
 }
 
@@ -328,6 +331,7 @@ impl Repository {
             "-r",
             "--name-only",
             "-z",
+            "--ignore-submodules=none",
             "--end-of-options",
             base,
             head,
@@ -659,6 +663,7 @@ impl Repository {
             "-r",
             "--shortstat",
             "--find-renames",
+            "--ignore-submodules=none",
             &merge_base,
             head_sha,
             "--",

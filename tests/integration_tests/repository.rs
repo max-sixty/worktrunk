@@ -1206,6 +1206,53 @@ fn test_sparse_checkout_paths_cached() {
     assert_eq!(first, &["dir1".to_string()]);
 }
 
+/// `submodule.<name>.ignore = all` hides gitlink changes even from plumbing,
+/// so the diffs `wt` reads override it: a branch that only moves a submodule
+/// still has changes.
+#[test]
+fn test_submodule_bump_survives_submodule_ignore() {
+    let repo = TestRepo::new();
+    fs::write(
+        repo.root_path().join(".gitmodules"),
+        "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n",
+    )
+    .unwrap();
+    repo.run_git(&["add", ".gitmodules"]);
+    repo.run_git(&["commit", "--message", "add .gitmodules"]);
+    let first = repo.git_output(&["rev-parse", "HEAD"]);
+    let gitlink = |sha: &str| format!("160000,{sha},sub");
+    repo.run_git(&["update-index", "--add", "--cacheinfo", &gitlink(&first)]);
+    repo.run_git(&["commit", "--message", "add submodule"]);
+    repo.run_git(&["switch", "--create", "feature"]);
+    let second = repo.git_output(&["rev-parse", "HEAD"]);
+    repo.run_git(&["update-index", "--cacheinfo", &gitlink(&second)]);
+    repo.run_git(&["commit", "--message", "bump submodule"]);
+    repo.run_git(&["switch", "main"]);
+    repo.run_git(&["config", "submodule.sub.ignore", "all"]);
+    let main_sha = repo.git_output(&["rev-parse", "main"]);
+    let feature_sha = repo.git_output(&["rev-parse", "feature"]);
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    assert!(
+        repository
+            .has_added_changes_by_sha(&feature_sha, &main_sha)
+            .unwrap()
+    );
+    assert_eq!(
+        repository.changed_files(&main_sha, &feature_sha).unwrap(),
+        ["sub"]
+    );
+    let stats = repository.branch_diff_stats("main", "feature").unwrap();
+    assert_eq!((stats.added, stats.deleted), (1, 1));
+    assert!(
+        repository
+            .prepare_diff(&main_sha, &feature_sha)
+            .capture(["--name-only"])
+            .unwrap()
+            .contains("sub")
+    );
+}
+
 #[test]
 fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     let repo = TestRepo::new();

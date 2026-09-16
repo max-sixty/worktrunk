@@ -1230,6 +1230,41 @@ mod merge_tree_error_tests {
 }
 
 #[cfg(test)]
+mod has_added_changes_error_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// A `git diff-tree` failure (here: the branch's tree object is missing)
+    /// must surface as a typed `CommandError`, not read as "no added changes",
+    /// which would let `wt remove` delete the branch.
+    #[test]
+    fn diff_tree_failure_is_command_error() {
+        let test = TestRepo::with_initial_commit();
+        let target_sha = test.git_output(&["rev-parse", "HEAD"]);
+        std::fs::write(test.root_path().join("added.txt"), "added\n").unwrap();
+        test.run_git(&["add", "added.txt"]);
+        test.run_git(&["commit", "--message", "add file"]);
+        let branch_sha = test.git_output(&["rev-parse", "HEAD"]);
+        let tree = test.git_output(&["rev-parse", "HEAD^{tree}"]);
+        let (dir, file) = tree.split_at(2);
+        std::fs::remove_file(test.root_path().join(".git/objects").join(dir).join(file)).unwrap();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let err = repo
+            .has_added_changes_by_sha(&branch_sha, &target_sha)
+            .unwrap_err();
+        let cmd_err =
+            crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
+        assert!(
+            cmd_err
+                .command_string()
+                .starts_with("git diff-tree --quiet"),
+            "{err:#}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod merge_tree_cache_tests {
     use super::*;
     use crate::testing::TestRepo;
