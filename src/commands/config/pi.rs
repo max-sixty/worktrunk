@@ -10,6 +10,8 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use color_print::cformat;
+use worktrunk::styling::{eprintln, hint_message};
 
 /// The extension source, embedded at compile time.
 const EXTENSION_SOURCE: &str = include_str!("../../../dev/pi-extension.ts");
@@ -48,5 +50,19 @@ pub fn handle_pi_install(yes: bool) -> Result<()> {
 
 pub fn handle_pi_uninstall(yes: bool) -> Result<()> {
     let target = plugin_path()?;
-    super::uninstall_file_plugin("Pi", &target, yes)
+    // Until this split, `wt config plugins pi uninstall` removed the oh-my-pi
+    // hook. Someone repeating that command finds nothing at Pi's path, so the
+    // bare "Plugin not installed" reads as a completed removal while their
+    // hook sits untouched under oh-my-pi. Name the command that removes it.
+    let omp_hook_left_behind = !target.exists() && super::omp::plugin_file_exists();
+    super::uninstall_file_plugin("Pi", &target, yes)?;
+    if omp_hook_left_behind {
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "An oh-my-pi hook is installed; to remove it, run <underline>wt config plugins omp uninstall</>"
+            ))
+        );
+    }
+    Ok(())
 }

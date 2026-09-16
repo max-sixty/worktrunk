@@ -3197,6 +3197,30 @@ fn test_pi_uninstall_missing_is_a_no_op(temp_home: TempDir) {
     assert!(output.status.success(), "uninstall failed: {output:?}");
 }
 
+/// `pi uninstall` used to remove the oh-my-pi hook, so anyone repeating that
+/// command after the split gets "Plugin not installed" for a hook that is
+/// still there. The hint names the command that removes it.
+#[rstest]
+fn test_pi_uninstall_points_at_omp_when_its_hook_remains(temp_home: TempDir) {
+    let hook_path = temp_home.path().join(".omp/agent/hooks/pre/worktrunk.ts");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    fs::write(&hook_path, include_str!("../../dev/omp-hook.ts")).unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "pi", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(
+        hook_path.exists(),
+        "pi uninstall must not touch the oh-my-pi hook"
+    );
+}
+
 #[rstest]
 fn test_pi_uninstall_prompt_declined(temp_home: TempDir) {
     let extension_path = temp_home.path().join(".pi/agent/extensions/worktrunk.ts");
