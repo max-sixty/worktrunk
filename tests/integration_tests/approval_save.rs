@@ -915,3 +915,41 @@ command = "llm -m claude-haiku-4.5"
     command = "llm -m claude-sonnet-4"
     "#);
 }
+
+/// A one-step pipeline written as an array serializes back as a table, so a
+/// save rewrites the line even though its value didn't change. The comment and
+/// blank line above it must land above the new header, not inside its brackets
+/// — where they would make the file unparsable and the save get refused.
+#[test]
+fn test_saving_config_mutation_keeps_a_comment_above_an_array_pipeline() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"worktree-path = "../x"
+
+# start the dev server
+post-start = [{ server = "npm run dev" }]
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    toml::from_str::<toml::Table>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    worktree-path = "../x"
+
+    # start the dev server
+    [post-start]
+    server = "npm run dev"
+
+    [projects]
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}

@@ -49,6 +49,8 @@ impl UserConfig {
     /// - Existing inline table, desired standard table: merge through the same
     ///   recursive path, so nested `preserve` applies; the inline format is kept
     ///   when that merge changed nothing
+    /// - Existing value of another kind, desired standard table: replaced through
+    ///   `replace_value_with_table`, which moves the line's comments to the header
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
     fn merge_tables(
@@ -85,8 +87,18 @@ impl UserConfig {
                     nested_preserve,
                 );
                 if !Self::tables_equal(&as_table, &merged) {
-                    crate::config::replace_inline_with_table(existing, key, merged);
+                    crate::config::replace_value_with_table(existing, key, merged);
                 }
+                continue;
+            }
+
+            // Any other value that serializes back as a standard table — a
+            // one-step pipeline written as an array, say — changes shape on
+            // save, and the key's comments would otherwise render inside the
+            // new header's brackets.
+            if desired_item.is_table() && existing.get(key).is_some_and(toml_edit::Item::is_value) {
+                let table = desired_item.as_table().unwrap().clone();
+                crate::config::replace_value_with_table(existing, key, table);
                 continue;
             }
 
@@ -121,9 +133,9 @@ impl UserConfig {
     /// a value, and — since template-variable migration became `Structural` —
     /// on a line the command never touched, because every load rewrites retired
     /// names and the next unrelated mutation (declining the commit-generation
-    /// offer, say) finds that line changed. An inline table turning into a
-    /// standard one takes the other path, `replace_inline_with_table`, which
-    /// moves decor onto the header.
+    /// offer, say) finds that line changed. A value turning into a standard
+    /// table takes the other path, `replace_value_with_table`, which moves decor
+    /// onto the header.
     fn replace_keeping_decor(existing_item: &mut toml_edit::Item, desired_item: &toml_edit::Item) {
         let decor = existing_item.as_value().map(|v| v.decor().clone());
         *existing_item = desired_item.clone();

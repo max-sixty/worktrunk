@@ -1041,7 +1041,7 @@ fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
 /// with later subtables. Convert before inserting migrated nested sections so
 /// existing inline parent fields survive alongside the new child table.
 ///
-/// The conversion goes through [`super::replace_inline_with_table`] so the
+/// The conversion goes through [`super::replace_value_with_table`] so the
 /// key's leading comments and blank lines land above the header rather than
 /// inside its brackets. These rules run on the load path, so a header the key's
 /// decor broke is a config file that stops parsing on every command, not just
@@ -1061,7 +1061,7 @@ fn ensure_standard_table_parent<'a>(
         .and_then(|item| item.as_inline_table())
         .cloned()
     {
-        super::replace_inline_with_table(table, key, inline.into_table());
+        super::replace_value_with_table(table, key, inline.into_table());
     }
     table.get_mut(key)?.as_table_mut()
 }

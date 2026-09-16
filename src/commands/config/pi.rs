@@ -7,7 +7,7 @@
 //! oh-my-pi (`omp`) is a separate agent, with its own config root and hook
 //! API; it has its own command — see [`super::omp`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use color_print::cformat;
@@ -16,12 +16,17 @@ use worktrunk::styling::{eprintln, hint_message, warning_message};
 /// The extension source, embedded at compile time.
 const EXTENSION_SOURCE: &str = include_str!("../../../dev/pi-extension.ts");
 
+/// Pi expands a leading `~` in `$PI_CODING_AGENT_DIR` (`getAgentDir` →
+/// `normalizePath`), so a quoted `~/x` names a directory under home, not a
+/// literal `~` beneath the current directory. oh-my-pi resolves the same
+/// variable with a plain `path.resolve`, which is why [`super::omp`] leaves it
+/// unexpanded.
 fn pi_agent_dir() -> Result<PathBuf> {
     if let Some(path) = std::env::var("PI_CODING_AGENT_DIR")
         .ok()
         .filter(|value| !value.is_empty())
     {
-        return Ok(PathBuf::from(path));
+        return Ok(worktrunk::path::expand_tilde(Path::new(&path)).into_owned());
     }
 
     let home = worktrunk::path::home_dir().context("Could not determine home directory")?;
