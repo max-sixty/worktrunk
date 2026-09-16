@@ -211,6 +211,10 @@ pub enum ConfigPluginsPiCommand {
     #[command(
         after_long_help = r#"Writes the Worktrunk extension to Pi's user extension directory.
 
+Where oh-my-pi is on `PATH` and Pi is not — the state a user of the pre-split
+`pi install` is in — the output names `wt config plugins omp install` before
+writing anything.
+
 ## Examples
 
 ```console

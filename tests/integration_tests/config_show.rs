@@ -3087,6 +3087,10 @@ fn test_pi_install_writes_extension(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
+        // `pi install` redirects when only oh-my-pi resolves, so pin both
+        // rather than letting the developer's PATH decide this snapshot.
+        cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "0");
         cmd.args(["config", "plugins", "pi", "install", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
@@ -3153,6 +3157,42 @@ fn test_pi_install_is_idempotent(temp_home: TempDir) {
     assert_eq!(
         fs::read_to_string(extension_path).unwrap(),
         include_str!("../../dev/pi-extension.ts")
+    );
+}
+
+/// `pi install` meant oh-my-pi until the split, and a stray Pi extension has
+/// no surface in `wt config show` — so the command says so itself when only
+/// oh-my-pi is on PATH.
+#[rstest]
+fn test_pi_install_points_at_omp_when_only_omp_is_on_path(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "0");
+        cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// With Pi itself on PATH the command has nothing to redirect, whatever else
+/// is installed alongside it.
+#[rstest]
+fn test_pi_install_stays_quiet_when_pi_is_on_path(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+    cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "1");
+    cmd.args(["config", "plugins", "pi", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(output.status.success(), "install failed: {output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("wt config plugins omp install"),
+        "unexpected oh-my-pi redirect: {stderr}"
     );
 }
 

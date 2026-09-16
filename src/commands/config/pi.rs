@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use color_print::cformat;
-use worktrunk::styling::{eprintln, hint_message};
+use worktrunk::styling::{eprintln, hint_message, warning_message};
 
 /// The extension source, embedded at compile time.
 const EXTENSION_SOURCE: &str = include_str!("../../../dev/pi-extension.ts");
@@ -45,6 +45,23 @@ pub fn plugin_file_exists() -> bool {
 
 pub fn handle_pi_install(yes: bool) -> Result<()> {
     let target = plugin_path()?;
+    // This command meant oh-my-pi until the split, so someone who has oh-my-pi
+    // and no Pi has most likely reached the wrong one. Say so here because
+    // nothing downstream will: `wt config show` gates its PI section on
+    // `which pi`, so the extension this writes stays invisible to them.
+    if super::show::is_omp_available() && !super::show::is_pi_available() {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "oh-my-pi is on PATH and Pi is not; for the oh-my-pi hook, run <bold>wt config plugins omp install</>"
+            ))
+        );
+        // The blank belongs to the prompt below, which `install_file_plugin`
+        // skips when the extension is already there.
+        if !yes && !is_plugin_installed() {
+            eprintln!();
+        }
+    }
     super::install_file_plugin("Pi", &target, EXTENSION_SOURCE, yes)
 }
 

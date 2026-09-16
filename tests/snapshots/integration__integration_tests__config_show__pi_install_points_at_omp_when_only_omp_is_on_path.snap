@@ -39,10 +39,10 @@ info:
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
-    WORKTRUNK_TEST_OMP_INSTALLED: "0"
+    WORKTRUNK_TEST_OMP_INSTALLED: "1"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_PARENT_SHELL: ""
-    WORKTRUNK_TEST_PI_INSTALLED: "1"
+    WORKTRUNK_TEST_PI_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_PROBE_TIMEOUT_MS: "60000"
@@ -55,5 +55,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33moh-my-pi is on PATH and Pi is not; for the oh-my-pi hook, run [1mwt config plugins omp install[22m[39m
 [32m✓[39m [32mPlugin installed @ [1m~/.pi/agent/extensions/worktrunk.ts[22m[39m
 [2m↳[22m [2mActivity markers (🤖/💬) will appear in [4mwt list[24m[22m

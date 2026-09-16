@@ -71,6 +71,10 @@ Usage: [1m[36mwt config plugins pi install[0m [36m[OPTIONS][0m
 
 Writes the Worktrunk extension to Pi's user extension directory.
 
+Where oh-my-pi is on [2mPATH[0m and Pi is not — the state a user of the pre-split
+[2mpi install[0m is in — the output names [2mwt config plugins omp install[0m before
+writing anything.
+
 [1m[32mExamples[0m
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m config plugins pi install[0m
