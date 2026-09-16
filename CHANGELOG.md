@@ -30,6 +30,8 @@
 
 - **Config saves keep the trailing comment on a value they rewrite**: a save such as answering the commit-generation offer dropped the comment after each value it rewrote, including one after an inline section's closing brace. ([#4138](https://github.com/max-sixty/worktrunk/pull/4138))
 
+- **Ignored project-config keys warn from every worktree**: an unknown key in `.config/wt.toml`, or one that belongs in user config such as `[merge]`, warned only in the main worktree, so `wt merge` from a linked worktree ignored it silently. ([#4145](https://github.com/max-sixty/worktrunk/pull/4145), thanks @ee-prog for reporting)
+
 - **`wt merge` skips `post-commit` when it removes that hook's worktree**: before, the hook ran in the primary worktree when the removed one sat inside the repository, and otherwise didn't run. The merge now prints `▲ Skipped post-commit`; move work that must finish there to `pre-remove`. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
 
 - **`wt switch` recovers from a removed worktree in a bare repository**: `wt switch` and the picker surfaced git's raw `fatal: Unable to read current working directory` instead, and the removed-directory message lacked `wt switch ^`. ([#4067](https://github.com/max-sixty/worktrunk/pull/4067))
@@ -58,7 +60,7 @@
 
 - **A deprecated config section the migration can't rewrite now warns**: `select = "not a table"`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121), thanks @zach-hammad-vs for reporting)
 
-- **`wt config update` no longer changes what a template renders**: it renamed `{{ repo_root }}` inside quoted strings, and after `{% set %}` rebound it. A template binding a retired name or its replacement is now left unmigrated and unwarned, so a hook fails to render and a squash template silently drops the variable. ([#4124](https://github.com/max-sixty/worktrunk/pull/4124), thanks @zach-hammad-vs for reporting)
+- **`wt config update` no longer changes what a template renders**: it could rename `{{ repo_root }}` inside a quoted string, and after `{% set %}` rebound it. A template binding a retired name or its replacement stays unmigrated and unwarned: a hook reading that name fails, and a squash template can silently drop it. ([#4124](https://github.com/max-sixty/worktrunk/pull/4124), thanks @zach-hammad-vs for reporting)
 
 - **Config migration previews ignore `diff.external` and report a failed diff**: `wt config show` and the `wt config update` prompt showed an external diff program's output in place of the patch, and nothing when the diff failed. A failure now prints `Could not render the proposed diff` with git's error. ([#4126](https://github.com/max-sixty/worktrunk/pull/4126), thanks @zach-hammad-vs for reporting)
 
