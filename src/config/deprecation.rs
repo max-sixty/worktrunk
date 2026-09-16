@@ -165,11 +165,13 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
         .unwrap_or(Cow::Borrowed(template))
 }
 
-/// The deprecated `(old, new)` pairs used as variables in `template`, in
-/// [`DEPRECATED_VARS`] order. Empty when none appear (or the template doesn't
-/// parse). An identifier appearing only as an attribute name
-/// (`{{ foo.repo_root }}`) or an assignment target doesn't count — only
-/// genuine variable uses, which is exactly what the rewrite replaces.
+/// The deprecated `(old, new)` pairs it is safe to rewrite in `template`, in
+/// [`DEPRECATED_VARS`] order. Empty when none appear, when the template
+/// doesn't parse, or when a block binds either half of a pair — see
+/// [`template_bound_names`] for why a bound name drops the pair instead of
+/// renaming half a scope. An identifier appearing only as an attribute name
+/// (`{{ foo.repo_root }}`) or an assignment target isn't a use, so it doesn't
+/// bring a pair in on its own.
 fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static str)> {
     // Quick check: if none of the deprecated vars appear, skip parsing
     if !DEPRECATED_VARS
@@ -3813,6 +3815,9 @@ hostname = "forge.example"
             "worktree-path = \"{{ repo_root }}{%+ set repo_root = 'x' %}{{ repo_root }}\"\n",
             // a parenthesized tuple target binds just as a bare one does
             "worktree-path = \"{{ repo_root }}{% for (repo_root, x) in items %}{{ repo_root }}{% endfor %}\"\n",
+            // binding the *canonical* name holds the rename back from the
+            // other side
+            "worktree-path = \"{{ repo_root }}{% for repo_path in items %}{{ repo_root }}{% endfor %}\"\n",
         ];
         for content in untouched {
             assert!(
