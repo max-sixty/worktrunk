@@ -58,7 +58,7 @@
 
 - **A deprecated config section the migration can't rewrite now warns**: `select = "not a table"`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121), thanks @zach-hammad-vs for reporting)
 
-- **`wt config update- **`wt config update` no longer changes what a template renders when renaming a retired variable**: it rewrote `{{ repo_root }}` inside a quoted string, and turned `{{ repo_root }}{% set repo_root = 'x' %}{{ repo_root }}` into one printing the path twice. A template that binds a retired name or its replacement is now left unmigrated, for hand-editing.hub.com/max-sixty/worktrunk/pull/4124), thanks @zach-hammad-vs for reporting)
+- **`wt config update` no longer changes what a template renders when renaming a retired variable**: it rewrote `{{ repo_root }}` inside a quoted string, and turned `{{ repo_root }}{% set repo_root = 'x' %}{{ repo_root }}` into one printing the path twice. A template that binds a retired name or its replacement is now left unmigrated, for hand-editing. ([#4124](https://github.com/max-sixty/worktrunk/pull/4124), thanks @zach-hammad-vs for reporting)
 
 - **Config migration previews ignore `diff.external` and report a failed diff**: `wt config show` and the `wt config update` prompt showed an external diff program's output in place of the patch, and nothing when the diff failed. A failure now prints `Could not render the proposed diff` with git's error. ([#4126](https://github.com/max-sixty/worktrunk/pull/4126), thanks @zach-hammad-vs for reporting)
 
