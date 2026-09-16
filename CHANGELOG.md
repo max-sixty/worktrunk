@@ -6,7 +6,7 @@
 
 - **Hook scripts read renamed context keys**: the JSON piped to every hook drops `worktree`, `repo_root`, `main_worktree`, and `main_worktree_path` in favour of `worktree_path`, `repo_path`, `repo`, and `primary_worktree_path`. Config templates migrate on load, so hooks written with the old names keep working; scripts reading the JSON, `--execute` templates, and `--var` overrides need updating. (Breaking.) ([#4080](https://github.com/max-sixty/worktrunk/pull/4080))
 
-- **`wt config plugins pi` installs for Pi; oh-my-pi moves to `wt config plugins omp`**: `pi install` wrote an oh-my-pi hook, which Pi never loads; Pi users re-run it to get a Pi extension. Existing oh-my-pi hooks keep working, listed as outdated until `wt config plugins omp install`. (Breaking: oh-my-pi scripts need `omp` in place of `pi`.) [Docs](https://worktrunk.dev/claude-code/#oh-my-pi) ([#4135](https://github.com/max-sixty/worktrunk/pull/4135), thanks @ashebanow)
+- **`wt config plugins pi` installs for Pi; oh-my-pi moves to `wt config plugins omp`**: `pi install` wrote an oh-my-pi hook, which Pi never loads; Pi users re-run it to get a Pi extension. Existing oh-my-pi hooks keep working, listed as outdated until `wt config plugins omp install`. (Breaking: scripts that run `wt config plugins pi` for oh-my-pi need `omp`.) [Docs](https://worktrunk.dev/claude-code/#oh-my-pi) ([#4135](https://github.com/max-sixty/worktrunk/pull/4135), thanks @ashebanow)
 
 - **Interactive prompts no longer open with a blank line**: `wt config shell install`, `wt config plugins claude install`, and the commit-message setup offer in `wt merge` began with one. ([#4059](https://github.com/max-sixty/worktrunk/pull/4059))
 
@@ -26,9 +26,9 @@
 
 - **`wt step prune` no longer deletes a branch created minutes ago from an older commit**: `--min-age` aged a branch without a worktree by its commit's date, so a new branch off a day-old commit was pruned on the next run. Age now comes from the branch's oldest reflog entry. ([#4077](https://github.com/max-sixty/worktrunk/pull/4077))
 
-- **A comment or blank line above an inline config section no longer breaks the config**: a save or migration that rewrote `commit = { … }` as `[commit]` put that line inside the brackets. `wt switch` then failed with `Failed to load config`; other commands ran without the config. Saves also dropped unrecognized keys from inline sections. ([#4120](https://github.com/max-sixty/worktrunk/pull/4120), thanks @zach-hammad-vs for reporting)
+- **A comment or blank line above an inline config section no longer breaks the config**: a save or migration that rewrote `commit = { … }` as `[commit]` put that line inside the brackets. `wt switch`, `wt merge`, `wt remove`, and several `wt step` commands then failed with `Failed to load config`; `wt list` warned and ran without the config. Saves also dropped unrecognized keys from inline sections. ([#4120](https://github.com/max-sixty/worktrunk/pull/4120), thanks @zach-hammad-vs for reporting)
 
-- **Config saves keep the trailing comment on a line they change**: a save such as answering the commit-generation offer dropped the comment after each value it rewrote, including one after an inline section's closing brace. ([#4138](https://github.com/max-sixty/worktrunk/pull/4138))
+- **Config saves keep the trailing comment on a value they rewrite**: a save such as answering the commit-generation offer dropped the comment after each value it rewrote, including one after an inline section's closing brace. ([#4138](https://github.com/max-sixty/worktrunk/pull/4138))
 
 - **`wt merge` skips `post-commit` when it removes that hook's worktree**: before, the hook ran in the primary worktree when the removed one sat inside the repository, and otherwise didn't run. The merge now prints `▲ Skipped post-commit`; move work that must finish there to `pre-remove`. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
 
