@@ -131,7 +131,7 @@ Force-delete an unmerged branch:
 
 By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
-Worktrunk checks six conditions against the default branch (the target):
+Worktrunk checks six conditions:
 
 1. [1mSame commit[0m — Branch HEAD equals the default branch. Shows [2m_[0m in [2mwt list[0m.
 2. [1mAncestor[0m — Branch is in target's history (fast-forward or rebase case). Shows [2m⊂[0m.
@@ -139,6 +139,10 @@ Worktrunk checks six conditions against the default branch (the target):
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows [2m⊂[0m.
 6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m.
+
+The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs [2m-D[0m to remove.
+
+The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
 Branches matching these conditions and with empty working trees are dimmed in [2mwt list[0m as safe to delete.
 

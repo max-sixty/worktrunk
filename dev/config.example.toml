@@ -271,7 +271,7 @@
 #
 # A repository's own `[forge]` block still wins over any entry here, field by field.
 #
-# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence.:
+# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:
 #
 # # Single command
 # [projects."github.com/user/repo"]

@@ -396,7 +396,7 @@ Entries in [2mapprovals.toml[0m match the same way, so a hand-written pattern 
 
 A repository's own [2m[forge][0m block still wins over any entry here, field by field.
 
-Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence.:
+Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:
 
 [107m [0m [2m# Single command[0m
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m

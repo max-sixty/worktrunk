@@ -90,7 +90,7 @@ Worktrunk detects the default branch automatically:
 3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m, giving up after 10s
 4. [1mLocal inference[0m — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in [2mworktrunk.default-branch[0m. A later change to [2morigin/HEAD[0m isn't picked up automatically: [2mwt config state[0m flags the mismatch, [2mset[0m adopts the new branch, and [2mclear[0m re-detects.
+Once detected, the result is cached in [2mworktrunk.default-branch[0m — except a value inferred after the remote query was abandoned, so an outage can't make a guess permanent. A later change to [2morigin/HEAD[0m isn't picked up automatically: [2mwt config state[0m flags the mismatch, [2mset[0m adopts the new branch, and [2mclear[0m re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it

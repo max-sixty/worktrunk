@@ -348,7 +348,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# A repository's own `[forge]` block still wins over any entry here, field by field.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence.:[0m
+[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Single command[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m

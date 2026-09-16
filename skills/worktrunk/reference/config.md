@@ -380,7 +380,7 @@ forge.hostname = "api.git.company.example"   # API host, when the remote's own h
 
 A repository's own `[forge]` block still wins over any entry here, field by field.
 
-Hooks support all three [hook forms](https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence.:
+Hooks support all three [hook forms](https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence:
 
 ```toml
 # Single command
@@ -1092,7 +1092,7 @@ Worktrunk detects the default branch automatically:
 3. **Remote query** — If not cached, queries `git ls-remote`, giving up after 10s
 4. **Local inference** — If no remote, or the query was abandoned, infers from local branches
 
-Once detected, the result is cached in `worktrunk.default-branch`. A later change to `origin/HEAD` isn't picked up automatically: `wt config state` flags the mismatch, `set` adopts the new branch, and `clear` re-detects.
+Once detected, the result is cached in `worktrunk.default-branch` — except a value inferred after the remote query was abandoned, so an outage can't make a guess permanent. A later change to `origin/HEAD` isn't picked up automatically: `wt config state` flags the mismatch, `set` adopts the new branch, and `clear` re-detects.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
