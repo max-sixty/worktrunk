@@ -112,17 +112,18 @@ impl UserConfig {
         }
     }
 
-    /// Overwrite an item, keeping the line's own decor — its leading blank lines
-    /// and comments, and the trailing comment after the value.
+    /// Overwrite an item, keeping the value's own decor — the spacing after `=`
+    /// and the trailing comment after the value.
     ///
-    /// `toml_edit` carries decor on the value, so replacing the item wholesale
-    /// drops whatever the user wrote around it. That is a silent edit to a line
-    /// the command was never asked to touch: template-variable migration is
-    /// `Structural`, so it rewrites retired names on every load, and the next
-    /// unrelated mutation — declining the commit-generation offer, say — diffs
-    /// the migrated value against the file and replaces that line. An inline
-    /// table turning into a standard one takes the other path,
-    /// `replace_inline_with_table`, which moves decor onto the header.
+    /// Comments and blank lines *above* the line sit on the key's leaf decor,
+    /// which a value replacement never touches. The trailing comment sits on the
+    /// value, so replacing the item wholesale drops it: whenever a save changes
+    /// a value, and — since template-variable migration became `Structural` —
+    /// on a line the command never touched, because every load rewrites retired
+    /// names and the next unrelated mutation (declining the commit-generation
+    /// offer, say) finds that line changed. An inline table turning into a
+    /// standard one takes the other path, `replace_inline_with_table`, which
+    /// moves decor onto the header.
     fn replace_keeping_decor(existing_item: &mut toml_edit::Item, desired_item: &toml_edit::Item) {
         let decor = existing_item.as_value().map(|v| v.decor().clone());
         *existing_item = desired_item.clone();
