@@ -1324,6 +1324,43 @@ fn test_unknown_project_key_warning_during_load(repo: TestRepo, temp_home: TempD
     );
 }
 
+/// The load-time unknown-field warning fires from a linked worktree too.
+///
+/// `[merge]` in project config is ignored at runtime, and the warning is the
+/// only thing that says so. Suppressing it outside the primary worktree hid it
+/// from exactly the commands the keys govern — `wt merge` runs from the
+/// feature worktree — so a repo's merge policy diverged silently between a
+/// machine carrying the `[projects."<id>"]` entry and a fresh checkout (#4144).
+#[rstest]
+fn test_misplaced_project_key_warns_from_linked_worktree(mut repo: TestRepo, temp_home: TempDir) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // `[merge]` is user-config-only, so project config ignores it entirely.
+    let config_dir = feature_wt.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[merge]\nsquash = false\nff = false\n",
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(&feature_wt);
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("belongs in user config"),
+        "Expected misplaced-key warning from a linked worktree, got: {stderr}"
+    );
+}
+
 /// Tests that when a user-config-only key (commit-generation) appears in project config,
 /// the warning suggests moving it to user config.
 #[rstest]
