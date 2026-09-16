@@ -6,6 +6,8 @@
 
 - **Hook scripts read renamed context keys**: the JSON piped to every hook drops `worktree`, `repo_root`, `main_worktree`, and `main_worktree_path` in favour of `worktree_path`, `repo_path`, `repo`, and `primary_worktree_path`. Config templates migrate on load, so hooks written with the old names keep working; scripts reading the JSON, `--execute` templates, and `--var` overrides need updating. (Breaking.) ([#4080](https://github.com/max-sixty/worktrunk/pull/4080))
 
+- **`wt config plugins pi` installs for Pi; oh-my-pi moves to `wt config plugins omp`**: `pi install` wrote an oh-my-pi hook, which Pi never loads; Pi users re-run it to get a Pi extension. Existing oh-my-pi hooks keep working, listed as outdated until `wt config plugins omp install`. (Breaking: oh-my-pi scripts need `omp` in place of `pi`.) [Docs](https://worktrunk.dev/claude-code/#oh-my-pi) ([#4135](https://github.com/max-sixty/worktrunk/pull/4135), thanks @ashebanow)
+
 - **Interactive prompts no longer open with a blank line**: `wt config shell install`, `wt config plugins claude install`, and the commit-message setup offer in `wt merge` began with one. ([#4059](https://github.com/max-sixty/worktrunk/pull/4059))
 
 - **`wt config show` gives a single `wt config shell install` hint**: an outdated wrapper, a fish wrapper at the deprecated `conf.d` path, and missing fish completions each printed their own hint. The zsh `compinit` snippet is now syntax-highlighted. ([#4059](https://github.com/max-sixty/worktrunk/pull/4059))
@@ -24,6 +26,10 @@
 
 - **`wt step prune` no longer deletes a branch created minutes ago from an older commit**: `--min-age` aged a branch without a worktree by its commit's date, so a new branch off a day-old commit was pruned on the next run. Age now comes from the branch's oldest reflog entry. ([#4077](https://github.com/max-sixty/worktrunk/pull/4077))
 
+- **A comment or blank line above an inline config section no longer breaks the config**: a save or migration that rewrote `commit = { … }` as `[commit]` put that line inside the brackets. `wt switch` then failed with `Failed to load config`; other commands ran without the config. Saves also dropped unrecognized keys from inline sections. ([#4120](https://github.com/max-sixty/worktrunk/pull/4120), thanks @zach-hammad-vs for reporting)
+
+- **Config saves keep the trailing comment on a line they change**: a save such as answering the commit-generation offer dropped the comment after each value it rewrote, including one after an inline section's closing brace. ([#4138](https://github.com/max-sixty/worktrunk/pull/4138))
+
 - **`wt merge` skips `post-commit` when it removes that hook's worktree**: before, the hook ran in the primary worktree when the removed one sat inside the repository, and otherwise didn't run. The merge now prints `▲ Skipped post-commit`; move work that must finish there to `pre-remove`. ([#4049](https://github.com/max-sixty/worktrunk/pull/4049))
 
 - **`wt switch` recovers from a removed worktree in a bare repository**: `wt switch` and the picker surfaced git's raw `fatal: Unable to read current working directory` instead, and the removed-directory message lacked `wt switch ^`. ([#4067](https://github.com/max-sixty/worktrunk/pull/4067))
@@ -31,6 +37,8 @@
 - **`wt config shell install fish` puts the wrapper where fish reads it under a custom `$XDG_CONFIG_HOME`**: the wrapper always went to `~/.config/fish/functions/`, so install reported success while `wt switch` changed no directory. On Windows, the fish completion moves from `%APPDATA%\fish\completions` to the wrapper's directory. ([#4107](https://github.com/max-sixty/worktrunk/pull/4107))
 
 - **`wt config shell install zsh` honours `$ZDOTDIR` only when it is absolute**: an empty or relative value resolved against the current directory, so install appended to a `.zshrc` under the current directory and reported success while the file zsh reads went untouched. A non-absolute value now falls back to `$HOME`. ([#4085](https://github.com/max-sixty/worktrunk/pull/4085))
+
+- **`wt config shell install` for Nushell no longer deletes a `wt.nu` under the current directory**: an empty or relative `$XDG_CONFIG_HOME` resolved against it, so install removed a `nushell/vendor/autoload/wt.nu` beneath it unread, as a stale wrapper. It now falls back to `~/.config`, which also fixes unread `tea` logins that let `wt switch pr:<n>` treat a Gitea host as GitHub. ([#4104](https://github.com/max-sixty/worktrunk/pull/4104))
 
 - **`wt switch --create` names the branch a failed worktree add leaves behind**: `git worktree add -b` writes the branch ref before populating the worktree, so a failure in between left the branch with no worktree, and the next attempt reported a name collision. The error now says how to delete or reuse it. ([#4109](https://github.com/max-sixty/worktrunk/pull/4109), thanks @technicalpickles for reporting)
 
@@ -47,6 +55,8 @@
 - **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: that config, common with GitHub Enterprise and self-hosted GitLab, kept the deprecated key with no deprecation warning. ([#4061](https://github.com/max-sixty/worktrunk/pull/4061))
 
 - **A deprecated config section the migration can't rewrite now warns**: `select = "not a table"`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121), thanks @zach-hammad-vs for reporting)
+
+- **Config migration previews ignore `diff.external` and report a failed diff**: `wt config show` and the `wt config update` prompt showed an external diff program's output in place of the patch, and nothing when the diff failed. A failure now prints `Could not render the proposed diff` with git's error. ([#4126](https://github.com/max-sixty/worktrunk/pull/4126), thanks @zach-hammad-vs for reporting)
 
 - **An alias that binds `dry_run` can take `--dry-run <value>`**: that spelling failed with the retired-flag error even when the template referenced `{{ dry_run }}`, while `--dry-run=<value>` worked. A bare `--dry-run` still errors; pass `--dry-run=1`. ([#4058](https://github.com/max-sixty/worktrunk/pull/4058))
 
