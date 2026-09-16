@@ -186,8 +186,10 @@ $ wt config plugins opencode install --yes
 ## Plugin location
 
 The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`,
-mirroring OpenCode's own global-config precedence:
-`$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`."#
+following OpenCode's global-config precedence:
+`$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`.
+An empty `$OPENCODE_CONFIG_DIR` and an empty or relative `$XDG_CONFIG_HOME`
+are ignored."#
     )]
     Install,
 
@@ -465,9 +467,10 @@ $ wt config plugins opencode uninstall
 
 ## Plugin location
 
-Written to `~/.config/opencode/plugins/worktrunk.ts`. Honors OpenCode's
+Written to `~/.config/opencode/plugins/worktrunk.ts`. Follows OpenCode's
 config precedence: `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
-`~/.config/opencode`."#
+`~/.config/opencode`. An empty `$OPENCODE_CONFIG_DIR` and an empty or relative
+`$XDG_CONFIG_HOME` are ignored."#
     )]
     Opencode {
         #[command(subcommand)]
