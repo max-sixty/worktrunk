@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
 
-use crate::git::CommandError;
+use crate::git::{CommandError, PlumbingDiff};
 use crate::shell_exec::Cmd;
 
 use super::working_tree::{TempIndex, WorkingTree, path_to_logging_context};
@@ -94,21 +94,16 @@ impl<'a> PreparedDiff<'a> {
         &self,
         options: impl IntoIterator<Item = impl Into<String>>,
     ) -> anyhow::Result<String> {
+        let command = match &self.sides {
+            DiffSides::WorkingTree(_) => PlumbingDiff::Index.args(&[]),
+            DiffSides::Staged(_) => {
+                PlumbingDiff::Index.args(&["--cached", "--ita-invisible-in-index"])
+            }
+            DiffSides::Commits(..) => PlumbingDiff::Tree.args(&["-r"]),
+        };
         let mut args = vec!["--no-optional-locks".to_string()];
-        match &self.sides {
-            DiffSides::WorkingTree(_) => args.push("diff-index".into()),
-            DiffSides::Staged(_) => args.extend([
-                "diff-index".into(),
-                "--cached".into(),
-                "--ita-invisible-in-index".into(),
-            ]),
-            DiffSides::Commits(..) => args.extend(["diff-tree".into(), "-r".into()]),
-        }
-        args.extend([
-            "--find-renames".into(),
-            "--textconv".into(),
-            "--ignore-submodules=none".into(),
-        ]);
+        args.extend(command.into_iter().map(String::from));
+        args.extend(["--find-renames".into(), "--textconv".into()]);
         args.extend(options.into_iter().map(Into::into));
         args.push("--end-of-options".into());
         args.extend(self.revisions());
@@ -326,17 +321,15 @@ impl Repository {
     /// a file is renamed in one branch but has uncommitted changes under the
     /// old name).
     pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&[
-            "diff-tree",
+        let stdout = self.run_command(&PlumbingDiff::Tree.args(&[
             "-r",
             "--name-only",
             "-z",
-            "--ignore-submodules=none",
             "--end-of-options",
             base,
             head,
             "--",
-        ])?;
+        ]))?;
         Ok(stdout
             .split('\0')
             .filter(|path| !path.is_empty())
@@ -658,16 +651,14 @@ impl Repository {
             .iter()
             .map(|path| format!(":(top){path}"))
             .collect();
-        let mut args = vec![
-            "diff-tree",
+        let mut args = PlumbingDiff::Tree.args(&[
             "-r",
             "--shortstat",
             "--find-renames",
-            "--ignore-submodules=none",
             &merge_base,
             head_sha,
             "--",
-        ];
+        ]);
         args.extend(sparse_pathspecs.iter().map(String::as_str));
 
         let stdout = self.run_command(&args)?;

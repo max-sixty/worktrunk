@@ -141,11 +141,70 @@ impl DiffStats {
     }
 }
 
+/// A git plumbing diff command.
+///
+/// Plumbing diffs ignore the user's diff display configuration but still
+/// honor `submodule.<name>.ignore`, from repository config or `.gitmodules`,
+/// which hides gitlink changes. Every plumbing diff `wt` runs is built by
+/// [`Self::args`], which overrides that setting.
+#[derive(Debug, Clone, Copy)]
+pub enum PlumbingDiff {
+    /// `git diff-tree`: tree against tree.
+    Tree,
+    /// `git diff-index`: tree against the index or working tree.
+    Index,
+    /// `git diff-files`: index against working tree.
+    Files,
+}
+
+impl PlumbingDiff {
+    /// Arguments for `git <command> --ignore-submodules=none <args>`.
+    pub fn args<'a>(self, args: &[&'a str]) -> Vec<&'a str> {
+        let command = match self {
+            Self::Tree => "diff-tree",
+            Self::Index => "diff-index",
+            Self::Files => "diff-files",
+        };
+        let mut all = vec![command, "--ignore-submodules=none"];
+        all.extend_from_slice(args);
+        all
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+
+    /// Plumbing diff commands are spelled only in [`PlumbingDiff::args`], so
+    /// none can skip its submodule override.
+    #[test]
+    fn plumbing_diffs_are_built_by_plumbing_diff() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let this_file = src.join("git").join("diff.rs");
+        let mut offenders = Vec::new();
+        let mut dirs = vec![src];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") && path != this_file {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for command in ["\"diff-tree\"", "\"diff-index\"", "\"diff-files\""] {
+                        if text.contains(command) {
+                            offenders.push(format!("{} spells {command}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "build these with PlumbingDiff::args: {offenders:#?}"
+        );
+    }
 
     // ============================================================================
     // LineDiff Tests

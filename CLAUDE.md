@@ -109,7 +109,7 @@ When no structured alternative exists, document the fragility inline.
 
 ### Plumbing for Output `wt` Consumes
 
-Porcelain commands read display configuration that changes what they report: `diff.relative` once made `wt remove` delete an unmerged branch, and `color.ui=always` and `diff.external` leaked into LLM prompts. When `wt` parses, caches, renders, or prompts with git's output, it runs plumbing (`diff-tree`, `diff-index`, `diff-files`, `for-each-ref`), which ignores that configuration. Diffs go through `PreparedDiff::capture`, which restores the `git diff` defaults plumbing lacks. `git status` has no plumbing equivalent, so it pins its behavior with explicit flags. Output shown as git's own view, like `wt step diff`, stays porcelain.
+Porcelain commands read display configuration that changes what they report: `diff.relative` once made `wt remove` delete an unmerged branch, and `color.ui=always` and `diff.external` leaked into LLM prompts. When `wt` parses, caches, renders, or prompts with git's output, it runs plumbing (`diff-tree`, `diff-index`, `diff-files`, `for-each-ref`), which ignores that configuration apart from `submodule.<name>.ignore`. `PlumbingDiff::args` builds every plumbing diff with `--ignore-submodules=none` to override that setting, and a test rejects one spelled by hand. Rendered and prompted diffs go through `PreparedDiff::capture`, which also restores the `git diff` defaults plumbing lacks. `git status` has no plumbing equivalent, so it pins its behavior with explicit flags. Output shown as git's own view, like `wt step diff`, stays porcelain.
 
 ### Immutable Ids Over List Positions
 
