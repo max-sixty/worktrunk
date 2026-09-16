@@ -225,6 +225,13 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
 /// warns. Losing the warning is the price of not quietly rendering
 /// something else.
 ///
+/// Since [`RETIRED_VARS`] became a [`DeprecationRule::Structural`] row, that
+/// price is paid at render time rather than deferred: the retired name
+/// survives the load-path rewrite and reaches a renderer that has nothing to
+/// resolve it to, failing a `SemiStrict` expansion loudly or rendering empty
+/// in a squash template. Both beat renaming one scope's worth of uses out
+/// from under the template that bound the name.
+///
 /// The *canonical* name is checked against this set too. Binding it captures
 /// the global use the rename produces: `{% for repo_path in items %}` around a
 /// `{{ repo_root }}` reads the global today and the loop variable once
