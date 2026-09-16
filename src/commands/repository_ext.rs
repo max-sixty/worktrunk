@@ -4,8 +4,8 @@ use super::worktree::{RemovalPlan, SharedBranchCheckout};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::git::{
-    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
-    parse_porcelain_z, parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
+    WorktreeInfo, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -33,9 +33,6 @@ pub enum RemoveTarget {
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
 pub trait RepositoryCliExt {
-    /// Warn about untracked files being auto-staged.
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
-
     /// Prepare the removal of whichever worktree or branch [`RemoveTarget`]
     /// names.
     ///
@@ -101,15 +98,6 @@ pub trait RepositoryCliExt {
 }
 
 impl RepositoryCliExt for Repository {
-    fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
-        // `-uall` overrides the user's display preference and expands untracked
-        // directories so the warning counts every path `git add -A` will stage.
-        let status = self
-            .run_command(&["status", "--porcelain", "-z", "-uall"])
-            .context("Failed to get status")?;
-        warn_about_untracked_files(&status)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
@@ -625,10 +613,15 @@ pub(crate) fn check_not_default_branch(
 ///
 /// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
 /// is a hint counting the rest, which is always at least two paths.
-pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
+pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
     const MAX_ROWS: usize = 10;
 
-    let files = parse_untracked_files(status_output);
+    // `-uall` overrides the user's display preference and expands untracked
+    // directories so the warning counts every path `git add -A` will stage.
+    let status = wt
+        .run_command(&["status", "--porcelain", "-z", "-uall"])
+        .context("Failed to get status")?;
+    let files = parse_untracked_files(&status);
     if files.is_empty() {
         return Ok(());
     }
