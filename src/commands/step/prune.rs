@@ -705,7 +705,14 @@ fn worktree_age(
 fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
     let ref_name = format!("refs/heads/{branch}");
     let stdout = repo
-        .run_command(&["reflog", "show", "--date=unix", "--format=%gd", &ref_name])
+        .run_command(&[
+            "reflog",
+            "show",
+            "--no-show-signature",
+            "--date=unix",
+            "--format=%gd",
+            &ref_name,
+        ])
         .ok()?;
     let created_epoch = stdout
         .trim()

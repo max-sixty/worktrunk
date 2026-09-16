@@ -101,7 +101,7 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 | Tool | Fragile | Structured |
 |------|---------|------------|
 | `git diff-tree` / `diff-index` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
-| `git status` | default | `--porcelain=v2` |
+| `git status` | default | `--porcelain=v2 -z` (without `-z`, v2 paths are relative to the cwd) |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
 

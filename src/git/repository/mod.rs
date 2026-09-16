@@ -1731,6 +1731,14 @@ impl Repository {
         self.config_bool("core.bare")
     }
 
+    /// Whether `commit.gpgSign` asks for signed commits.
+    ///
+    /// `git commit` and `git merge` honor it; `git commit-tree` ignores it, so
+    /// a commit meant to match what porcelain would record passes `-S` itself.
+    pub fn signs_commits(&self) -> anyhow::Result<bool> {
+        self.config_bool("commit.gpgSign")
+    }
+
     /// Get the sparse checkout paths for this repository.
     ///
     /// Returns the list of paths from `git sparse-checkout list`. For non-sparse
