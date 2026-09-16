@@ -87,18 +87,44 @@ impl UserConfig {
                         .clone()
                         .into_table();
                     if !Self::tables_equal(&as_table, desired_item.as_table().unwrap()) {
-                        *existing_item = desired_item.clone();
+                        Self::replace_keeping_decor(existing_item, desired_item);
                     }
                 }
                 Some(existing_item) => {
                     if !Self::items_equal(existing_item, desired_item) {
-                        *existing_item = desired_item.clone();
+                        Self::replace_keeping_decor(existing_item, desired_item);
                     }
                 }
                 None => {
                     existing[key] = desired_item.clone();
                 }
             }
+        }
+    }
+
+    /// Overwrite an item, keeping the line's own decor — its leading blank lines
+    /// and comments, and the trailing comment after the value.
+    ///
+    /// `toml_edit` carries decor on the value, so replacing the item wholesale
+    /// drops whatever the user wrote around it. That is a silent edit to a line
+    /// the command was never asked to touch: template-variable migration is
+    /// `Structural`, so it rewrites retired names on every load, and the next
+    /// unrelated mutation — declining the commit-generation offer, say — diffs
+    /// the migrated value against the file and replaces that line.
+    ///
+    /// Both replacing arms route here, and the destination decides where the
+    /// decor lands: on the value for a scalar or inline table, on the header for
+    /// a standard table, since an inline table replaced by a standard one turns
+    /// one line into a section. The recursing arm needs nothing — it edits
+    /// through the existing table and never replaces it.
+    fn replace_keeping_decor(existing_item: &mut toml_edit::Item, desired_item: &toml_edit::Item) {
+        let decor = existing_item.as_value().map(|v| v.decor().clone());
+        *existing_item = desired_item.clone();
+        let Some(decor) = decor else { return };
+        if let Some(value) = existing_item.as_value_mut() {
+            *value.decor_mut() = decor;
+        } else if let Some(table) = existing_item.as_table_mut() {
+            *table.decor_mut() = decor;
         }
     }
 
