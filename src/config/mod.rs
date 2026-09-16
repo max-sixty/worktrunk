@@ -155,28 +155,27 @@ pub fn is_user_project_override_key(key: &str) -> bool {
         .any(|k| k == key)
 }
 
-/// Replace a key's value with a standard table, carrying the line's comments
-/// onto the table header.
+/// Replace a key's inline-table value with a standard table, carrying the line's
+/// comments onto the table header.
 ///
-/// The key was parsed from `merge = { … }` or `post-start = [ … ]`, so its leaf
-/// decor holds whatever preceded the line — comments, blank lines — plus the
-/// space before `=`. A standard table renders that decor *inside* its brackets,
-/// so leaving it in place writes `[# comment\nmerge ]`: a config file wt can no
-/// longer parse, and the user's own comment is what breaks it. Move the prefix
-/// to the header and drop the rest.
+/// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
+/// preceded the line — comments, blank lines — plus the space before `=`. A
+/// standard table renders that decor *inside* its brackets, so leaving it in
+/// place writes `[# comment\nmerge ]`: a config file wt can no longer parse,
+/// and the user's own comment is what breaks it. Move the prefix to the header
+/// and drop the rest.
 ///
-/// A trailing comment after the value sits in the value's own decor, which the
-/// replacement discards, so it is read from `existing` first and lands after the
-/// header's `]`. It is carried only when it holds a comment; bare whitespace
-/// there would just trail the header.
+/// A trailing comment after the closing brace sits in the inline value's own
+/// decor, which `InlineTable::into_table` discards, so it is read from
+/// `existing` before the replacement and lands after the header's `]`. It is
+/// carried only when it holds a comment; bare whitespace there would just trail
+/// the header.
 ///
-/// Every place that turns a value the user wrote into a standard table goes
-/// through here — the save-path merge in `user::persistence` (an inline table,
-/// or an array such as a one-step pipeline that serializes back as a table),
-/// and `ensure_standard_table_parent` in `deprecation`, which has no choice but
-/// to convert because TOML forbids extending an inline table with a later
-/// subtable.
-pub(crate) fn replace_value_with_table(
+/// Both places that rewrite a table the user wrote inline go through here — the
+/// save-path merge in `user::persistence`, and `ensure_standard_table_parent`
+/// in `deprecation`, which has no choice but to convert because TOML forbids
+/// extending an inline table with a later subtable.
+pub(crate) fn replace_inline_with_table(
     existing: &mut toml_edit::Table,
     key: &str,
     mut table: toml_edit::Table,
@@ -191,8 +190,8 @@ pub(crate) fn replace_value_with_table(
     }
     let suffix = existing
         .get(key)
-        .and_then(|item| item.as_value())
-        .and_then(|value| value.decor().suffix())
+        .and_then(|item| item.as_inline_table())
+        .and_then(|inline| inline.decor().suffix())
         .filter(|suffix| suffix.as_str().is_some_and(|s| s.contains('#')))
         .cloned();
     if let Some(suffix) = suffix {

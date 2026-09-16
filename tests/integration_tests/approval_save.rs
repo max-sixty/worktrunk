@@ -916,19 +916,31 @@ command = "llm -m claude-haiku-4.5"
     "#);
 }
 
-/// A one-step pipeline written as an array serializes back as a table, so a
-/// save rewrites the line even though its value didn't change. The comment and
-/// blank line above it must land above the new header, not inside its brackets
-/// — where they would make the file unparsable and the save get refused.
+/// A hook pipeline serializes in one spelling — one step as its lone table, more
+/// as an inline array — while the file may write `[[post-start]]` blocks (the
+/// documented form) or an inline array. An unrelated save must keep each
+/// pipeline in the file's spelling with its comments, changing only the steps
+/// the load rewrote (template migration renaming `repo_root`).
 #[test]
-fn test_saving_config_mutation_keeps_a_comment_above_an_array_pipeline() {
+fn test_saving_config_mutation_keeps_each_pipeline_spelling_and_its_comments() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
     let initial_content = r#"worktree-path = "../x"
 
 # start the dev server
-post-start = [{ server = "npm run dev" }]
+post-start = [{ server = "cd {{ repo_root }} && npm run dev" }]  # port 3000
+
+# announce the switch
+[[post-switch]]
+notify = "echo switched"
+
+# share the build cache, then install
+[[pre-start]]
+copy = "wt step copy-ignored"
+
+[[pre-start]]
+install = "cd {{ repo_root }} && pnpm install"  # after the copy
 "#;
     fs::write(&config_path, initial_content).unwrap();
 
@@ -944,8 +956,18 @@ post-start = [{ server = "npm run dev" }]
     worktree-path = "../x"
 
     # start the dev server
-    [post-start]
-    server = "npm run dev"
+    post-start = [{ server = "cd {{ repo_path }} && npm run dev" }]  # port 3000
+
+    # announce the switch
+    [[post-switch]]
+    notify = "echo switched"
+
+    # share the build cache, then install
+    [[pre-start]]
+    copy = "wt step copy-ignored"
+
+    [[pre-start]]
+    install = "cd {{ repo_path }} && pnpm install"  # after the copy
 
     [projects]
 

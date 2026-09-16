@@ -8,6 +8,8 @@
 //! handles any new fields without manual wiring — if a struct field is
 //! serializable, save_to persists it.
 
+use std::borrow::Cow;
+
 use crate::config::{ConfigError, UnknownTree, compute_unknown_tree};
 
 use super::UserConfig;
@@ -49,8 +51,8 @@ impl UserConfig {
     /// - Existing inline table, desired standard table: merge through the same
     ///   recursive path, so nested `preserve` applies; the inline format is kept
     ///   when that merge changed nothing
-    /// - Existing value of another kind, desired standard table: replaced through
-    ///   `replace_value_with_table`, which moves the line's comments to the header
+    /// - A pipeline: compared in the spelling the file uses (see
+    ///   `in_existing_spelling`); `[[…]]` blocks merge block by block
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
     fn merge_tables(
@@ -69,6 +71,8 @@ impl UserConfig {
 
         let empty_tree = UnknownTree::default();
         for (key, desired_item) in desired.iter() {
+            let desired_item = &*Self::in_existing_spelling(existing.get(key), desired_item);
+
             // Existing inline table, desired standard table: merge into a table
             // view so the same nested preservation applies as in the
             // standard-table branch, then write back only if that changed
@@ -87,18 +91,8 @@ impl UserConfig {
                     nested_preserve,
                 );
                 if !Self::tables_equal(&as_table, &merged) {
-                    crate::config::replace_value_with_table(existing, key, merged);
+                    crate::config::replace_inline_with_table(existing, key, merged);
                 }
-                continue;
-            }
-
-            // Any other value that serializes back as a standard table — a
-            // one-step pipeline written as an array, say — changes shape on
-            // save, and the key's comments would otherwise render inside the
-            // new header's brackets.
-            if desired_item.is_table() && existing.get(key).is_some_and(toml_edit::Item::is_value) {
-                let table = desired_item.as_table().unwrap().clone();
-                crate::config::replace_value_with_table(existing, key, table);
                 continue;
             }
 
@@ -112,6 +106,18 @@ impl UserConfig {
                         nested_preserve,
                     );
                 }
+                // Both `[[…]]` blocks, as many of each: merge block by block, so
+                // each block keeps its comments and formatting
+                Some(toml_edit::Item::ArrayOfTables(blocks))
+                    if desired_item
+                        .as_array_of_tables()
+                        .is_some_and(|desired_blocks| desired_blocks.len() == blocks.len()) =>
+                {
+                    let desired_blocks = desired_item.as_array_of_tables().unwrap();
+                    for (block, desired_block) in blocks.iter_mut().zip(desired_blocks.iter()) {
+                        Self::merge_tables(block, desired_block, &empty_tree);
+                    }
+                }
                 Some(existing_item) => {
                     if !Self::items_equal(existing_item, desired_item) {
                         Self::replace_keeping_decor(existing_item, desired_item);
@@ -124,6 +130,46 @@ impl UserConfig {
         }
     }
 
+    /// Re-spell a desired hook pipeline the way the file already writes it.
+    ///
+    /// A pipeline serializes in one spelling whatever the file used: one step as
+    /// its lone table, more as an inline array of tables. The file may write
+    /// either as `[[post-start]]` blocks — the documented form — or as an inline
+    /// array. Compared as serialized, an untouched pipeline reads as changed on
+    /// every save, and the rewrite moves it to the serialized spelling and drops
+    /// the comments on its blocks. So desired steps become blocks where the file
+    /// has blocks, and a lone step becomes a one-element array where the file has
+    /// an inline array; anything else stays as serialized. Only a pipeline meets
+    /// its serialized form in these shapes, so the match keys on shape alone.
+    fn in_existing_spelling<'a>(
+        existing: Option<&toml_edit::Item>,
+        desired: &'a toml_edit::Item,
+    ) -> Cow<'a, toml_edit::Item> {
+        use toml_edit::{Array, ArrayOfTables, Item, Value};
+        match (existing, desired) {
+            (Some(Item::ArrayOfTables(_)), Item::Table(step)) => {
+                let mut blocks = ArrayOfTables::new();
+                blocks.push(step.clone());
+                Cow::Owned(Item::ArrayOfTables(blocks))
+            }
+            (Some(Item::ArrayOfTables(_)), Item::Value(Value::Array(steps)))
+                if steps.iter().all(Value::is_inline_table) =>
+            {
+                let mut blocks = ArrayOfTables::new();
+                for step in steps.iter().filter_map(Value::as_inline_table) {
+                    blocks.push(step.clone().into_table());
+                }
+                Cow::Owned(Item::ArrayOfTables(blocks))
+            }
+            (Some(Item::Value(Value::Array(_))), Item::Table(step)) => {
+                let mut steps = Array::new();
+                steps.push(step.clone().into_inline_table());
+                Cow::Owned(Item::Value(Value::Array(steps)))
+            }
+            _ => Cow::Borrowed(desired),
+        }
+    }
+
     /// Overwrite an item, keeping the value's own decor — the spacing after `=`
     /// and the trailing comment after the value.
     ///
@@ -133,9 +179,9 @@ impl UserConfig {
     /// a value, and — since template-variable migration became `Structural` —
     /// on a line the command never touched, because every load rewrites retired
     /// names and the next unrelated mutation (declining the commit-generation
-    /// offer, say) finds that line changed. A value turning into a standard
-    /// table takes the other path, `replace_value_with_table`, which moves decor
-    /// onto the header.
+    /// offer, say) finds that line changed. An inline table turning into a
+    /// standard one takes the other path, `replace_inline_with_table`, which
+    /// moves decor onto the header.
     fn replace_keeping_decor(existing_item: &mut toml_edit::Item, desired_item: &toml_edit::Item) {
         let decor = existing_item.as_value().map(|v| v.decor().clone());
         *existing_item = desired_item.clone();
