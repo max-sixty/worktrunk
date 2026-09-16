@@ -7,7 +7,7 @@ use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
 use super::{RefSnapshot, Repository};
-use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
+use crate::git::{IntegrationReason, PlumbingDiff, check_integration, compute_integration_lazy};
 use crate::shell_exec::Cmd;
 
 /// Integration targets for `wt list`'s status column.
@@ -193,17 +193,7 @@ impl Repository {
             return Ok(true);
         };
 
-        // `--ignore-submodules=none` because `submodule.<name>.ignore`, from
-        // user config or `.gitmodules`, hides gitlink changes even from
-        // plumbing, and a branch that only moves a submodule has added changes.
-        let args = [
-            "diff-tree",
-            "--quiet",
-            "--ignore-submodules=none",
-            &merge_base,
-            branch_sha,
-            "--",
-        ];
+        let args = PlumbingDiff::Tree.args(&["--quiet", &merge_base, branch_sha, "--"]);
         let output = self.run_command_output(&args)?;
         let result = match output.status.code() {
             Some(0) => false,
@@ -397,10 +387,7 @@ impl Repository {
     ///
     /// Both sides of the comparison generate their diffs with `git diff-tree`
     /// (plumbing), so the patch-ids are immune to the user's `diff.*` git
-    /// config — see [`Self::patch_ids_from`]. Both also pass
-    /// `--ignore-submodules=none`: plumbing still honors
-    /// `submodule.<name>.ignore`, and a submodule bump dropped from both sides
-    /// would let a branch match a target commit that never carried the bump.
+    /// config — see [`Self::patch_ids_from`].
     ///
     /// Only runs when `merge-tree` conflicts (both sides modified the same files),
     /// since `MergeAddsNothing` handles the non-conflict case. Cost scales with the
@@ -440,14 +427,7 @@ impl Repository {
 
         // Compute the squashed patch-id (combined diff of all branch changes).
         let branch_pids = self.patch_ids_from(
-            &[
-                "diff-tree",
-                "--patch",
-                "--ignore-submodules=none",
-                &merge_base,
-                branch,
-                "--",
-            ],
+            &PlumbingDiff::Tree.args(&["--patch", &merge_base, branch, "--"]),
             None,
         )?;
         let Some(branch_pid) = branch_pids.split_whitespace().next() else {
@@ -464,12 +444,7 @@ impl Repository {
         // the commit list on stdin and emits one diff per commit.
         let target_commits = self.run_command(&["rev-list", &format!("{merge_base}..{target}")])?;
         let target_pids = self.patch_ids_from(
-            &[
-                "diff-tree",
-                "--stdin",
-                "--patch",
-                "--ignore-submodules=none",
-            ],
+            &PlumbingDiff::Tree.args(&["--stdin", "--patch"]),
             Some(target_commits.into_bytes()),
         )?;
 
@@ -1330,7 +1305,7 @@ mod has_added_changes_error_tests {
         assert!(
             cmd_err
                 .command_string()
-                .starts_with("git diff-tree --quiet"),
+                .starts_with("git diff-tree --ignore-submodules=none --quiet"),
             "{err:#}"
         );
     }

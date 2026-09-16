@@ -565,8 +565,9 @@ custom verifier must fail for every violation it claims to check—diagnostic
 Several guards read `src/`, or the snapshot corpus, as text rather than
 compiling it: no stray `println!` outside the allowlist, no `eprintln!` that
 resolves to std's macro instead of anstream's, no bare `env!("VERGEN_…")`, no
-`include_str!` of a path the package won't ship, no host path in a `.snap`, and
-nothing but `src/testing/mod.rs` spawning `wt` through `CARGO_BIN_EXE_wt`.
+`include_str!` of a path the package won't ship, no host path in a `.snap`, no
+plumbing diff built outside `PlumbingDiff::args`, and nothing but
+`src/testing/mod.rs` spawning `wt` through `CARGO_BIN_EXE_wt`.
 Each one asserts *absence* over what its walk handed it.
 
 That polarity is what makes the failure mode silent. A file that drops out of

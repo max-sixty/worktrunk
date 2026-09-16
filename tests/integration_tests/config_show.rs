@@ -3962,7 +3962,6 @@ fn test_config_update_output_destinations_emit_same_config(repo: TestRepo) {
     assert!(stdout_output.stderr.is_empty());
 
     let destination = repo.root_path().join("migrated.toml");
-    fs::write(&destination, "stale\n").unwrap();
     let file_output = repo
         .wt_command()
         .args(["config", "update", "--output=migrated.toml"])
@@ -4210,19 +4209,17 @@ approved-commands = ["cargo test"]
     );
 }
 
+/// `--output` never rewrites the config it migrates, even with `--yes`: that is
+/// the in-place update's job, which previews the diff and migrates
+/// `approved-commands`.
 #[rstest]
 fn test_config_update_output_rejects_source_path(repo: TestRepo) {
-    let original = r#"[list]
-json-schema = 1
-
-[projects."github.com/user/repo"]
-approved-commands = ["npm test"]
-"#;
+    let original = "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n";
     fs::write(repo.test_config_path(), original).unwrap();
 
     let output = repo
         .wt_command()
-        .args(["config", "update", "--output"])
+        .args(["config", "update", "--yes", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
@@ -4232,7 +4229,6 @@ approved-commands = ["npm test"]
         fs::read_to_string(repo.test_config_path()).unwrap(),
         original
     );
-    assert!(!repo.test_approvals_path().exists());
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
@@ -4241,24 +4237,59 @@ approved-commands = ["npm test"]
     );
 }
 
+/// An existing destination is overwritten only with `--yes`. Without it, and with
+/// no terminal to prompt on, the command fails and leaves the file as it was —
+/// here the user config, which has nothing to migrate but sits at the path a
+/// project-config migration was sent to.
 #[rstest]
-fn test_config_update_output_can_replace_source_without_approvals(repo: TestRepo) {
-    fs::write(
-        repo.test_config_path(),
-        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n",
-    )
-    .unwrap();
+fn test_config_update_output_overwrites_existing_file_only_with_yes(repo: TestRepo) {
+    let user_config = r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
-    let output = repo
+[aliases]
+hi = "echo hi"
+"#;
+    fs::write(repo.test_config_path(), user_config).unwrap();
+    repo.write_project_config(
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+
+    let refused = repo
         .wt_command()
         .args(["config", "update", "--output"])
         .arg(repo.test_config_path())
         .output()
         .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        user_config
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let stderr = stderr.ansi_strip();
+    assert!(
+        stderr.contains(
+            "already exists; to overwrite it with the project config migration, add --yes"
+        ),
+        "stderr:\n{stderr}"
+    );
 
-    assert!(output.status.success());
-    let updated = fs::read_to_string(repo.test_config_path()).unwrap();
-    assert!(updated.contains("{{ repo }}"), "config:\n{updated}");
+    let overwritten = repo
+        .wt_command()
+        .args(["config", "update", "--yes", "--output"])
+        .arg(repo.test_config_path())
+        .output()
+        .unwrap();
+    assert!(
+        overwritten.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&overwritten.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(repo.test_config_path()).unwrap(),
+        "pre-start = \"ln -sf {{ repo }}/node_modules\"\n"
+    );
 }
 
 /// `wt config update` with no deprecated settings reports nothing to do

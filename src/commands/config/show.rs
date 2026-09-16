@@ -968,8 +968,9 @@ fn render_project_config(out: &mut String, repo: Option<&Repository>) -> anyhow:
         return Ok(false);
     }
 
-    // Check for deprecations with emit_inline_warnings=false (silent mode)
-    // Only write migration file in main worktree, not linked worktrees.
+    // Check for deprecations with emit_inline_warnings=false (silent mode).
+    // They are actionable only from the main worktree, where `wt config update`
+    // rewrites the file.
     // Deprecated patterns supersede the TOML dump below because their diff
     // covers the file.
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);

@@ -141,6 +141,36 @@ impl DiffStats {
     }
 }
 
+/// A git plumbing diff command.
+///
+/// Plumbing diffs ignore the user's diff display configuration but still
+/// honor `submodule.<name>.ignore`, from repository config or `.gitmodules`,
+/// which hides gitlink changes. Every plumbing diff `wt` runs is built by
+/// [`Self::args`], which overrides that setting.
+#[derive(Debug, Clone, Copy)]
+pub enum PlumbingDiff {
+    /// `git diff-tree`: tree against tree.
+    Tree,
+    /// `git diff-index`: tree against the index or working tree.
+    Index,
+    /// `git diff-files`: index against working tree.
+    Files,
+}
+
+impl PlumbingDiff {
+    /// Arguments for `git <command> --ignore-submodules=none <args>`.
+    pub fn args<'a>(self, args: &[&'a str]) -> Vec<&'a str> {
+        let command = match self {
+            Self::Tree => "diff-tree",
+            Self::Index => "diff-index",
+            Self::Files => "diff-files",
+        };
+        let mut all = vec![command, "--ignore-submodules=none"];
+        all.extend_from_slice(args);
+        all
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;

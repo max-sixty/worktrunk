@@ -1,7 +1,8 @@
 //! Integration tests for `wt step prune`
 
 use crate::common::{
-    BareRepoTest, TestRepo, make_snapshot_cmd, repo, repo_with_remote, setup_temp_snapshot_settings,
+    BareRepoTest, TEST_EPOCH, TestRepo, make_snapshot_cmd, repo, repo_with_remote,
+    setup_temp_snapshot_settings,
 };
 use ansi_str::AnsiStr;
 use insta::assert_snapshot;
@@ -418,6 +419,125 @@ fn test_prune_orphan_branch_min_age(repo: TestRepo) {
     cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400"); // 2025-01-01T00:30:00Z
 
     assert_cmd_snapshot!(cmd);
+}
+
+/// Bare-clone `repo` into `clone.git` beside it. Like any `git clone --bare`,
+/// the clone stores its branches in `packed-refs` and writes them no reflogs.
+fn bare_clone(repo: &TestRepo) -> std::path::PathBuf {
+    let clone = repo.home_path().join("clone.git");
+    repo.run_git(&["clone", "--bare", ".", clone.to_str().unwrap()]);
+    clone
+}
+
+/// Set a file's mtime to `age_secs` before `TEST_EPOCH`.
+fn set_age(path: &std::path::Path, age_secs: u64) {
+    let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(TEST_EPOCH - age_secs);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(written)
+        .unwrap();
+}
+
+/// Orphan branches without a reflog are aged by when their ref was last written.
+///
+/// `git clone --bare` writes no reflogs and stores the branches it brings down
+/// in `packed-refs`; a later fetch into `refs/heads/*` writes a new branch as a
+/// loose ref, also without a reflog. The two files are dated a month and an
+/// hour before TEST_EPOCH, so each branch's age shows which file it was read
+/// from: `cloned` is a candidate, and `fetched` is skipped as younger than 1d.
+#[rstest]
+fn test_prune_orphan_branch_min_age_without_reflog(repo: TestRepo) {
+    repo.create_branch("cloned");
+    let clone = bare_clone(&repo);
+    repo.run_git_in(
+        &clone,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/heads/*",
+        ],
+    );
+    repo.create_branch("fetched");
+    repo.run_git_in(&clone, &["fetch", "origin"]);
+
+    for branch in ["cloned", "fetched"] {
+        let ref_name = format!("refs/heads/{branch}");
+        let output = repo
+            .git_command()
+            .args(["reflog", "exists", &ref_name])
+            .current_dir(&clone)
+            .run()
+            .unwrap();
+        assert!(!output.status.success(), "{branch} should have no reflog");
+    }
+
+    set_age(&clone.join("packed-refs"), 30 * 24 * 60 * 60);
+    set_age(&clone.join("refs/heads/fetched"), 60 * 60);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run"],
+        Some(&clone)
+    ));
+}
+
+/// Prune's own removals don't re-date the branches it has yet to check.
+///
+/// Deleting a packed branch rewrites `packed-refs`, which dates every branch
+/// without a reflog, and removals run while the scan is still checking later
+/// candidates. Two month-old packed branches in a bare clone go through a
+/// `git` shim that holds `packed-b`'s reflog read until `packed-a`'s deletion
+/// has finished, so `packed-b` is aged after that rewrite; both must still be
+/// removed. Unix-only for the same `CreateProcess` shim reason as the canary
+/// below.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_removals_keep_packed_branch_ages(repo: TestRepo) {
+    repo.create_branch("packed-a");
+    repo.create_branch("packed-b");
+    let clone = bare_clone(&repo);
+    set_age(&clone.join("packed-refs"), 30 * 24 * 60 * 60);
+
+    let mut cmd = repo.wt_command();
+    // Two scan threads, so `packed-a`'s check can finish while `packed-b`'s
+    // waits in the shim whichever order the scan takes them in.
+    cmd.current_dir(&clone).env("RAYON_NUM_THREADS", "2");
+    let git_wrapper_dir = repo.home_path().join("git-wrapper");
+    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+    write_deletion_ordering_git_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+    prepend_path(&mut cmd, &git_wrapper_dir);
+    let barrier_dir = repo.home_path().join("barrier");
+    std::fs::create_dir_all(&barrier_dir).unwrap();
+    cmd.env("WT_TEST_BARRIER_DIR", &barrier_dir);
+
+    let output = cmd.args(["step", "prune", "--yes"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "prune should succeed:\n{stderr}");
+    assert!(
+        barrier_dir.join("deleted-packed-a").exists(),
+        "the shim never saw packed-a deleted:\n{stderr}"
+    );
+    assert!(
+        !barrier_dir.join("timeout").exists(),
+        "packed-b's reflog read waited out the shim, so it was aged before packed-a's deletion:\n{stderr}"
+    );
+    let output = repo
+        .git_command()
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(&clone)
+        .run()
+        .unwrap();
+    let branches = String::from_utf8_lossy(&output.stdout);
+    for name in ["packed-a", "packed-b"] {
+        assert!(
+            !branches.lines().any(|branch| branch == name),
+            "{name} should have been pruned:\n{stderr}"
+        );
+    }
 }
 
 /// Prune can remove a mix of branch-only and worktree candidates in one run.
@@ -2034,6 +2154,48 @@ if mkdir "$WT_TEST_BARRIER_DIR/active" 2>/dev/null; then
   rmdir "$WT_TEST_BARRIER_DIR/active"
 else
   : > "$WT_TEST_BARRIER_DIR/overlap-$own"
+fi
+exec {real_git} "$@"
+"#
+    );
+    let path = dir.join("git");
+    std::fs::write(&path, script).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).unwrap();
+}
+
+/// A `git` shim that holds the reflog read for `refs/heads/packed-b` until
+/// `update-ref -d refs/heads/packed-a` has finished (see
+/// `test_prune_removals_keep_packed_branch_ages`); everything else passes
+/// through to the real git.
+#[cfg(unix)]
+fn write_deletion_ordering_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1 $2 $3" = "update-ref -d refs/heads/packed-a" ]; then
+  {real_git} "$@"
+  status=$?
+  : > "$WT_TEST_BARRIER_DIR/deleted-packed-a"
+  exit $status
+fi
+if [ "$1 $2" = "reflog show" ]; then
+  case " $* " in
+    *" refs/heads/packed-b "*)
+      i=0
+      while [ ! -e "$WT_TEST_BARRIER_DIR/deleted-packed-a" ]; do
+        i=$((i+1))
+        if [ "$i" -gt 300 ]; then
+          : > "$WT_TEST_BARRIER_DIR/timeout"
+          break
+        fi
+        sleep 0.05
+      done
+      ;;
+  esac
 fi
 exec {real_git} "$@"
 "#
