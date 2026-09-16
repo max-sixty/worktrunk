@@ -3196,6 +3196,30 @@ fn test_pi_install_stays_quiet_when_pi_is_on_path(temp_home: TempDir) {
     );
 }
 
+/// The redirect prints before the install prompt, so the blank line between
+/// them belongs to the prompt. Declined here (no `--yes`, piped stdin → empty),
+/// which is the only path that renders both.
+#[rstest]
+fn test_pi_install_redirect_precedes_the_prompt(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_OMP_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_PI_INSTALLED", "0");
+        cmd.args(["config", "plugins", "pi", "install"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(
+        !temp_home
+            .path()
+            .join(".pi/agent/extensions/worktrunk.ts")
+            .exists()
+    );
+}
+
 #[rstest]
 fn test_pi_install_prompt_declined(temp_home: TempDir) {
     let mut cmd = wt_command();
