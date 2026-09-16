@@ -4664,7 +4664,7 @@ dependencies = [
 
 [[package]]
 name = "worktrunk"
-version = "0.77.0"
+version = "0.78.0"
 dependencies = [
  "ansi-str",
  "ansi-to-tui",

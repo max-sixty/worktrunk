@@ -56,7 +56,7 @@ filterset = "test(/aur_pkgbuild/)"
 
 [package]
 name = "worktrunk"
-version = "0.77.0"
+version = "0.78.0"
 edition = "2024"
 rust-version = "1.97"
 build = "build.rs"

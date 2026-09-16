@@ -698,10 +698,13 @@ fn worktree_age(
 /// forbids `@{` inside a ref name, so the last `@{` opens the timestamp.
 ///
 /// Returns `None` if the reflog is missing or unparsable — callers treat
-/// "unknown age" as "old enough". A bare repository defaults
-/// `core.logAllRefUpdates` to false, so a branch created or updated only from
-/// the bare directory itself has no reflog and no min-age guard; one touched
-/// from inside a linked worktree has a reflog.
+/// "unknown age" as "old enough". `core.logAllRefUpdates` defaults to whether
+/// the repository is bare as seen from where the command runs, so a ref
+/// written from a bare directory has no reflog and no min-age guard:
+/// `git clone --bare` writes none for the branches it brings down, and
+/// neither does a later `git fetch` into `refs/heads/*`. A linked worktree is
+/// not bare, so a branch created or updated from one — every branch `wt`
+/// itself creates — is aged normally.
 fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
     let ref_name = format!("refs/heads/{branch}");
     let stdout = repo
