@@ -3245,6 +3245,110 @@ fn test_nushell_install_target_is_a_vendor_autoload_dir(repo: TestRepo, temp_hom
     );
 }
 
+/// A `ZDOTDIR` that isn't an absolute path is ignored, and the zsh integration
+/// line lands in `$HOME/.zshrc`.
+///
+/// Regression guard: the value used to be taken at face value, so an empty one
+/// collapsed zsh's config path to the relative `.zshrc` and a bare `dotfiles`
+/// to `dotfiles/.zshrc` — either way install appended the integration line
+/// under whatever directory `wt` was run from, a dotfiles checkout being the
+/// obvious way to have a `.zshrc` sitting there, while the file zsh reads went
+/// untouched. `wt config shell uninstall` rewrites rc files whole, so the same
+/// resolution decides which file that rewrite lands on.
+#[rstest]
+#[case::empty("")]
+#[case::relative("dotfiles")]
+fn test_configure_shell_non_absolute_zdotdir_uses_home(
+    #[case] zdotdir: &str,
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let home_zshrc = temp_home.path().join(".zshrc");
+    fs::write(&home_zshrc, "# Existing config\n").unwrap();
+
+    // A decoy `.zshrc` where the unguarded value would have resolved: under the
+    // invocation directory, joined with `ZDOTDIR` itself.
+    let run_dir = temp_home.path().join("work");
+    let decoy_zshrc = run_dir.join(zdotdir).join(".zshrc");
+    fs::create_dir_all(decoy_zshrc.parent().unwrap()).unwrap();
+    fs::write(&decoy_zshrc, "# Decoy\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("ZDOTDIR", zdotdir);
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.current_dir(&run_dir);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let home_contents = fs::read_to_string(&home_zshrc).unwrap();
+    assert!(
+        home_contents.contains("config shell init zsh"),
+        "integration line should land in $HOME/.zshrc, got:\n{home_contents}"
+    );
+    assert_eq!(
+        fs::read_to_string(&decoy_zshrc).unwrap(),
+        "# Decoy\n",
+        "the .zshrc under the invocation directory must be left alone"
+    );
+}
+
+/// An absolute `ZDOTDIR` is honoured: the zsh integration line lands under it,
+/// not under `$HOME`.
+///
+/// The companion to the non-absolute cases above, and the one that makes them
+/// mean something. Every other zsh test points `ZDOTDIR` at `$HOME` itself or
+/// at `/dev/null` for shell isolation, so without this case a `zsh_config_dir`
+/// that ignored the variable outright — the over-tightening the guard invites
+/// — would pass the whole suite.
+#[rstest]
+fn test_configure_shell_absolute_zdotdir_is_honoured(repo: TestRepo, temp_home: TempDir) {
+    let home = canonical_temp_home(&temp_home);
+    // Distinct from `$HOME`, so only honouring `ZDOTDIR` reaches it.
+    let zdotdir = home.join("zsh-config");
+    fs::create_dir_all(&zdotdir).unwrap();
+    fs::write(zdotdir.join(".zshrc"), "# Existing config\n").unwrap();
+    // A decoy at the fallback, so the assertion separates the two answers.
+    fs::write(home.join(".zshrc"), "# Decoy\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("ZDOTDIR", &zdotdir);
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.args(["config", "shell", "install", "zsh", "--yes"]);
+    cmd.current_dir(repo.root_path());
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let zdotdir_contents = fs::read_to_string(zdotdir.join(".zshrc")).unwrap();
+    assert!(
+        zdotdir_contents.contains("config shell init zsh"),
+        "integration line should land in $ZDOTDIR/.zshrc, got:\n{zdotdir_contents}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".zshrc")).unwrap(),
+        "# Decoy\n",
+        "$HOME/.zshrc must be left alone when $ZDOTDIR is absolute"
+    );
+}
+
 /// A non-default `XDG_CONFIG_HOME` sends the fish wrapper and the fish
 /// completion to the same fish config directory.
 ///

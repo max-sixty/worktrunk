@@ -76,7 +76,7 @@
               # Required for tree-sitter (syntax-highlighting feature, enabled by default)
               tree-sitter
             ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
               libiconv
             ];
 

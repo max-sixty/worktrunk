@@ -2072,9 +2072,12 @@ fn test_deprecated_project_config_silent_in_linked_worktree(
         .iter()
         .find(|hook| hook["source"] == "project" && hook["type"] == "pre-start")
         .expect("linked-worktree project hook should be listed");
+    // The linked-worktree gate silences the warning, not the migration: the
+    // retired name is rewritten before serde parses, here as everywhere, since
+    // nothing would resolve it at render time.
     assert_eq!(
         project_hook["template"],
-        "echo linked-project-hook {{ main_worktree }}"
+        "echo linked-project-hook {{ repo }}"
     );
     assert!(
         !(stderr.contains("Project config")
