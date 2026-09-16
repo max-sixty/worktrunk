@@ -188,14 +188,13 @@ re-derived rule is correct on the cases that motivated it and drifts silently
 afterwards: the hand-rolled scan for MiniJinja bindings missed the
 parenthesized tuple targets MiniJinja itself accepts (#4124). Where nothing
 can answer the question — the library exposes no such API — keep the
-substitute no larger than the question and say in the code why it exists;
-that is where both of this rule's own cases landed, so don't reopen them.
-MiniJinja has no binding list without `unstable_machinery`, so #4124's
-scanner stays. zsh has no "where should the config file go" to ask, so
-`zsh_config_dir` keeps zsh's `$ZDOTDIR`-or-`$HOME` rule plus an absolute-only
-guard that keeps `wt config shell uninstall`'s whole-file rewrite out of the
-invocation directory; #4085 deleted the zsh-source archaeology justifying
-that rule, not the rule. Standing backlog of sites still to delegate: #4106.
+substitute no larger than the question and say in the code why it exists.
+Both of this rule's own cases landed there, so don't reopen them: MiniJinja
+exposes no binding list without `unstable_machinery` (#4124), and zsh has no
+"where should the config file go" to ask, so `zsh_config_dir` keeps zsh's own
+rule plus an absolute-only guard — its docstring is where that guard's
+reasoning lives, and #4085 deleted the archaeology behind the rule, not the
+rule. Standing backlog of sites still to delegate: #4106.
 
 ### Don't Defend Improbable Environments
 
