@@ -54,7 +54,11 @@
 
 - **`wt config update` migrates `[ci] platform` into a `[forge]` section that only sets `hostname`**: that config, common with GitHub Enterprise and self-hosted GitLab, kept the deprecated key with no deprecation warning. ([#4061](https://github.com/max-sixty/worktrunk/pull/4061))
 
+- **Deprecated keys in an inline `[projects]` entry now migrate**: `"example.com/org/repo" = { merge = { no-ff = true } }` skipped the migration the section form got, so the per-project setting was dropped and stopped applying. ([#4122](https://github.com/max-sixty/worktrunk/pull/4122), thanks @zach-hammad-vs for reporting)
+
 - **A deprecated config section the migration can't rewrite now warns**: `select = "not a table"`, or a `[select]` whose `[switch.picker]` destination is already set, was ignored without a message. It now reports `unknown field select (will be ignored)`. ([#4121](https://github.com/max-sixty/worktrunk/pull/4121), thanks @zach-hammad-vs for reporting)
+
+- **`wt config update` no longer renames a retired variable where the template doesn't read it**: migrating `{{ repo_root }}` also changed that text inside a quoted string, and a variable the template rebinds with `{% set %}`. ([#4124](https://github.com/max-sixty/worktrunk/pull/4124), thanks @zach-hammad-vs for reporting)
 
 - **Config migration previews ignore `diff.external` and report a failed diff**: `wt config show` and the `wt config update` prompt showed an external diff program's output in place of the patch, and nothing when the diff failed. A failure now prints `Could not render the proposed diff` with git's error. ([#4126](https://github.com/max-sixty/worktrunk/pull/4126), thanks @zach-hammad-vs for reporting)
 
