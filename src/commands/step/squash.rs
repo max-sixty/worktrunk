@@ -226,7 +226,7 @@ pub fn handle_squash(
 
     // Get total stats (commits + any working tree changes)
     let total_stats = if has_staged {
-        wt.prepare_staged_diff(&merge_base, None).stats_summary()
+        wt.prepare_staged_diff(&merge_base).stats_summary()
     } else {
         wt.prepare_commit_diff(&merge_base, "HEAD").stats_summary()
     };

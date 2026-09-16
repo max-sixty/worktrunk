@@ -1399,14 +1399,16 @@ impl PickerRow {
         state: WorktreeDiffState,
     ) -> anyhow::Result<Option<String>> {
         let worktree = repo.worktree_at(path);
-        let diff = match state {
-            WorktreeDiffState::Clean => return Ok(None),
-            WorktreeDiffState::TrackedOnly => worktree.prepare_diff(base),
-            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => {
-                worktree.prepare_diff_with_untracked(base)?
+        match state {
+            WorktreeDiffState::Clean => Ok(None),
+            WorktreeDiffState::TrackedOnly => {
+                worktree.prepare_diff(base).capture_stat_and_patch(width)
             }
-        };
-        diff.capture_stat_and_patch(width)
+            WorktreeDiffState::HasUntracked | WorktreeDiffState::Unknown => worktree
+                .temp_index_with_untracked()?
+                .prepare_diff(base)
+                .capture_stat_and_patch(width),
+        }
     }
 
     fn unavailable_diff(branch: &str, label: &str) -> String {

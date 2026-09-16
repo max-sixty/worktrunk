@@ -5,7 +5,9 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, Repository, WorkingTree};
+use worktrunk::git::{
+    CommandError, CommitMessageDetail, ErrorExt, Repository, TempIndex, WorkingTree,
+};
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 
 use minijinja::Environment;
@@ -701,8 +703,8 @@ fn build_prompt(
 /// --branch <b>` and `wt step relocate --commit` commit somewhere else, and
 /// reading the diff from the cwd instead handed the LLM an empty diff.
 ///
-/// `index_override` is forwarded to git operations that read the staging area, so
-/// `--dry-run` can preview against a temp index without touching the user's real one.
+/// `staging_index` is the temporary index `--dry-run` staged into, read in
+/// place of the real one so the preview doesn't touch it.
 ///
 /// `project_append` is the approved project-level append fragment (or
 /// `None` to skip). It is rendered with the main template's context and
@@ -712,7 +714,7 @@ fn build_prompt(
 pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
     wt: &WorkingTree<'_>,
-    index_override: Option<&Path>,
+    staging_index: Option<&TempIndex>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
@@ -722,7 +724,7 @@ pub(crate) fn generate_commit_message(
         // failure of the LLM command itself gets the `LlmCommandFailed`
         // wrapper — mirroring `generate_squash_message`.
         let prompt =
-            build_commit_prompt(commit_generation_config, wt, index_override, project_append)?;
+            build_commit_prompt(commit_generation_config, wt, staging_index, project_append)?;
         // A slow or hung command is otherwise silent (stdout is captured); the
         // watchdog surfaces a "still waiting" status. Held until this function
         // returns, clearing the block before the caller prints the message.
@@ -742,9 +744,7 @@ pub(crate) fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let file_list = wt
-        .prepare_staged_diff(wt.index_base()?, index_override)
-        .capture(["--name-only", "-z"])?;
+    let file_list = staged_diff(wt, staging_index)?.capture(["--name-only", "-z"])?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -771,6 +771,19 @@ pub(crate) fn generate_commit_message(
     Ok(message)
 }
 
+/// The changes a commit from `wt` would record, read from `staging_index`
+/// when given and from the real index otherwise.
+fn staged_diff<'a>(
+    wt: &WorkingTree<'a>,
+    staging_index: Option<&'a TempIndex>,
+) -> anyhow::Result<worktrunk::git::PreparedDiff<'a>> {
+    let base = wt.index_base()?;
+    Ok(match staging_index {
+        Some(index) => index.prepare_staged_diff(base),
+        None => wt.prepare_staged_diff(base),
+    })
+}
+
 /// Build the commit prompt from staged changes.
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
@@ -780,16 +793,15 @@ pub(crate) fn generate_commit_message(
 /// Every input is read from `wt`, the worktree being committed — which is not
 /// always the invoking one (see [`generate_commit_message`]).
 ///
-/// `index_override` points git at an alternate index via `GIT_INDEX_FILE` — used by
-/// `--dry-run` to preview what `git add` per the user's `--stage` flag would produce
-/// without modifying the real index.
+/// `staging_index` is the temporary index `--dry-run` staged per the user's
+/// `--stage` flag, read in place of the real index.
 pub(crate) fn build_commit_prompt(
     config: &CommitGenerationConfig,
     wt: &WorkingTree<'_>,
-    index_override: Option<&Path>,
+    staging_index: Option<&TempIndex>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let staged = wt.prepare_staged_diff(wt.index_base()?, index_override);
+    let staged = staged_diff(wt, staging_index)?;
     let diff_output = staged.capture(["--patch"])?;
     let diff_stat = staged.capture(["--stat"])?;
 

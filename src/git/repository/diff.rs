@@ -12,14 +12,9 @@ use crate::shell_exec::Cmd;
 use super::working_tree::{TempIndex, WorkingTree, path_to_logging_context};
 use super::{DiffStats, LineDiff, Repository};
 
-enum DiffSource<'repo> {
-    Repository {
-        repo: &'repo Repository,
-        path: PathBuf,
-        /// An alternate index for a staged diff (`GIT_INDEX_FILE`).
-        index_file: Option<PathBuf>,
-    },
-    TempIndex(TempIndex),
+enum DiffSource<'a> {
+    Repository { repo: &'a Repository, path: PathBuf },
+    TempIndex(&'a TempIndex),
 }
 
 enum DiffSides {
@@ -43,50 +38,30 @@ enum DiffSides {
 /// porcelain `git diff` instead: it hands the user git's own view, under their
 /// configuration and arguments.
 ///
-/// The source owns a temporary index when untracked files must participate in
-/// the diff. Keeping that index alive in this value makes multi-command reads
-/// such as a stat followed by a patch observe the same prepared worktree state.
+/// A diff prepared from a [`TempIndex`] borrows it, so every read — a stat,
+/// then a patch — observes the same index state.
 #[must_use]
-pub struct PreparedDiff<'repo> {
-    source: DiffSource<'repo>,
+pub struct PreparedDiff<'a> {
+    source: DiffSource<'a>,
     sides: DiffSides,
 }
 
-impl<'repo> PreparedDiff<'repo> {
-    fn new(repo: &'repo Repository, path: PathBuf, sides: DiffSides) -> Self {
+impl<'a> PreparedDiff<'a> {
+    fn new(repo: &'a Repository, path: PathBuf, sides: DiffSides) -> Self {
         Self {
-            source: DiffSource::Repository {
-                repo,
-                path,
-                index_file: None,
-            },
-            sides,
-        }
-    }
-
-    fn with_temp_index(index: TempIndex, sides: DiffSides) -> Self {
-        Self {
-            source: DiffSource::TempIndex(index),
+            source: DiffSource::Repository { repo, path },
             sides,
         }
     }
 
     fn command(&self, args: &[String]) -> Cmd {
         match &self.source {
-            DiffSource::Repository {
-                repo,
-                path,
-                index_file,
-            } => {
-                let mut cmd = Cmd::new("git")
+            DiffSource::Repository { repo, path } => repo.with_object_store_env(
+                Cmd::new("git")
                     .args(args.iter().cloned())
                     .current_dir(path)
-                    .context(path_to_logging_context(path));
-                if let Some(index_file) = index_file {
-                    cmd = cmd.env("GIT_INDEX_FILE", index_file);
-                }
-                repo.with_object_store_env(cmd)
-            }
+                    .context(path_to_logging_context(path)),
+            ),
             DiffSource::TempIndex(index) => index.command(args.iter().cloned()),
         }
     }
@@ -202,18 +177,13 @@ impl<'repo> WorkingTree<'repo> {
         )
     }
 
-    /// Prepare a diff from `base` that also includes untracked files without
-    /// changing the real index.
-    pub fn prepare_diff_with_untracked(
-        &self,
-        base: impl Into<String>,
-    ) -> anyhow::Result<PreparedDiff<'repo>> {
+    /// A temporary copy of this worktree's index with untracked files
+    /// registered, so a diff prepared from it includes them without changing
+    /// the real index.
+    pub fn temp_index_with_untracked(&self) -> anyhow::Result<TempIndex> {
         let index = self.temp_index()?;
         index.register_untracked()?;
-        Ok(PreparedDiff::with_temp_index(
-            index,
-            DiffSides::WorkingTree(base.into()),
-        ))
+        Ok(index)
     }
 
     /// Prepare a diff from one tree-ish to another, resolved in this worktree
@@ -230,25 +200,34 @@ impl<'repo> WorkingTree<'repo> {
         )
     }
 
-    /// Prepare a diff from `base` to this worktree's staged changes, read
-    /// from `index_file` instead of the real index when given.
+    /// Prepare a diff from `base` to this worktree's staged changes.
     ///
     /// For the changes a commit would record, `base` is [`Self::index_base`].
-    pub fn prepare_staged_diff(
-        &self,
-        base: impl Into<String>,
-        index_file: Option<&std::path::Path>,
-    ) -> PreparedDiff<'repo> {
+    pub fn prepare_staged_diff(&self, base: impl Into<String>) -> PreparedDiff<'repo> {
+        PreparedDiff::new(self.repo, self.path.clone(), DiffSides::Staged(base.into()))
+    }
+}
+
+impl TempIndex {
+    /// Prepare a diff from `base` to the worktree's files, seen through this
+    /// index.
+    pub fn prepare_diff(&self, base: impl Into<String>) -> PreparedDiff<'_> {
         PreparedDiff {
-            source: DiffSource::Repository {
-                repo: self.repo,
-                path: self.path.clone(),
-                index_file: index_file.map(std::path::Path::to_path_buf),
-            },
-            sides: DiffSides::Staged(base.into()),
+            source: DiffSource::TempIndex(self),
+            sides: DiffSides::WorkingTree(base.into()),
         }
     }
 
+    /// Prepare a diff from `base` to what this index has staged.
+    pub fn prepare_staged_diff(&self, base: impl Into<String>) -> PreparedDiff<'_> {
+        PreparedDiff {
+            source: DiffSource::TempIndex(self),
+            sides: DiffSides::Staged(base.into()),
+        }
+    }
+}
+
+impl<'repo> WorkingTree<'repo> {
     /// Get recent commit subjects for style reference.
     ///
     /// Returns up to `count` commit subjects (first line of message), excluding merges.
