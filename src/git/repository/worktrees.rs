@@ -350,7 +350,7 @@ impl Repository {
                 self.switch_previous().ok_or_else(|| {
                     GitError::Other {
                         message: cformat!(
-                            "No previous branch found in history. Run <underline>wt list</> to see available worktrees."
+                            "No previous branch found in history; to see available worktrees, run <bold>wt list</>"
                         ),
                     }
                     .into()

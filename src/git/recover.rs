@@ -75,10 +75,12 @@ fn hint_for_repo(repo: &Repository) -> String {
             .flatten()
             .is_some_and(|p| !repo.worktree_is_unusable(&p).unwrap_or(true))
     {
-        return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
+        return cformat!(
+            "Current directory was removed; to switch to the default branch, run <underline>wt switch ^</>"
+        );
     }
 
-    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees")
+    cformat!("Current directory was removed; to see worktrees, run <underline>wt list</>")
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
@@ -513,7 +515,7 @@ mod tests {
         // A normal repo with a main worktree should suggest `wt switch ^`.
         let test = TestRepo::with_initial_commit();
         let hint = hint_for_repo(&test.repo);
-        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed; to switch to the default branch, run wt switch ^");
     }
 
     #[test]
@@ -522,6 +524,6 @@ mod tests {
         // so it should suggest `wt list` instead of `wt switch ^`.
         let test = TestRepo::bare();
         let hint = hint_for_repo(&test.repo);
-        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees");
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed; to see worktrees, run wt list");
     }
 }
