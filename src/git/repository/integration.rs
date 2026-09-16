@@ -40,11 +40,15 @@ pub fn select_comparison_base<'a>(
     targets.map(|t| t.primary.as_str()).or(default_branch)
 }
 
-/// Git's well-known empty-tree object. Diffing a commit against it yields the
-/// commit's full content as additions — the orphan-branch fallback for the
-/// diff/summary preview panes, which can't three-dot-diff a branch that shares
-/// no history with the comparison base.
-pub(super) const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// Git's well-known empty-tree object in a SHA-1 repository. Diffing a commit
+/// against it yields the commit's full content as additions — the
+/// orphan-branch fallback for the diff/summary preview panes, and the staged
+/// diff's base on an unborn branch. [`Repository::empty_tree_sha`] picks the
+/// id for the repository's object format.
+pub(super) const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// The empty-tree object in a SHA-256 repository.
+const EMPTY_TREE_SHA256: &str = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
 
 /// The upstream-aware base a branch's content is measured against in the
 /// diff/summary preview panes — [`IntegrationTargets::primary`], resolved once
@@ -72,16 +76,12 @@ pub(in crate::git) struct ComparisonBase {
 /// [`Repository::branch_diff_spec`].
 #[derive(Debug, Clone)]
 pub struct BranchDiffSpec {
-    /// The `git diff` revision arguments to splice in after `diff` and any
-    /// options: a single three-dot range `["{base}...{head}"]` normally, or
-    /// `["{empty-tree}", "{head}"]` for an orphan.
-    pub revs: Vec<String>,
-    /// Single tree-ish to compare with the worktree when rendering a unified
-    /// committed + uncommitted diff: the merge-base SHA normally, or the empty
-    /// tree for an orphan. `None` only when merge-base resolution failed; unlike
-    /// the committed-only three-dot diff, a worktree diff has no correct range
-    /// fallback in that case.
-    pub working_base: Option<String>,
+    /// The tree-ish the branch's changes are measured from, for both the
+    /// committed diff (to the branch head) and the unified diff (to the
+    /// worktree): the merge-base SHA normally, or the empty tree for an
+    /// orphan. `None` when merge-base resolution failed, so the panes report
+    /// the diff as unavailable rather than guess a base.
+    pub diff_base: Option<String>,
     /// Display name of the comparison base, for "no file changes vs X".
     pub base_name: String,
     /// Stable SHA identifying the base for disk-cache keying: the base's commit
@@ -193,9 +193,27 @@ impl Repository {
             return Ok(true);
         };
 
-        let range = format!("{merge_base}..{branch_sha}");
-        let output = self.run_command(&["diff", "--name-only", &range])?;
-        let result = !output.trim().is_empty();
+        // `--ignore-submodules=none` because `submodule.<name>.ignore`, from
+        // user config or `.gitmodules`, hides gitlink changes even from
+        // plumbing, and a branch that only moves a submodule has added changes.
+        let args = [
+            "diff-tree",
+            "--quiet",
+            "--ignore-submodules=none",
+            &merge_base,
+            branch_sha,
+            "--",
+        ];
+        let output = self.run_command_output(&args)?;
+        let result = match output.status.code() {
+            Some(0) => false,
+            Some(1) => true,
+            _ => {
+                return Err(
+                    crate::git::CommandError::from_failed_output("git", &args, &output).into(),
+                );
+            }
+        };
         super::sha_cache::put_has_added_changes(self, branch_sha, target_sha, result);
         Ok(result)
     }
@@ -639,6 +657,16 @@ impl Repository {
         Some(ComparisonBase { name, sha })
     }
 
+    /// The empty tree's object id in this repository's object format.
+    pub(super) fn empty_tree_sha(&self) -> anyhow::Result<&'static str> {
+        Ok(
+            match self.config_value("extensions.objectFormat")?.as_deref() {
+                Some("sha256") => EMPTY_TREE_SHA256,
+                _ => EMPTY_TREE_SHA1,
+            },
+        )
+    }
+
     /// Resolve how to diff a branch's content against the mainline for the
     /// diff/summary preview panes. `head` is a resolved commit SHA. See
     /// [`BranchDiffSpec`]. Returns `None` when there's no comparison base (no
@@ -647,32 +675,21 @@ impl Repository {
         let base = self.comparison_base()?;
         let base_sha = base.sha.as_str();
 
-        // Orphan (no merge base with the base): a three-dot range is
-        // ill-defined, so diff the full content against the empty tree. A
-        // merge-base *error* (invalid/unreachable object) is NOT an orphan —
-        // fall through to the normal three-dot range and let the diff surface
-        // the failure rather than dumping the whole tree as "the branch".
-        let (revs, working_base, cache_sha) = match self.merge_base_by_sha(base_sha, head) {
-            Ok(None) => (
-                vec![EMPTY_TREE_SHA.to_string(), head.to_string()],
-                Some(EMPTY_TREE_SHA.to_string()),
-                EMPTY_TREE_SHA.to_string(),
-            ),
-            Ok(Some(merge_base)) => (
-                vec![format!("{base_sha}...{head}")],
-                Some(merge_base),
-                base_sha.to_string(),
-            ),
-            Err(_) => (
-                vec![format!("{base_sha}...{head}")],
-                None,
-                base_sha.to_string(),
-            ),
+        // Orphan (no merge base with the base): diff the full content against
+        // the empty tree. A merge-base *error* (invalid/unreachable object) is
+        // NOT an orphan — leave the base unresolved so the panes report the
+        // failure rather than dumping the whole tree as "the branch".
+        let (diff_base, cache_sha) = match self.merge_base_by_sha(base_sha, head) {
+            Ok(None) => {
+                let empty_tree = self.empty_tree_sha().ok()?;
+                (Some(empty_tree.to_string()), empty_tree.to_string())
+            }
+            Ok(Some(merge_base)) => (Some(merge_base), base_sha.to_string()),
+            Err(_) => (None, base_sha.to_string()),
         };
 
         Some(BranchDiffSpec {
-            revs,
-            working_base,
+            diff_base,
             base_name: base.name.clone(),
             cache_sha,
         })

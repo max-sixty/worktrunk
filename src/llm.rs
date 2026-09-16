@@ -155,23 +155,6 @@ const MAX_SQUASH_COMMITS: usize = 200;
 /// Lock file patterns that are filtered out when diff is too large
 const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
 
-/// Git `-c` overrides forcing the `a/`/`b/` diff prefix format regardless of
-/// user config: `diff.noprefix`, `diff.mnemonicPrefix`, and (git >= 2.45)
-/// `diff.srcPrefix`/`diff.dstPrefix` can all change the header format that
-/// [`parse_diff_sections`] splits file sections on, so every full diff
-/// destined for [`prepare_diff`] must carry these flags. Unknown config keys
-/// are ignored by older git.
-pub(crate) const DIFF_PREFIX_OVERRIDES: [&str; 8] = [
-    "-c",
-    "diff.noprefix=false",
-    "-c",
-    "diff.mnemonicPrefix=false",
-    "-c",
-    "diff.srcPrefix=a/",
-    "-c",
-    "diff.dstPrefix=b/",
-];
-
 /// Prepared diff output with optional filtering applied
 pub(crate) struct PreparedDiff {
     /// The diff content (possibly filtered/truncated)
@@ -189,8 +172,9 @@ fn is_lock_file(filename: &str) -> bool {
 
 /// Extract the destination path from a `diff --git` header line.
 ///
-/// [`DIFF_PREFIX_OVERRIDES`] pins the prefixes to `a/` and `b/`, so the
-/// destination begins at the last ` b/` — or, when git quotes the pair,
+/// Every diff fed to [`prepare_diff`] comes from plumbing (`diff-index`,
+/// `diff-tree`), which ignores the prefix settings and always writes `a/` and
+/// `b/`, so the destination begins at the last ` b/` — or, when git quotes the pair,
 /// at the last ` "b/`. Quoting is not optional: `core.quotePath` escapes a
 /// non-ASCII name, and a name holding `"` or `\` is quoted whatever that
 /// setting says, so a parser that only knows the bare form fails on both.
@@ -412,7 +396,7 @@ pub(crate) fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
 struct PromptContext<'a> {
     /// The diff to describe (staged changes for commit, combined diff for squash)
     git_diff: &'a str,
-    /// Diff statistics summary (output of git diff --stat)
+    /// Diff statistics summary (`--stat` output)
     git_diff_stat: &'a str,
     /// Current branch name
     branch: &'a str,
@@ -524,7 +508,7 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 /// All LLM execution should go through this function to maintain consistency.
 pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
     // TODO(diff-pipe): Consider splitting the prompt template around
-    // `{{ git_diff }}` and piping `git diff` directly into the LLM via
+    // `{{ git_diff }}` and piping the diff directly into the LLM via
     // `Cmd::pipe_into` (preamble + epilogue through env vars). Avoids buffering
     // MB-scale diffs in our process memory and removes them from our logs
     // entirely. See conversation around PR #2136 for sketch.
@@ -758,11 +742,9 @@ pub(crate) fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let file_list = run_git_capture(
-        &["diff", "--staged", "--name-only", "-z"],
-        wt.path(),
-        index_override,
-    )?;
+    let file_list = wt
+        .prepare_staged_diff(wt.index_base()?, index_override)
+        .capture(["--name-only", "-z"])?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -789,30 +771,6 @@ pub(crate) fn generate_commit_message(
     Ok(message)
 }
 
-/// Run a git command and capture stdout, mirroring [`Repository::run_command`]
-/// (including its [`CommandError`] on non-zero exit).
-///
-/// Used by call sites that need to set `GIT_INDEX_FILE` (`--dry-run`) and so can't go
-/// through `Repository::run_command`. Without this check, a failing `git diff` would
-/// silently feed an empty diff to the LLM.
-fn run_git_capture(
-    args: &[&str],
-    cwd: &Path,
-    index_override: Option<&Path>,
-) -> anyhow::Result<String> {
-    let mut cmd = Cmd::new("git").args(args.iter().copied()).current_dir(cwd);
-    if let Some(index) = index_override {
-        cmd = cmd.env("GIT_INDEX_FILE", index);
-    }
-    let output = cmd
-        .run()
-        .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-    if !output.status.success() {
-        return Err(CommandError::from_failed_output("git", args, &output).into());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
 /// Build the commit prompt from staged changes.
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
@@ -831,16 +789,9 @@ pub(crate) fn build_commit_prompt(
     index_override: Option<&Path>,
     project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let cwd = wt.path();
-
-    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
-    diff_args.extend(["--no-pager", "diff", "--staged"]);
-    let diff_output = run_git_capture(&diff_args, cwd, index_override)?;
-    let diff_stat = run_git_capture(
-        &["--no-pager", "diff", "--staged", "--stat"],
-        cwd,
-        index_override,
-    )?;
+    let staged = wt.prepare_staged_diff(wt.index_base()?, index_override);
+    let diff_output = staged.capture(["--patch"])?;
+    let diff_stat = staged.capture(["--stat"])?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -933,10 +884,9 @@ pub(crate) fn build_squash_prompt(
     let repo = Repository::current()?;
 
     // Get the combined diff and diffstat for all commits being squashed
-    let mut diff_args: Vec<&str> = DIFF_PREFIX_OVERRIDES.to_vec();
-    diff_args.extend(["--no-pager", "diff", merge_base, "HEAD"]);
-    let diff_output = repo.run_command(&diff_args)?;
-    let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
+    let squashed = repo.prepare_diff(merge_base, "HEAD");
+    let diff_output = squashed.capture(["--patch"])?;
+    let diff_stat = squashed.capture(["--stat"])?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -1044,21 +994,6 @@ mod tests {
         assert!(
             !rendered.contains('/') && !rendered.contains('\\'),
             "shell rendered with directory components: {rendered}"
-        );
-    }
-
-    /// `run_git_capture` must surface a non-zero exit as a typed [`CommandError`]
-    /// carrying the command and its captured stderr — without that, the dry-run
-    /// path would feed an empty diff to the LLM on a `git` failure.
-    #[test]
-    fn test_run_git_capture_bails_on_nonzero_exit() {
-        let err = run_git_capture(&["frobnicate-nonexistent"], Path::new("."), None).unwrap_err();
-        let cmd_err = CommandError::find_in(&err).expect("error should carry a CommandError");
-        assert_eq!(cmd_err.command_string(), "git frobnicate-nonexistent");
-        assert!(
-            cmd_err.stderr.contains("frobnicate-nonexistent"),
-            "stderr should name the failing command; got: {}",
-            cmd_err.stderr
         );
     }
 

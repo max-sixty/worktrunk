@@ -1240,6 +1240,18 @@ fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     assert_eq!(stats.added, 2, "sparse: only inside/ additions");
     assert_eq!(stats.deleted, 1, "sparse: only inside/ deletions");
 
+    // The sparse paths are root-relative, so discovery from a subdirectory
+    // counts the same changes.
+    let nested_stats = Repository::at(inside.clone())
+        .unwrap()
+        .branch_diff_stats("main", "feature")
+        .unwrap();
+    assert_eq!(
+        (nested_stats.added, nested_stats.deleted),
+        (2, 1),
+        "sparse: discovered from inside/"
+    );
+
     // Disable sparse checkout — full stats include both inside/ and outside/
     repo.run_git(&["sparse-checkout", "disable"]);
     let full_repository = Repository::at(repo.root_path().to_path_buf()).unwrap();

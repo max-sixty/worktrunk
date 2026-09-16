@@ -148,7 +148,9 @@ impl<'a> CommitGenerator<'a> {
         }
 
         if show_progress {
-            let stats_parts = wt.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+            let stats_parts = wt
+                .prepare_staged_diff(wt.index_base()?, None)
+                .stats_summary();
 
             let changes_type = match stage_mode {
                 StageMode::Tracked => "tracked changes",

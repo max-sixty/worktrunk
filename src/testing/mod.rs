@@ -1414,8 +1414,10 @@ impl TestRepo {
     }
 
     /// Shared initializer for `new()`, `bare()`, and `empty()`: makes a tempdir
-    /// and runs `git init` with the given arguments inside it.
-    fn init_repo(git_args: &[&str]) -> Self {
+    /// and runs `git init` with the given arguments inside it. Public for a
+    /// test that needs an `init` option no named constructor covers, such as
+    /// `--object-format=sha256`.
+    pub fn init_repo(git_args: &[&str]) -> Self {
         shell_exec::enable_hermetic_test_env();
         let temp_dir = test_tempdir();
         let root = temp_dir.path().join("repo");

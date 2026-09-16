@@ -186,28 +186,26 @@ pub(crate) fn force_serial_concurrent() -> bool {
     std::env::var_os("WORKTRUNK_TEST_SERIAL_CONCURRENT").is_some()
 }
 
-/// Show detailed diffstat for a given commit range.
+/// Show detailed diffstat from `base` to `head`.
 ///
 /// Displays the diff statistics (file changes, insertions, deletions) in a gutter format.
 /// Used after commit/squash to show what was included in the commit.
-///
-/// # Arguments
-/// * `repo` - The repository to query
-/// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
-pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let mut args = vec!["diff", "--color=always", "--stat"];
+pub(crate) fn show_diffstat(
+    repo: &worktrunk::git::Repository,
+    base: &str,
+    head: &str,
+) -> anyhow::Result<()> {
+    let mut options = vec!["--color=always".to_string(), "--stat".to_string()];
     // With no detectable width, omit the flag and let git use its default width.
-    let stat_width_arg;
     if let Some(term_width) = worktrunk::styling::terminal_width() {
         let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
-        stat_width_arg = format!("--stat-width={stat_width}");
-        args.push(&stat_width_arg);
+        options.push(format!("--stat-width={stat_width}"));
     }
-    // Fence the range positional so a target branch named like a flag
-    // (`-x..HEAD`) can't be misparsed as an option.
-    args.push("--end-of-options");
-    args.push(range);
-    let diff_stat = repo.run_command(&args)?.trim_end().to_string();
+    let diff_stat = repo
+        .prepare_diff(base, head)
+        .capture(options)?
+        .trim_end()
+        .to_string();
 
     if !diff_stat.is_empty() {
         eprintln!("{}", format_with_gutter(&diff_stat, None));

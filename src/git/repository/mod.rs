@@ -1931,14 +1931,14 @@ impl Repository {
     /// Run a git command and return whether it succeeded (exit code 0).
     ///
     /// This is useful for commands that use exit codes for boolean results,
-    /// like `git merge-base --is-ancestor` or `git diff --quiet`.
+    /// like `git merge-base --is-ancestor`.
     ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
     /// let repo = Repository::current()?;
-    /// let is_clean = repo.run_command_check(&["diff", "--quiet", "--exit-code"])?;
+    /// let merged = repo.run_command_check(&["merge-base", "--is-ancestor", "feature", "main"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {

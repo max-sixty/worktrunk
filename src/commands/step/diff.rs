@@ -32,7 +32,7 @@ pub fn step_diff(
         .context("No common ancestor with target branch")?;
 
     // Stream diff to stdout — git handles pager and coloring.
-    wt.prepare_diff_with_untracked([merge_base])?
+    wt.prepare_diff_with_untracked(merge_base)?
         .stream(extra_args)?;
 
     Ok(())

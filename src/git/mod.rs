@@ -31,7 +31,7 @@ mod test;
 //
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
-// - git diff --shortstat (accesses pack files and indexes via mmap)
+// - git diff-tree --shortstat (accesses pack files and indexes via mmap)
 use crate::path::canonicalize_with_parents;
 use crate::sync::Semaphore;
 use std::sync::LazyLock;

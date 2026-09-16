@@ -41,7 +41,7 @@ use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
 use worktrunk::utils::epoch_now;
 
-use crate::llm::{DIFF_PREFIX_OVERRIDES, execute_llm_command, prepare_diff};
+use crate::llm::{execute_llm_command, prepare_diff};
 
 /// Limits concurrent LLM calls to avoid overwhelming the network / LLM
 /// provider. 8 permits balances parallelism with resource usage — LLM calls
@@ -237,33 +237,28 @@ pub(crate) fn compute_combined_diff(
     // Branch diff vs the comparison base — skipped for the default-branch row
     // itself (the baseline) and when no comparison base resolves.
     let is_default_branch = repo.default_branch().as_deref() == Some(branch);
-    if !is_default_branch && let Some(spec) = repo.branch_diff_spec(head) {
-        // `--end-of-options` guards a base name that could begin with `-`; the
-        // stat and full-diff invocations differ only by the `--stat` flag.
-        // The prefix overrides keep the diff parseable into per-file sections
-        // by `prepare_diff` (same guard as `build_commit_prompt`).
-        let prepared = repo.prepare_diff(spec.revs.iter().cloned());
-        let run_branch_diff = |opts: &[&str], out: &mut String| {
-            if let Ok(text) =
-                prepared.capture_with_git_options(DIFF_PREFIX_OVERRIDES, opts.iter().copied())
-            {
-                out.push_str(&text);
-            }
-        };
-        run_branch_diff(&["--stat"], &mut stat);
-        run_branch_diff(&[], &mut diff);
+    if !is_default_branch
+        && let Some(spec) = repo.branch_diff_spec(head)
+        && let Some(base) = spec.diff_base
+    {
+        let prepared = repo.prepare_diff(base, head);
+        if let Ok(text) = prepared.capture(["--stat"]) {
+            stat.push_str(&text);
+        }
+        if let Ok(text) = prepared.capture(["--patch"]) {
+            diff.push_str(&text);
+        }
     }
 
     // Working tree diff: uncommitted changes
     if let Some(wt_path) = worktree_path {
-        let prepared = repo.worktree_at(wt_path).prepare_diff(["HEAD"]);
+        let prepared = repo.worktree_at(wt_path).prepare_diff("HEAD");
         if let Ok(wt_stat) = prepared.capture(["--stat"])
             && !wt_stat.trim().is_empty()
         {
             stat.push_str(&wt_stat);
         }
-        if let Ok(wt_diff) =
-            prepared.capture_with_git_options(DIFF_PREFIX_OVERRIDES, std::iter::empty::<&str>())
+        if let Ok(wt_diff) = prepared.capture(["--patch"])
             && !wt_diff.trim().is_empty()
         {
             diff.push_str(&wt_diff);

@@ -100,12 +100,39 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 
 | Tool | Fragile | Structured |
 |------|---------|------------|
-| `git diff` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
+| `git diff-tree` / `diff-index` | `--stat` (localized) | `--numstat`, `--shortstat` (`(+)`/`(-)` hardcoded) |
 | `git status` | default | `--porcelain=v2` |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
 
 When no structured alternative exists, document the fragility inline.
+
+### Plumbing for Output `wt` Consumes
+
+Porcelain commands read the user's display configuration, and some of it changes what they report. `diff.relative` drops paths outside the cwd, which once made a branch whose changes sat elsewhere look integrated, so `wt remove` deleted it. `diff.external` replaces the patch, `color.ui=always` writes escapes into piped output, `log.showSignature` adds lines to a `--format`, and `branch.sort` and `column.ui` reorder and reflow `git branch`. Plumbing (`diff-tree`, `diff-index`, `diff-files`, `rev-list`, `for-each-ref`, `ls-files`, `cat-file`) ignores all of these. So when `wt` parses, counts, caches, or prompts an LLM with git's output, it runs plumbing, which makes the protection a property of the command instead of a flag every call site must remember.
+
+| Porcelain | Plumbing |
+|-----------|----------|
+| `git diff A B`, `git diff A..B` | `git diff-tree -r A B --` |
+| `git diff A...B` | `Repository::merge_base`, then `git diff-tree -r <merge-base> B --` |
+| `git diff <tree>` | `git diff-index <tree> --` |
+| `git diff --cached` | `git diff-index --cached --ita-invisible-in-index <base> --`, with `WorkingTree::index_base` for an unborn HEAD |
+| `git diff` | `git diff-files` |
+| `git branch --format` | `git for-each-ref refs/heads` |
+
+`PreparedDiff::capture` applies this to the diffs `wt` renders or prompts with. The plumbing forms need care the porcelain ones don't:
+
+- Rename detection and textconv filters are off: pass `--find-renames` and `--textconv` where the content should match what `git diff` shows.
+- The default output is raw: name the format (`--patch`, `--stat`).
+- Two revisions are two arguments, and git checks each against the filesystem: end them with `--`, or a directory named like the target branch fails the call.
+- `diff-tree` has no three-dot form. A literal `A...B` prints nothing and exits 0, and `--merge-base` exits 128 when there are several merge bases, where `git diff A...B` warns and uses the first.
+- The index isn't refreshed: `diff-files --name-only` lists files that were only touched, while `--stat`, `--numstat`, and `--patch` compare contents.
+
+Some settings still reach plumbing, so a call site that depends on them overrides them explicitly. `submodule.<name>.ignore`, from user config or `.gitmodules`, hides gitlink changes: pass `--ignore-submodules=none` where a submodule change counts. `core.quotePath` quotes non-ASCII paths: parse paths from `-z` output. Pathspecs resolve against the cwd, so a root-relative path takes `:(top)`.
+
+`git status` has no one-call plumbing equivalent; `--porcelain -z` with `--untracked-files=<mode>`, `--ignore-submodules=none`, and `--renames` pins its untracked, submodule, and rename reporting. `git log --format` with `--no-show-signature` prints only the placeholders it is given.
+
+Output the user reads as git's own view stays porcelain: `wt step diff` streams `git diff` with the user's arguments and configuration.
 
 ### Immutable Ids Over List Positions
 

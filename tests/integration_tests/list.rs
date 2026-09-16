@@ -2445,8 +2445,15 @@ fn mock_summary_cache(
     let head = String::from_utf8_lossy(&head_output.stdout)
         .trim()
         .to_string();
-    let merge_base = format!("main...{}", head);
-    if let Ok(output) = repo.git_command().args(["diff", &merge_base]).run() {
+    let merge_base = repo.git_output(&["merge-base", "main", &head]);
+    let patch_args = ["--find-renames", "--textconv", "--patch"];
+    if let Ok(output) = repo
+        .git_command()
+        .args(["diff-tree", "-r"])
+        .args(patch_args)
+        .args([merge_base.as_str(), head.as_str()])
+        .run()
+    {
         let branch_diff = String::from_utf8_lossy(&output.stdout);
         diff.push_str(&branch_diff);
     }
@@ -2456,7 +2463,9 @@ fn mock_summary_cache(
         let wt_str = wt_path.display().to_string();
         if let Ok(output) = repo
             .git_command()
-            .args(["-C", &wt_str, "diff", "HEAD"])
+            .args(["-C", &wt_str, "diff-index"])
+            .args(patch_args)
+            .arg("HEAD")
             .run()
         {
             let wt_diff = String::from_utf8_lossy(&output.stdout);
