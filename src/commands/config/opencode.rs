@@ -24,7 +24,7 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 /// here — it would put the plugin in the wrong place on macOS.
 ///
 /// `OPENCODE_CONFIG_DIR` reads an exported-but-empty value as unset, matching
-/// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::pi`.
+/// `CLAUDE_CONFIG_DIR` in `config::show` and `PI_CONFIG_DIR` in `config::omp`.
 /// An empty value taken at face value yields the relative path `plugins/`, so
 /// the install writes the plugin into whatever directory `wt` was run from.
 ///

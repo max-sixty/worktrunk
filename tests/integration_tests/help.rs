@@ -124,6 +124,10 @@ fn test_merge_help_describes_exact_shape_no_rebase() {
 )]
 #[case("help_config_plugins_pi", "config plugins pi --help")]
 #[case("help_config_plugins_pi_install", "config plugins pi install --help")]
+#[case(
+    "help_config_plugins_pi_uninstall",
+    "config plugins pi uninstall --help"
+)]
 #[case("help_config_plugins_omp", "config plugins omp --help")]
 #[case("help_config_plugins_omp_install", "config plugins omp install --help")]
 #[case(

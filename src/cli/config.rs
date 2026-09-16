@@ -233,6 +233,10 @@ different hook API — use `wt config plugins omp install` for that."#
     #[command(
         after_long_help = r#"Removes the Worktrunk extension from Pi's user extension directory.
 
+Where nothing is installed there while an oh-my-pi hook remains — the state an
+install from before `pi` and `omp` became separate commands leaves behind — the
+output names `wt config plugins omp uninstall` rather than reporting a removal.
+
 ## Examples
 
 ```console
