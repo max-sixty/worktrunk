@@ -4250,7 +4250,7 @@ hi = "echo hi"
     let stderr = String::from_utf8_lossy(&refused.stderr);
     let stderr = stderr.ansi_strip();
     assert!(
-        stderr.contains("already exists; add --yes to overwrite it"),
+        stderr.contains("already exists; to overwrite it, add --yes"),
         "stderr:\n{stderr}"
     );
 

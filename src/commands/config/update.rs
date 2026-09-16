@@ -112,7 +112,7 @@ pub fn handle_config_update(yes: bool, output: Option<PathBuf>) -> anyhow::Resul
         })?;
         if current != candidate.original {
             bail!(cformat!(
-                "{} changed @ <bold>{}</> since the preview; re-run <bold>wt config update</> to migrate the current contents",
+                "{} changed @ <bold>{}</> since the preview; to migrate the current contents, re-run <bold>wt config update</>",
                 candidate.info.label(),
                 format_path_for_display(&candidate.config_path)
             ));
@@ -189,14 +189,14 @@ fn write_migrated_output(
 
     let [candidate] = candidates else {
         bail!(cformat!(
-            "Cannot write <bold>user config</> and <bold>project config</> migrations to one file; use <bold>--output=-</> to inspect both or run <bold>wt config update</> to apply them in place"
+            "Cannot write <bold>user config</> and <bold>project config</> migrations to one file; to inspect both, use <bold>--output=-</>; to apply them in place, run <bold>wt config update</>"
         ));
     };
 
     let output = resolve_input_path(output);
     if paths_match(&output, &candidate.config_path) {
         bail!(cformat!(
-            "Cannot overwrite <bold>{}</> with <bold>--output</>; run <bold>wt config update</> to apply the migration in place",
+            "Cannot overwrite <bold>{}</> with <bold>--output</>; to apply the migration in place, run <bold>wt config update</>",
             candidate.info.label().to_lowercase()
         ));
     }
@@ -209,7 +209,7 @@ fn write_migrated_output(
     if replace && !yes {
         if !std::io::stdin().is_terminal() {
             bail!(cformat!(
-                "{display_path} already exists; add <bold>--yes</> to overwrite it"
+                "{display_path} already exists; to overwrite it, add <bold>--yes</>"
             ));
         }
         if !approvals_warning.is_empty() {
@@ -271,7 +271,7 @@ fn format_dropped_approvals_warning(candidate: &UpdateCandidate) -> String {
     format!(
         "{}\n",
         warning_message(cformat!(
-            "Output omits deprecated <bold>approved-commands</>; run <bold>wt config update</> to migrate them to approvals.toml"
+            "Output omits deprecated <bold>approved-commands</>; to migrate them to approvals.toml, run <bold>wt config update</>"
         ))
     )
 }

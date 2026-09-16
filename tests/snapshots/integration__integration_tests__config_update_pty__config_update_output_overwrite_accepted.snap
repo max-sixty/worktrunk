@@ -2,7 +2,7 @@
 source: tests/integration_tests/config_update_pty.rs
 expression: "&accepted"
 ---
-[33m▲[39m [33mOutput omits deprecated [1mapproved-commands[22m; run [1mwt config update[22m to migrate them to approvals.toml[39m
+[33m▲[39m [33mOutput omits deprecated [1mapproved-commands[22m; to migrate them to approvals.toml, run [1mwt config update[22m[39m
 
 [36m❯[39m Overwrite migrated.toml? [1m[y/N/?][22m y
 [32m✓[39m [32mWrote user config migration @ migrated.toml[39m
