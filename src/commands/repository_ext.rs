@@ -611,15 +611,18 @@ pub(crate) fn check_not_default_branch(
 
 /// Warn about untracked files that will be auto-staged.
 ///
+/// Paths come from git's `normal` untracked mode, which overrides a
+/// `status.showUntrackedFiles=no` that would hide them and names a wholly
+/// untracked directory once as `dir/`. A directory of generated files then
+/// takes one row instead of pushing the paths beside it past the cap.
+///
 /// The listing has at most `MAX_ROWS` rows. Past that many paths, the last row
 /// is a hint counting the rest, which is always at least two paths.
 pub(crate) fn warn_about_untracked_files(wt: &WorkingTree) -> anyhow::Result<()> {
     const MAX_ROWS: usize = 10;
 
-    // `-uall` overrides the user's display preference and expands untracked
-    // directories so the warning counts every path `git add -A` will stage.
     let status = wt
-        .run_command(&["status", "--porcelain", "-z", "-uall"])
+        .run_command(&["status", "--porcelain", "-z", "-unormal"])
         .context("Failed to get status")?;
     let files = parse_untracked_files(&status);
     if files.is_empty() {

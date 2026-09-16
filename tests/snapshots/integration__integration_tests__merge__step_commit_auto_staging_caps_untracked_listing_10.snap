@@ -61,16 +61,16 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mAuto-staging 10 untracked paths:[39m
-[107m [0m generated/01.txt
-[107m [0m generated/02.txt
-[107m [0m generated/03.txt
-[107m [0m generated/04.txt
-[107m [0m generated/05.txt
-[107m [0m generated/06.txt
-[107m [0m generated/07.txt
-[107m [0m generated/08.txt
-[107m [0m generated/09.txt
-[107m [0m generated/10.txt
-[36m◎[39m [36mGenerating commit message and committing changes... [90m(10 files[39m[90m)[39m[39m
+[107m [0m 0-generated/
+[107m [0m 01.txt
+[107m [0m 02.txt
+[107m [0m 03.txt
+[107m [0m 04.txt
+[107m [0m 05.txt
+[107m [0m 06.txt
+[107m [0m 07.txt
+[107m [0m 08.txt
+[107m [0m 09.txt
+[36m◎[39m [36mGenerating commit message and committing changes... [90m(309 files[39m[90m)[39m[39m
 [107m [0m [1mfeat: add generated files[22m
 [32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
