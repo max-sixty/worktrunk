@@ -903,6 +903,12 @@ fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
 /// Inline tables can deserialize like tables, but TOML forbids extending them
 /// with later subtables. Convert before inserting migrated nested sections so
 /// existing inline parent fields survive alongside the new child table.
+///
+/// The conversion goes through [`super::replace_inline_with_table`] so the
+/// key's leading comments and blank lines land above the header rather than
+/// inside its brackets. These rules run on the load path, so a header the key's
+/// decor broke is a config file that stops parsing on every command, not just
+/// one `wt config update` writes back.
 fn ensure_standard_table_parent<'a>(
     table: &'a mut toml_edit::Table,
     key: &str,
@@ -913,11 +919,14 @@ fn ensure_standard_table_parent<'a>(
         table.insert(key, toml_edit::Item::Table(parent));
     }
 
-    let item = table.get_mut(key)?;
-    if let Some(inline) = item.as_inline_table().cloned() {
-        *item = toml_edit::Item::Table(inline.into_table());
+    if let Some(inline) = table
+        .get(key)
+        .and_then(|item| item.as_inline_table())
+        .cloned()
+    {
+        super::replace_inline_with_table(table, key, inline.into_table());
     }
-    item.as_table_mut()
+    table.get_mut(key)?.as_table_mut()
 }
 
 /// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
@@ -1662,36 +1671,101 @@ pub fn compute_migrated_content(content: &str) -> String {
     }
 }
 
+/// Render the `Proposed diff:` block for a migration, or a warning line when
+/// git cannot produce the patch.
+///
+/// The three outcomes of `format_migration_diff` stay distinct here: an
+/// identical pair renders nothing, a differing pair renders the patch, and a
+/// git failure renders a warning rather than disappearing. Both consumers
+/// (`wt config show` and `wt config update`) go through this so neither can
+/// present a failed diff as "no changes"; the migration itself is computed in
+/// memory and is unaffected, so a broken renderer degrades the preview rather
+/// than failing the command.
+///
+/// Returns a string ending in a newline, or empty when there is nothing to show.
+pub fn format_migration_diff_block(original: &str, migrated: &str, label: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    match format_migration_diff(original, migrated, label) {
+        Ok(Some(diff)) => {
+            let _ = writeln!(out, "{}", info_message("Proposed diff:"));
+            let _ = writeln!(out, "{diff}");
+        }
+        Ok(None) => {}
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "{}",
+                warning_message("Could not render the proposed diff")
+            );
+            // `{e:#}` rather than `to_string()`: the git-failure arm bails with
+            // the whole payload, but a spawn or tempfile failure carries its
+            // cause one `.context` layer down, and plain Display drops it.
+            let _ = writeln!(out, "{}", format_with_gutter(&format!("{e:#}"), None));
+        }
+    }
+    out
+}
+
 /// Render a colored unified diff between `original` and `migrated`, with
 /// `label` shown as the file name in the diff header (e.g. `config.toml`).
 ///
 /// Uses a private tempdir containing two files named `<label>/current` and
 /// `<label>/migrated`; `git diff --no-index` is invoked from inside that
 /// tempdir so the diff header shows clean relative paths. The tempdir is
-/// dropped on return. Returns `None` when the contents match.
-pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Option<String> {
-    let dir = tempfile::tempdir().expect("failed to create tempdir for migration diff");
+/// dropped on return. Returns `Ok(None)` when the contents match.
+///
+/// `--no-ext-diff` keeps the patch worktrunk's own: a user's `diff.external`
+/// program would otherwise be handed these two temp files and could emit
+/// something that isn't a patch, block on a GUI, or die and take the preview
+/// with it.
+///
+/// `git diff --no-index` exits 0 when the files match and 1 when they differ,
+/// so those two are the answer and anything else is a failure. Branching on
+/// stdout alone conflated "no changes" with "git refused to run" — the shape
+/// this guards against (#4118).
+fn format_migration_diff(
+    original: &str,
+    migrated: &str,
+    label: &str,
+) -> anyhow::Result<Option<String>> {
+    let dir = tempfile::tempdir().context("failed to create tempdir for migration diff")?;
     let subdir = dir.path().join(label);
-    std::fs::create_dir(&subdir).expect("failed to create subdir in fresh tempdir");
-    let current = subdir.join("current");
-    let migrated_path = subdir.join("migrated");
-    std::fs::write(&current, original).expect("failed to write current config to tempfile");
-    std::fs::write(&migrated_path, migrated).expect("failed to write migrated config to tempfile");
+    std::fs::create_dir(&subdir).context("failed to create subdir in fresh tempdir")?;
+    std::fs::write(subdir.join("current"), original)
+        .context("failed to write current config to tempfile")?;
+    std::fs::write(subdir.join("migrated"), migrated)
+        .context("failed to write migrated config to tempfile")?;
 
     let output = Cmd::new("git")
-        .args(["diff", "--no-index", "--color=always", "-U3", "--"])
+        .args([
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--color=always",
+            "-U3",
+            "--",
+        ])
         .arg(format!("{label}/current"))
         .arg(format!("{label}/migrated"))
         .current_dir(dir.path())
         .run()
-        .expect("git diff --no-index failed");
+        .context("failed to run git diff --no-index")?;
 
-    // git diff --no-index exits 1 when files differ, which is expected.
-    let diff_output = String::from_utf8_lossy(&output.stdout);
-    if diff_output.is_empty() {
-        return None;
+    match output.status.code() {
+        Some(0) => Ok(None),
+        Some(1) => Ok(Some(format_with_gutter(
+            String::from_utf8_lossy(&output.stdout).trim_end(),
+            None,
+        ))),
+        // `ExitStatus`'s own rendering covers a signal-killed child too, so
+        // there is no separate arm for one.
+        _ => anyhow::bail!(
+            "git diff --no-index, {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        ),
     }
-    Some(format_with_gutter(diff_output.trim_end(), None))
 }
 
 /// Format deprecation warning lines (without apply hints or diff).
@@ -1861,10 +1935,11 @@ pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "config".to_string());
-    if let Some(diff) = format_migration_diff(original_content, &migrated, &label) {
-        let _ = writeln!(out, "{}", info_message("Proposed diff:"));
-        let _ = writeln!(out, "{diff}");
-    }
+    out.push_str(&format_migration_diff_block(
+        original_content,
+        &migrated,
+        &label,
+    ));
 
     out
 }
@@ -3938,6 +4013,36 @@ approved-commands = ["npm install"]
         assert_eq!(result, content, "Invalid TOML should be returned unchanged");
     }
 
+    /// The three outcomes the block renderer has to keep apart: identical
+    /// content, changed content, and (covered by the integration tests that
+    /// break `git diff`) a failure. Before #4118 a failure rendered as the
+    /// first of these.
+    #[test]
+    fn test_migration_diff_block_separates_identical_from_changed() {
+        // This test spawns the real `git diff`, and no fixture constructor runs
+        // here to latch the floor for it — without this the child reads the
+        // developer's own global config, where a single unparsable `diff.*`
+        // value turns the first assertion into the failure arm.
+        crate::shell_exec::enable_hermetic_test_env();
+
+        let original = "worktree-path = \"../{{ repo }}.{{ branch }}\"\n";
+        assert_eq!(
+            format_migration_diff_block(original, original, "config.toml"),
+            "",
+            "identical content renders nothing"
+        );
+
+        let block = format_migration_diff_block(
+            original,
+            "worktree-path = \"../{{ repo }}.{{ branch | sanitize }}\"\n",
+            "config.toml",
+        );
+        assert!(
+            block.contains("Proposed diff:") && block.contains("sanitize"),
+            "changed content renders the patch, got:\n{block}"
+        );
+    }
+
     #[test]
     fn test_format_deprecation_details_approved_commands() {
         let content = r#"
@@ -4242,6 +4347,61 @@ pager = "delta --paging=never"
         assert!(
             !result.contains("[select]"),
             "Should remove [select]: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_commented_inline_parent_keeps_the_config_loadable() {
+        // The parent has to become a standard table before `[commit.generation]`
+        // can be added, and the key's decor — the comment above it — renders
+        // inside the header brackets. Left there it wrote
+        // `[# my commit settings\ncommit ]`, and because this rule runs before
+        // serde on every load, the user's config stopped parsing entirely.
+        let content = r#"# my commit settings
+commit = { stage = "tracked" }
+commit-generation = { command = "llm" }
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("# my commit settings\n[commit]"),
+            "the comment belongs above the header, not inside it: {result}"
+        );
+
+        let config = crate::config::UserConfig::load_from_str(content)
+            .unwrap_or_else(|e| panic!("config must still load: {e}\n{result}"));
+        assert_eq!(config.commit.stage, Some(crate::config::StageMode::Tracked));
+        assert_eq!(
+            config
+                .commit
+                .generation
+                .and_then(|generation| generation.command)
+                .as_deref(),
+            Some("llm"),
+        );
+    }
+
+    #[test]
+    fn test_migrate_inline_parent_after_blank_line_keeps_the_config_loadable() {
+        // Same decor path with no comment: a blank line before the inline
+        // section is prefix decor too, which makes any inline section past the
+        // first line of the file a candidate.
+        let content = r#"skip-shell-integration-prompt = true
+
+switch = { cd = false }
+
+[select]
+pager = "delta"
+"#;
+        let config = crate::config::UserConfig::load_from_str(content)
+            .unwrap_or_else(|e| panic!("config must still load: {e}"));
+        assert_eq!(config.switch.cd, Some(false));
+        assert_eq!(
+            config
+                .switch
+                .picker
+                .and_then(|picker| picker.pager)
+                .as_deref(),
+            Some("delta"),
         );
     }
 

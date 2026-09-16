@@ -1,10 +1,14 @@
-// Worktrunk activity tracking hook for Pi / oh-my-pi.
+// Worktrunk activity tracking hook for oh-my-pi (`omp`).
 //
 // Tracks agent activity per branch, showing status markers in `wt list`:
 //   🤖 — agent is working
 //   💬 — agent is waiting for input
 //
-// Installed globally via: wt config plugins pi install
+// Installed globally via: wt config plugins omp install
+//
+// oh-my-pi loads user hooks from `hooks/pre/*.ts` and exposes `HookAPI`.
+// earendil-works Pi is a different agent with a different loader and API —
+// see `dev/pi-extension.ts` and `wt config plugins pi install`.
 
 import type { HookAPI } from "@oh-my-pi/pi-coding-agent/extensibility/hooks";
 

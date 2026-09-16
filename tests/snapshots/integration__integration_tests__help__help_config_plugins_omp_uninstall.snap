@@ -5,6 +5,8 @@ info:
   args:
     - config
     - plugins
+    - omp
+    - uninstall
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -43,16 +45,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config plugins - Plugin management
+wt config plugins omp uninstall - Remove the activity tracking hook
 
-Usage: [1m[36mwt config plugins[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
-
-[1m[32mCommands:[0m
-  [1m[36mclaude[0m    Claude Code plugin
-  [1m[36mcodex[0m     Codex plugin
-  [1m[36momp[0m       oh-my-pi activity hook
-  [1m[36mopencode[0m  OpenCode plugin
-  [1m[36mpi[0m        Pi activity extension
+Usage: [1m[36mwt config plugins omp uninstall[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -74,22 +69,10 @@ Usage: [1m[36mwt config plugins[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Install and manage Worktrunk plugins for AI coding tools.
-
-[1m[32mSupported tools[0m
-
-- [1mclaude[0m — Claude Code plugin (activity tracking + statusline)
-- [1mcodex[0m — Codex plugin (Worktrunk configuration skill)
-- [1momp[0m — oh-my-pi hook (activity tracking)
-- [1mopencode[0m — OpenCode plugin (activity tracking)
-- [1mpi[0m — Pi extension (activity tracking)
+Removes the Worktrunk hook from oh-my-pi's active user hook directory.
 
 [1m[32mExamples[0m
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins claude install[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins codex install[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins omp install[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins opencode install[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins pi install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins omp uninstall[0m
 
 ----- stderr -----

@@ -606,7 +606,7 @@ test('short wide tables become labeled records without capturing dense tables', 
     /\bwt-responsive-records\b/,
   );
   assert.doesNotMatch(
-    findTable('/claude-code/', ['Capability', 'Claude Code', 'Codex', 'OpenCode', 'Pi', 'Gemini CLI']).attributes,
+    findTable('/claude-code/', ['Capability', 'Claude Code', 'Codex', 'OpenCode', 'Pi', 'oh-my-pi', 'Gemini CLI']).attributes,
     /\bwt-responsive-records\b/,
   );
   assert.doesNotMatch(

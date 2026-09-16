@@ -160,14 +160,15 @@ Created by the `wt config plugins <agent>` install commands. Each writes outside
 | File | Created by | Purpose |
 |------|------------|---------|
 | `~/.config/opencode/plugins/worktrunk.ts` | `wt config plugins opencode install` | Activity markers in `wt list` |
-| `~/.omp/agent/hooks/pre/worktrunk.ts` | `wt config plugins pi install` | Activity markers in `wt list` |
+| `~/.pi/agent/extensions/worktrunk.ts` | `wt config plugins pi install` | Activity markers in `wt list` |
+| `~/.omp/agent/hooks/pre/worktrunk.ts` | `wt config plugins omp install` | Activity markers in `wt list` |
 | `~/.claude/settings.json` | `wt config plugins claude install-statusline` | Adds a `statusLine` entry running `wt list statusline --format=claude-code` |
 
-The OpenCode path follows `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`; the Pi path follows `$PI_CONFIG_DIR`, `$OMP_PROFILE`/`$PI_PROFILE`, and `$PI_CODING_AGENT_DIR`; Claude Code's follows `$CLAUDE_CONFIG_DIR`. The two plugin files are worktrunk's own, so install writes them whole. `settings.json` belongs to Claude Code, so install merges the `statusLine` key into it and leaves the rest untouched.
+The OpenCode path follows `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`; the Pi path follows `$PI_CODING_AGENT_DIR`; the oh-my-pi path follows `$PI_CONFIG_DIR`, `$OMP_PROFILE`/`$PI_PROFILE`, and `$PI_CODING_AGENT_DIR`; Claude Code's follows `$CLAUDE_CONFIG_DIR`. The three plugin files are worktrunk's own, so install writes them whole (and uninstall removes them whole). `settings.json` belongs to Claude Code, so install merges the `statusLine` key into it and leaves the rest untouched.
 
 `wt config plugins claude install` and `wt config plugins codex install` write nothing themselves — they run `claude` / `codex` to register the marketplace and install the plugin, and each CLI records that in its own config (`~/.claude/plugins/`, `~/.codex/config.toml`).
 
-**To remove:** `wt config plugins opencode uninstall` and `wt config plugins pi uninstall` delete their plugin file. `wt config plugins claude uninstall` / `codex uninstall` remove the plugin and marketplace through that CLI. The statusline entry is removed by editing `settings.json`.
+**To remove:** `wt config plugins opencode uninstall`, `wt config plugins pi uninstall`, and `wt config plugins omp uninstall` delete their plugin file. `wt config plugins claude uninstall` / `codex uninstall` remove the plugin and marketplace through that CLI. The statusline entry is removed by editing `settings.json`.
 
 ### 6. Temporary files (automatic)
 
@@ -215,7 +216,7 @@ A branch checked out in a second worktree is retained regardless, `-D` included.
 - `wt config state clear` — removes all worktrunk data from `.git/` (config keys, caches, markers, hints, variables, logs, stale trash)
 - `wt config shell install` — when migrating an integration to a new location, removes the file left at the old one: fish `conf.d/wt.fish` (now `functions/wt.fish`) and nushell wrappers stranded under `<config-dir>/vendor/autoload` (now `<data-dir>/vendor/autoload`). The old path is where worktrunk's own wrapper lived and is named after the command being installed, so it's taken back whole without reading it — a `conf.d/wt.fish` left in place would be sourced at startup and shadow the new wrapper anyway. Only that exact filename is touched, and each removal is printed. The same rule covers the path being installed to, so an existing `functions/wt.fish`, `completions/wt.fish`, or `wt.nu` is replaced whole; [Files created](/shell-integration/#files-created) names the file each shell gets
 - `wt config shell uninstall` — removes integration lines from bash/zsh/PowerShell rc files, and deletes worktrunk's wrapper and completion files (fish `functions/`, `conf.d/`, and `completions/`; nushell `vendor/autoload`). Uninstall takes no command name, so it lists those directories and recognizes files by worktrunk's own content markers, whatever binary name they were installed under; files without the markers are left alone. An rc file belongs to the user, so a line qualifies only where it runs the init command: one that merely mentions it, inside a comment, an `echo`, or an alias body, stays. Every line uninstall does take is printed, before removal and again after
-- `wt config plugins opencode uninstall` / `wt config plugins pi uninstall` — deletes that agent's `worktrunk.ts` plugin file. Only worktrunk's own file is touched; the rest of the agent's plugin directory is left alone
+- `wt config plugins opencode uninstall` / `wt config plugins pi uninstall` / `wt config plugins omp uninstall` — deletes that agent's `worktrunk.ts` plugin file. Only worktrunk's own file is touched; the rest of the agent's plugin directory is left alone
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.
 

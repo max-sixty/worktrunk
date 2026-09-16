@@ -207,9 +207,13 @@ $ wt config plugins opencode uninstall
 // Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsPiCommand {
-    /// Install the activity tracking hook
+    /// Install the activity tracking extension
     #[command(
-        after_long_help = r#"Writes the Worktrunk hook to Pi's profile-aware user hook directory.
+        after_long_help = r#"Writes the Worktrunk extension to Pi's user extension directory.
+
+Where oh-my-pi is on `PATH` and Pi is not — the state a user of the pre-split
+`pi install` is in — the output names `wt config plugins omp install` before
+writing anything.
 
 ## Examples
 
@@ -218,23 +222,65 @@ $ wt config plugins pi install
 $ wt config plugins pi install --yes
 ```
 
-## Plugin location
+## Extension location
 
-The default location is `~/.omp/agent/hooks/pre/worktrunk.ts`. The installer
-honors `$PI_CONFIG_DIR` and active `$OMP_PROFILE` / `$PI_PROFILE` profiles.
-`$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile
-only — named profiles ignore it, matching Pi's own resolution."#
+The default location is `~/.pi/agent/extensions/worktrunk.ts`.
+`$PI_CODING_AGENT_DIR` replaces the agent directory (`~/.pi/agent`).
+
+This targets Pi (<https://github.com/earendil-works/pi>), which loads
+extensions from `extensions/`. oh-my-pi (`omp`) is a separate agent with a
+different hook API — use `wt config plugins omp install` for that."#
     )]
     Install,
 
-    /// Remove the activity tracking hook
+    /// Remove the activity tracking extension
     #[command(
-        after_long_help = r#"Removes the Worktrunk hook from Pi's active user hook directory.
+        after_long_help = r#"Removes the Worktrunk extension from Pi's user extension directory.
+
+Where nothing is installed there while an oh-my-pi hook remains — the state an
+install from before `pi` and `omp` became separate commands leaves behind — the
+output names `wt config plugins omp uninstall` rather than reporting a removal.
 
 ## Examples
 
 ```console
 $ wt config plugins pi uninstall
+```"#
+    )]
+    Uninstall,
+}
+
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
+pub enum ConfigPluginsOmpCommand {
+    /// Install the activity tracking hook
+    #[command(
+        after_long_help = r#"Writes the Worktrunk hook to oh-my-pi's profile-aware user hook directory.
+
+## Examples
+
+```console
+$ wt config plugins omp install
+$ wt config plugins omp install --yes
+```
+
+## Hook location
+
+The default location is `~/.omp/agent/hooks/pre/worktrunk.ts`. The installer
+honors `$PI_CONFIG_DIR` and active `$OMP_PROFILE` / `$PI_PROFILE` profiles.
+`$PI_CODING_AGENT_DIR` overrides the agent directory for the default profile
+only — named profiles ignore it, matching oh-my-pi's own resolution."#
+    )]
+    Install,
+
+    /// Remove the activity tracking hook
+    #[command(
+        after_long_help = r#"Removes the Worktrunk hook from oh-my-pi's active user hook directory.
+
+## Examples
+
+```console
+$ wt config plugins omp uninstall
 ```"#
     )]
     Uninstall,
@@ -378,6 +424,32 @@ $ wt config plugins codex uninstall
         action: ConfigPluginsCodexCommand,
     },
 
+    /// oh-my-pi activity hook
+    #[command(
+        after_long_help = r#"Activity tracking hook — shows status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+oh-my-pi's `session_shutdown` event clears the marker when the session exits.
+
+## Examples
+
+```console
+$ wt config plugins omp install
+$ wt config plugins omp uninstall
+```
+
+## Hook location
+
+Written to `~/.omp/agent/hooks/pre/worktrunk.ts`. Honors `$PI_CONFIG_DIR`,
+the active `$OMP_PROFILE` / `$PI_PROFILE` profile, and `$PI_CODING_AGENT_DIR`
+for the default profile."#
+    )]
+    Omp {
+        #[command(subcommand)]
+        action: ConfigPluginsOmpCommand,
+    },
+
     /// OpenCode plugin
     #[command(
         after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
@@ -402,9 +474,9 @@ config precedence: `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
         action: ConfigPluginsOpencodeCommand,
     },
 
-    /// Pi / oh-my-pi activity hook
+    /// Pi activity extension
     #[command(
-        after_long_help = r#"Activity tracking hook — shows status markers in `wt list`:
+        after_long_help = r#"Activity tracking extension — shows status markers in `wt list`:
 - 🤖 — agent is working
 - 💬 — agent is waiting for input
 
@@ -415,7 +487,12 @@ Pi's `session_shutdown` event clears the marker when the session exits.
 ```console
 $ wt config plugins pi install
 $ wt config plugins pi uninstall
-```"#
+```
+
+## Extension location
+
+Written to `~/.pi/agent/extensions/worktrunk.ts`. `$PI_CODING_AGENT_DIR`
+replaces the agent directory."#
     )]
     Pi {
         #[command(subcommand)]
@@ -740,14 +817,16 @@ $ wt config alias dry-run deploy -- --env=staging
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
 - **codex** — Codex plugin (Worktrunk configuration skill)
+- **omp** — oh-my-pi hook (activity tracking)
 - **opencode** — OpenCode plugin (activity tracking)
-- **pi** — Pi / oh-my-pi plugin (activity tracking)
+- **pi** — Pi extension (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
 $ wt config plugins codex install
+$ wt config plugins omp install
 $ wt config plugins opencode install
 $ wt config plugins pi install
 ```"#

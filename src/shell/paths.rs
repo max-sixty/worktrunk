@@ -94,16 +94,22 @@ fn nu_dirs() -> NuDirs {
 
 /// Fallback for Nushell's `$nu.data-dir` when `nu` can't be queried.
 ///
-/// Mirrors `nu_path::data_dir`: `XDG_DATA_HOME` (when absolute) wins on every
-/// platform, otherwise `dirs::data_dir()` (`~/Library/Application Support` on
-/// macOS, `%APPDATA%` on Windows, `~/.local/share` on Linux). Nushell appends
-/// `nushell`.
+/// Mirrors Nushell's own `resolve_xdg_base` (`crates/nu-config/src/resolve.rs`):
+/// `XDG_DATA_HOME` wins on every platform when it is absolute, otherwise
+/// `dirs::data_dir()` (`~/Library/Application Support` on macOS, `%APPDATA%` on
+/// Windows, `~/.local/share` on Linux). Nushell appends `nushell`.
+///
+/// The one XDG read worktrunk still spells out, because it is Nushell's rule
+/// rather than the spec's: etcetera's `Xdg::data_dir()` applies the same
+/// absolute-only filter but falls back to `~/.local/share` everywhere, which is
+/// the wrong directory on macOS and Windows, and the native strategies that get
+/// those right ignore `XDG_DATA_HOME`.
 fn nushell_data_dir_fallback(home: &std::path::Path) -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        let path = PathBuf::from(xdg);
-        if path.is_absolute() {
-            return path.join("nushell");
-        }
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        return xdg.join("nushell");
     }
     dirs::data_dir()
         .unwrap_or_else(|| home.join(".local").join("share"))
@@ -141,8 +147,11 @@ fn legacy_nushell_autoload_dirs(
     if let Some(dir) = default_config {
         dirs.push(dir.to_path_buf());
     }
-    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        dirs.push(PathBuf::from(xdg_config).join("nushell"));
+    // etcetera's XDG strategy: `$XDG_CONFIG_HOME` when absolute, `~/.config`
+    // otherwise. `~/.config` stays listed on its own because an absolute
+    // `$XDG_CONFIG_HOME` displaces it, and older worktrunk wrote there too.
+    if let Ok(xdg) = Xdg::new() {
+        dirs.push(xdg.config_dir().join("nushell"));
     }
     dirs.push(home.join(".config").join("nushell"));
     if let Ok(strategy) = choose_base_strategy() {

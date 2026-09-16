@@ -902,13 +902,16 @@ command = "llm -m claude-haiku-4.5"
         .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
         .unwrap();
 
+    // The comment lands after the header's `]`, and the rewrite still parses.
     let saved_content = fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved_content.contains("# entry note"),
-        "Inline entry comment was lost. Saved content:\n{saved_content}"
-    );
-    assert!(
-        saved_content.contains(r#"worktree-path = "../{{ repo }}.{{ branch }}""#),
-        "Retired variable was not migrated. Saved content:\n{saved_content}"
-    );
+    toml::from_str::<toml::Table>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    [projects]
+
+    [projects."example.com/org/repo"]  # entry note
+    worktree-path = "../{{ repo }}.{{ branch }}"
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
 }

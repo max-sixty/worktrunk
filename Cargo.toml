@@ -199,7 +199,7 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 minijinja = { version = "2.20", default-features = false, features = ["builtins", "serde", "std_collections"] }
 rayon = "1.12"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = "1.0.150"
 shell-escape = "0.1"
 shellexpand = "3.1"
 strsim = "0.11.1"
@@ -209,11 +209,11 @@ terminal_size = "0.4.3"
 toml = { version = "1.0", features = ["preserve_order"] }
 toml_edit = { version = "0.25", features = ["serde"] }
 # tree-sitter-bash may lag behind tree-sitter-highlight (0.25.x works with
-# tree-sitter-highlight 0.26.x).
+# tree-sitter-highlight 0.27.x).
 # These are optional dependencies controlled by the "syntax-highlighting" feature.
 # To build without C compilation requirements, use: cargo install worktrunk --no-default-features --features cli
 tree-sitter-bash = { version = "0.25.1", optional = true }
-tree-sitter-highlight = { version = "0.26", optional = true }
+tree-sitter-highlight = { version = "0.27", optional = true }
 unicode-width = "0.2.1"
 wrap-ansi = "0.1"
 osc8 = "0.1.0"

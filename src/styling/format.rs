@@ -343,7 +343,13 @@ fn format_bash_with_gutter_impl(
 
     let mut highlighter = Highlighter::new();
     let highlights = highlighter
-        .highlight(&config, content.as_bytes(), None, |_| None)
+        .highlight(
+            &config,
+            content.as_bytes(),
+            None, // encoding: None = UTF-8
+            None, // cancellation flag
+            |_| None,
+        )
         .expect("highlighting valid UTF-8 should not fail");
 
     let content_bytes = content.as_bytes();
@@ -716,7 +722,7 @@ mod tests {
 
         let mut output = String::new();
         let highlights = highlighter
-            .highlight(&config, cmd.as_bytes(), None, |_| None)
+            .highlight(&config, cmd.as_bytes(), None, None, |_| None)
             .unwrap();
         for event in highlights {
             match event.unwrap() {
@@ -772,7 +778,7 @@ mod tests {
 
         let mut output = String::new();
         let highlights = highlighter
-            .highlight(&config, cmd.as_bytes(), None, |_| None)
+            .highlight(&config, cmd.as_bytes(), None, None, |_| None)
             .unwrap();
         for event in highlights {
             match event.unwrap() {
