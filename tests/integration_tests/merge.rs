@@ -1826,6 +1826,33 @@ fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
     ));
 }
 
+/// `rebase.updateRefs` would also move a branch stacked inside the rebased
+/// range; `wt step rebase` rewrites only the worktree's own branch.
+#[rstest]
+fn test_step_rebase_leaves_stacked_branches(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "base.txt", "base\n", "Stack base");
+    repo.run_git_in(&feature_wt, &["branch", "stacked"]);
+    repo.commit_in_worktree(&feature_wt, "top.txt", "top\n", "Stack top");
+    fs::write(repo.root_path().join("main-update.txt"), "main\n").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
+    repo.run_git(&["config", "rebase.updateRefs", "true"]);
+    let stacked_before = repo.git_output(&["rev-parse", "stacked"]);
+
+    let output = make_snapshot_cmd(&repo, "step", &["rebase", "main"], Some(&feature_wt))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(repo.git_output(&["rev-parse", "stacked"]), stacked_before);
+    assert_eq!(
+        repo.git_output(&["merge-base", "main", "feature"]),
+        repo.git_output(&["rev-parse", "main"]),
+        "feature should be rebased onto main"
+    );
+}
+
 // =============================================================================
 // --no-rebase tests
 // =============================================================================
