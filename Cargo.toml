@@ -195,8 +195,16 @@ tracing-log = { version = "0.2.0", optional = true }
 # `EnvFilter::builder().with_default_directive(...).from_env_lossy()` (used in
 # `src/logging.rs`) stabilized on top of the per-layer filtering rework.
 tracing-subscriber = { version = "0.3.17", default-features = false, features = ["ansi", "env-filter", "fmt", "registry"], optional = true }
-# Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
-minijinja = { version = "2.20", default-features = false, features = ["builtins", "serde", "std_collections"] }
+# Only enable needed features - saves ~200KB by excluding debug, macros, multi_template.
+# `unstable_machinery` exposes the parser `src/config/deprecation.rs` migrates retired
+# template variables through, rather than re-deriving MiniJinja's grammar by hand; it
+# pulls in `internal_debug`, which costs ~116KB of that saving back (~67KB stripped).
+minijinja = { version = "2.20", default-features = false, features = [
+    "builtins",
+    "serde",
+    "std_collections",
+    "unstable_machinery",
+] }
 rayon = "1.12"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

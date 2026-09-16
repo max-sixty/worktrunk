@@ -203,6 +203,22 @@ pub(crate) fn replace_inline_with_table(
     existing[key] = toml_edit::Item::Table(table);
 }
 
+/// Refuse to write a config file that is not valid TOML.
+///
+/// wt can't load such a file: every later command skips user config with a
+/// warning, and the commands that need project config fail, until the user
+/// hand-edits it. Both writers that rewrite a config file the user owns
+/// check the content they are about to write: `UserConfig::save_to` and
+/// `wt config update`. Neither starts from invalid TOML, so this fires only when
+/// the rewrite itself broke the syntax, and the file on disk stays as it was.
+pub fn ensure_config_parses(content: &str) -> Result<(), ConfigError> {
+    content.parse::<toml::Table>().map(|_| ()).map_err(|e| {
+        ConfigError(format!(
+            "Refusing to write a config file wt could not read back: {e}"
+        ))
+    })
+}
+
 // Re-export public types
 pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
@@ -261,6 +277,16 @@ mod tests {
 
     fn test_repo() -> TestRepo {
         TestRepo::new()
+    }
+
+    #[test]
+    fn test_ensure_config_parses_rejects_a_header_holding_the_key_decor() {
+        // The shape an inline-to-table rewrite once wrote: the key's leading
+        // comment rendered inside the brackets.
+        let err =
+            ensure_config_parses("[# why squash is off\nmerge ]\nsquash = true\n").unwrap_err();
+        assert!(err.0.contains("could not read back"), "{}", err.0);
+        ensure_config_parses("# why squash is off\n[merge]\nsquash = true\n").unwrap();
     }
 
     #[test]

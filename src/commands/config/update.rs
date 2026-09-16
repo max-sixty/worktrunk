@@ -12,7 +12,7 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
     ConfigFileKind, DeprecationInfo, DeprecationKind, compute_migrated_content, config_path,
-    copy_approved_commands_to_approvals_file, format_deprecation_warnings,
+    copy_approved_commands_to_approvals_file, ensure_config_parses, format_deprecation_warnings,
     format_migration_diff_block,
 };
 use worktrunk::git::{Repository, resolve_input_path};
@@ -34,6 +34,25 @@ struct UpdateCandidate {
     migrated: String,
     /// Detected deprecations for display
     info: DeprecationInfo,
+}
+
+impl UpdateCandidate {
+    /// Compute the migration, refusing one whose content wt could not load.
+    ///
+    /// Checking here rather than at the write covers both destinations — the
+    /// in-place update and `--output` — and fails before the preview asks for
+    /// confirmation.
+    fn new(config_path: PathBuf, original: String, info: DeprecationInfo) -> anyhow::Result<Self> {
+        let migrated = compute_migrated_content(&original);
+        ensure_config_parses(&migrated)
+            .with_context(|| format!("Failed to migrate {}", info.label().to_lowercase()))?;
+        Ok(Self {
+            config_path,
+            original,
+            migrated,
+            info,
+        })
+    }
 }
 
 /// Handle the `wt config update` command.
@@ -277,13 +296,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     };
 
-    let migrated = compute_migrated_content(&original);
-    Ok(Some(UpdateCandidate {
-        config_path,
-        original,
-        migrated,
-        info,
-    }))
+    UpdateCandidate::new(config_path, original, info).map(Some)
 }
 
 fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidate>> {
@@ -326,11 +339,5 @@ fn check_project_config(read_only: bool) -> anyhow::Result<Option<UpdateCandidat
         return Ok(None);
     }
 
-    let migrated = compute_migrated_content(&original);
-    Ok(Some(UpdateCandidate {
-        config_path,
-        original,
-        migrated,
-        info,
-    }))
+    UpdateCandidate::new(config_path, original, info).map(Some)
 }

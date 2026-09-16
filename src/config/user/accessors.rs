@@ -229,8 +229,7 @@ impl UserConfig {
     /// Format a worktree path using this configuration's template.
     ///
     /// # Arguments
-    /// * `main_worktree` - Main worktree directory name; supplies both
-    ///   `{{ main_worktree }}` and `{{ repo }}`
+    /// * `main_worktree` - Main worktree directory name; supplies `{{ repo }}`
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
     /// * `repo` - Repository, for template function access and for the
     ///   `{{ repo_path }}`, `{{ owner }}`, and {{ remote_repo }} values read off it —

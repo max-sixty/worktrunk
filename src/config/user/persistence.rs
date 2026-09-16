@@ -245,6 +245,7 @@ impl UserConfig {
             doc.to_string()
         };
 
+        crate::config::ensure_config_parses(&toml_string)?;
         crate::utils::write_atomically(config_path, &toml_string)
             .map_err(|e| ConfigError(format!("Failed to write config file: {}", e)))?;
 
