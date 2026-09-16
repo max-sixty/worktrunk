@@ -161,3 +161,58 @@ fn test_config_update_rejects_config_removed_at_apply(repo: TestRepo) {
         "the removed config should not be recreated from the preview"
     );
 }
+
+/// Execute `wt config update --output=<destination>` in a PTY, answering the
+/// overwrite prompt.
+fn exec_config_update_output_in_pty(
+    repo: &TestRepo,
+    destination: &str,
+    input: &str,
+) -> (String, i32) {
+    let output_arg = format!("--output={destination}");
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["config", "update", &output_arg],
+        repo.root_path(),
+        &repo.test_env_vars(),
+        None,
+    );
+    exec_cmd_in_pty_prompted(cmd, &[input], "[y/N")
+}
+
+/// An existing `--output` destination is overwritten only once the prompt is
+/// accepted. The approvals warning is narration above the prompt, so a blank
+/// line separates the two.
+#[rstest]
+fn test_config_update_output_overwrite_prompt(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."github.com/user/repo"]
+approved-commands = ["npm test"]
+"#,
+    )
+    .unwrap();
+    let destination = repo.root_path().join("migrated.toml");
+    fs::write(&destination, "important user data\n").unwrap();
+
+    let (declined, exit_code) = exec_config_update_output_in_pty(&repo, "migrated.toml", "n\n");
+    assert_eq!(exit_code, 0);
+    assert_eq!(
+        fs::read_to_string(&destination).unwrap(),
+        "important user data\n"
+    );
+
+    let (accepted, exit_code) = exec_config_update_output_in_pty(&repo, "migrated.toml", "y\n");
+    assert_eq!(exit_code, 0);
+    assert_eq!(
+        fs::read_to_string(&destination).unwrap(),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n"
+    );
+
+    config_update_pty_settings(&repo).bind(|| {
+        assert_snapshot!("config_update_output_overwrite_declined", &declined);
+        assert_snapshot!("config_update_output_overwrite_accepted", &accepted);
+    });
+}
