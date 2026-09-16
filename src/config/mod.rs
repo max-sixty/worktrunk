@@ -192,8 +192,9 @@ pub(crate) fn replace_inline_with_table(
 
 /// Refuse to write a config file that is not valid TOML.
 ///
-/// Loading rejects such a file outright, so every later command fails until the
-/// user hand-edits it. Both writers that rewrite a config file the user owns
+/// wt can't load such a file: every later command skips user config with a
+/// warning, and the commands that need project config fail, until the user
+/// hand-edits it. Both writers that rewrite a config file the user owns
 /// check the content they are about to write: `UserConfig::save_to` and
 /// `wt config update`. Neither starts from invalid TOML, so this fires only when
 /// the rewrite itself broke the syntax, and the file on disk stays as it was.
