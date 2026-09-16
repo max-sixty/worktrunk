@@ -215,10 +215,8 @@ fn write_migrated_output(
         if !approvals_warning.is_empty() {
             eprintln!();
         }
-        match prompt_yes_no_preview(
-            &format!("Overwrite {display_path} with the {label} migration?"),
-            || {},
-        )? {
+        let prompt = format!("Overwrite {display_path} with the {label} migration?");
+        match prompt_yes_no_preview(&prompt, || {})? {
             PromptResponse::Accepted => {}
             PromptResponse::Declined => {
                 eprintln!("{}", info_message("Update cancelled"));
