@@ -278,12 +278,8 @@ pub fn build_hook_context(
         map.insert("branch".into(), branch.into());
     }
     map.insert("worktree_name".into(), worktree_name.into());
-    map.insert("repo_path".into(), repo_path.clone());
-    map.insert("worktree_path".into(), worktree.clone());
-    // Deprecated aliases (kept for backward compatibility)
-    map.insert("main_worktree".into(), repo_name.into());
-    map.insert("repo_root".into(), repo_path);
-    map.insert("worktree".into(), worktree);
+    map.insert("repo_path".into(), repo_path);
+    map.insert("worktree_path".into(), worktree);
 
     if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
         map.insert("owner".into(), parsed_remote.owner().to_string());
@@ -299,17 +295,13 @@ pub fn build_hook_context(
     }
 
     // Primary worktree path (where established files live)
-    if scope.wants("primary_worktree_path") || scope.wants("main_worktree_path") {
+    if scope.wants("primary_worktree_path") {
         let _span = Span::new("var_primary_worktree");
         if let Ok(Some(path)) = ctx.repo.primary_worktree() {
-            let path_str = to_posix_path(&path.to_string_lossy());
-            if scope.wants("primary_worktree_path") {
-                map.insert("primary_worktree_path".into(), path_str.clone());
-            }
-            // Deprecated alias
-            if scope.wants("main_worktree_path") {
-                map.insert("main_worktree_path".into(), path_str);
-            }
+            map.insert(
+                "primary_worktree_path".into(),
+                to_posix_path(&path.to_string_lossy()),
+            );
         }
     }
 
