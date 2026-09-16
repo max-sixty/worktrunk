@@ -1430,47 +1430,36 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 }
 
 /// Rename the `pre-create`/`post-create` hook aliases to `pre-start`/`post-start`,
-/// at the top level and under each `[projects."..."]`.
+/// in every config scope (see [`for_each_config_table_mut`]).
 ///
 /// Config saves run this on the file they merge into too
 /// (`UserConfig::save_to`): the config being saved serializes only the
 /// canonical names, so a hook left under its alias would be written a second
 /// time beside it, and serde rejects the duplicate on the next load.
 pub(crate) fn canonicalize_hook_keys(doc: &mut toml_edit::DocumentMut) -> bool {
-    let pre = rename_hook_key(doc, "pre-create", "pre-start");
-    let post = rename_hook_key(doc, "post-create", "post-start");
-    pre || post
+    for_each_config_table_mut(doc, |_, table| {
+        let pre = rename_hook_key(table, "pre-create", "pre-start");
+        let post = rename_hook_key(table, "post-create", "post-start");
+        pre || post
+    })
 }
 
-/// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
+/// Rename `old_key` to `new_key` in `table`, keeping the comment lines above it.
 ///
-/// Skips any location where `new_key` already exists — the user has already
+/// Skips a table where `new_key` already exists — the user has already
 /// consolidated there, and clobbering their canonical value would lose config.
 /// The rewrite preserves the value shape (string, `[table]`, or
 /// `[[array-of-tables]]`) since it moves the `Item` unchanged.
-fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
-    let mut modified = false;
-
-    if doc.get(new_key).is_none()
-        && let Some(value) = doc.remove(old_key)
-    {
-        doc.insert(new_key, value);
-        modified = true;
+fn rename_hook_key(table: &mut toml_edit::Table, old_key: &str, new_key: &str) -> bool {
+    if table.contains_key(new_key) {
+        return false;
     }
-
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut()
-                && project_table.get(new_key).is_none()
-                && let Some(value) = project_table.remove(old_key)
-            {
-                project_table.insert(new_key, value);
-                modified = true;
-            }
-        }
-    }
-
-    modified
+    let Some((key, item)) = table.remove_entry(old_key) else {
+        return false;
+    };
+    let renamed = toml_edit::Key::new(new_key).with_leaf_decor(key.leaf_decor().clone());
+    table.insert_formatted(&renamed, item);
+    true
 }
 
 /// Remove `key` from a top-level `section` in a table, dropping a
@@ -4990,14 +4979,19 @@ pager = "delta --paging=never"
 
     /// The silent create-hooks rule renames the deprecated `pre-create`/`post-create`
     /// keys to canonical `pre-start`/`post-start`, preserving the value shape
-    /// (string, `[table]`, `[[array-of-tables]]`) at both the top level and
-    /// inside `[projects."..."]`.
+    /// (string, `[table]`, `[[array-of-tables]]`) and the comment above the key,
+    /// at the top level and inside `[projects."..."]` entries written either as
+    /// tables or inline.
     #[test]
     fn test_migrate_create_hooks_renames_every_shape() {
-        let content = r#"pre-create = "npm install"
+        let content = r#"# install first
+pre-create = "npm install"
 
 [[post-create]]
 lint = "cargo clippy"
+
+[projects]
+"inline-project" = { post-create = "make" }
 
 [projects."my-project"]
 pre-create = "cargo build"
@@ -5005,27 +4999,22 @@ pre-create = "cargo build"
 [projects."my-project".post-create]
 server = "npm run dev"
 "#;
-        let result = migrate_content(content);
-        assert!(
-            !result.contains("pre-create") && !result.contains("post-create"),
-            "no deprecated key may remain; got:\n{result}"
-        );
-        assert!(
-            result.contains(r#"pre-start = "npm install""#),
-            "top-level string renamed; got:\n{result}"
-        );
-        assert!(
-            result.contains("[[post-start]]"),
-            "top-level array-of-tables renamed; got:\n{result}"
-        );
-        assert!(
-            result.contains(r#"pre-start = "cargo build""#),
-            "per-project string renamed; got:\n{result}"
-        );
-        assert!(
-            result.contains(r#"[projects."my-project".post-start]"#),
-            "per-project table renamed; got:\n{result}"
-        );
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        # install first
+        pre-start = "npm install"
+
+        [[post-start]]
+        lint = "cargo clippy"
+
+        [projects]
+        "inline-project" = { post-start = "make" }
+
+        [projects."my-project"]
+        pre-start = "cargo build"
+
+        [projects."my-project".post-start]
+        server = "npm run dev"
+        "#);
     }
 
     /// When the canonical `-start` key already exists, the migrator leaves the

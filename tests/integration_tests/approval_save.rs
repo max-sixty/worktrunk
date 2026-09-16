@@ -918,15 +918,19 @@ command = "llm -m claude-haiku-4.5"
 
 /// A hook under its `pre-create`/`post-create` alias loads as
 /// `pre-start`/`post-start`, which is the only name the saved config has. The
-/// save writes it under that name once, at the top level and per project,
-/// rather than adding the canonical key beside the alias — a duplicate that
-/// fails the next load.
+/// save writes it under that name once, with its comment, at the top level and
+/// per project however the entry is written, rather than adding the canonical
+/// key beside the alias — a duplicate that fails the next load.
 #[test]
 fn test_saving_config_mutation_renames_hook_aliases() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
-    let initial_content = r#"pre-create = "echo top"
+    let initial_content = r#"# greet
+pre-create = "echo top"
+
+[projects]
+"example.com/org/inline" = { pre-create = "make" }
 
 [projects."example.com/org/repo"]
 post-create = "npm install"
@@ -942,7 +946,11 @@ post-create = "npm install"
     let saved_content = fs::read_to_string(&config_path).unwrap();
     toml::from_str::<UserConfig>(&saved_content).unwrap();
     assert_snapshot!(saved_content, @r#"
+    # greet
     pre-start = "echo top"
+
+    [projects]
+    "example.com/org/inline" = { pre-start = "make" }
 
     [projects."example.com/org/repo"]
     post-start = "npm install"
