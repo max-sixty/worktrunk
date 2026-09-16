@@ -791,15 +791,6 @@ Updates deprecated settings in user and project config files
 to their current equivalents, removes deprecated keys that have no equivalent,
 and reports each one. Shows a diff and asks for confirmation.
 
-Migrations are computed in memory on demand; nothing is written outside this
-command. Set `--output <path>` to write a migrated config to that destination
-instead of applying it in place. Use `-` for stdout. When both user and project
-config need migration, stdout emits a labeled inspection artifact and file
-output fails rather than combining the configs.
-
-`--output` omits deprecated `approved-commands` with a stderr warning; only an
-in-place update migrates them to `approvals.toml`.
-
 ### Examples
 
 Preview and apply updates:
@@ -812,12 +803,12 @@ Apply without confirmation:
 $ wt config update --yes
 ```
 
-Write the migration artifact to a file:
+Write the migrated config to a file instead of updating in place:
 ```console
 $ wt config update --output migrated.toml
 ```
 
-Write the migration artifact to stdout:
+Print the migrated config:
 ```console
 $ wt config update --output=-
 ```
