@@ -86,19 +86,37 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     // Render OpenCode status (only when opencode CLI is available)
     if is_opencode_available() {
         show_output.push('\n');
-        render_opencode_status(&mut show_output)?;
+        render_file_plugin_status(
+            &mut show_output,
+            "OPENCODE",
+            "wt config plugins opencode install",
+            super::opencode::is_plugin_installed(),
+            super::opencode::plugin_file_exists(),
+        )?;
     }
 
     // Render oh-my-pi status (only when the oh-my-pi CLI is available)
     if is_omp_available() {
         show_output.push('\n');
-        render_omp_status(&mut show_output)?;
+        render_file_plugin_status(
+            &mut show_output,
+            "OH-MY-PI",
+            "wt config plugins omp install",
+            super::omp::is_plugin_installed(),
+            super::omp::plugin_file_exists(),
+        )?;
     }
 
     // Render Pi status (only when the Pi CLI is available)
     if is_pi_available() {
         show_output.push('\n');
-        render_pi_status(&mut show_output)?;
+        render_file_plugin_status(
+            &mut show_output,
+            "PI",
+            "wt config plugins pi install",
+            super::pi::is_plugin_installed(),
+            super::pi::plugin_file_exists(),
+        )?;
     }
 
     // Render Gemini status (only when gemini CLI is available)
@@ -430,89 +448,34 @@ fn is_omp_available() -> bool {
     which::which("omp").is_ok()
 }
 
-/// Render OPENCODE section (plugin status).
-/// Caller must check `is_opencode_available()` first.
-fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
-    writeln!(out, "{}", format_heading("OPENCODE", None))?;
+/// Render the section for a plugin the installer writes as a plain file.
+///
+/// OpenCode, Pi, and oh-my-pi each install one file and each report the same
+/// three states, differing only in the heading and the command that writes the
+/// file — so they share this rather than keeping a copy apiece. Callers check
+/// their own `is_*_available()` first, and answer `installed` / `file_exists`
+/// from their own module.
+fn render_file_plugin_status(
+    out: &mut String,
+    heading: &str,
+    install_command: &str,
+    installed: bool,
+    file_exists: bool,
+) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading(heading, None))?;
 
-    // Plugin status
-    let plugin_installed = super::opencode::is_plugin_installed();
-    let plugin_exists = super::opencode::plugin_file_exists();
-    if plugin_installed {
-        writeln!(out, "{}", success_message("Plugin installed"))?;
-    } else if plugin_exists {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin outdated. To update, run <underline>wt config plugins opencode install</>"
-            ))
-        )?;
+    let status = if installed {
+        success_message("Plugin installed")
+    } else if file_exists {
+        hint_message(cformat!(
+            "Plugin outdated. To update, run <underline>{install_command}</>"
+        ))
     } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
-            ))
-        )?;
-    }
-
-    Ok(())
-}
-
-/// Render PI section (extension status).
-/// Caller must check `is_pi_available()` first.
-fn render_pi_status(out: &mut String) -> anyhow::Result<()> {
-    writeln!(out, "{}", format_heading("PI", None))?;
-
-    if super::pi::is_plugin_installed() {
-        writeln!(out, "{}", success_message("Plugin installed"))?;
-    } else if super::pi::plugin_file_exists() {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin outdated. To update, run <underline>wt config plugins pi install</>"
-            ))
-        )?;
-    } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin not installed. To install, run <underline>wt config plugins pi install</>"
-            ))
-        )?;
-    }
-
-    Ok(())
-}
-
-/// Render OH-MY-PI section (hook status).
-/// Caller must check `is_omp_available()` first.
-fn render_omp_status(out: &mut String) -> anyhow::Result<()> {
-    writeln!(out, "{}", format_heading("OH-MY-PI", None))?;
-
-    if super::omp::is_plugin_installed() {
-        writeln!(out, "{}", success_message("Plugin installed"))?;
-    } else if super::omp::plugin_file_exists() {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin outdated. To update, run <underline>wt config plugins omp install</>"
-            ))
-        )?;
-    } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "Plugin not installed. To install, run <underline>wt config plugins omp install</>"
-            ))
-        )?;
-    }
+        hint_message(cformat!(
+            "Plugin not installed. To install, run <underline>{install_command}</>"
+        ))
+    };
+    writeln!(out, "{status}")?;
 
     Ok(())
 }
