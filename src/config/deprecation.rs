@@ -121,11 +121,10 @@ static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
 /// its commit list silently — the outcome #2984 opens by calling out.
 ///
 /// TODO(retired-vars): revisit dropping these rows after 2026-12-16, three
-/// months on from the load-time rewrite (#4080, 2026-09-15). Dropping a row
-/// stops the rename, so the old name has to fail loudly on its own before it
-/// goes: a hook, alias, or `worktree-path` template already does, through
-/// `SemiStrict` expansion, but `commits` would go back to silently rendering an
-/// empty commit list under `Lenient` — that row can only go once `build_prompt`
+/// months on from the load-time rewrite (#4080). Dropping a row stops the
+/// rename, so the old name has to fail loudly on its own before it goes, and
+/// the split above is what makes the rows non-uniform: the `SemiStrict`
+/// surfaces already do, while `commits` can only go once `build_prompt`
 /// rejects the name itself (#2984).
 const RETIRED_VARS: &[(&str, &str)] = &[
     ("repo_root", "repo_path"),
