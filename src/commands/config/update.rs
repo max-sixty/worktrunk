@@ -2,8 +2,8 @@
 //!
 //! Computes user- and project-config migrations in memory. The default mode
 //! previews and applies them atomically; output mode writes one migration
-//! artifact to the named destination instead. The previous `.new` file flow
-//! was removed — nothing writes to disk outside this command.
+//! artifact to the named destination instead. No other command writes a
+//! migration to disk.
 
 use std::fmt::Write as _;
 use std::io::IsTerminal;
