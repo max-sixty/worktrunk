@@ -183,7 +183,8 @@ mod tests {
     fn plumbing_diffs_are_built_by_plumbing_diff() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let this_file = src.join("git").join("diff.rs");
-        let mut offenders = Vec::new();
+        let commands = ["\"diff-tree\"", "\"diff-index\"", "\"diff-files\""];
+        let mut spellings = Vec::new();
         let mut dirs = vec![src];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(dir).unwrap() {
@@ -192,17 +193,14 @@ mod tests {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|ext| ext == "rs") && path != this_file {
                     let text = std::fs::read_to_string(&path).unwrap();
-                    for command in ["\"diff-tree\"", "\"diff-index\"", "\"diff-files\""] {
-                        if text.contains(command) {
-                            offenders.push(format!("{} spells {command}", path.display()));
-                        }
-                    }
+                    spellings.extend(commands.map(|c| (text.contains(c), c, path.clone())));
                 }
             }
         }
+        spellings.retain(|(spelled, ..)| *spelled);
         assert!(
-            offenders.is_empty(),
-            "build these with PlumbingDiff::args: {offenders:#?}"
+            spellings.is_empty(),
+            "build these with PlumbingDiff::args: {spellings:#?}"
         );
     }
 
