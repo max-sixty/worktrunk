@@ -3,16 +3,31 @@
 //! Handles TOML serialization with formatting (multiline arrays, implicit tables)
 //! and preserves comments when updating existing files via diff-based merge.
 //!
-//! The existing-file save path works by diffing the serialized in-memory state
-//! against the parsed file and merging only changed keys. This automatically
-//! handles any new fields without manual wiring — if a struct field is
-//! serializable, save_to persists it.
+//! The existing-file save path diffs the serialized in-memory state against the
+//! file's own config, serialized the same way, and applies only that difference
+//! to the parsed file (see `merge_tables`). This automatically handles any new
+//! fields without manual wiring — if a struct field is serializable, save_to
+//! persists it.
 
-use crate::config::{ConfigError, UnknownTree, compute_unknown_tree};
+use crate::config::ConfigError;
 
 use super::UserConfig;
 
 impl UserConfig {
+    /// Serialize to a document whose nested structs are standard tables.
+    ///
+    /// `projects` is implicit, so an empty map writes no bare `[projects]`
+    /// header and a non-empty one writes only its `[projects."…"]` entries.
+    fn to_expanded_document(&self) -> Result<toml_edit::DocumentMut, ConfigError> {
+        let mut doc = toml_edit::ser::to_document(self)
+            .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
+        Self::expand_inline_tables(doc.as_table_mut());
+        if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+            projects.set_implicit(true);
+        }
+        Ok(doc)
+    }
+
     /// Recursively convert inline tables to standard tables for readability.
     ///
     /// When using `toml_edit::ser::to_document()`, nested structs are serialized as inline tables
@@ -43,30 +58,40 @@ impl UserConfig {
 
     /// Recursively merge desired state into existing document.
     ///
+    /// `base` is the file's own config, serialized the same way as `desired`,
+    /// which is that config after the change being saved (`None` where it has
+    /// no table at this path). A key only `base` has is one the change reset.
+    /// A key neither has serializes to nothing — a value written out at its
+    /// default, an empty section — or is one serde doesn't know (a typo, a
+    /// field from a newer version); the change didn't touch it, so it stays.
+    ///
     /// - Keys in desired but not existing: inserted
-    /// - Keys in existing but not desired: removed (unless in `preserve`)
+    /// - Keys in existing and base but not desired: removed
     /// - Both standard tables: recurse (preserves existing formatting and comments)
     /// - Existing inline table, desired standard table: merge through the same
-    ///   recursive path, so nested `preserve` applies; the inline format is kept
+    ///   recursive path, so the nested `base` applies; the inline format is kept
     ///   when that merge changed nothing
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
     fn merge_tables(
         existing: &mut toml_edit::Table,
         desired: &toml_edit::Table,
-        preserve: &UnknownTree,
+        base: Option<&toml_edit::Table>,
     ) {
         let stale_keys: Vec<_> = existing
             .iter()
             .map(|(k, _)| k.to_string())
-            .filter(|k| !desired.contains_key(k) && !preserve.keys.contains(k))
+            .filter(|k| !desired.contains_key(k) && base.is_some_and(|b| b.contains_key(k)))
             .collect();
         for key in &stale_keys {
             existing.remove(key);
         }
 
-        let empty_tree = UnknownTree::default();
         for (key, desired_item) in desired.iter() {
+            let nested_base = base
+                .and_then(|b| b.get(key))
+                .and_then(toml_edit::Item::as_table);
+
             // Existing inline table, desired standard table: merge into a table
             // view so the same nested preservation applies as in the
             // standard-table branch, then write back only if that changed
@@ -78,12 +103,7 @@ impl UserConfig {
                     .map(|inline| inline.clone().into_table())
             {
                 let mut merged = as_table.clone();
-                let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
-                Self::merge_tables(
-                    &mut merged,
-                    desired_item.as_table().unwrap(),
-                    nested_preserve,
-                );
+                Self::merge_tables(&mut merged, desired_item.as_table().unwrap(), nested_base);
                 if !Self::tables_equal(&as_table, &merged) {
                     crate::config::replace_inline_with_table(existing, key, merged);
                 }
@@ -93,11 +113,10 @@ impl UserConfig {
             match existing.get_mut(key) {
                 // Both standard tables: recurse
                 Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
-                    let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
                     Self::merge_tables(
                         existing_item.as_table_mut().unwrap(),
                         desired_item.as_table().unwrap(),
-                        nested_preserve,
+                        nested_base,
                     );
                 }
                 Some(existing_item) => {
@@ -194,9 +213,12 @@ impl UserConfig {
     ///
     /// Preserves comments and formatting in the existing file by diffing the
     /// serialized in-memory state against the parsed file and merging only
-    /// changed keys. Schema-unknown keys at any nesting level (typos, fields
-    /// from newer wt versions) are preserved so older wt versions don't
-    /// silently strip forward-compatible config data.
+    /// changed keys. A key is removed only when the change being saved reset
+    /// it (see `merge_tables`), so a value written out at its default keeps
+    /// its line, and schema-unknown keys at any nesting level (typos, fields
+    /// from newer wt versions) survive — older wt versions don't silently
+    /// strip forward-compatible config data. An existing file that doesn't
+    /// parse as a config fails the save.
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
@@ -210,38 +232,29 @@ impl UserConfig {
             let mut existing_doc: toml_edit::DocumentMut = existing_content
                 .parse()
                 .map_err(|e| ConfigError(format!("Failed to parse config file: {}", e)))?;
+            // Both configs below name these hooks only canonically.
+            crate::config::deprecation::canonicalize_hook_keys(&mut existing_doc);
 
-            let mut desired_doc = toml_edit::ser::to_document(&self)
-                .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
-            Self::expand_inline_tables(desired_doc.as_table_mut());
+            let desired_doc = self.to_expanded_document()?;
 
-            // Preserve unknown keys at every nesting level (typos, future
-            // fields, deprecated keys not yet migrated) so they aren't
-            // silently deleted on save. On type-mismatch we still preserve
-            // every on-disk key — it's safer to round-trip the whole file
-            // than to drop fields we can't interpret.
-            let analysis = compute_unknown_tree::<UserConfig>(&existing_content);
-            let preserve = analysis.preserve_tree();
+            // Parsed the way `with_locked_mutation` reloads it, so this
+            // differs from `desired` only by the change being saved.
+            let migrated = crate::config::deprecation::migrate_content(&existing_content);
+            let file_config: UserConfig = toml::from_str(&migrated)
+                .map_err(|e| ConfigError(format!("Failed to parse config file: {e}")))?;
+            let base_doc = file_config.to_expanded_document()?;
 
             Self::merge_tables(
                 existing_doc.as_table_mut(),
                 desired_doc.as_table(),
-                preserve,
+                Some(base_doc.as_table()),
             );
             Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
 
             existing_doc.to_string()
         } else {
-            let mut doc = toml_edit::ser::to_document(&self)
-                .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
-
-            Self::expand_inline_tables(doc.as_table_mut());
+            let mut doc = self.to_expanded_document()?;
             Self::make_commit_table_implicit_if_only_subtables(&mut doc);
-
-            if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-                projects.set_implicit(true);
-            }
-
             doc.to_string()
         };
 

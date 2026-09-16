@@ -255,7 +255,7 @@ pub use project::{
     ProjectForgeConfig, ProjectListConfig, valid_project_config_keys,
 };
 pub use unknown_tree::{
-    UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
+    UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
 pub use user::LoadError;
 pub(crate) use user::project_match::matching_keys as matching_project_keys;
@@ -672,17 +672,11 @@ task2 = "echo 'Task 2 running' > task2.txt"
     }
 
     fn project_warn_tree(contents: &str) -> UnknownTree {
-        compute_unknown_tree::<ProjectConfig>(contents)
-            .warn_tree()
-            .cloned()
-            .unwrap()
+        compute_unknown_tree::<ProjectConfig>(contents).unwrap()
     }
 
     fn user_warn_tree(contents: &str) -> UnknownTree {
-        compute_unknown_tree::<UserConfig>(contents)
-            .warn_tree()
-            .cloned()
-            .unwrap()
+        compute_unknown_tree::<UserConfig>(contents).unwrap()
     }
 
     #[test]
@@ -728,16 +722,8 @@ task2 = "echo 'Task 2 running' > task2.txt"
     #[test]
     fn test_unknown_tree_invalid_toml() {
         let toml = "this is not valid toml {{{";
-        assert!(
-            compute_unknown_tree::<ProjectConfig>(toml)
-                .warn_tree()
-                .is_none()
-        );
-        assert!(
-            compute_unknown_tree::<UserConfig>(toml)
-                .warn_tree()
-                .is_none()
-        );
+        assert!(compute_unknown_tree::<ProjectConfig>(toml).is_none());
+        assert!(compute_unknown_tree::<UserConfig>(toml).is_none());
     }
 
     #[test]

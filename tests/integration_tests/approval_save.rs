@@ -876,6 +876,82 @@ approved-commands = [
     );
 }
 
+/// A value written out at its default serializes to nothing, the same as a
+/// value that was never written, so a save can't tell the two apart from the
+/// config alone. A save that doesn't change them must leave them — and their
+/// comments — where the user put them.
+#[test]
+fn test_saving_config_mutation_keeps_explicit_defaults() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"skip-shell-integration-prompt = false  # keep asking
+
+[list]
+columns = []  # pick later
+
+[merge]
+
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    assert_snapshot!(fs::read_to_string(&config_path).unwrap(), @r#"
+    skip-shell-integration-prompt = false  # keep asking
+
+    [list]
+    columns = []  # pick later
+
+    [merge]
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}
+
+/// A hook under its `pre-create`/`post-create` alias loads as
+/// `pre-start`/`post-start`, which is the only name the saved config has. The
+/// save writes it under that name once, at the top level and per project,
+/// rather than adding the canonical key beside the alias — a duplicate that
+/// fails the next load.
+#[test]
+fn test_saving_config_mutation_renames_hook_aliases() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let initial_content = r#"pre-create = "echo top"
+
+[projects."example.com/org/repo"]
+post-create = "npm install"
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
+    config
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
+        .unwrap();
+
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+    toml::from_str::<UserConfig>(&saved_content).unwrap();
+    assert_snapshot!(saved_content, @r#"
+    pre-start = "echo top"
+
+    [projects."example.com/org/repo"]
+    post-start = "npm install"
+
+    [commit.generation]
+    command = "llm -m claude-sonnet-4"
+    "#);
+}
+
 /// The same line-decor guarantee for a `[projects]` entry written inline.
 ///
 /// This entry is an inline table, which `toml_edit` holds as a value, and the

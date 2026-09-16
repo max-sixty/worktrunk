@@ -714,11 +714,7 @@ const DEPRECATION_RULES: &[DeprecationRule] = &[
     // but in-memory migration to canonical keeps round-trip analysis
     // (`unknown_tree`) coherent for the table and array-of-tables forms,
     // where serde aliases on the field don't cover every shape.
-    DeprecationRule::Silent(|doc| {
-        let pre = rename_hook_key(doc, "pre-create", "pre-start");
-        let post = rename_hook_key(doc, "post-create", "post-start");
-        pre || post
-    }),
+    DeprecationRule::Silent(canonicalize_hook_keys),
     // [ci] → [forge]. Moves `platform` only; unrelated `[ci]` keys stay where
     // the user wrote them, so they keep warning at their own path rather than
     // being relocated (contrast the wholesale-move rules above, which drop
@@ -1431,6 +1427,19 @@ fn migrate_negated_bool_doc(
 /// is still a valid serde field. They apply in [`compute_migrated_content`].
 fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     apply_rules(doc, RulePass::Load, &mut Vec::new())
+}
+
+/// Rename the `pre-create`/`post-create` hook aliases to `pre-start`/`post-start`,
+/// at the top level and under each `[projects."..."]`.
+///
+/// Config saves run this on the file they merge into too
+/// (`UserConfig::save_to`): the config being saved serializes only the
+/// canonical names, so a hook left under its alias would be written a second
+/// time beside it, and serde rejects the duplicate on the next load.
+pub(crate) fn canonicalize_hook_keys(doc: &mut toml_edit::DocumentMut) -> bool {
+    let pre = rename_hook_key(doc, "pre-create", "pre-start");
+    let post = rename_hook_key(doc, "post-create", "post-start");
+    pre || post
 }
 
 /// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
