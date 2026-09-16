@@ -61,7 +61,7 @@ pub(crate) fn is_bare_repo_dir(dir: &Path) -> bool {
 // Re-exports from submodules
 pub use ci_platform::ForgeKind;
 pub(crate) use diff::DiffStats;
-pub use diff::{LineDiff, parse_numstat_line};
+pub use diff::{LineDiff, PlumbingDiff, parse_numstat_line};
 pub use error::{
     // Typed leaf error for buffered command-runner failures (downcast target)
     CommandError,

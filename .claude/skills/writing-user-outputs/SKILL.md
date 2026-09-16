@@ -526,12 +526,13 @@ clearer:
 ```
 
 **Description + command in single message:** For warnings/errors that include a
-recovery command, join with semicolon. Use `<bold>` for commands in
+recovery command, join with semicolon, and order the recovery "To X, run Y" as
+hints do, so the command still ends the line. Use `<bold>` for commands in
 warnings/errors (only hints use `<underline>`):
 
 ```rust
 // Warning with inline recovery command (bold for commands)
-warning_message("Failed to restore stash; run <bold>git stash pop {ref}</> to restore manually")
+warning_message("Failed to restore stash; to restore manually, run <bold>git stash pop {ref}</>")
 warning_message("{tool} not authenticated; run <bold>{tool} auth login</>")
 
 // For longer suggestions, use separate hint message (underline for commands)

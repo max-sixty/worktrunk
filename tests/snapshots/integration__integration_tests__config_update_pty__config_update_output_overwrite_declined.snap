@@ -1,0 +1,8 @@
+---
+source: tests/integration_tests/config_update_pty.rs
+expression: "&declined"
+---
+[33m▲[39m [33mOutput omits deprecated [1mapproved-commands[22m; to migrate them to approvals.toml, run [1mwt config update[22m[39m
+
+[36m❯[39m Overwrite migrated.toml with the user config migration? [1m[y/N/?][22m n
+[2m○[22m Update cancelled

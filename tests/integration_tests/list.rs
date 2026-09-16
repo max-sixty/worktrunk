@@ -2432,6 +2432,7 @@ fn mock_summary_cache(
     summary: &str,
 ) {
     use sha2::{Digest, Sha256};
+    use worktrunk::git::PlumbingDiff;
 
     // Compute combined diff (matching compute_combined_diff in summary.rs)
     let mut diff = String::new();
@@ -2449,7 +2450,7 @@ fn mock_summary_cache(
     let patch_args = ["--find-renames", "--textconv", "--patch"];
     if let Ok(output) = repo
         .git_command()
-        .args(["diff-tree", "-r"])
+        .args(PlumbingDiff::Tree.args(&["-r"]))
         .args(patch_args)
         .args([merge_base.as_str(), head.as_str()])
         .run()
@@ -2463,7 +2464,8 @@ fn mock_summary_cache(
         let wt_str = wt_path.display().to_string();
         if let Ok(output) = repo
             .git_command()
-            .args(["-C", &wt_str, "diff-index"])
+            .args(["-C", &wt_str])
+            .args(PlumbingDiff::Index.args(&[]))
             .args(patch_args)
             .arg("HEAD")
             .run()

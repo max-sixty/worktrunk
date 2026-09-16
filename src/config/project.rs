@@ -277,8 +277,8 @@ impl ProjectConfig {
             },
         };
 
-        // Check for deprecated template variables and create migration file if needed
-        // Only write migration file in main worktree, not linked worktrees
+        // Check for deprecated patterns. They are actionable only from the main
+        // worktree, where `wt config update` rewrites the file.
         // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };

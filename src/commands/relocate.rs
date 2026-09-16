@@ -170,7 +170,7 @@ pub fn gather_candidates(
                 bail!(
                     "{}",
                     cformat!(
-                        "Cannot relocate worktree @ {} — its directory is gone; run <bold>wt step prune</> to clear the entry",
+                        "Cannot relocate worktree @ {} — its directory is gone; to clear the entry, run <bold>wt step prune</>",
                         format_path_for_display(&path)
                     )
                 );

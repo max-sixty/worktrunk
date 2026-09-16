@@ -13,7 +13,7 @@ use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
-use crate::git::CommandError;
+use crate::git::{CommandError, PlumbingDiff};
 
 const TEMP_INDEX_PREFIX: &str = "worktrunk-temp-index-";
 
@@ -690,13 +690,7 @@ impl<'a> WorkingTree<'a> {
     /// all.
     pub fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
         let output = self
-            .run_command(&[
-                "diff-files",
-                "--name-only",
-                "--diff-filter=U",
-                "-z",
-                "--ignore-submodules=none",
-            ])
+            .run_command(&PlumbingDiff::Files.args(&["--name-only", "--diff-filter=U", "-z"]))
             .context("Failed to list unmerged paths")?;
         Ok(output
             .split('\0')
@@ -891,14 +885,12 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&[
-            "diff-index",
+        let stdout = self.run_command(&PlumbingDiff::Index.args(&[
             "--shortstat",
             "--find-renames",
-            "--ignore-submodules=none",
             "HEAD",
             "--",
-        ])?;
+        ]))?;
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
@@ -922,16 +914,14 @@ impl<'a> WorkingTree<'a> {
             return self.working_tree_diff_stats();
         }
 
-        let numstat_args = [
-            "diff-index",
+        let numstat_args = PlumbingDiff::Index.args(&[
             "--numstat",
             "-z",
             "--find-renames",
-            "--ignore-submodules=none",
             "--end-of-options",
             "HEAD",
             "--",
-        ];
+        ]);
         let tracked_output = self.run_command_output(&numstat_args)?;
         if !tracked_output.status.success() {
             return Err(
@@ -1799,7 +1789,7 @@ mod tests {
         assert!(
             cmd_err
                 .command_string()
-                .starts_with("git diff-index --numstat -z --find-renames --ignore-submodules=none --end-of-options HEAD")
+                .starts_with("git diff-index --ignore-submodules=none --numstat -z --find-renames --end-of-options HEAD")
         );
     }
 

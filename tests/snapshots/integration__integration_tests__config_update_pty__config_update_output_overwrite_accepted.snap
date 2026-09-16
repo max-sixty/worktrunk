@@ -1,0 +1,6 @@
+---
+source: tests/integration_tests/config_update_pty.rs
+expression: "&accepted"
+---
+[36m❯[39m Overwrite migrated.toml with the user config migration? [1m[y/N/?][22m y
+[32m✓[39m [32mWrote user config migration @ migrated.toml[39m
