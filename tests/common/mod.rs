@@ -1339,7 +1339,17 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // stdout (`exec 2>&1`) so that leaked job-control *notifications* are
     // visible to tests — those stay visible, since `assert_no_job_control_messages`
     // matches the `[1] 12345` / `[1]+ Done` shape this filter does not touch.
-    settings.add_filter(r"(?m)^\w+: child setpgid \(\d+ to \d+\): [^\n]*\n?", "");
+    //
+    // The shell writes the line whenever the race resolves, so it need not
+    // start a line: it has also landed straight after the capture's trailing
+    // `\x1b[0m`, with no newline between (macOS CI, actions/runs/35132033122).
+    // The pattern therefore starts at a line start or right after an SGR
+    // escape, and keeps the escape. A bare unanchored `\w+` would instead eat
+    // the tail of whatever word preceded the shell's name.
+    settings.add_filter(
+        r"(?m)(^|\x1b\[[0-9;]*m)\w+: child setpgid \(\d+ to \d+\): [^\n]*\n?",
+        "$1",
+    );
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
@@ -1368,13 +1378,15 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
 // =============================================================================
 
 /// PTY capture carrying a shell's failed-`setpgid` diagnostic alongside the
-/// job-control notifications the wrapper tests assert on.
+/// job-control notifications the wrapper tests assert on — once at a line
+/// start, and once appended to the capture's trailing SGR reset.
 #[cfg(test)]
-const SETPGID_NOISE_SAMPLE: &str = r#"bash: child setpgid (42242 to 42242): Operation not permitted
+const SETPGID_NOISE_SAMPLE: &str = "bash: child setpgid (42242 to 42242): Operation not permitted
 [1] 42243
 Switched to worktree for feature-api
 [1]+ Done                    wt hook post-start
-"#;
+\x1b[0mbash: child setpgid (64019 to 64019): Operation not permitted
+";
 
 #[cfg(test)]
 mod tests {
@@ -1389,11 +1401,14 @@ mod tests {
     fn pty_filters_drop_the_setpgid_diagnostic_but_keep_job_control_notices() {
         let mut settings = insta::Settings::clone_current();
         add_pty_filters(&mut settings);
+        // Runs after the PTY filters, so it shows the reset they must keep.
+        settings.add_filter(r"\x1b\[0m", "[RESET]");
         settings.bind(|| {
             assert_snapshot!(SETPGID_NOISE_SAMPLE, @r"
             [1] 42243
             Switched to worktree for feature-api
             [1]+ Done                    wt hook post-start
+            [RESET]
             ");
         });
     }
