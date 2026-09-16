@@ -18,14 +18,21 @@ use super::UserConfig;
 impl UserConfig {
     /// Serialize to a document whose nested structs are standard tables.
     ///
-    /// `projects` is implicit, so an empty map writes no bare `[projects]`
-    /// header and a non-empty one writes only its `[projects."…"]` entries.
+    /// Two tables are implicit, so they write no bare header: `projects`, which
+    /// writes only its `[projects."…"]` entries, and a `commit` holding only
+    /// subtables, which writes only `[commit.generation]`. The flags go on the
+    /// serialized document, so a header the file already has stays as written.
     fn to_expanded_document(&self) -> Result<toml_edit::DocumentMut, ConfigError> {
         let mut doc = toml_edit::ser::to_document(self)
             .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
         Self::expand_inline_tables(doc.as_table_mut());
         if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
             projects.set_implicit(true);
+        }
+        if let Some(commit) = doc.get_mut("commit").and_then(|c| c.as_table_mut())
+            && commit.iter().all(|(_, v)| v.is_table())
+        {
+            commit.set_implicit(true);
         }
         Ok(doc)
     }
@@ -43,17 +50,6 @@ impl UserConfig {
                 let mut new_table = inline.clone().into_table();
                 Self::expand_inline_tables(&mut new_table);
                 *item = toml_edit::Item::Table(new_table);
-            }
-        }
-    }
-
-    /// If `[commit]` only contains subtables (like `[commit.generation]`), mark it implicit
-    /// so TOML doesn't emit an empty `[commit]` header.
-    fn make_commit_table_implicit_if_only_subtables(doc: &mut toml_edit::DocumentMut) {
-        if let Some(commit) = doc.get_mut("commit").and_then(|c| c.as_table_mut()) {
-            let has_only_subtables = commit.iter().all(|(_, v)| v.is_table());
-            if has_only_subtables {
-                commit.set_implicit(true);
             }
         }
     }
@@ -317,13 +313,10 @@ impl UserConfig {
                 desired_doc.as_table(),
                 Some(base_doc.as_table()),
             );
-            Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
 
             existing_doc.to_string()
         } else {
-            let mut doc = self.to_expanded_document()?;
-            Self::make_commit_table_implicit_if_only_subtables(&mut doc);
-            doc.to_string()
+            self.to_expanded_document()?.to_string()
         };
 
         crate::config::ensure_config_parses(&toml_string)?;

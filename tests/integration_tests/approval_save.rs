@@ -892,6 +892,9 @@ columns = []  # pick later
 
 [merge]
 
+# fill in later
+[commit]
+
 [commit.generation]
 command = "llm -m claude-haiku-4.5"
 "#;
@@ -910,6 +913,9 @@ command = "llm -m claude-haiku-4.5"
     columns = []  # pick later
 
     [merge]
+
+    # fill in later
+    [commit]
 
     [commit.generation]
     command = "llm -m claude-sonnet-4"
