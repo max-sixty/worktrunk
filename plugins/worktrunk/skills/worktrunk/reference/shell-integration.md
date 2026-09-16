@@ -64,7 +64,7 @@ When shell integration isn't working, `wt switch` shows a warning explaining why
 
 ### "shell wrapper is out of date"
 
-**Meaning**: The active shell still has a retired wrapper loaded. Current versions no longer write to that wrapper's single directive file, so the parent shell cannot follow a directory change.
+**Meaning**: The active shell has a wrapper from an older Worktrunk version loaded, which can't follow a directory change.
 
 **Fix**: Run `wt config shell install`, then restart the shell (or reload its config) to activate the current wrapper.
 
@@ -238,8 +238,6 @@ eval "$(wt config shell init zsh)"
 ```
 
 ### Windows Git Bash issues
-
-Git Bash uses MSYS2, which automatically converts POSIX paths in environment variables. The directive file path is handled correctly without manual conversion.
 
 If you see path issues, make sure you're on a recent Git for Windows version.
 

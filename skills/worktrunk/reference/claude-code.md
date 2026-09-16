@@ -51,7 +51,7 @@ codex plugin add worktrunk@worktrunk
 wt config plugins opencode install
 ```
 
-This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it. The one file covers both plugin runtimes — OpenCode 2 loads its `setup` export, OpenCode 1.16 and later its `server` export.
+This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
 
 ### Pi
 
@@ -59,7 +59,7 @@ This writes the activity-tracking plugin to OpenCode's global plugins directory,
 wt config plugins pi install
 ```
 
-This writes the activity extension to `~/.pi/agent/extensions/worktrunk.ts`, where Pi discovers it on startup; `$PI_CODING_AGENT_DIR` replaces the agent directory. Pi has no profile concept. `wt config plugins pi uninstall` removes the extension.
+This writes the activity extension to `~/.pi/agent/extensions/worktrunk.ts`, where Pi discovers it on startup; `$PI_CODING_AGENT_DIR` replaces the agent directory. `wt config plugins pi uninstall` removes the extension.
 
 ### oh-my-pi
 
@@ -127,12 +127,6 @@ Activity tracking is not plugin-specific. The plugins above only call `wt` on th
 | Session starts, or the agent resumes work | `wt config state marker set "🤖"` |
 | Agent finishes a turn and waits for input | `wt config state marker set "💬"` |
 | Session ends | `wt config state marker clear` |
-
-Three things to get right:
-
-- **Run the command inside the worktree.** Each one resolves the branch from its working directory, so a hook that runs elsewhere marks the wrong branch, and one that runs outside a repository silently does nothing. Where the host pins the working directory elsewhere, pass the global `-C <worktree>`, which moves both the repository lookup and the branch resolution. `--branch <branch>` names the branch on its own, but the repository lookup still comes from the working directory — that, not a missing worktree argument, is why a caller pinned outside the repository needs `-C`. Elsewhere, a command that names a branch ([`wt switch`](https://worktrunk.dev/switch/), [`wt remove`](https://worktrunk.dev/remove/), `wt step diff --branch`) already names the worktree it acts on, and `-C` is for reaching a different repository rather than a different worktree.
-- **Don't let a failed marker call fail the session.** Outside a repository both `set` and `clear` do nothing and exit 0, but an invalid `--branch` or a failed git config write still exits non-zero, and hosts differ on what a non-zero hook does. Append `|| true` (or the host's equivalent) to every call unless you want that surfaced.
-- **Clear on exit.** A marker set on session start persists until something clears it, so pair every set with a clear on the host's session-end event — and expect the same stale marker as above if the process is killed first.
 
 ## Worktree isolation (Claude Code only)
 

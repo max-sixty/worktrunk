@@ -152,8 +152,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 The [2m--create[0m flag creates a new branch from [2m--base[0m — the default branch unless specified. Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
 
-One rule decides the upstream, whatever [2mbranch.autoSetupMerge[0m is set to: a new branch tracks the remote branch it starts from only when the two share a name. Switching to [2morigin/feature[0m shares it, so that branch tracks. [2m--create[0m need not: [2m--create release --base origin/release[0m tracks [2morigin/release[0m, while [2m--create feature --base origin/release[0m — and the bare [2m--base release[0m that resolves to it — gets no upstream. Git's default would have [2mfeature[0m track [2morigin/release[0m, so under [2mpush.default = 
-[2mupstream[0m a bare [2mgit push[0m would push the new work to [2mrelease[0m. Publishing such a branch takes [2mgit push --set-upstream origin <branch>[0m, or git's [2mpush.autoSetupRemote = true[0m set once, after which a bare [2mgit push[0m from the new worktree publishes it and configures its tracking.
+A new branch tracks the remote branch it starts from only when the two share a name: [2m--create release --base origin/release[0m tracks [2morigin/release[0m, while [2m--create feature --base origin/release[0m gets no upstream. Publish such a branch with [2mgit push --set-upstream origin <branch>[0m, or set git's [2mpush.autoSetupRemote = true[0m once.
 
 [1m[32mCreating worktrees[0m
 
@@ -191,7 +190,7 @@ Worktrees are addressed by branch name, and every argument that takes one also a
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m
 
-Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to [2m--base[0m.
 
 [1m[32mInteractive picker[0m
 
@@ -201,29 +200,23 @@ The CI column shows each row's PR/MR CI and review status, the same as [2mwt li
 
 [1mKeybindings:[0m
 
-      Key                              Action                         
- ───────────── ────────────────────────────────────────────────────── 
- [2m↑[0m/[2m↓[0m           Navigate worktree list                                 
- (type)        Filter worktrees                                       
- [2mEnter[0m         Switch to selected worktree                            
- [2mAlt-c[0m         Create new worktree named as entered text              
- [2mAlt-x[0m         Remove selected worktree/branch (never forces)         
- [2mAlt-y[0m         Copy selected branch name to the clipboard             
- [2mAlt-o[0m         Open the selected row's PR/MR URL in the browser       
- [2mAlt-r[0m         Refresh the list (pick up worktrees created elsewhere) 
- [2mEsc[0m           Cancel                                                 
- [2mAlt-1[0m–[2mAlt-8[0m   Jump to a preview tab                                  
- [2mTab[0m/[2mShift-Tab[0m Cycle available preview tabs forward/backward          
- [2mAlt-p[0m         Toggle preview panel                                   
- [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                 
+      Key                                       Action                                  
+ ───────────── ──────────────────────────────────────────────────────────────────────── 
+ [2m↑[0m/[2m↓[0m           Navigate worktree list                                                   
+ (type)        Filter worktrees                                                         
+ [2mEnter[0m         Switch to selected worktree                                              
+ [2mAlt-c[0m         Create new worktree named as entered text                                
+ [2mAlt-x[0m         Remove selected worktree/branch (never forces; not the current worktree) 
+ [2mAlt-y[0m         Copy selected branch name to the clipboard                               
+ [2mAlt-o[0m         Open the selected row's PR/MR URL in the browser                         
+ [2mAlt-r[0m         Refresh the list (pick up worktrees created elsewhere)                   
+ [2mEsc[0m           Cancel                                                                   
+ [2mAlt-1[0m–[2mAlt-8[0m   Jump to a preview tab                                                    
+ [2mTab[0m/[2mShift-Tab[0m Cycle available preview tabs forward/backward                            
+ [2mAlt-p[0m         Toggle preview panel                                                     
+ [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                                                   
 
-[2mAlt-o[0m is a no-op on a row with no PR/MR (or whose status hasn't loaded yet).
-
-[2mAlt-x[0m is a no-op on the current worktree (the [2m@[0m row) — removing the worktree in use would have to switch elsewhere first, so switch away and remove it from there.
-
-Each row filters by its branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author, the same fields whether the PR is checked out (a worktree row) or listed via [2m--prs[0m. Plain digits go to the filter, so a number can be typed directly and the preview tabs move to [2mAlt[0m.
-
-Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktrees and [2m@[0m to the current worktree. The other sigils don't filter cleanly — [2m^[0m and [2m|[0m are skim's prefix-anchor and OR query operators (so [2m^[0m matches every row and [2m|[0m none), and [2m/[0m matches most rows because every worktree path contains it.
+The filter matches each row's branch, path, and — when it has a PR/MR — the PR/MR's number, title, and author. Typing [36m+[0m narrows to linked worktrees, and [2m@[0m to the current worktree.
 
 [1mPreview tabs:[0m
 
@@ -237,8 +230,6 @@ Typing a gutter sigil filters by row kind: [36m+[0m narrows to linked worktree
 8. [1mcomments[0m — The PR/MR's comment thread, fetched from the forge for any row whose branch has one
 
 The comparison base is the merge-base with the default branch, or with its upstream when the local default branch lags. The picker opens on [1mdiff[0m for local rows and [1mpr[0m for a PR/MR listed by [2m--prs[0m but not available locally. [2mTab[0m and [2mShift-Tab[0m skip tabs without content; [2mAlt-1[0m through [2mAlt-8[0m open any tab directly. After you choose a tab, that choice stays active while you navigate.
-
-On narrow previews the tab bar compacts to digits — only the active tab keeps its label — so every [2mAlt-N[0m accelerator stays visible.
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -259,8 +250,7 @@ Both work anywhere a branch is accepted, including [2m--base[0m. The [2m--cre
 
 If the PR or MR is on a fork, the local branch uses its branch name directly, so [2mgit push[0m works normally. A pre-existing local branch with that name tracking something else requires renaming first.
 
-The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) to the interactive picker — only the ones not already there: a PR whose branch is already shown (as a worktree, or a local or remote branch) isn't listed twice, so [2m--prs[0m only adds the rest and the two pickers differ solely by those extra rows. Each added row resolves to the same [2mpr:[0m/[2mmr:[0m shortcut, so selecting one fetches the ref and switches to its branch. A [2m--prs[0m row has no local worktree, so its [2mpr[0m and [2mcomments[0m preview tabs
- load the PR/MR's metadata and comments from the forge in the background. The [2mlog[0m tab uses a local [2mgit log[0m — graph and merge-base dimming included — whenever the head commit is already in the object store (a same-repo PR off a fetched remote), falling back to a flat forge-fetched commit list otherwise.
+The [2m--prs[0m flag adds the repository's open PRs (GitHub) or MRs (GitLab) that aren't already in the interactive picker. Selecting one switches to it as [2mpr:<number>[0m / [2mmr:<number>[0m would.
 
 Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or an equivalent CLI installed and authenticated; see forge platform for Gitea, Azure DevOps, and other supported platforms.
 
