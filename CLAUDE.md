@@ -186,18 +186,26 @@ reads its config, which TOML keys a schema accepts, how MiniJinja scopes a
 template binding. Ask the library; don't re-derive its rule inside `wt`. A
 re-derived rule is correct on the cases that motivated it and drifts silently
 afterwards: the hand-rolled scan for MiniJinja bindings missed the
-parenthesized tuple targets MiniJinja itself accepts (#4124), and `$ZDOTDIR`
-handling carried a docstring of zsh-source archaeology to justify a rule zsh
-already owns (#4085). Where nothing can answer the question — the library
-exposes no such API — keep the substitute no larger than the question and say
-in the code why it exists. Standing backlog of sites still to delegate: #4106.
+parenthesized tuple targets MiniJinja itself accepts (#4124). Where nothing
+can answer the question — the library exposes no such API — keep the
+substitute no larger than the question and say in the code why it exists;
+that is where both of this rule's own cases landed, so don't reopen them.
+MiniJinja has no binding list without `unstable_machinery`, so #4124's
+scanner stays. zsh has no "where should the config file go" to ask, so
+`zsh_config_dir` keeps zsh's `$ZDOTDIR`-or-`$HOME` rule plus an absolute-only
+guard that keeps `wt config shell uninstall`'s whole-file rewrite out of the
+invocation directory; #4085 deleted the zsh-source archaeology justifying
+that rule, not the rule. Standing backlog of sites still to delegate: #4106.
 
-**Don't defend improbable environments.** No resolvable home directory, a
-config directory the user moved out from under the tool that owns it — `wt`'s
-behavior there is the least of that user's problems. Take the working
-environment as a precondition and drop the fallback chain rather than carrying
-code that is maintained forever and exercised by nobody. Data safety is the
-exception, and it has its own section.
+### Don't Defend Improbable Environments
+
+No resolvable home directory, a config directory the user moved out from under
+the tool that owns it — `wt`'s behavior there is the least of that user's
+problems. Take the working environment as a precondition and drop the fallback
+chain rather than carrying code that is maintained forever and exercised by
+nobody. Dropping a fallback still means failing with an error, never
+`.expect()` — see **Error Handling**. Data safety is the exception, and it has
+its own section.
 
 ### Other
 
