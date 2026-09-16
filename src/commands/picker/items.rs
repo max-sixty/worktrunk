@@ -3084,7 +3084,7 @@ mod tests {
         let commit = |file: &str| {
             std::fs::write(t.path().join(file), file).unwrap();
             repo.run_command(&["add", file]).unwrap();
-            repo.run_command(&["commit", "-m", file]).unwrap();
+            repo.run_command(&["commit", "--message", file]).unwrap();
             repo.run_command(&["rev-parse", "HEAD"])
                 .unwrap()
                 .trim()

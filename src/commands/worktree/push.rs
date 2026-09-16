@@ -577,7 +577,7 @@ pub fn handle_no_ff_merge(
     ];
     // Sign as `git merge --no-ff` would; `commit-tree` ignores `commit.gpgSign`.
     if ctx.repo.signs_commits()? {
-        commit_tree_args.push("-S");
+        commit_tree_args.push("--gpg-sign");
     }
     let merge_sha = ctx
         .repo

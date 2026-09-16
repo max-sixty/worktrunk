@@ -1421,10 +1421,10 @@ fn test_remove_branch_only_unmerged(repo: TestRepo) {
 /// subdirectory look integrated, and the branch was deleted.
 #[rstest]
 fn test_remove_branch_only_unmerged_from_subdirectory_with_diff_relative(repo: TestRepo) {
-    repo.run_git(&["checkout", "-b", "feature-unmerged"]);
+    repo.run_git(&["switch", "--create", "feature-unmerged"]);
     fs::write(repo.root_path().join("feature.txt"), "new feature").unwrap();
     repo.run_git(&["add", "feature.txt"]);
-    repo.run_git(&["commit", "-m", "Add feature"]);
+    repo.run_git(&["commit", "--message", "Add feature"]);
     repo.run_git(&["checkout", "main"]);
     repo.run_git(&["config", "diff.relative", "true"]);
     let subdir = repo.root_path().join("subdir");

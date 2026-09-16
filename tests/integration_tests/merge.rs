@@ -1836,7 +1836,7 @@ fn test_step_rebase_leaves_stacked_branches(mut repo: TestRepo) {
     repo.commit_in_worktree(&feature_wt, "top.txt", "top\n", "Stack top");
     fs::write(repo.root_path().join("main-update.txt"), "main\n").unwrap();
     repo.run_git(&["add", "main-update.txt"]);
-    repo.run_git(&["commit", "-m", "Update main"]);
+    repo.run_git(&["commit", "--message", "Update main"]);
     repo.run_git(&["config", "rebase.updateRefs", "true"]);
     let stacked_before = repo.git_output(&["rev-parse", "stacked"]);
 
@@ -1997,7 +1997,7 @@ fn test_merge_no_ff_signs_merge_commit(merge_scenario: (TestRepo, PathBuf)) {
 
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
-        repo.git_output(&["show", "-s", "--format=%P", "main"])
+        repo.git_output(&["show", "--no-patch", "--format=%P", "main"])
             .split(' ')
             .count(),
         2
@@ -3001,7 +3001,7 @@ fn test_step_commit_show_prompt(repo: TestRepo) {
 fn test_step_commit_fallback_message_names_recorded_changes(repo: TestRepo) {
     fs::write(repo.root_path().join("old.txt"), "content\n").unwrap();
     repo.run_git(&["add", "old.txt"]);
-    repo.run_git(&["commit", "-m", "Add old.txt"]);
+    repo.run_git(&["commit", "--message", "Add old.txt"]);
     repo.run_git(&["mv", "old.txt", "new.txt"]);
     fs::write(repo.root_path().join("notes.txt"), "").unwrap();
     repo.run_git(&["add", "--intent-to-add", "notes.txt"]);
@@ -3017,7 +3017,7 @@ fn test_step_commit_fallback_message_names_recorded_changes(repo: TestRepo) {
 
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
-        repo.git_output(&["log", "-1", "--format=%s"]),
+        repo.git_output(&["log", "--max-count=1", "--format=%s"]),
         "Changes to new.txt"
     );
 }
@@ -3026,7 +3026,12 @@ fn test_step_commit_fallback_message_names_recorded_changes(repo: TestRepo) {
 /// id depends on the repository's object format.
 #[test]
 fn test_step_commit_first_commit_in_sha256_repo() {
-    let repo = TestRepo::init_repo(&["init", "-q", "-b", "main", "--object-format=sha256"]);
+    let repo = TestRepo::init_repo(&[
+        "init",
+        "--quiet",
+        "--initial-branch=main",
+        "--object-format=sha256",
+    ]);
     fs::write(repo.root_path().join("first.txt"), "first\n").unwrap();
     repo.run_git(&["add", "first.txt"]);
 
@@ -3036,7 +3041,7 @@ fn test_step_commit_first_commit_in_sha256_repo() {
 
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
-        repo.git_output(&["log", "-1", "--format=%s"]),
+        repo.git_output(&["log", "--max-count=1", "--format=%s"]),
         "Changes to first.txt"
     );
 }
