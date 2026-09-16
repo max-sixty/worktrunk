@@ -291,10 +291,16 @@ impl<'a> TemplateVars<'a> {
     /// `None` when MiniJinja can't parse `template` — the templates its
     /// renderer rejects too, left untouched rather than guessed at.
     fn of(template: &'a str) -> Option<Self> {
-        // The syntax and whitespace defaults, which are what the environments
-        // that render these templates use. Spelled `Default::default()`
+        // The syntax and whitespace defaults, spelled `Default::default()`
         // because `SyntaxConfig` is a unit struct without MiniJinja's
-        // `custom_syntax` feature.
+        // `custom_syntax` feature. Neither has to match the environment that
+        // renders the template — `expand_template_with` sets
+        // `keep_trailing_newline(true)` for every `ShellEscapeMode` but
+        // `Literal`, and a `WhitespaceConfig` only ever shapes literal text
+        // (which byte the tokenizer stops at, where an `EmitRaw` node's
+        // boundaries fall), never an `Expr::Var` span. Everything outside
+        // those spans is copied from the original string, so the two readings
+        // cannot move an edit apart.
         let ast =
             parse_template(template, "<config>", Default::default(), Default::default()).ok()?;
         let mut vars = TemplateVars {
@@ -2959,6 +2965,13 @@ timeout = 30
             ("{{ items[repo_root] }}", "{{ items[repo_path] }}"),
             ("{{ not repo_root }}", "{{ not repo_path }}"),
             ("{{ -repo_root }}", "{{ -repo_path }}"),
+            // `Expr::Compare` needs a *chained* comparison: `parse_compare`
+            // lowers a single one to `Expr::BinOp`, so `repo_root == "x"`
+            // never reaches the arm that walks the operand list.
+            ("{{ 1 < repo_root < 3 }}", "{{ 1 < repo_path < 3 }}"),
+            // A conditional's `else` arm, which the visit-order case above
+            // leaves off.
+            ("{{ a if b else repo_root }}", "{{ a if b else repo_path }}"),
             (
                 "{{ repo_root ~ worktree }}",
                 "{{ repo_path ~ worktree_path }}",
