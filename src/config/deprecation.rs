@@ -2824,7 +2824,7 @@ timeout = 30
     /// it is left untouched rather than guessed at — and it raises no warning
     /// either, since detection reads the same parse.
     #[test]
-    fn test_normalize_leaves_an_unparseable_template_untouched() {
+    fn test_normalize_leaves_an_unparsable_template_untouched() {
         let template = "{{ repo_root";
         let result = normalize_template_vars(template);
         assert!(matches!(result, Cow::Borrowed(_)), "should not rewrite");
