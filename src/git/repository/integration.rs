@@ -397,7 +397,10 @@ impl Repository {
     ///
     /// Both sides of the comparison generate their diffs with `git diff-tree`
     /// (plumbing), so the patch-ids are immune to the user's `diff.*` git
-    /// config — see [`Self::patch_ids_from`].
+    /// config — see [`Self::patch_ids_from`]. Both also pass
+    /// `--ignore-submodules=none`: plumbing still honors
+    /// `submodule.<name>.ignore`, and a submodule bump dropped from both sides
+    /// would let a branch match a target commit that never carried the bump.
     ///
     /// Only runs when `merge-tree` conflicts (both sides modified the same files),
     /// since `MergeAddsNothing` handles the non-conflict case. Cost scales with the
@@ -436,7 +439,17 @@ impl Repository {
         }
 
         // Compute the squashed patch-id (combined diff of all branch changes).
-        let branch_pids = self.patch_ids_from(&["diff-tree", "-p", &merge_base, branch], None)?;
+        let branch_pids = self.patch_ids_from(
+            &[
+                "diff-tree",
+                "--patch",
+                "--ignore-submodules=none",
+                &merge_base,
+                branch,
+                "--",
+            ],
+            None,
+        )?;
         let Some(branch_pid) = branch_pids.split_whitespace().next() else {
             return Ok(false);
         };
@@ -451,7 +464,12 @@ impl Repository {
         // the commit list on stdin and emits one diff per commit.
         let target_commits = self.run_command(&["rev-list", &format!("{merge_base}..{target}")])?;
         let target_pids = self.patch_ids_from(
-            &["diff-tree", "--stdin", "-p"],
+            &[
+                "diff-tree",
+                "--stdin",
+                "--patch",
+                "--ignore-submodules=none",
+            ],
             Some(target_commits.into_bytes()),
         )?;
 
@@ -1202,6 +1220,60 @@ mod patch_id_tests {
             Some(IntegrationReason::PatchIdMatch),
             "squash merge must be detected via patch-id regardless of diff.* config"
         );
+    }
+
+    /// Patch-ids count a submodule bump under `submodule.<name>.ignore = all`,
+    /// which hides the bump from plain plumbing. The branch edits a file and
+    /// bumps a submodule: a target squash that dropped the bump must not
+    /// match, and one that carried it must. Each target re-touches the same
+    /// line afterwards so `merge-tree` conflicts and the patch-id fallback
+    /// runs.
+    #[test]
+    fn patch_id_counts_submodule_bump_under_submodule_ignore() {
+        let test = TestRepo::new();
+        let repo = &test.repo;
+        let path = test.path().join("file");
+        let gitlink = |sha: &str| format!("160000,{sha},sub");
+
+        std::fs::write(
+            test.path().join(".gitmodules"),
+            "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n",
+        )
+        .unwrap();
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+        test.run_git(&["add", ".gitmodules", "file"]);
+        test.run_git(&["commit", "--message", "base"]);
+        let base = test.git_output(&["rev-parse", "HEAD"]);
+        test.run_git(&["update-index", "--add", "--cacheinfo", &gitlink(&base)]);
+        test.run_git(&["commit", "--message", "add submodule"]);
+        let fork = test.git_output(&["rev-parse", "HEAD"]);
+
+        let commit_on = |branch: &str, bump: bool| {
+            test.run_git(&["switch", "--create", branch, &fork]);
+            std::fs::write(&path, "one\nFEATURE\nthree\n").unwrap();
+            test.run_git(&["add", "file"]);
+            if bump {
+                test.run_git(&["update-index", "--cacheinfo", &gitlink(&fork)]);
+            }
+            test.run_git(&["commit", "--message", branch]);
+        };
+        commit_on("feature", true);
+        for (target, bump) in [("dropped", false), ("carried", true)] {
+            commit_on(target, bump);
+            std::fs::write(&path, "one\nPADDED\nthree\n").unwrap();
+            test.run_git(&["add", "file"]);
+            test.run_git(&["commit", "--message", "follow-up on same line"]);
+        }
+        test.run_git(&["config", "submodule.sub.ignore", "all"]);
+
+        let snapshot = repo.capture_refs().unwrap();
+        let reason = |target: &str| {
+            check_integration(
+                &compute_integration_lazy(repo, &snapshot, "feature", target).unwrap(),
+            )
+        };
+        assert_eq!(reason("dropped"), None);
+        assert_eq!(reason("carried"), Some(IntegrationReason::PatchIdMatch));
     }
 }
 

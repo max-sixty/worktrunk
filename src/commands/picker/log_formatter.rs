@@ -46,7 +46,14 @@ pub(super) fn batch_fetch_stats(
         return HashMap::new();
     };
     let Ok(output) = Cmd::new("git")
-        .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
+        .args([
+            "diff-tree",
+            "--numstat",
+            "-r",
+            "--root",
+            "--ignore-submodules=none",
+            "--stdin",
+        ])
         .current_dir(repo_path)
         .stdin_bytes(stdin_data)
         .run()
