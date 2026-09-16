@@ -98,15 +98,18 @@ impl UserConfig {
             // Existing inline table, desired standard table: merge into a table
             // view so the same nested preservation applies as in the
             // standard-table branch, then write back only if that changed
-            // something — an untouched inline table keeps its formatting.
-            if desired_item.is_table()
+            // something — an untouched inline table keeps its formatting. The
+            // rewrite takes `desired`'s implicit flag, so it writes no bare
+            // header a table the save inserted wouldn't.
+            if let Some(desired_table) = desired_item.as_table()
                 && let Some(as_table) = existing
                     .get(key)
                     .and_then(|item| item.as_inline_table())
                     .map(|inline| inline.clone().into_table())
             {
                 let mut merged = as_table.clone();
-                Self::merge_tables(&mut merged, desired_item.as_table().unwrap(), nested_base);
+                Self::merge_tables(&mut merged, desired_table, nested_base);
+                merged.set_implicit(desired_table.is_implicit());
                 if !Self::tables_equal(&as_table, &merged) {
                     crate::config::replace_inline_with_table(existing, key, merged);
                 }

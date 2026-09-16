@@ -3662,6 +3662,26 @@ fn test_save_to_rewrites_commented_inline_section_as_parseable_toml() {
 }
 
 #[test]
+fn test_save_to_rewrites_inline_commit_without_a_bare_header() {
+    // A `commit` holding only `generation`, written inline, becomes a standard
+    // table when the command changes. Like a `commit` the save inserts, it
+    // writes only `[commit.generation]`, not an empty `[commit]` above it.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "commit = { generation = { command = \"old\" } }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    let mut config = UserConfig::load_from_str(original).unwrap();
+    config.commit.generation.as_mut().unwrap().command = Some("new".to_string());
+    config.save_to(&config_path).unwrap();
+
+    insta::assert_snapshot!(std::fs::read_to_string(&config_path).unwrap(), @r#"
+    [commit.generation]
+    command = "new"
+    "#);
+}
+
+#[test]
 fn test_save_to_rewrites_blank_line_separated_inline_section_as_parseable_toml() {
     // Same decor path with no comment: a blank line before the inline section
     // is prefix decor too, and rendered inside the brackets it broke the file.
