@@ -2,12 +2,14 @@
 
 ## Data-Loss Surface: Hold for Human Review
 
-Worktrunk's worst failure is silently destroying a user's work, and the deletion
-surface is where it leaks in. A change that touches it is not an agent's to
-merge: a force-flag bypass can read as harmless and still discard committed work.
+Worktrunk's worst failure is silently destroying a user's work. A change that
+could cause that is not an agent's to merge: a force-flag bypass can read as
+harmless and still discard committed work.
 
-Flag a PR when its diff adds one of these, widens what an existing one can
-delete, or edits a file that contains one:
+Hold a PR when its diff could make worktrunk destroy something it used to keep:
+it adds a deletion, widens what an existing one can delete, or loosens a check
+that gates one, such as the dirty-worktree check or the integration check that
+lets `wt remove` delete a branch. Deletions include:
 
 - `wt remove`, especially `-D` / `--force-delete` or `-f` / `--force`
 - `git branch -D` / `-d`, `git worktree remove --force`
@@ -25,14 +27,9 @@ directory's age: `wt step promote` creates its staging directory and removes it
 inside one operation, and in between the directory holds the user's only copy of
 both worktrees' ignored files.
 
-Hold on what the diff can reach, not co-location. In source, a change near the
-force-delete path holds even when the destructive line isn't in the diff. In
-structured config with independent entries, hold only when the diff touches the
-destructive entry itself.
-
 On a match:
 
-1. Name the command and file in the review.
+1. Name the deletion in the review, and how the diff could make it destroy more.
 2. Request review from @max-sixty.
 3. Do not approve or authorize the merge, even if it looks acceptable.
 
