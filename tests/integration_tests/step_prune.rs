@@ -1,7 +1,8 @@
 //! Integration tests for `wt step prune`
 
 use crate::common::{
-    BareRepoTest, TestRepo, make_snapshot_cmd, repo, repo_with_remote, setup_temp_snapshot_settings,
+    BareRepoTest, TEST_EPOCH, TestRepo, make_snapshot_cmd, repo, repo_with_remote,
+    setup_temp_snapshot_settings,
 };
 use ansi_str::AnsiStr;
 use insta::assert_snapshot;
@@ -418,6 +419,60 @@ fn test_prune_orphan_branch_min_age(repo: TestRepo) {
     cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400"); // 2025-01-01T00:30:00Z
 
     assert_cmd_snapshot!(cmd);
+}
+
+/// Orphan branches without a reflog are aged by when their ref was last written.
+///
+/// `git clone --bare` writes no reflogs and stores the branches it brings down
+/// in `packed-refs`; a later fetch into `refs/heads/*` writes a new branch as a
+/// loose ref, also without a reflog. The two files are dated a month and an
+/// hour before TEST_EPOCH, so each branch's age shows which file it was read
+/// from: `cloned` is a candidate, and `fetched` is skipped as younger than 1d.
+#[rstest]
+fn test_prune_orphan_branch_min_age_without_reflog(repo: TestRepo) {
+    repo.create_branch("cloned");
+    let clone = repo.home_path().join("clone.git");
+    repo.run_git(&["clone", "--bare", ".", clone.to_str().unwrap()]);
+    repo.run_git_in(
+        &clone,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/heads/*",
+        ],
+    );
+    repo.create_branch("fetched");
+    repo.run_git_in(&clone, &["fetch", "origin"]);
+
+    for branch in ["cloned", "fetched"] {
+        let ref_name = format!("refs/heads/{branch}");
+        let output = repo
+            .git_command()
+            .args(["reflog", "exists", &ref_name])
+            .current_dir(&clone)
+            .run()
+            .unwrap();
+        assert!(!output.status.success(), "{branch} should have no reflog");
+    }
+
+    let set_age = |path: &std::path::Path, age_secs: u64| {
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(TEST_EPOCH - age_secs);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+    };
+    set_age(&clone.join("packed-refs"), 30 * 24 * 60 * 60);
+    set_age(&clone.join("refs/heads/fetched"), 60 * 60);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run"],
+        Some(&clone)
+    ));
 }
 
 /// Prune can remove a mix of branch-only and worktree candidates in one run.

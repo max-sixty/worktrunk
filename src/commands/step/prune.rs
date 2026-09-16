@@ -492,7 +492,7 @@ fn check_one(
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
             CheckSource::Linked { wt_idx } => worktree_age(repo, &worktrees[*wt_idx], now_secs)?,
-            CheckSource::Orphan => orphan_branch_age(repo, &item.integration_ref, now_secs),
+            CheckSource::Orphan => Some(orphan_branch_age(repo, &item.integration_ref, now_secs)?),
             CheckSource::Prunable { .. } => None,
         }
     } else {
@@ -697,34 +697,65 @@ fn worktree_age(
 /// `--date=unix` renders each entry's selector as `<name>@{<epoch>}`, and git
 /// forbids `@{` inside a ref name, so the last `@{` opens the timestamp.
 ///
-/// Returns `None` if the reflog is missing or unparsable — callers treat
-/// "unknown age" as "old enough". `core.logAllRefUpdates` defaults to whether
-/// the repository is bare as seen from where the command runs, so a ref
-/// written from a bare directory has no reflog and no min-age guard:
-/// `git clone --bare` writes none for the branches it brings down, and
-/// neither does a later `git fetch` into `refs/heads/*`. A linked worktree is
-/// not bare, so a branch created or updated from one — every branch `wt`
-/// itself creates — is aged normally.
-fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> Option<Duration> {
+/// A branch with no reflog entries is aged by [`ref_write_epoch`] instead.
+/// `core.logAllRefUpdates` defaults to whether the repository is bare as seen
+/// from where git runs, so in a bare repository only a ref written from inside
+/// a linked worktree gets a reflog: `git clone --bare`, a `git fetch` into
+/// `refs/heads/*`, and `wt switch --create` run from the bare directory all
+/// leave none. Expiry (`git gc`) can also empty a reflog.
+fn orphan_branch_age(repo: &Repository, branch: &str, now_secs: u64) -> anyhow::Result<Duration> {
     let ref_name = format!("refs/heads/{branch}");
-    let stdout = repo
-        .run_command(&[
-            "reflog",
-            "show",
-            "--no-show-signature",
-            "--date=unix",
-            "--format=%gd",
-            &ref_name,
-        ])
-        .ok()?;
-    let created_epoch = stdout
-        .trim()
-        .lines()
-        .last()
-        .and_then(|selector| selector.rsplit_once("@{"))
-        .and_then(|(_, epoch)| epoch.strip_suffix('}'))
-        .and_then(|epoch| epoch.parse::<u64>().ok())?;
-    Some(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
+    let stdout = repo.run_command(&[
+        "reflog",
+        "show",
+        "--no-show-signature",
+        "--date=unix",
+        "--format=%gd",
+        &ref_name,
+        "--",
+    ])?;
+    let created_epoch = match stdout.trim().lines().last() {
+        Some(selector) => selector
+            .rsplit_once("@{")
+            .and_then(|(_, epoch)| epoch.strip_suffix('}'))
+            .and_then(|epoch| epoch.parse::<u64>().ok())
+            .with_context(|| format!("parsing reflog selector {selector:?}"))?,
+        None => ref_write_epoch(repo, branch)?,
+    };
+    Ok(Duration::from_secs(now_secs.saturating_sub(created_epoch)))
+}
+
+/// When git last wrote the storage holding a branch's ref, as a Unix epoch.
+///
+/// Git replaces ref storage by renaming a new file into place, so a file's
+/// mtime is its last write, and the branch it holds existed by then. An age
+/// measured from it is never older than the branch, so the guard errs toward
+/// keeping it. Which file holds the ref depends on the backend:
+///
+/// - **files** (the default): a loose `refs/heads/<branch>` shadows
+///   `packed-refs`. Creating or updating a ref writes it loose, including from
+///   `git fetch`, while `git clone` writes `packed-refs`. `git pack-refs` (run
+///   by `git gc`) and deleting any packed ref rewrite `packed-refs` whole,
+///   which makes every packed branch young again and delays its pruning by up
+///   to `--min-age`.
+/// - **reftable**: tables hold many refs, and every ref update rewrites
+///   `reftable/tables.list`, so a branch counts as no older than the
+///   repository's last ref update.
+fn ref_write_epoch(repo: &Repository, branch: &str) -> anyhow::Result<u64> {
+    let common_dir = repo.git_common_dir();
+    let metadata = match repo.config_value("extensions.refStorage")?.as_deref() {
+        Some("reftable") => fs::metadata(common_dir.join("reftable").join("tables.list")),
+        _ => match fs::metadata(common_dir.join("refs/heads").join(branch)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                fs::metadata(common_dir.join("packed-refs"))
+            }
+            loose => loose,
+        },
+    };
+    let written = metadata
+        .and_then(|m| m.modified())
+        .with_context(|| format!("reading when branch {branch} was last written"))?;
+    Ok(written.duration_since(std::time::UNIX_EPOCH)?.as_secs())
 }
 
 /// Render dry-run output (text or JSON) and the `Skipped (younger than ...)`
