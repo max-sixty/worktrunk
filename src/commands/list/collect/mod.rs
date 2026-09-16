@@ -227,8 +227,8 @@
 //! | `merge-tree-conflicts/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
 //! | `merge-add-probe/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `is-ancestor/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
-//! | `has-added-changes/` | `git::repository::sha_cache` | `plumbing-{branch_sha}-{target_sha}.json` | Never — content-addressed |
-//! | `diff-stats/` | `git::repository::sha_cache` | `plumbing-{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
+//! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `merge-base/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |

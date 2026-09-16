@@ -179,6 +179,10 @@ impl<'repo> PreparedDiff<'repo> {
 impl Repository {
     /// Prepare an immutable diff from one tree-ish to another in this
     /// repository's context.
+    ///
+    /// For `git diff A...B`, pass the merge base as `from`: `diff-tree` reads
+    /// a literal `A...B` as no revisions, and its `--merge-base` fails when
+    /// there are several merge bases.
     pub fn prepare_diff(&self, from: impl Into<String>, to: impl Into<String>) -> PreparedDiff<'_> {
         PreparedDiff::new(
             self,

@@ -58,15 +58,6 @@ fn asymmetric_key(first: &str, second: &str) -> String {
     format!("{first}-{second}.json")
 }
 
-/// Asymmetric filename for the diff-derived kinds (`has-added-changes`,
-/// `diff-stats`). Entries written before those diffs moved to plumbing could
-/// carry the user's diff configuration — `diff.relative` from a subdirectory
-/// recorded a branch with changes as having none — so the prefix leaves them
-/// unread. The LRU bound and [`clear_all`] still sweep them.
-fn plumbing_diff_key(first: &str, second: &str) -> String {
-    format!("plumbing-{first}-{second}.json")
-}
-
 // merge-tree conflicts (symmetric)
 
 /// Look up a cached `has_merge_conflicts_by_sha(sha1, sha2)` result.
@@ -156,7 +147,7 @@ pub(super) fn has_added_changes(
     cache::read(
         repo,
         KIND_HAS_ADDED_CHANGES,
-        &plumbing_diff_key(branch_sha, target_sha),
+        &asymmetric_key(branch_sha, target_sha),
     )
 }
 
@@ -170,7 +161,7 @@ pub(super) fn put_has_added_changes(
     cache::write_with_lru(
         repo,
         KIND_HAS_ADDED_CHANGES,
-        &plumbing_diff_key(branch_sha, target_sha),
+        &asymmetric_key(branch_sha, target_sha),
         &value,
         MAX_ENTRIES_PER_KIND,
     );
@@ -182,11 +173,7 @@ pub(super) fn put_has_added_changes(
 ///
 /// Asymmetric: diff from merge-base(base,head)..head is directional.
 pub(super) fn diff_stats(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<LineDiff> {
-    cache::read(
-        repo,
-        KIND_DIFF_STATS,
-        &plumbing_diff_key(base_sha, head_sha),
-    )
+    cache::read(repo, KIND_DIFF_STATS, &asymmetric_key(base_sha, head_sha))
 }
 
 /// Store a `branch_diff_stats(base_sha, head_sha)` result.
@@ -194,7 +181,7 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
     cache::write_with_lru(
         repo,
         KIND_DIFF_STATS,
-        &plumbing_diff_key(base_sha, head_sha),
+        &asymmetric_key(base_sha, head_sha),
         &value,
         MAX_ENTRIES_PER_KIND,
     );
