@@ -182,11 +182,13 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
         .unwrap_or(Cow::Borrowed(template))
 }
 
-/// The retired `(old, new)` pairs used as variables in `template`, in
-/// [`RETIRED_VARS`] order. Empty when none appear (or the template doesn't
-/// parse). An identifier appearing only as an attribute name
-/// (`{{ foo.repo_root }}`) or an assignment target doesn't count — only
-/// genuine variable uses, which is exactly what the rewrite replaces.
+/// The retired `(old, new)` pairs it is safe to rewrite in `template`, in
+/// [`RETIRED_VARS`] order. Empty when none appear, when the template doesn't
+/// parse, or when a block binds either half of a pair — see
+/// [`template_bound_names`] for why a bound name drops the pair instead of
+/// renaming half a scope. An identifier appearing only as an attribute name
+/// (`{{ foo.repo_root }}`) or an assignment target isn't a use, so it doesn't
+/// bring a pair in on its own.
 ///
 /// Detection and migration share this one predicate: the rule rewrites what
 /// this reports, so the two cannot drift.
@@ -201,11 +203,171 @@ fn deprecated_vars_in_template(template: &str) -> Vec<(&'static str, &'static st
         return Vec::new();
     };
     let used_vars = parsed.undeclared_variables(false);
+    let bound = template_bound_names(template);
     RETIRED_VARS
         .iter()
         .copied()
-        .filter(|(old, _)| used_vars.contains(*old))
+        .filter(|(old, new)| {
+            used_vars.contains(*old) && !bound.contains(old) && !bound.contains(new)
+        })
         .collect()
+}
+
+/// Every name a `{% … %}` block binds anywhere in `template`.
+///
+/// `undeclared_variables` answers whether a name is read before it is bound,
+/// not which of its occurrences are the global one, so
+/// `{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}` reports
+/// `repo_root` even though the last use reads the local. The rewriter has no
+/// scope tracking and would rename both. A deprecated name that is bound
+/// anywhere is therefore dropped from the replacement set — and because
+/// detection reads that same set, such a template neither migrates nor
+/// warns. Losing the warning is the price of not quietly rendering
+/// something else.
+///
+/// Since [`RETIRED_VARS`] became a [`DeprecationRule::Structural`] row, that
+/// price is paid at render time rather than deferred: the retired name
+/// survives the load-path rewrite and reaches a renderer that has nothing to
+/// resolve it to, failing a `SemiStrict` expansion loudly or rendering empty
+/// in a squash template. Both beat renaming one scope's worth of uses out
+/// from under the template that bound the name.
+///
+/// The *canonical* name is checked against this set too. Binding it captures
+/// the global use the rename produces: `{% for repo_path in items %}` around a
+/// `{{ repo_root }}` reads the global today and the loop variable once
+/// renamed. The same collision reaches every pair — `{% for commit_details in
+/// … %}{{ commits }}` is the squash-template shape of it.
+fn template_bound_names(template: &str) -> HashSet<&str> {
+    let mut bound = HashSet::new();
+    let mut cursor = 0;
+    let mut in_raw = false;
+    while let Some((tag_start, kind)) = find_next_template_tag(template, cursor) {
+        let body_start = tag_start + 2;
+        let close_delim = match kind {
+            TemplateTagKind::Variable => "}}",
+            TemplateTagKind::Block => "%}",
+            TemplateTagKind::Comment => "#}",
+        };
+        // A comment runs to its first `#}` — MiniJinja doesn't tokenize
+        // strings inside one — so it takes the plain scan the rewriter uses.
+        let tag_end = match kind {
+            TemplateTagKind::Comment => template[body_start..]
+                .find(close_delim)
+                .map(|rel| body_start + rel),
+            _ => template_tag_end(template, body_start, close_delim),
+        };
+        // A tag this scanner can't terminate is one it must not guess at: the
+        // rewrite bails on the same tag, so reporting no further bindings
+        // changes nothing.
+        let Some(tag_end) = tag_end else { break };
+        if kind == TemplateTagKind::Block {
+            let body = &template[body_start..tag_end];
+            match template_block_name(body) {
+                // `{% raw %}` content is literal text to MiniJinja, so a tag
+                // inside one binds nothing — the same state the rewriter keeps.
+                Some("raw") => in_raw = true,
+                Some("endraw") => in_raw = false,
+                _ if !in_raw => bound.extend(template_block_bindings(body)),
+                _ => {}
+            }
+        }
+        cursor = tag_end + close_delim.len();
+    }
+    bound
+}
+
+/// The names one block tag binds in the surrounding scope.
+///
+/// `set`, `for`, and `with` are the binding statements this MiniJinja build
+/// has: `Cargo.toml` takes it with `default-features = false`, so `macro` and
+/// `call` are not statements at all and a template using one fails to parse
+/// before reaching here. Adding the `macros` feature would mean adding their
+/// parameter lists to this match.
+///
+/// Only the binding keywords are inspected — `{% if repo_root %}` reads a name
+/// rather than binding it. Over-reporting is the safer direction: a name this
+/// returns is left unmigrated and stops warning, while one it misses would be
+/// renamed at a use that no longer refers to the global.
+fn template_block_bindings(body: &str) -> Vec<&str> {
+    let (keyword, rest) = split_block_keyword(body);
+    match keyword {
+        // `{% set a, (b, c) = expr %}`, `{% set a %}…{% endset %}`
+        "set" => binding_targets(rest, TargetsEndAt::Assign),
+        // `{% with a = 1, b = 2 %}`
+        "with" => binding_targets(rest, TargetsEndAt::AssignPairs),
+        "for" => binding_targets(rest, TargetsEndAt::In),
+        _ => Vec::new(),
+    }
+}
+
+/// What separates a binding tag's targets from its values.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetsEndAt {
+    /// `{% for a, (b, c) in expr %}` — the `in` keyword, once.
+    In,
+    /// `{% set a, b = expr %}` — the first top-level `=`. MiniJinja's `set`
+    /// takes one assignment, so a top-level comma after it builds a tuple
+    /// *value* and starts no further target.
+    Assign,
+    /// `{% with a = 1, b = 2 %}` — each `=`, with a top-level comma starting
+    /// the next pair's target.
+    AssignPairs,
+}
+
+/// The identifiers a binding tag's target list binds.
+///
+/// MiniJinja's `parse_assignment` accepts arbitrarily nested parenthesized
+/// tuples — `{% for (a, (b, c)) in … %}` — so the targets are gathered by
+/// scanning the target region for identifiers rather than by splitting it on
+/// commas, which read `(repo_root` as "not a bare identifier" and bound
+/// nothing. A shape this doesn't model contributes extra names, leaving a
+/// template unmigrated; a missed one gets renamed at a use that no longer
+/// refers to the global, so the scan errs toward collecting.
+///
+/// A dotted target binds nothing — `{% set repo_root.x = … %}` mutates an
+/// attribute of the global, so neither half of the path is a binding.
+fn binding_targets(rest: &str, targets_end_at: TargetsEndAt) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut depth = 0usize;
+    let mut in_targets = true;
+    let mut cursor = 0;
+    while let Some(ch) = rest.get(cursor..).and_then(|s| s.chars().next()) {
+        if ch == '"' || ch == '\'' {
+            cursor = quoted_template_string_end(rest, cursor, ch);
+            continue;
+        }
+        if is_template_identifier_start(ch) {
+            let end = identifier_end(rest, cursor);
+            let name = &rest[cursor..end];
+            if targets_end_at == TargetsEndAt::In && depth == 0 && name == "in" {
+                in_targets = false;
+            } else if in_targets
+                && !rest[..cursor].trim_end().ends_with('.')
+                && !rest[end..].trim_start().starts_with('.')
+            {
+                names.push(name);
+            }
+            cursor = end;
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if targets_end_at != TargetsEndAt::In
+                && depth == 0
+                && !rest[cursor..].starts_with("==") =>
+            {
+                in_targets = false;
+            }
+            ',' if targets_end_at == TargetsEndAt::AssignPairs && depth == 0 => in_targets = true,
+            // A `set` block's filter chain is value, not target:
+            // `{% set x | default(repo_root) %}…{% endset %}` binds only `x`.
+            '|' if depth == 0 => in_targets = false,
+            _ => {}
+        }
+        cursor += ch.len_utf8();
+    }
+    names
 }
 
 fn rewrite_template_var_identifiers(
@@ -230,7 +392,7 @@ fn rewrite_template_var_identifiers(
                 continue;
             }
         };
-        let tag_end = template[body_start..].find(close_delim)? + body_start;
+        let tag_end = template_tag_end(template, body_start, close_delim)?;
         let full_tag_end = tag_end + close_delim.len();
 
         if tag_kind == TemplateTagKind::Block
@@ -299,11 +461,25 @@ fn find_next_template_tag(template: &str, from: usize) -> Option<(usize, Templat
 }
 
 fn template_block_name(body: &str) -> Option<&str> {
-    let body = body.strip_prefix('-').unwrap_or(body).trim_start();
-    let end = body
+    let (keyword, _) = split_block_keyword(body);
+    (!keyword.is_empty()).then_some(keyword)
+}
+
+/// A block tag's body split into its leading keyword and the rest.
+///
+/// MiniJinja spells whitespace control `-` *or* `+` (`Whitespace::from_byte`
+/// maps both, one trimming and one preserving), and accepts either on both
+/// ends of a tag. Stripping only `-` left `{%+ raw %}` unrecognized — its
+/// literal contents were rewritten — and `{%+ set x = … %}` binding nothing,
+/// so the name it shadows was renamed at every use. Both readers of a block
+/// keyword go through here so that stays one answer.
+fn split_block_keyword(body: &str) -> (&str, &str) {
+    let body = body.strip_prefix(['-', '+']).unwrap_or(body);
+    let body = body.strip_suffix(['-', '+']).unwrap_or(body).trim();
+    let split = body
         .find(|c: char| !is_template_identifier_char(c))
         .unwrap_or(body.len());
-    (end > 0).then_some(&body[..end])
+    body.split_at(split)
 }
 
 fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) -> (String, bool) {
@@ -335,6 +511,29 @@ fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) 
     }
 
     (out, changed)
+}
+
+/// The offset of `close_delim` that ends this tag, skipping any occurrence
+/// inside a quoted string.
+///
+/// MiniJinja tokenizes strings before it looks for the tag end, so a plain
+/// `find` disagrees with the parser that decided which variables are in scope.
+/// On `{{ "}} " ~ repo_root }}` that disagreement cut the tag at the quoted
+/// delimiter, leaving the real reference as outside-tag text (no migration) and
+/// exposing literal text in a later string to the rewriter (a changed
+/// template).
+fn template_tag_end(template: &str, body_start: usize, close_delim: &str) -> Option<usize> {
+    let mut cursor = body_start;
+    while let Some(ch) = template.get(cursor..).and_then(|s| s.chars().next()) {
+        if template[cursor..].starts_with(close_delim) {
+            return Some(cursor);
+        } else if ch == '"' || ch == '\'' {
+            cursor = quoted_template_string_end(template, cursor, ch);
+        } else {
+            cursor += ch.len_utf8();
+        }
+    }
+    None
 }
 
 fn quoted_template_string_end(body: &str, start: usize, quote: char) -> usize {
@@ -704,19 +903,62 @@ fn apply_rules(doc: &mut toml_edit::DocumentMut, pass: RulePass, kinds: &mut Dep
 /// Scope walk: apply `f` mutably to the top-level table (scope
 /// `None`) and to each `[projects."key"]` table (scope `Some(key)`), returning
 /// whether any scope reported a change.
+///
+/// Both the `projects` container and each entry inside it can be written as a
+/// standard table or inline (`"host/org/repo" = { merge = { no-ff = true } }`),
+/// and `toml_edit` surfaces those as different node types. Every rule routed
+/// through this walk sees the same scopes either way: an inline entry is
+/// migrated through a table view and written back inline, so a shape the user
+/// chose can't decide whether their config gets migrated. The alternative —
+/// skipping inline entries — leaves a deprecated key unmigrated at a path serde
+/// has no alias for, which drops the setting from the typed config on load.
 fn for_each_config_table_mut(
     doc: &mut toml_edit::DocumentMut,
     mut f: impl FnMut(Option<&str>, &mut toml_edit::Table) -> bool,
 ) -> bool {
     let mut modified = f(None, doc.as_table_mut());
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (key, value) in projects.iter_mut() {
-            if let Some(table) = value.as_table_mut() {
-                modified |= f(Some(key.get()), table);
+    match doc.get_mut("projects") {
+        Some(toml_edit::Item::Table(projects)) => {
+            for (key, entry) in projects.iter_mut() {
+                let scope = key.get();
+                modified |= match entry {
+                    toml_edit::Item::Table(table) => f(Some(scope), table),
+                    toml_edit::Item::Value(value) => migrate_inline_scope(scope, value, &mut f),
+                    _ => false,
+                };
             }
         }
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(projects))) => {
+            for (key, entry) in projects.iter_mut() {
+                modified |= migrate_inline_scope(key.get(), entry, &mut f);
+            }
+        }
+        _ => {}
     }
     modified
+}
+
+/// Apply `f` to an inline `[projects."key"]` entry through a table view,
+/// writing the result back inline only when `f` reported a change so an
+/// untouched entry keeps its original formatting.
+///
+/// That write-back is what `f` owes in return: a rule that mutates the scope
+/// table while reporting no change keeps its edit on the standard-table path
+/// and loses it here, so the shape would decide the outcome again — the bug
+/// this walk exists to close.
+fn migrate_inline_scope<F>(scope: &str, entry: &mut toml_edit::Value, f: &mut F) -> bool
+where
+    F: FnMut(Option<&str>, &mut toml_edit::Table) -> bool,
+{
+    let toml_edit::Value::InlineTable(inline) = entry else {
+        return false;
+    };
+    let mut as_table = inline.clone().into_table();
+    if !f(Some(scope), &mut as_table) {
+        return false;
+    }
+    *inline = as_table.into_inline_table();
+    true
 }
 
 /// Keys `[switch.picker]` accepts — the destination of the `[select]` rename.
@@ -2603,6 +2845,167 @@ timeout = 30
         assert_eq!(result, template);
     }
 
+    /// A `}}` inside a quoted string does not end the tag. Scanning for the
+    /// first textual `}}` cut the tag short, so the real reference after the
+    /// string was never reached, and literal text in a later string was
+    /// rewritten as though it were a tag.
+    #[test]
+    fn test_normalize_ignores_delimiters_inside_quoted_strings() {
+        assert_eq!(
+            normalize_template_vars(r#"{{ "}} " ~ repo_root }}"#),
+            r#"{{ "}} " ~ repo_path }}"#
+        );
+        // The literal `{{ repo_root }}` inside the string is output text, not
+        // a reference; only the real tag after it changes.
+        assert_eq!(
+            normalize_template_vars(r#"{{ "}} {{ repo_root }}" }}{{ repo_root }}"#),
+            r#"{{ "}} {{ repo_root }}" }}{{ repo_path }}"#
+        );
+        // Same for a single-quoted string and a block tag.
+        assert_eq!(
+            normalize_template_vars(r#"{% if '%}' ~ repo_root %}x{% endif %}"#),
+            r#"{% if '%}' ~ repo_path %}x{% endif %}"#
+        );
+    }
+
+    /// A deprecated name that a block binds somewhere in the template is left
+    /// alone everywhere: the rewriter has no scope tracking, so renaming the
+    /// global reference would also rename the later local use. Binding the
+    /// canonical name holds the rename back for the same reason from the other
+    /// side — the rename would walk a genuine global use into that binding.
+    /// Either way the pair is dropped from the replacement set that detection
+    /// reads too, so the template stops warning as well — the price of not
+    /// renaming half a scope.
+    #[test]
+    fn test_normalize_skips_names_bound_by_a_block() {
+        for template in [
+            // read as the global first, then rebound and read as the local
+            r#"{{ repo_root }}{% set repo_root = "local" %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% for repo_root in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% with repo_root = "local" %}{{ repo_root }}{% endwith %}"#,
+            // `+` is whitespace control just as `-` is, on either end
+            r#"{{ repo_root }}{%+ set repo_root = "local" %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% set repo_root = "local" +%}{{ repo_root }}"#,
+            // parenthesized tuple targets, which MiniJinja's `parse_assignment`
+            // accepts for all three keywords and nests arbitrarily
+            r#"{{ repo_root }}{% for (repo_root, x) in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% for (a, (repo_root, x)) in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% set (repo_root, x) = items %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% with (repo_root, x) = items %}{{ repo_root }}{% endwith %}"#,
+            // the second pair of a multi-assignment `with`
+            r#"{{ repo_root }}{% with a = 1, repo_root = 2 %}{{ repo_root }}{% endwith %}"#,
+            // `set`'s block form binds its target before the filter chain the
+            // `|` arm cuts the target region at
+            r#"{{ repo_root }}{% set repo_root %}b{% endset %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% set repo_root | default(1) %}b{% endset %}{{ repo_root }}"#,
+            // binding the *canonical* name captures the use the rename
+            // produces: `{{ repo_root }}` reads the global here and the local
+            // once it is spelled `repo_path`
+            r#"{{ repo_root }}{% set repo_path = "local" %}{{ repo_root }}"#,
+            r#"{{ repo_root }}{% for repo_path in items %}{{ repo_root }}{% endfor %}"#,
+            r#"{{ repo_root }}{% with repo_path = "local" %}{{ repo_root }}{% endwith %}"#,
+            // the same collision in the squash template's pair
+            r#"{% for commit_details in items %}{{ commits }}{% endfor %}"#,
+        ] {
+            let result = normalize_template_vars(template);
+            assert!(
+                matches!(result, Cow::Borrowed(_)),
+                "should not rewrite: {template}"
+            );
+            assert_eq!(result, template);
+            assert!(
+                detect_deprecations(&format!("worktree-path = \"{template}\"\n")).is_empty(),
+                "a template left unrewritten must not warn: {template}"
+            );
+        }
+    }
+
+    /// `{% raw %}` content is literal text to MiniJinja, so a binding-shaped
+    /// tag inside one binds nothing and must not hold back a real use outside
+    /// it. The raw contents are left exactly as written, `+` whitespace
+    /// control included.
+    #[test]
+    fn test_normalize_ignores_raw_block_contents() {
+        assert_eq!(
+            normalize_template_vars(
+                r#"{% raw %}{% set repo_root = "x" %}{% endraw %}{{ repo_root }}"#
+            ),
+            r#"{% raw %}{% set repo_root = "x" %}{% endraw %}{{ repo_path }}"#
+        );
+        assert_eq!(
+            normalize_template_vars("{{ repo_root }}{%+ raw %}{{ repo_root }}{%+ endraw %}"),
+            "{{ repo_path }}{%+ raw %}{{ repo_root }}{%+ endraw %}"
+        );
+    }
+
+    /// A tag the scanner can't terminate leaves the whole template
+    /// unmigrated rather than guessing where it ends. `{% raw %}` content is
+    /// literal to MiniJinja, so a template can parse while holding something
+    /// this scanner reads as an unterminated tag.
+    #[test]
+    fn test_normalize_bails_on_a_tag_it_cannot_terminate() {
+        let template = r#"{{ repo_root }}{% raw %}{{ " {% endraw %}"#;
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "should not rewrite");
+        assert_eq!(result, template);
+    }
+
+    /// Binding detection only looks at the binding keywords — a deprecated
+    /// name merely *used* inside a block tag still migrates.
+    #[test]
+    fn test_normalize_rewrites_names_used_but_not_bound_in_blocks() {
+        assert_eq!(
+            normalize_template_vars("{% if repo_root %}{{ repo_root }}{% endif %}"),
+            "{% if repo_path %}{{ repo_path }}{% endif %}"
+        );
+        assert_eq!(
+            normalize_template_vars("{% for x in repo_root %}{{ x }}{% endfor %}"),
+            "{% for x in repo_path %}{{ x }}{% endfor %}"
+        );
+        assert_eq!(
+            normalize_template_vars("{% set p = repo_root %}{{ p }}"),
+            "{% set p = repo_path %}{{ p }}"
+        );
+        // A value region the target scan must not claim: a `for` filter, a
+        // comparison whose `=` is not an assignment, a collection literal.
+        assert_eq!(
+            normalize_template_vars("{% for x in items if repo_root %}{{ x }}{% endfor %}"),
+            "{% for x in items if repo_path %}{{ x }}{% endfor %}"
+        );
+        assert_eq!(
+            normalize_template_vars(r#"{% set a = repo_root == "x" %}{{ a }}"#),
+            r#"{% set a = repo_path == "x" %}{{ a }}"#
+        );
+        assert_eq!(
+            normalize_template_vars("{% with a = [repo_root, 1] %}{{ a }}{% endwith %}"),
+            "{% with a = [repo_path, 1] %}{{ a }}{% endwith %}"
+        );
+        // A dotted target mutates an attribute of the global rather than
+        // binding it, so the global still migrates.
+        assert_eq!(
+            normalize_template_vars("{% set repo_root.x = 1 %}{{ repo_root }}"),
+            "{% set repo_path.x = 1 %}{{ repo_path }}"
+        );
+        // `set` takes one assignment, so the comma after its `=` builds a
+        // tuple value — the name beside it reads the global and migrates,
+        // unlike the second pair of a `with`.
+        assert_eq!(
+            normalize_template_vars("{% set a = 1, repo_root %}{{ repo_root }}"),
+            "{% set a = 1, repo_path %}{{ repo_path }}"
+        );
+        // A `set` block's filter chain is value too: only `x` is bound, so
+        // the argument and the later global both migrate.
+        assert_eq!(
+            normalize_template_vars("{% set x | default(repo_root) %}b{% endset %}{{ repo_root }}"),
+            "{% set x | default(repo_path) %}b{% endset %}{{ repo_path }}"
+        );
+        // The squash-template migration this must not regress.
+        assert_eq!(
+            normalize_template_vars("{% for c in commits %}{{ c }}{% endfor %}"),
+            "{% for c in commit_details %}{{ c }}{% endfor %}"
+        );
+    }
+
     /// Identifiers inside `{# #}` comments must not be rewritten.
     #[test]
     fn test_normalize_skips_comment_tags() {
@@ -3586,6 +3989,16 @@ hostname = "forge.example"
             "switch = \"x\"\n\n[select]\nheight = \"50%\"\n",
             // empty approved-commands is not deprecated
             "[projects.\"github.com/u/r\"]\napproved-commands = []\n",
+            // a retired name a block binds is not the global, so the
+            // rewriter leaves the whole template alone
+            "worktree-path = \"{{ repo_root }}{% set repo_root = 'x' %}{{ repo_root }}\"\n",
+            // `+` is whitespace control too, so the binding still counts
+            "worktree-path = \"{{ repo_root }}{%+ set repo_root = 'x' %}{{ repo_root }}\"\n",
+            // a parenthesized tuple target binds just as a bare one does
+            "worktree-path = \"{{ repo_root }}{% for (repo_root, x) in items %}{{ repo_root }}{% endfor %}\"\n",
+            // binding the *canonical* name holds the rename back from the
+            // other side
+            "worktree-path = \"{{ repo_root }}{% for repo_path in items %}{{ repo_root }}{% endfor %}\"\n",
             // Live variables whose names merely contain a retired one. The
             // rewrite matches whole identifiers, and it now runs on every
             // load, so a substring match here would mangle a current variable
@@ -3633,6 +4046,13 @@ hostname = "forge.example"
             // list.task-timeout-ms, section and inline forms
             "[projects.\"github.com/u/r\".list]\ntask-timeout-ms = 500\n",
             "[projects.\"github.com/u/r\"]\nlist = { task-timeout-ms = 500 }\n",
+            // the project scope itself written inline, and the whole
+            // `projects` container written inline: the scope walk reaches
+            // both, so the shape doesn't decide whether a rule fires
+            "[projects]\n\"github.com/u/r\" = { merge = { no-ff = true } }\n",
+            "[projects]\n\"github.com/u/r\" = { list = { task-timeout-ms = 500 } }\n",
+            "[projects]\n\"github.com/u/r\" = { select = { timeout-ms = 500 } }\n",
+            "projects = { \"github.com/u/r\" = { switch = { no-cd = true } } }\n",
             // Retired template variables, rewritten on load as well as by
             // update. `main_worktree_path` is the near-miss of the row above
             // it in the table and must reach its own replacement.
@@ -3641,6 +4061,14 @@ hostname = "forge.example"
             "post-start = \"ln -sf {{ main_worktree_path }}/node_modules .\"\n",
             "post-start = \"cp {{ worktree }}/.env .\"\n",
             "[commit.generation]\nsquash-template = \"{{ commits | length }}\"\n",
+            // a `}}` inside a quoted string doesn't end the tag
+            "worktree-path = '{{ \"}} \" ~ repo_root }}'\n",
+            // a binding-shaped tag inside `{% raw %}` binds nothing
+            "worktree-path = \"{% raw %}{% set repo_root = 'x' %}{% endraw %}{{ repo_root }}\"\n",
+            // the comma after a `set`'s `=` starts a tuple value, not a target
+            "worktree-path = \"{% set a = 1, repo_root %}{{ repo_root }}\"\n",
+            // a `set` block's filter chain is value, not target
+            "worktree-path = \"{% set x | default(repo_root) %}b{% endset %}{{ repo_root }}\"\n",
             "[projects.\"github.com/u/r\"]\napproved-commands = [\"npm test\"]\n",
         ];
         for content in rewritten {
@@ -4839,6 +5267,79 @@ no-ff = true
         let result = migrate_content(content);
         assert!(result.contains("ff = false"), "Should migrate: {result}");
         assert!(!result.contains("no-ff"), "Should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_no_ff_inline_project_scope() {
+        // A project entry written inline is the same config as the section
+        // form, so it migrates the same way. `UserProjectOverrides` has no
+        // `no-ff` alias, so an unmigrated key is dropped from the typed value
+        // on load — the setting would silently stop applying.
+        let content = "[projects]\n\"github.com/user/repo\" = { merge = { no-ff = true } }\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "should migrate: {result}");
+        assert!(!result.contains("no-ff"), "should remove no-ff: {result}");
+
+        let config = crate::config::UserConfig::load_from_str(content).unwrap();
+        assert_eq!(
+            config.projects["github.com/user/repo"].merge.ff,
+            Some(false),
+            "the migrated setting should reach the typed config"
+        );
+    }
+
+    #[test]
+    fn test_migrate_no_ff_fully_inline_projects_table() {
+        // ...including when the `projects` container itself is inline.
+        let content = "projects = { \"github.com/user/repo\" = { merge = { no-ff = true } } }\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "should migrate: {result}");
+        assert!(!result.contains("no-ff"), "should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_leaves_unrelated_inline_project_keys_alone() {
+        // The table round-trip an inline scope goes through must not disturb
+        // keys no rule touched, and an entry no rule changed keeps its shape.
+        let content = "[projects]\n\"a/b\" = { worktree-path = \"../{{ branch }}\" }\n\"c/d\" = { merge = { no-ff = true, squash = true } }\n";
+        let result = migrate_content(content);
+        assert!(
+            result.contains("\"a/b\" = { worktree-path = \"../{{ branch }}\" }"),
+            "untouched entry should keep its formatting: {result}"
+        );
+        assert!(result.contains("squash = true"), "should keep: {result}");
+        assert!(result.contains("ff = false"), "should migrate: {result}");
+    }
+
+    #[test]
+    fn test_migrate_leaves_project_entries_that_are_not_tables_alone() {
+        // A project entry can be hand-written as something other than a table.
+        // The scope walk has no scope to offer a rule there, so it skips the
+        // entry and leaves the text for serde's own type error and the
+        // unknown-field check — it must not panic or rewrite.
+        for (content, untouched) in [
+            // a scalar entry
+            (
+                "[projects]\n\"a/b\" = \"scalar\"\n[merge]\nno-ff = true\n",
+                "\"a/b\" = \"scalar\"\n",
+            ),
+            // an array-of-tables entry
+            (
+                "[[projects.\"a/b\"]]\nno-ff = true\n[merge]\nno-ff = true\n",
+                "[[projects.\"a/b\"]]\nno-ff = true\n",
+            ),
+        ] {
+            let result = migrate_content(content);
+            assert!(
+                result.contains(untouched),
+                "the entry should survive unrewritten: {result}"
+            );
+            // The top-level rule still fires, so the walk itself ran.
+            assert!(
+                result.contains("ff = false"),
+                "top-level scope should still migrate: {result}"
+            );
+        }
     }
 
     #[test]

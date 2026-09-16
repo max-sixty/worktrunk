@@ -1325,6 +1325,21 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS PTYs emit ^D (literal caret-D) followed by backspaces (0x08)
     // when EOF is signaled. Linux PTYs don't. Strip these for consistency.
     settings.add_filter(r"\^D\x08+", "");
+
+    // An interactive shell puts each child it forks into its own process
+    // group, and reports a failed `setpgid` on its own stderr:
+    //
+    //     bash: child setpgid (42242 to 42242): Operation not permitted
+    //
+    // Whether that call loses its race with the child's own `setpgid`/exec is
+    // up to host scheduling, so the line appears in a handful of runs and in
+    // none of the others (observed once on macOS CI, actions/runs/35065804093).
+    // It is the shell describing its own job-control bookkeeping, not anything
+    // `wt` wrote, and the bash arm of the wrapper harness folds stderr into
+    // stdout (`exec 2>&1`) so that leaked job-control *notifications* are
+    // visible to tests — those stay visible, since `assert_no_job_control_messages`
+    // matches the `[1] 12345` / `[1]+ Done` shape this filter does not touch.
+    settings.add_filter(r"(?m)^\w+: child setpgid \(\d+ to \d+\): [^\n]*\n?", "");
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
@@ -1352,11 +1367,36 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
 // Tests
 // =============================================================================
 
+/// PTY capture carrying a shell's failed-`setpgid` diagnostic alongside the
+/// job-control notifications the wrapper tests assert on.
+#[cfg(test)]
+const SETPGID_NOISE_SAMPLE: &str = r#"bash: child setpgid (42242 to 42242): Operation not permitted
+[1] 42243
+Switched to worktree for feature-api
+[1]+ Done                    wt hook post-start
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rstest::rstest;
+
+    /// A shell's own failed-`setpgid` diagnostic is host scheduling noise that
+    /// lands in the middle of a PTY snapshot, while the job-control
+    /// *notifications* the wrapper tests watch for must survive the filters.
+    #[test]
+    fn pty_filters_drop_the_setpgid_diagnostic_but_keep_job_control_notices() {
+        let mut settings = insta::Settings::clone_current();
+        add_pty_filters(&mut settings);
+        settings.bind(|| {
+            assert_snapshot!(SETPGID_NOISE_SAMPLE, @r"
+            [1] 42243
+            Switched to worktree for feature-api
+            [1]+ Done                    wt hook post-start
+            ");
+        });
+    }
 
     /// The uplifted `target/debug/wt` is removed and recreated by any
     /// concurrent `cargo build`, so the suite spawns a pinned hardlink
