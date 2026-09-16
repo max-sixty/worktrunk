@@ -3098,7 +3098,10 @@ fn test_pi_install_writes_extension(temp_home: TempDir) {
     let content = fs::read_to_string(&extension_path).expect("Pi extension should be installed");
     assert!(content.contains("@earendil-works/pi-coding-agent"));
     assert!(content.contains("agent_start"));
-    assert!(content.contains("agent_end"));
+    // `agent_settled`, not `agent_end`: Pi documents the former as the event a
+    // status integration waits for, because it may still auto-retry after the
+    // latter. oh-my-pi's hook API has no equivalent and keeps `agent_end`.
+    assert!(content.contains(r#"pi.on("agent_settled""#));
     assert!(content.contains("session_shutdown"));
 }
 

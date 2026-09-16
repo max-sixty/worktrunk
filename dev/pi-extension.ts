@@ -29,7 +29,11 @@ export default function worktrunkActivity(pi: ExtensionAPI): void {
     await run(ctx.cwd, ["set", "🤖"]);
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
+  // `agent_end` is not the end: Pi may auto-retry, auto-compact and retry, or
+  // pick up a queued follow-up message. `agent_settled` is the event Pi
+  // documents for status integrations — it fires once Pi will not continue
+  // running on its own.
+  pi.on("agent_settled", async (_event, ctx) => {
     await run(ctx.cwd, ["set", "💬"]);
   });
 
