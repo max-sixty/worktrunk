@@ -73,7 +73,7 @@ jobs:
         path: cobertura.xml
 
     - name: Upload to codecov.io
-      uses: codecov/codecov-action@v7.0.0
+      uses: codecov/codecov-action@v7.1.0
       with:
         files: cobertura.xml
         # Soft-fail on fork PRs: secrets aren't available there, so we rely on
