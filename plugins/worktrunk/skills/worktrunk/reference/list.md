@@ -125,6 +125,7 @@ Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command �
 Each `[list.custom-columns]` entry in user config adds a column: the key is the header, the template renders each row's cell. Templates read two per-branch namespaces — `{{ vars.* }}`, stored with [`wt config state vars set`](https://worktrunk.dev/config/#wt-config-state-vars), and `{{ git.branch.* }}`, the branch's own git config under `branch.<name>.*` (a `jira` key you set yourself, or the git-native `description`) — useful for tracking what each of many (often agent-driven) branches is for:
 
 ```toml
+# ~/.config/worktrunk/config.toml
 [list.custom-columns.Ticket]
 template = "{{ vars.ticket }}"
 ```

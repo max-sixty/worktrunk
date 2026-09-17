@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use ansi_to_tui::IntoText;
 use anstyle::Reset;
-use color_print::cformat;
+use color_print::{cformat, cstr};
 use dashmap::DashMap;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
@@ -742,7 +742,7 @@ pub(super) struct LocalContent {
     /// (`TaskContext::comparison_base` — the upstream ref when the local default
     /// lags it), so a stale fork default doesn't inflate it. The branch-diff and
     /// summary panes diff against the **same** base
-    /// (`Repository::branch_diff_spec`), so the dimmed number and the pane agree
+    /// (`Repository::branch_diff_spec`), so the dimmed tab and the pane agree
     /// even on a fork whose local default lags upstream.
     branch_diff: Option<bool>,
     /// `upstream`: the branch is ahead of or behind its tracking ref. Combined
@@ -790,10 +790,10 @@ impl LocalContent {
 
 /// Which preview tabs have renderable content for the selected row.
 ///
-/// Empty tabs are de-emphasized in the bar (number dimmed). Skim computes a
-/// preview once per selection and cannot re-query it mid-selection (see
-/// `loading_placeholder`). Two genuine axes drive availability, and `--prs`
-/// touches neither — it only decides whether a PR row is *listed* at all:
+/// Empty tabs are dimmed in the bar. Skim computes a preview once per selection
+/// and cannot re-query it mid-selection (see `loading_placeholder`). Two genuine
+/// axes drive availability, and `--prs` touches neither — it only decides
+/// whether a PR row is *listed* at all:
 ///
 /// - The local-checkout tabs: the three subsidiary diff tabs (`working_tree` /
 ///   `branch_diff` / `upstream`) follow the row's live [`LocalContent`]
@@ -908,6 +908,24 @@ struct Tab {
     has_content: bool,
 }
 
+impl Tab {
+    /// Style the text that speaks for this tab — its label, or in the compact
+    /// bar the bare digit that replaces one — with the bar's two signals (see
+    /// [`render_preview_tabs`]): brightness carries availability (normal = has
+    /// content, dim = empty for this row) and underline carries the active tab.
+    /// Bold reinforces an active tab that has content. An active-but-empty tab
+    /// takes the underline alone, because `[2m[1m` leaves the terminal to pick
+    /// one intensity and the dim is the signal worth keeping.
+    fn styled(&self, text: &str) -> String {
+        match (self.has_content, self.is_active) {
+            (true, true) => cformat!("<bold,underline>{}</>", text),
+            (true, false) => text.to_string(),
+            (false, true) => cformat!("<dim,underline>{}</>", text),
+            (false, false) => cformat!("<dim>{}</>", text),
+        }
+    }
+}
+
 /// Longest preview body handed to skim, in lines.
 ///
 /// skim scrolls the pane through ratatui's `Paragraph::scroll`, whose offset is
@@ -952,25 +970,37 @@ fn cap_preview_lines(mut body: String) -> (String, Option<String>) {
 /// Render the preview tab bar, shared by worktree rows and `--prs` rows.
 ///
 /// Every full-form tab keeps its `N: label` text — only the formatting varies,
-/// so the accelerators stay discoverable. Two **orthogonal** signals carry
-/// through the styling: the **number's** brightness says whether the tab is
-/// selectable (normal = has content, dim = empty for this row — see
-/// `TabAvailability`), and the **label's** weight says whether it's the active
-/// mode (bold = active, dim = inactive). The two compose independently: an empty
-/// tab dims its number whether or not it's selected, but the active tab's label
-/// still bolds — so an active-but-empty tab (dim number, bold label) stays
-/// distinct from an inactive-empty one (dim number, dim label), and the selected
-/// tab is always identifiable even when it has nothing to show (its pane, e.g.
-/// "… has no PR", says the rest).
+/// so the accelerators stay discoverable. The **label** carries two
+/// **orthogonal** signals: **brightness** says whether the tab is selectable
+/// (normal = has content, dim = empty for this row — see `TabAvailability`),
+/// and **underline** marks the active mode. The two compose independently, so
+/// an active-but-empty label (dim, underlined) stays distinct both from an
+/// inactive-empty one (dim) and from an active label that has content (bold,
+/// underlined) — the selected tab is always identifiable even when it has
+/// nothing to show (its pane, e.g. "… has no PR", says the rest).
+///
+/// The accelerator digit and the [`TAB_DIVIDER`]s stay out of it: `alt-N` opens
+/// any tab whatever the row holds, so a digit that dimmed would describe the
+/// label beside it rather than the key, and dividers that didn't dim would be
+/// the brightest thing left on a row whose labels are mostly empty.
+///
+/// Underline is the one attribute this pane spends twice —
+/// [`pr_pane::url_line`] underlines a URL a few rows below the bar — and that's
+/// a decision rather than an oversight: nothing in a preview is clickable, so
+/// neither underline is marking a link, and the alternatives cost more. Reverse
+/// video cancels the dim it would have to compose with, and a leading glyph
+/// shifts every later tab's column as the active one moves.
 ///
 /// **Width adaptation.** skim renders previews with wrapping off (its default),
 /// so a tab bar wider than `width` would truncate on the right — and the `pr` /
 /// `comments` tabs, exactly the ones with content on a `--prs` row, sit at that
 /// end. When the eight full-form tabs don't fit, the bar falls back to a compact
 /// form (`1 2: log 3 …`): every accelerator digit stays visible, but only the
-/// active tab keeps its label. The two style signals survive — empty digits dim,
-/// the active digit+label bolds — so navigation works at any width. `width` is
-/// the preview pane width skim reports.
+/// active tab keeps its label. An inactive tab is then a bare digit with no
+/// label to carry the signals, so there the digit takes the label's styling —
+/// empty digits dim, and the active tab's label still bolds and underlines — so
+/// navigation works at any width. `width` is the preview pane width skim
+/// reports.
 pub(super) fn render_preview_tabs(
     mode: PreviewMode,
     avail: TabAvailability,
@@ -1004,7 +1034,7 @@ pub(super) fn render_preview_tabs(
         render_tab_row_compact(&tabs, reset)
     };
 
-    // Controls use dim cyan to distinguish from the dimmed (white) tabs above.
+    // Controls use dim cyan to distinguish from the white tabs above.
     // The tab numbers above are the alt-N accelerators (bare digits type
     // into the query); Tab/shift-tab cycle the same tabs.
     //
@@ -1027,51 +1057,36 @@ pub(super) fn render_preview_tabs(
     format!("{bar}\n{controls}{reset}\n\n")
 }
 
-/// Full tab bar: `N: label` per tab, ` | `-separated. The number dims when the
-/// tab is empty (not selectable), and the label bolds on the active tab — two
-/// orthogonal signals that compose (see [`render_preview_tabs`]).
+/// The separator between full-form tabs, dim so the labels are what the bar
+/// reads as. A constant because the bar's reset invariant is stated against it
+/// (`test_render_preview_tabs_ansi_codes` splits on it).
+///
+/// It closes its dim with the SGR 22 that `</>` emits rather than with a full
+/// reset — unlike the pane's other styled runs (see `pr_pane::branch_line`),
+/// it sits between two tabs that each end at one, so its own span is all it has
+/// to clear.
+const TAB_DIVIDER: &str = cstr!("<dim> | </>");
+
+/// Full tab bar: `N: ` then the label styled by [`Tab::styled`], tabs joined by
+/// [`TAB_DIVIDER`].
 fn render_tab_row_full(tabs: &[Tab], reset: Reset) -> String {
     tabs.iter()
-        .map(|t| {
-            let number = if t.has_content {
-                format!("{}:", t.number)
-            } else {
-                cformat!("<dim>{}:</>", t.number)
-            };
-            let label = if t.is_active {
-                cformat!("<bold>{}</>", t.label)
-            } else {
-                cformat!("<dim>{}</>", t.label)
-            };
-            format!("{number} {label}{reset}")
-        })
+        .map(|t| format!("{}: {}{reset}", t.number, t.styled(t.label)))
         .collect::<Vec<_>>()
-        .join(" | ")
+        .join(TAB_DIVIDER)
 }
 
 /// Compact tab bar for narrow panes: just the digits, space-separated, with the
-/// active tab keeping its label (`1 2: log 3 …`). The number still dims when
-/// empty and the active digit+label bolds, so both style signals survive and
-/// every accelerator stays visible — only the inactive labels drop.
+/// active tab keeping its label (`1 2: log 3 …`). Styling is [`Tab::styled`]'s,
+/// so both signals survive and every accelerator stays visible — only the
+/// inactive labels drop.
 fn render_tab_row_compact(tabs: &[Tab], reset: Reset) -> String {
     tabs.iter()
         .map(|t| {
             if t.is_active {
-                // Active: `N: label`, with the number bold (and dim too when empty).
-                let number = if t.has_content {
-                    cformat!("<bold>{}:</>", t.number)
-                } else {
-                    cformat!("<dim,bold>{}:</>", t.number)
-                };
-                format!("{number} {}{reset}", cformat!("<bold>{}</>", t.label))
+                format!("{}: {}{reset}", t.number, t.styled(t.label))
             } else {
-                // Inactive: just the digit, dim when empty.
-                let number = if t.has_content {
-                    t.number.to_string()
-                } else {
-                    cformat!("<dim>{}</>", t.number)
-                };
-                format!("{number}{reset}")
+                format!("{}{reset}", t.styled(&t.number.to_string()))
             }
         })
         .collect::<Vec<_>>()
@@ -2045,10 +2060,10 @@ mod tests {
         // Each mode active, on a worktree row whose diffs all have content
         // (uncommitted changes, commits ahead, diverged from upstream) with
         // summaries enabled but no PR (tabs 1-6 available; tabs 7 pr and 8
-        // comments dim). The active mode's label is bold, inactive available
-        // labels dim, and on the `pr` iteration tab 7 is active-but-empty —
-        // exercising the rule that emptiness dims even the active tab. Verifies
-        // labels and structure.
+        // comments dim). The active tab is bold + underlined, inactive available
+        // tabs plain, and on the `pr` iteration tab 7 is active-but-empty —
+        // exercising the rule that emptiness dims even the active tab, which
+        // then carries the underline alone. Verifies labels and structure.
         let wt = TabAvailability::worktree(CONTENT_FULL, true, true, false);
         for (name, mode) in [
             ("unified_diff", PreviewMode::UnifiedDiff),
@@ -2069,7 +2084,7 @@ mod tests {
         // - `empty_all_local_diffs`: every diff *known* empty (clean working tree,
         //   no commits ahead, up to date with a present upstream) — dims tabs 1,
         //   2, 3, 5, plus 6/7/8, leaving only `log`. This is the behavior the diff
-        //   tabs gained: a dimmed number once the diff is known empty.
+        //   tabs gained: a dimmed tab once the diff is known empty.
         // - `pr_row`: a listed-PR row dims the complete/working/committed/
         //   upstream/summary tabs but keeps log/pr/comments.
         assert_snapshot!(
@@ -2857,8 +2872,8 @@ mod tests {
         // pane — the dispatch arm `SkimItem::preview` reaches once the picker-state
         // state selects mode 7. The pane shows the title and the markdown body.
         let pr_pane = row.render_preview(PreviewMode::Pr, WIDE, 24);
-        // Strip ANSI before checking the tab labels: the active `pr` tab is bold,
-        // so `7: pr` is split by an SGR escape in the raw string (the bar's own
+        // Strip ANSI before checking the tab labels: the active `pr` tab is
+        // styled, so `7: pr` carries SGR escapes in the raw string (the bar's own
         // test, `test_render_preview_tabs`, snapshots the styled form).
         let bar = pr_pane.ansi_strip().to_string();
         assert!(bar.contains("7: pr"), "pr tab: {bar:?}");
@@ -3694,9 +3709,9 @@ mod tests {
         // Test that ANSI escape sequences properly reset to prevent style bleeding.
         // The per-tab `{reset}` is appended in the full bar regardless of a
         // tab's internal styling, so the reset/divider counts hold whether a tab
-        // is active (bold label), inactive-available (dim label), or empty (dim
-        // number + label — here tabs 7 pr and 8 comments). WIDE forces the full
-        // (not compact) bar.
+        // is active (bold + underlined label), inactive-available (unstyled, the
+        // one case with no SGR of its own), or empty (dim label — here tabs 7 pr
+        // and 8 comments). WIDE forces the full (not compact) bar.
         let output = render_preview_tabs(
             PreviewMode::WorkingTree,
             TabAvailability::worktree(CONTENT_FULL, true, true, false),
@@ -3707,15 +3722,17 @@ mod tests {
         let second_line = output.lines().nth(1).unwrap();
 
         // Each styled tab should end with a full reset (\x1b[0m) before the divider
-        // This prevents bold/dim from bleeding into the " | " dividers
+        // This prevents bold/dim from bleeding into the dividers, which carry
+        // their own dim and close it themselves.
         let full_reset = "\x1b[0m";
 
         // Count resets - should have one after each of the 8 tabs
         assert_eq!(first_line.matches(full_reset).count(), 8);
 
-        // The sequence should be: style + text + [22m + [0m + divider
-        // Check that dividers come after full resets
-        let parts: Vec<&str> = first_line.split(" | ").collect();
+        // Each segment is the number, then the label with whatever style it
+        // carries, then a full reset — so a divider always follows one, whether
+        // or not the label opened a style of its own.
+        let parts: Vec<&str> = first_line.split(TAB_DIVIDER).collect();
         assert_eq!(parts.len(), 8);
         assert!(parts.iter().all(|part| part.ends_with(full_reset)));
 

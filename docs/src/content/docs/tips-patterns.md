@@ -151,6 +151,7 @@ See [`wt config state vars`](/config/#wt-config-state-vars) for storage format, 
 Reference Taskfile/Justfile/Makefile in hooks:
 
 ```toml
+# .config/wt.toml
 [pre-start]
 "setup" = "task install"
 
@@ -163,6 +164,7 @@ Reference Taskfile/Justfile/Makefile in hooks:
 Split checks across hook types — quick feedback before each commit, expensive suites before merge:
 
 ```toml
+# .config/wt.toml
 [[pre-commit]]
 lint = "npm run lint"
 typecheck = "npm run typecheck"
@@ -179,6 +181,7 @@ build = "npm run build"
 Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:
 
 ```toml
+# .config/wt.toml
 post-merge = """
 if [ {{ target }} = main ]; then
     npm run deploy:production
@@ -231,6 +234,7 @@ $ wt list
 Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](/config/#wt-config-state-vars), then later steps and hooks reference them:
 
 ```toml
+# .config/wt.toml
 [[post-start]]
 set-vars = """
 wt config state vars set \
@@ -270,6 +274,7 @@ To scope environment variables to a worktree — a tool's package path, a profil
 **direnv** — commit `.envrc` at the repo root:
 
 ```sh
+# .envrc
 export MY_PACKAGES_PATH="$PWD/.packages"
 ```
 
@@ -278,6 +283,7 @@ Run `direnv allow` once per worktree to trust the file ([getting started](https:
 **mise** — commit `mise.toml` at the repo root:
 
 ```toml
+# mise.toml
 [env]
 MY_PACKAGES_PATH = "{{ config_root }}/.packages"
 ```
@@ -291,6 +297,7 @@ Both set real environment variables in the shell session, so every child process
 Use [`wt step copy-ignored`](/step/#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
 
 ```toml
+# .config/wt.toml
 [post-start]
 copy = "wt step copy-ignored"
 ```
@@ -298,6 +305,7 @@ copy = "wt step copy-ignored"
 When another hook depends on the copy — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages — sequence them with a `[[post-start]]` pipeline:
 
 ```toml
+# .config/wt.toml
 [[post-start]]
 copy = "wt step copy-ignored"
 
@@ -460,7 +468,7 @@ This lets one agent session hand off work to another that runs in the background
 
 The [worktrunk skill](/claude-code/) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
 
-```markdown
+```markdown title="CLAUDE.md"
 When I ask you to spawn parallel worktrees, use the agent handoff pattern
 from the worktrunk skill.
 ```

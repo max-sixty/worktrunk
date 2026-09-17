@@ -243,6 +243,7 @@ namespaces — [2m{{ vars.* }}[0m, stored with [2mwt config state vars set[0
 you set yourself, or the git-native [2mdescription[0m) — useful for tracking what each
  of many (often agent-driven) branches is for:
 
+[107m [0m [2m# ~/.config/worktrunk/config.toml[0m
 [107m [0m [2m[36m[list.custom-columns.Ticket][0m
 [107m [0m [2mtemplate = [0m[2m[32m"{{ vars.ticket }}"[0m
 

@@ -282,7 +282,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 
 ## My `for-each` or `--execute` alias prints the same value in every worktree
 
-The alias body rendered once at dispatch, baking the variable to the invoking worktree's value before the nested `wt` command iterated. See [deferring expansion to a nested `wt` command](/extending/#deferring-expansion-to-a-nested-wt-command) for how to confirm it and how to defer the variable.
+The alias body rendered once at dispatch, baking the variable to the invoking worktree's value before the nested `wt` command iterated. See [nesting templates](/extending/#nesting-templates) for how to pass the template through unrendered.
 
 ## What system dependencies are required?
 

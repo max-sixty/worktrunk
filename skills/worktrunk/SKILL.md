@@ -100,7 +100,7 @@ Test with `wt switch --create test-hooks`.
 - Create a `wt` alias → `reference/extending.md#aliases`
 - Run a command in every worktree → `reference/step.md#wt-step-for-each`
 - Rebase every worktree (up-style) → `reference/extending.md#recipe-rebase-every-worktree-onto-its-upstream`
-- Defer a template variable to a nested `wt` command → `reference/extending.md#deferring-expansion-to-a-nested-wt-command`
+- Pass a template to a nested `wt` command → `reference/extending.md#nesting-templates`
 
 ## Key commands
 

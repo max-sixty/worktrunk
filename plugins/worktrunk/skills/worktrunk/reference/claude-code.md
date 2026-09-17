@@ -148,7 +148,7 @@ Worktree state comes from the same cells [`wt list`](https://worktrunk.dev/list/
 
 Add to `~/.claude/settings.json`:
 
-```json
+```json title="~/.claude/settings.json"
 {
   "statusLine": {
     "type": "command",
