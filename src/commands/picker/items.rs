@@ -984,6 +984,13 @@ fn cap_preview_lines(mut body: String) -> (String, Option<String>) {
 /// label beside it rather than the key, and dividers that didn't dim would be
 /// the brightest thing left on a row whose labels are mostly empty.
 ///
+/// Underline is the one attribute this pane spends twice —
+/// [`pr_pane::url_line`] underlines a URL a few rows below the bar — and that's
+/// a decision rather than an oversight: nothing in a preview is clickable, so
+/// neither underline is marking a link, and the alternatives cost more. Reverse
+/// video cancels the dim it would have to compose with, and a leading glyph
+/// shifts every later tab's column as the active one moves.
+///
 /// **Width adaptation.** skim renders previews with wrapping off (its default),
 /// so a tab bar wider than `width` would truncate on the right — and the `pr` /
 /// `comments` tabs, exactly the ones with content on a `--prs` row, sit at that

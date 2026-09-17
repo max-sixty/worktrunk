@@ -41,10 +41,10 @@ pub(super) fn header(pr_ref: PrRef, title: Option<&str>) -> String {
 /// A field label (`BRANCH`, `URL`, `DESCRIPTION`, …) in the app's cyan all-caps
 /// title style, rendered through [`format_heading`] so it matches the section
 /// headings across the CLI (`wt config show`, `wt step`, …). A trailing full
-/// `{reset}` closes the span: skim's ANSI parser drops color_print's `</>` (the
-/// SGR 39 `format_heading` itself emits), so the cyan would otherwise bleed into
-/// the value or body (see [`super::items::render_preview_tabs`]). Every label in
-/// the pane goes through this one helper, so they all render identically.
+/// `{reset}` closes the span, the same rule every styled run in a pane follows
+/// (see [`branch_line`]) — the cyan ends at the label whatever the value that
+/// follows it carries. Every label in the pane goes through this one helper, so
+/// they all render identically.
 fn field_label(text: &str) -> String {
     let reset = Reset;
     format!("{}{reset}", format_heading(&text.to_uppercase(), None))
@@ -63,18 +63,22 @@ pub(super) fn metadata_line(label: &str, value: &str) -> String {
 /// for branch identifiers (git and error messages throughout the CLI, the
 /// branch summary in `src/summary.rs`). Both panes build
 /// the line through here so the styling can't drift between them. The trailing
-/// full `{reset}` closes the bold span: skim's ANSI parser drops the SGR 22 that
-/// color_print's `</>` emits, exactly as the `DESCRIPTION` label and the `draft`
-/// state value handle their own closers.
+/// full `{reset}` closes the bold span, the same way the `DESCRIPTION` label and
+/// the `draft` state value close theirs — every styled run in a pane ends at a
+/// full reset, so nothing depends on where the next one starts.
 pub(super) fn branch_line(branch: &str) -> String {
     let reset = Reset;
     metadata_line("branch", &cformat!("<bold>{branch}</>{reset}"))
 }
 
 /// The `URL` metadata line, with the url underlined — the app convention for
-/// inline links and references (hints, the fork-push notice). Both panes build
-/// the line through here so the styling can't drift. The trailing full `{reset}`
-/// closes the underline span (skim drops the SGR 24 that `</>` emits).
+/// inline links and references (hints, the fork-push notice). Nothing in a
+/// preview is clickable — skim parses the pane with `ansi_to_tui`, which keeps
+/// no OSC 8 — so the underline here marks a reference rather than a link, which
+/// is why `render_preview_tabs` can spend the same attribute on the active tab.
+/// Both panes build the line through here so the styling can't drift. The
+/// trailing full `{reset}` closes the underline span, per the full-reset rule
+/// above.
 pub(super) fn url_line(url: &str) -> String {
     let reset = Reset;
     metadata_line("url", &cformat!("<underline>{url}</>{reset}"))
@@ -217,7 +221,7 @@ mod tests {
         let out = branch_line("feature/auth");
         // Bold (SGR 1) wraps the value — the app convention for branch
         // identifiers — closed by a full reset so it doesn't bleed past the
-        // value (skim drops color_print's `</>`).
+        // value.
         assert!(out.contains("\x1b[1m"), "bold value: {out:?}");
         assert!(
             out.contains("\x1b[0m"),

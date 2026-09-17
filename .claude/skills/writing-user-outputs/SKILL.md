@@ -822,7 +822,12 @@ to the render rather than to the cell emitting it: `LayoutConfig::link_style`
 answers it once for a whole row, so a CI reference and a dev-server port can't
 disagree. Two destinations carry no links, and so no underline: a terminal
 without OSC 8 support, where `wt list` prints the dev-server URL in full, and
-the picker, whose rows pass through skim.
+the picker's rows, which pass through skim. Nothing in the picker is clickable —
+skim parses both the rows and the preview pane with `ansi_to_tui`, which keeps
+no OSC 8 — so underline there is free to mean something else, and the preview
+pane spends it twice: on a URL, marking a reference rather than a link
+(`pr_pane::url_line`), and on the active tab in the tab bar
+(`items::render_preview_tabs`).
 
 ## Design Principles
 
