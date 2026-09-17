@@ -1060,6 +1060,11 @@ pub(super) fn render_preview_tabs(
 /// The separator between full-form tabs, dim so the labels are what the bar
 /// reads as. A constant because the bar's reset invariant is stated against it
 /// (`test_render_preview_tabs_ansi_codes` splits on it).
+///
+/// It closes its dim with the SGR 22 that `</>` emits rather than with a full
+/// reset — unlike the pane's other styled runs (see `pr_pane::branch_line`),
+/// it sits between two tabs that each end at one, so its own span is all it has
+/// to clear.
 const TAB_DIVIDER: &str = cstr!("<dim> | </>");
 
 /// Full tab bar: `N: ` then the label styled by [`Tab::styled`], tabs joined by

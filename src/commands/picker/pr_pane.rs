@@ -64,8 +64,10 @@ pub(super) fn metadata_line(label: &str, value: &str) -> String {
 /// branch summary in `src/summary.rs`). Both panes build
 /// the line through here so the styling can't drift between them. The trailing
 /// full `{reset}` closes the bold span, the same way the `DESCRIPTION` label and
-/// the `draft` state value close theirs — every styled run in a pane ends at a
-/// full reset, so nothing depends on where the next one starts.
+/// the `draft` state value close theirs: a run ends at a full reset wherever
+/// what follows it isn't this code's to know — a caller's value, the next line
+/// of the pane. The tab bar's `items::TAB_DIVIDER` is the case where it is
+/// known, and closes only the dim it opened.
 pub(super) fn branch_line(branch: &str) -> String {
     let reset = Reset;
     metadata_line("branch", &cformat!("<bold>{branch}</>{reset}"))
@@ -77,8 +79,7 @@ pub(super) fn branch_line(branch: &str) -> String {
 /// no OSC 8 — so the underline here marks a reference rather than a link, which
 /// is why `render_preview_tabs` can spend the same attribute on the active tab.
 /// Both panes build the line through here so the styling can't drift. The
-/// trailing full `{reset}` closes the underline span, per the full-reset rule
-/// above.
+/// trailing full `{reset}` closes the underline span, per the reset rule above.
 pub(super) fn url_line(url: &str) -> String {
     let reset = Reset;
     metadata_line("url", &cformat!("<underline>{url}</>{reset}"))
