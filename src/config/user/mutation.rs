@@ -93,10 +93,7 @@ impl UserConfig {
             );
             eprint!(
                 "{}",
-                crate::config::deprecation::format_warning_lines(
-                    changes,
-                    crate::config::ConfigFileKind::User.label()
-                )
+                crate::config::deprecation::format_applied_lines(changes)
             );
         }
         Ok(())

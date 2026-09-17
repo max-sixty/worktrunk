@@ -1965,10 +1965,9 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
 /// emit several). The kinds arrive in emission order, so a single pass
 /// reproduces the original output verbatim.
 ///
-/// A config mutation that writes into a migrated file reports what the
-/// migrations did through here too, so every kind is named the same way
-/// wherever it surfaces — including the removals.
-pub(crate) fn format_warning_lines<'a>(
+/// A rewrite that has already happened is named by [`format_applied_lines`]
+/// instead: these lines say what is still outstanding.
+fn format_warning_lines<'a>(
     kinds: impl IntoIterator<Item = &'a DeprecationKind>,
     label: &str,
 ) -> String {
@@ -2080,6 +2079,72 @@ pub(crate) fn format_warning_lines<'a>(
                     ))
                 );
             }
+        }
+    }
+
+    out
+}
+
+/// Render one `warning_message` line per kind, for migrations already applied.
+///
+/// The sibling of [`format_warning_lines`], in the tense the config mutations
+/// need: they report what their write just did to the file, where the load
+/// path's "is deprecated in favor of" and "will be removed" name work still
+/// ahead. Both live here so a new [`DeprecationKind`] is worded in one place.
+pub(crate) fn format_applied_lines<'a>(
+    kinds: impl IntoIterator<Item = &'a DeprecationKind>,
+) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let mut line = |text: String| {
+        let _ = writeln!(out, "{}", warning_message(text));
+    };
+
+    for kind in kinds {
+        match kind {
+            DeprecationKind::TemplateVar { old, new } => line(cformat!(
+                "Renamed template variable <bold>{old}</> to <bold>{new}</>"
+            )),
+            DeprecationKind::CommitGeneration(scopes) => {
+                if scopes.has_top_level {
+                    line(cformat!(
+                        "Moved <bold>[commit-generation]</> to <bold>[commit.generation]</>"
+                    ));
+                }
+                for k in &scopes.project_keys {
+                    line(cformat!(
+                        "Moved <bold>[projects.\"{k}\".commit-generation]</> to <bold>[projects.\"{k}\".commit.generation]</>"
+                    ));
+                }
+            }
+            DeprecationKind::ApprovedCommands => line(cformat!(
+                "Moved <bold>approved-commands</> under <bold>[projects]</> to <bold>approvals.toml</>"
+            )),
+            DeprecationKind::Select(scopes) => {
+                if scopes.has_top_level {
+                    line(cformat!(
+                        "Moved <bold>[select]</> to <bold>[switch.picker]</>"
+                    ));
+                }
+                for k in &scopes.project_keys {
+                    line(cformat!(
+                        "Moved <bold>[projects.\"{k}\".select]</> to <bold>[projects.\"{k}\".switch.picker]</>"
+                    ));
+                }
+            }
+            DeprecationKind::UnsupportedKey { section, key } => line(cformat!(
+                "Removed <bold>{section} {key}</>, which its replacement has no field for"
+            )),
+            DeprecationKind::CiSection => line(cformat!("Moved <bold>[ci]</> to <bold>[forge]</>")),
+            DeprecationKind::NoFf => line(cformat!(
+                "Replaced <bold>merge.no-ff</> with <bold>merge.ff</> (inverted)"
+            )),
+            DeprecationKind::NoCd => line(cformat!(
+                "Replaced <bold>switch.no-cd</> with <bold>switch.cd</> (inverted)"
+            )),
+            DeprecationKind::ListTaskTimeout => line(cformat!(
+                "Removed <bold>list.task-timeout-ms</>, which nothing reads"
+            )),
         }
     }
 
@@ -5030,11 +5095,6 @@ pager = "delta --paging=never"
         );
     }
 
-    /// The silent create-hooks rule renames the deprecated `pre-create`/`post-create`
-    /// keys to canonical `pre-start`/`post-start`, preserving the value shape
-    /// (string, `[table]`, `[[array-of-tables]]`) and the comment above the key,
-    /// at the top level and inside `[projects."..."]` entries written either as
-    /// tables or inline.
     /// `[commit-generation]` migrates into `commit`, which TOML forbids
     /// extending when the file wrote it inline — so it becomes a standard
     /// table, and the line's trailing comment lands after the new header's `]`.
@@ -5054,6 +5114,11 @@ template = "MINE"
         "#);
     }
 
+    /// The silent create-hooks rule renames the deprecated `pre-create`/`post-create`
+    /// keys to canonical `pre-start`/`post-start`, preserving the value shape
+    /// (string, `[table]`, `[[array-of-tables]]`) and the comment above the key,
+    /// at the top level and inside `[projects."..."]` entries written either as
+    /// tables or inline.
     #[test]
     fn test_migrate_create_hooks_renames_every_shape() {
         let content = r#"# install first

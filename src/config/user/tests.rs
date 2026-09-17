@@ -2831,16 +2831,11 @@ fn test_edit_takes_the_migrations_when_one_lands_on_its_path() {
     // `[switch.picker]` has no `height`, so the migration drops it. Every
     // change is reported, which is what the caller's warning prints.
     insta::assert_snapshot!(
-        ansi_str::AnsiStr::ansi_strip(
-            &crate::config::deprecation::format_warning_lines(
-                &changes,
-                crate::config::ConfigFileKind::User.label()
-            )
-        ),
+        ansi_str::AnsiStr::ansi_strip(&crate::config::deprecation::format_applied_lines(&changes)),
         @r"
-    ▲ User config: [commit-generation] is deprecated in favor of [commit.generation]
-    ▲ User config: [select] is deprecated in favor of [switch.picker]
-    ▲ User config: [select] height is no longer supported and will be removed
+    ▲ Moved [commit-generation] to [commit.generation]
+    ▲ Moved [select] to [switch.picker]
+    ▲ Removed [select] height, which its replacement has no field for
     "
     );
     // The migrated file carries every load-path migration, so the unrelated
