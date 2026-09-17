@@ -1,333 +1,177 @@
-//! Config persistence - loading and saving to disk.
+//! Writing a config mutation into the file.
 //!
-//! Handles TOML serialization with formatting (multiline arrays, implicit tables)
-//! and preserves comments when updating existing files via diff-based merge.
+//! A mutation writes the one value it changed, at its key path, into the file
+//! parsed as a `toml_edit` document ([`ConfigEdit`]). The rest of the file keeps
+//! its comments, formatting, key order, values written at their defaults, keys
+//! wt doesn't know, and deprecated spellings the load path migrates in memory.
+//! `cargo add`, uv, and poetry edit user-owned TOML the same way; no library
+//! merges a serialized struct into a document while keeping all of that.
 //!
-//! The existing-file save path diffs the serialized in-memory state against the
-//! file's own config, serialized the same way, and applies only that difference
-//! to the parsed file (see `merge_tables`). This automatically handles any new
-//! fields without manual wiring — if a struct field is serializable, save_to
-//! persists it.
+//! The exception is an edit the load path wouldn't read as written. A load-time
+//! migration that moves config onto the edit's path — a deprecated
+//! `[commit-generation]` onto `[commit.generation]` — declines once the
+//! canonical table exists, so the edit goes into the migrated file instead,
+//! which writes those migrations too ([`ConfigFile::edited`]).
 
-use std::borrow::Cow;
+use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::config::ConfigError;
+use crate::config::Deprecations;
+use crate::config::deprecation::migrate_doc;
+use crate::path::format_path_for_display;
 
 use super::UserConfig;
 
-impl UserConfig {
-    /// Serialize to a document whose nested structs are standard tables.
-    ///
-    /// Two tables are implicit, so they write no bare header: `projects`, which
-    /// writes only its `[projects."…"]` entries, and a `commit` holding only
-    /// subtables, which writes only `[commit.generation]`. The flags go on the
-    /// serialized document, so a header the file already has stays as written.
-    fn to_expanded_document(&self) -> Result<toml_edit::DocumentMut, ConfigError> {
-        let mut doc = toml_edit::ser::to_document(self)
-            .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
-        Self::expand_inline_tables(doc.as_table_mut());
-        if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-            projects.set_implicit(true);
-        }
-        if let Some(commit) = doc.get_mut("commit").and_then(|c| c.as_table_mut())
-            && commit.iter().all(|(_, v)| v.is_table())
-        {
-            commit.set_implicit(true);
-        }
-        Ok(doc)
-    }
+/// One value a config mutation writes: the tables it sits in, its key, and the
+/// value.
+pub(super) struct ConfigEdit<'a> {
+    pub(super) tables: Vec<&'a str>,
+    pub(super) key: &'a str,
+    pub(super) value: Value,
+}
 
-    /// Recursively convert inline tables to standard tables for readability.
+impl ConfigEdit<'_> {
+    /// Set the value in `doc`, leaving everything else as it is.
     ///
-    /// When using `toml_edit::ser::to_document()`, nested structs are serialized as inline tables
-    /// (e.g., `commit = { generation = { command = "..." } }`). This converts them to standard
-    /// multi-line tables for better human readability.
-    fn expand_inline_tables(table: &mut toml_edit::Table) {
-        let keys: Vec<_> = table.iter().map(|(k, _)| k.to_string()).collect();
-        for key in keys {
-            let item = table.get_mut(&key).unwrap();
-            if let Some(inline) = item.as_inline_table() {
-                let mut new_table = inline.clone().into_table();
-                Self::expand_inline_tables(&mut new_table);
-                *item = toml_edit::Item::Table(new_table);
-            }
-        }
-    }
-
-    /// Recursively merge desired state into existing document.
-    ///
-    /// `base` is the file's own config, serialized the same way as `desired`,
-    /// which is that config after the change being saved (`None` where it has
-    /// no table at this path). A key only `base` has is one the change reset.
-    /// A key neither has serializes to nothing — a value written out at its
-    /// default, an empty section — or is one serde doesn't know (a typo, a
-    /// field from a newer version); the change didn't touch it, so it stays.
-    ///
-    /// - Keys in desired but not existing: inserted
-    /// - Keys in existing and base but not desired: removed
-    /// - Both standard tables: recurse (preserves existing formatting and comments)
-    /// - Existing inline table, desired standard table: merge through the same
-    ///   recursive path, so the nested `base` applies; the inline format is kept
-    ///   when that merge changed nothing
-    /// - A pipeline: compared in the spelling the file uses (see
-    ///   `in_existing_spelling`), as is its `base`; `[[…]]` blocks merge block by
-    ///   block
-    /// - Both exist, values differ: update existing to desired
-    /// - Both exist, values equal: leave existing unchanged (preserves comments)
-    fn merge_tables(
-        existing: &mut toml_edit::Table,
-        desired: &toml_edit::Table,
-        base: Option<&toml_edit::Table>,
-    ) {
-        let stale_keys: Vec<_> = existing
-            .iter()
-            .map(|(k, _)| k.to_string())
-            .filter(|k| !desired.contains_key(k) && base.is_some_and(|b| b.contains_key(k)))
-            .collect();
-        for key in &stale_keys {
-            existing.remove(key);
-        }
-
-        for (key, desired_item) in desired.iter() {
-            let desired_item = &*Self::in_existing_spelling(existing.get(key), desired_item);
-            let base_item = base
-                .and_then(|b| b.get(key))
-                .map(|item| Self::in_existing_spelling(existing.get(key), item));
-            let nested_base = base_item.as_deref().and_then(toml_edit::Item::as_table);
-
-            // Existing inline table, desired standard table: merge into a table
-            // view so the same nested preservation applies as in the
-            // standard-table branch, then write back only if that changed
-            // something — an untouched inline table keeps its formatting. The
-            // rewrite takes `desired`'s implicit flag, so it writes no bare
-            // header a table the save inserted wouldn't.
-            if let Some(desired_table) = desired_item.as_table()
-                && let Some(as_table) = existing
-                    .get(key)
-                    .and_then(|item| item.as_inline_table())
-                    .map(|inline| inline.clone().into_table())
-            {
-                let mut merged = as_table.clone();
-                Self::merge_tables(&mut merged, desired_table, nested_base);
-                merged.set_implicit(desired_table.is_implicit());
-                if !Self::tables_equal(&as_table, &merged) {
-                    crate::config::replace_inline_with_table(existing, key, merged);
+    /// An existing value is replaced in place and keeps its decor — the spacing
+    /// after `=` and a trailing comment. A missing table is created implicit, so
+    /// it writes no header of its own (`[commit.generation]`, not `[commit]`
+    /// above it), or inline inside an inline table, which can't hold a standard
+    /// one. An existing table is edited in whatever form the file writes it:
+    /// standard, inline, or dotted keys.
+    pub(super) fn apply(&self, doc: &mut DocumentMut) -> Result<(), ConfigError> {
+        let mut table: &mut dyn TableLike = doc.as_table_mut();
+        let mut inline = false;
+        for &name in &self.tables {
+            let item = table.entry(name).or_insert_with(|| {
+                if inline {
+                    Item::Value(Value::InlineTable(Default::default()))
+                } else {
+                    let mut implicit = Table::new();
+                    implicit.set_implicit(true);
+                    Item::Table(implicit)
                 }
-                continue;
-            }
-
-            match existing.get_mut(key) {
-                // Both standard tables: recurse
-                Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
-                    Self::merge_tables(
-                        existing_item.as_table_mut().unwrap(),
-                        desired_item.as_table().unwrap(),
-                        nested_base,
-                    );
-                }
-                // Both `[[…]]` blocks, as many of each: merge block by block, so
-                // each block keeps its comments and formatting
-                Some(toml_edit::Item::ArrayOfTables(blocks))
-                    if desired_item
-                        .as_array_of_tables()
-                        .is_some_and(|desired_blocks| desired_blocks.len() == blocks.len()) =>
-                {
-                    let desired_blocks = desired_item.as_array_of_tables().unwrap();
-                    let base_blocks = base_item
-                        .as_deref()
-                        .and_then(toml_edit::Item::as_array_of_tables);
-                    for (i, (block, desired_block)) in
-                        blocks.iter_mut().zip(desired_blocks.iter()).enumerate()
-                    {
-                        Self::merge_tables(
-                            block,
-                            desired_block,
-                            base_blocks.and_then(|b| b.get(i)),
-                        );
-                    }
-                }
-                Some(existing_item) => {
-                    if !Self::items_equal(existing_item, desired_item) {
-                        Self::replace_keeping_decor(existing_item, desired_item);
-                    }
-                }
-                None => {
-                    existing[key] = desired_item.clone();
-                }
-            }
-        }
-    }
-
-    /// Re-spell a desired hook pipeline the way the file already writes it.
-    ///
-    /// A pipeline serializes in one spelling whatever the file used: one step as
-    /// its lone table, more as an inline array of tables. The file may write
-    /// either as `[[post-start]]` blocks — the documented form — or as an inline
-    /// array. Compared as serialized, an untouched pipeline reads as changed on
-    /// every save, and the rewrite moves it to the serialized spelling and drops
-    /// the comments on its blocks. So desired steps become blocks where the file
-    /// has blocks, and a lone step becomes a one-element array where the file has
-    /// an inline array; anything else stays as serialized. Only a pipeline meets
-    /// its serialized form in these shapes, so the match keys on shape alone.
-    fn in_existing_spelling<'a>(
-        existing: Option<&toml_edit::Item>,
-        desired: &'a toml_edit::Item,
-    ) -> Cow<'a, toml_edit::Item> {
-        use toml_edit::{Array, ArrayOfTables, Item, Value};
-        match (existing, desired) {
-            (Some(Item::ArrayOfTables(_)), Item::Table(step)) => {
-                let mut blocks = ArrayOfTables::new();
-                blocks.push(step.clone());
-                Cow::Owned(Item::ArrayOfTables(blocks))
-            }
-            (Some(Item::ArrayOfTables(_)), Item::Value(Value::Array(steps)))
-                if steps.iter().all(Value::is_inline_table) =>
-            {
-                let mut blocks = ArrayOfTables::new();
-                for step in steps.iter().filter_map(Value::as_inline_table) {
-                    blocks.push(step.clone().into_table());
-                }
-                Cow::Owned(Item::ArrayOfTables(blocks))
-            }
-            (Some(Item::Value(Value::Array(_))), Item::Table(step)) => {
-                let mut steps = Array::new();
-                steps.push(step.clone().into_inline_table());
-                Cow::Owned(Item::Value(Value::Array(steps)))
-            }
-            _ => Cow::Borrowed(desired),
-        }
-    }
-
-    /// Overwrite an item, keeping the value's own decor — the spacing after `=`
-    /// and the trailing comment after the value.
-    ///
-    /// Comments and blank lines *above* the line sit on the key's leaf decor,
-    /// which a value replacement never touches. The trailing comment sits on the
-    /// value, so replacing the item wholesale drops it: whenever a save changes
-    /// a value, and — since template-variable migration became `Structural` —
-    /// on a line the command never touched, because every load rewrites retired
-    /// names and the next unrelated mutation (declining the commit-generation
-    /// offer, say) finds that line changed. An inline table turning into a
-    /// standard one takes the other path, `replace_inline_with_table`, which
-    /// moves decor onto the header.
-    fn replace_keeping_decor(existing_item: &mut toml_edit::Item, desired_item: &toml_edit::Item) {
-        let decor = existing_item.as_value().map(|v| v.decor().clone());
-        *existing_item = desired_item.clone();
-        if let Some(decor) = decor
-            && let Some(value) = existing_item.as_value_mut()
-        {
-            *value.decor_mut() = decor;
-        }
-    }
-
-    /// Compare two Items for value equality, ignoring formatting and comments.
-    fn items_equal(a: &toml_edit::Item, b: &toml_edit::Item) -> bool {
-        match (a, b) {
-            (toml_edit::Item::Value(va), toml_edit::Item::Value(vb)) => Self::values_equal(va, vb),
-            (toml_edit::Item::Table(ta), toml_edit::Item::Table(tb)) => Self::tables_equal(ta, tb),
-            _ => false,
-        }
-    }
-
-    /// Compare two Values for equality, ignoring formatting.
-    ///
-    /// A variant with no arm of its own answers "not equal" for a value that
-    /// never changed, and in the inline-table branch of `merge_tables` "not
-    /// equal" is what rewrites the user's inline section as a standard table.
-    /// So the mismatched-variant arm spells out every variant instead of using
-    /// `_`: adding one to `toml_edit::Value` is then a compile error here
-    /// rather than a section that silently stops keeping its formatting.
-    fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
-        use toml_edit::Value;
-        match (a, b) {
-            (Value::String(a), Value::String(b)) => a.value() == b.value(),
-            (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
-            (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
-            (Value::Float(a), Value::Float(b)) => a.value() == b.value(),
-            (Value::Datetime(a), Value::Datetime(b)) => a.value() == b.value(),
-            (Value::InlineTable(a), Value::InlineTable(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .all(|(k, v)| b.get(k).is_some_and(|bv| Self::values_equal(v, bv)))
-            }
-            (Value::Array(a), Value::Array(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(a, b)| Self::values_equal(a, b))
-            }
-            // Two different variants. Exhaustive on purpose — see above.
-            (
-                Value::String(_)
-                | Value::Integer(_)
-                | Value::Float(_)
-                | Value::Boolean(_)
-                | Value::Datetime(_)
-                | Value::Array(_)
-                | Value::InlineTable(_),
-                _,
-            ) => false,
-        }
-    }
-
-    fn tables_equal(a: &toml_edit::Table, b: &toml_edit::Table) -> bool {
-        a.len() == b.len()
-            && a.iter()
-                .all(|(k, v)| b.get(k).is_some_and(|bv| Self::items_equal(v, bv)))
-    }
-
-    /// Save the current configuration to a specific file path.
-    ///
-    /// Preserves comments and formatting in the existing file by diffing the
-    /// serialized in-memory state against the parsed file and merging only
-    /// changed keys. A key is removed only when the change being saved reset
-    /// it (see `merge_tables`), so a value written out at its default keeps
-    /// its line, and schema-unknown keys at any nesting level (typos, fields
-    /// from newer wt versions) survive — older wt versions don't silently
-    /// strip forward-compatible config data. An existing file that doesn't
-    /// parse as a config fails the save.
-    pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ConfigError(format!("Failed to create config directory: {}", e)))?;
+            });
+            inline = item.is_inline_table();
+            table = item.as_table_like_mut().ok_or_else(|| {
+                ConfigError(format!(
+                    "Failed to write config file: `{name}` is not a table"
+                ))
+            })?;
         }
 
-        let toml_string = if config_path.exists() {
-            let existing_content = std::fs::read_to_string(config_path)
-                .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
-
-            let mut existing_doc: toml_edit::DocumentMut = existing_content
-                .parse()
-                .map_err(|e| ConfigError(format!("Failed to parse config file: {}", e)))?;
-            // Both configs below name these hooks only canonically.
-            crate::config::deprecation::canonicalize_hook_keys(&mut existing_doc);
-
-            let desired_doc = self.to_expanded_document()?;
-
-            // Parsed the way `with_locked_mutation` reloads it, so this
-            // differs from `desired` only by the change being saved.
-            let migrated = crate::config::deprecation::migrate_content(&existing_content);
-            let file_config: UserConfig = toml::from_str(&migrated)
-                .map_err(|e| ConfigError(format!("Failed to parse config file: {e}")))?;
-            let base_doc = file_config.to_expanded_document()?;
-
-            Self::merge_tables(
-                existing_doc.as_table_mut(),
-                desired_doc.as_table(),
-                Some(base_doc.as_table()),
-            );
-
-            existing_doc.to_string()
-        } else {
-            self.to_expanded_document()?.to_string()
-        };
-
-        crate::config::ensure_config_parses(&toml_string)?;
-        crate::utils::write_atomically(config_path, &toml_string)
-            .map_err(|e| ConfigError(format!("Failed to write config file: {}", e)))?;
-
+        let mut value = self.value.clone();
+        match table.get_mut(self.key) {
+            Some(Item::Value(existing)) => {
+                *value.decor_mut() = existing.decor().clone();
+                *existing = value;
+            }
+            _ => {
+                table.insert(self.key, Item::Value(value));
+            }
+        }
         Ok(())
     }
+}
+
+/// The user config file as a mutation reads it: the document to edit and the
+/// config it loads as.
+pub(super) struct ConfigFile {
+    doc: DocumentMut,
+    pub(super) config: UserConfig,
+}
+
+impl ConfigFile {
+    /// Read and parse the file; a missing file is an empty document holding the
+    /// default config.
+    pub(super) fn read(path: &std::path::Path) -> Result<Self, ConfigError> {
+        if !path.exists() {
+            return Ok(Self {
+                doc: DocumentMut::new(),
+                config: UserConfig::default(),
+            });
+        }
+
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            ConfigError(format!(
+                "Failed to read config file {}: {}",
+                format_path_for_display(path),
+                e
+            ))
+        })?;
+        let parse_error = |e: String| {
+            ConfigError(format!(
+                "Failed to parse config file {}: {}",
+                format_path_for_display(path),
+                e
+            ))
+        };
+        let doc: DocumentMut = content
+            .parse()
+            .map_err(|e: toml_edit::TomlError| parse_error(e.to_string()))?;
+        let config = load(&doc).map_err(|e| parse_error(e.to_string()))?;
+        Ok(Self { doc, config })
+    }
+
+    /// The file's content with `edit` applied, such that it loads as `expected`.
+    ///
+    /// The edit goes into the file as written when that loads as `expected`.
+    /// Otherwise a load-time migration touches the edit's path — a deprecated
+    /// `[commit-generation]` migrates to `[commit.generation]` only while that
+    /// table is absent — and the edit goes into the migrated file, which loads
+    /// as `expected` by construction: the migrations are idempotent and the
+    /// edit lands after them. That file carries *every* load-path migration,
+    /// not just the one on the edit's path, so it can also move an unrelated
+    /// deprecated section and drop the keys its destination has no field for.
+    /// A mutation is otherwise not what materializes migrations —
+    /// `wt config update` is — so [`Edited::Migrated`] says so, and its caller
+    /// tells the user.
+    pub(super) fn edited(
+        &self,
+        edit: &ConfigEdit,
+        expected: &UserConfig,
+    ) -> Result<Edited, ConfigError> {
+        let mut doc = self.doc.clone();
+        edit.apply(&mut doc)?;
+        if load(&doc).is_ok_and(|config| &config == expected) {
+            return Ok(Edited::AsWritten(doc.to_string()));
+        }
+
+        let mut doc = self.doc.clone();
+        let changes = migrate_doc(&mut doc);
+        edit.apply(&mut doc)?;
+        Ok(Edited::Migrated {
+            content: doc.to_string(),
+            changes,
+        })
+    }
+}
+
+/// A config file with an edit applied, and whether writing it took the load-path
+/// migrations with it.
+pub(super) enum Edited {
+    AsWritten(String),
+    /// The migrations came too, `changes` reporting each one — the sections
+    /// they moved and the keys they removed.
+    Migrated {
+        content: String,
+        changes: Deprecations,
+    },
+}
+
+impl Edited {
+    pub(super) fn content(&self) -> &str {
+        match self {
+            Self::AsWritten(content) | Self::Migrated { content, .. } => content,
+        }
+    }
+}
+
+/// The config a document loads as, after the load-time migrations.
+fn load(doc: &DocumentMut) -> Result<UserConfig, toml::de::Error> {
+    let mut migrated = doc.clone();
+    migrate_doc(&mut migrated);
+    toml::from_str(&migrated.to_string())
 }
 
 // =========================================================================

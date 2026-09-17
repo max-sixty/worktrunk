@@ -1031,13 +1031,56 @@ fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
     }
 }
 
+/// Replace a key's inline-table value with a standard table, carrying the line's
+/// comments onto the table header.
+///
+/// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
+/// preceded the line — comments, blank lines — plus the space before `=`. A
+/// standard table renders that decor *inside* its brackets, so leaving it in
+/// place writes `[# comment\nmerge ]`: a config file wt can no longer parse,
+/// and the user's own comment is what breaks it. Move the prefix to the header
+/// and drop the rest.
+///
+/// A trailing comment after the closing brace sits in the inline value's own
+/// decor, which `InlineTable::into_table` discards, so it is read from
+/// `existing` before the replacement and lands after the header's `]`. It is
+/// carried only when it holds a comment; bare whitespace there would just trail
+/// the header.
+fn replace_inline_with_table(
+    existing: &mut toml_edit::Table,
+    key: &str,
+    mut table: toml_edit::Table,
+) {
+    let prefix = existing
+        .key(key)
+        .and_then(|k| k.leaf_decor().prefix())
+        .filter(|prefix| prefix.as_str() != Some(""))
+        .cloned();
+    let suffix = existing
+        .get(key)
+        .and_then(|item| item.as_inline_table())
+        .and_then(|inline| inline.decor().suffix())
+        .filter(|suffix| suffix.as_str().is_some_and(|s| s.contains('#')))
+        .cloned();
+    if let Some(prefix) = prefix {
+        table.decor_mut().set_prefix(prefix);
+    }
+    if let Some(suffix) = suffix {
+        table.decor_mut().set_suffix(suffix);
+    }
+    if let Some(mut key_mut) = existing.key_mut(key) {
+        key_mut.leaf_decor_mut().clear();
+    }
+    existing[key] = toml_edit::Item::Table(table);
+}
+
 /// Ensure a table-like parent is writable as a standard table.
 ///
 /// Inline tables can deserialize like tables, but TOML forbids extending them
 /// with later subtables. Convert before inserting migrated nested sections so
 /// existing inline parent fields survive alongside the new child table.
 ///
-/// The conversion goes through [`super::replace_inline_with_table`] so the
+/// The conversion goes through [`replace_inline_with_table`] so the
 /// key's leading comments and blank lines land above the header rather than
 /// inside its brackets. These rules run on the load path, so a header the key's
 /// decor broke is a config file that stops parsing on every command, not just
@@ -1057,7 +1100,7 @@ fn ensure_standard_table_parent<'a>(
         .and_then(|item| item.as_inline_table())
         .cloned()
     {
-        super::replace_inline_with_table(table, key, inline.into_table());
+        replace_inline_with_table(table, key, inline.into_table());
     }
     table.get_mut(key)?.as_table_mut()
 }
@@ -1429,14 +1472,20 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     apply_rules(doc, RulePass::Load, &mut Vec::new())
 }
 
+/// Apply the load-path migrations to `doc`, reporting what they changed.
+///
+/// The config mutations use this where [`migrate_content_doc`]'s bool isn't
+/// enough: writing an edit into a migrated file removes the keys the
+/// destinations have no field for, which the mutation names to the user.
+pub(crate) fn migrate_doc(doc: &mut toml_edit::DocumentMut) -> Deprecations {
+    let mut deprecations = Vec::new();
+    apply_rules(doc, RulePass::Load, &mut deprecations);
+    deprecations
+}
+
 /// Rename the `pre-create`/`post-create` hook aliases to `pre-start`/`post-start`,
 /// in every config scope (see [`for_each_config_table_mut`]).
-///
-/// Config saves run this on the file they merge into too
-/// (`UserConfig::save_to`): the config being saved serializes only the
-/// canonical names, so a hook left under its alias would be written a second
-/// time beside it, and serde rejects the duplicate on the next load.
-pub(crate) fn canonicalize_hook_keys(doc: &mut toml_edit::DocumentMut) -> bool {
+fn canonicalize_hook_keys(doc: &mut toml_edit::DocumentMut) -> bool {
     for_each_config_table_mut(doc, |_, table| {
         let pre = rename_hook_key(table, "pre-create", "pre-start");
         let post = rename_hook_key(table, "post-create", "post-start");
@@ -1912,6 +1961,9 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
 /// Render one `warning_message` line per kind (the commit-generation kind can
 /// emit several). The kinds arrive in emission order, so a single pass
 /// reproduces the original output verbatim.
+///
+/// A rewrite that has already happened is named by [`format_applied_lines`]
+/// instead: these lines say what is still outstanding.
 fn format_warning_lines<'a>(
     kinds: impl IntoIterator<Item = &'a DeprecationKind>,
     label: &str,
@@ -2024,6 +2076,72 @@ fn format_warning_lines<'a>(
                     ))
                 );
             }
+        }
+    }
+
+    out
+}
+
+/// Render one `warning_message` line per kind, for migrations already applied.
+///
+/// The sibling of [`format_warning_lines`], in the tense the config mutations
+/// need: they report what their write just did to the file, where the load
+/// path's "is deprecated in favor of" and "will be removed" name work still
+/// ahead. Both live here so a new [`DeprecationKind`] is worded in one place.
+pub(crate) fn format_applied_lines<'a>(
+    kinds: impl IntoIterator<Item = &'a DeprecationKind>,
+) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let mut line = |text: String| {
+        let _ = writeln!(out, "{}", warning_message(text));
+    };
+
+    for kind in kinds {
+        match kind {
+            DeprecationKind::TemplateVar { old, new } => line(cformat!(
+                "Renamed template variable <bold>{old}</> to <bold>{new}</>"
+            )),
+            DeprecationKind::CommitGeneration(scopes) => {
+                if scopes.has_top_level {
+                    line(cformat!(
+                        "Moved <bold>[commit-generation]</> to <bold>[commit.generation]</>"
+                    ));
+                }
+                for k in &scopes.project_keys {
+                    line(cformat!(
+                        "Moved <bold>[projects.\"{k}\".commit-generation]</> to <bold>[projects.\"{k}\".commit.generation]</>"
+                    ));
+                }
+            }
+            DeprecationKind::ApprovedCommands => line(cformat!(
+                "Moved <bold>approved-commands</> under <bold>[projects]</> to <bold>approvals.toml</>"
+            )),
+            DeprecationKind::Select(scopes) => {
+                if scopes.has_top_level {
+                    line(cformat!(
+                        "Moved <bold>[select]</> to <bold>[switch.picker]</>"
+                    ));
+                }
+                for k in &scopes.project_keys {
+                    line(cformat!(
+                        "Moved <bold>[projects.\"{k}\".select]</> to <bold>[projects.\"{k}\".switch.picker]</>"
+                    ));
+                }
+            }
+            DeprecationKind::UnsupportedKey { section, key } => line(cformat!(
+                "Removed <bold>{section} {key}</>, which its replacement has no field for"
+            )),
+            DeprecationKind::CiSection => line(cformat!("Moved <bold>[ci]</> to <bold>[forge]</>")),
+            DeprecationKind::NoFf => line(cformat!(
+                "Replaced <bold>merge.no-ff</> with <bold>merge.ff</> (inverted)"
+            )),
+            DeprecationKind::NoCd => line(cformat!(
+                "Replaced <bold>switch.no-cd</> with <bold>switch.cd</> (inverted)"
+            )),
+            DeprecationKind::ListTaskTimeout => line(cformat!(
+                "Removed <bold>list.task-timeout-ms</>, which nothing reads"
+            )),
         }
     }
 
@@ -4974,6 +5092,25 @@ pager = "delta --paging=never"
         );
     }
 
+    /// `[commit-generation]` migrates into `commit`, which TOML forbids
+    /// extending when the file wrote it inline — so it becomes a standard
+    /// table, and the line's trailing comment lands after the new header's `]`.
+    #[test]
+    fn test_migrate_carries_an_inline_parent_comment_onto_its_header() {
+        let content = r#"commit = { stage = "all" }  # how to stage
+
+[commit-generation]
+template = "MINE"
+"#;
+        insta::assert_snapshot!(migrate_content(content), @r#"
+        [commit]  # how to stage
+        stage = "all"
+
+        [commit.generation]
+        template = "MINE"
+        "#);
+    }
+
     /// The silent create-hooks rule renames the deprecated `pre-create`/`post-create`
     /// keys to canonical `pre-start`/`post-start`, preserving the value shape
     /// (string, `[table]`, `[[array-of-tables]]`) and the comment above the key,
@@ -5193,6 +5330,48 @@ timeout-ms = 500
         ▲ User config: merge.no-ff is deprecated in favor of merge.ff (inverted)
         ▲ User config: switch.no-cd is deprecated in favor of switch.cd (inverted)
         ▲ User config: list.task-timeout-ms is no longer used — list.timeout-ms bounds the collect phase
+        "#);
+    }
+
+    /// The same kinds as above, in the tense a config mutation reports its
+    /// write in — the second half of what "Adding a deprecation" words.
+    #[test]
+    fn test_format_applied_lines_all_kinds() {
+        let kinds = vec![
+            DeprecationKind::TemplateVar {
+                old: "repo_root",
+                new: "repo_path",
+            },
+            DeprecationKind::CommitGeneration(ScopedSections {
+                has_top_level: true,
+                project_keys: vec!["github.com/user/repo".to_string()],
+            }),
+            DeprecationKind::ApprovedCommands,
+            DeprecationKind::Select(ScopedSections {
+                has_top_level: true,
+                project_keys: vec!["github.com/user/repo".to_string()],
+            }),
+            DeprecationKind::UnsupportedKey {
+                section: "[select]".to_string(),
+                key: "height".to_string(),
+            },
+            DeprecationKind::CiSection,
+            DeprecationKind::NoFf,
+            DeprecationKind::NoCd,
+            DeprecationKind::ListTaskTimeout,
+        ];
+        assert_snapshot!(format_applied_lines(&kinds).ansi_strip(), @r#"
+        ▲ Renamed template variable repo_root to repo_path
+        ▲ Moved [commit-generation] to [commit.generation]
+        ▲ Moved [projects."github.com/user/repo".commit-generation] to [projects."github.com/user/repo".commit.generation]
+        ▲ Moved approved-commands under [projects] to approvals.toml
+        ▲ Moved [select] to [switch.picker]
+        ▲ Moved [projects."github.com/user/repo".select] to [projects."github.com/user/repo".switch.picker]
+        ▲ Removed [select] height, which its replacement has no field for
+        ▲ Moved [ci] to [forge]
+        ▲ Replaced merge.no-ff with merge.ff (inverted)
+        ▲ Replaced switch.no-cd with switch.cd (inverted)
+        ▲ Removed list.task-timeout-ms, which nothing reads
         "#);
     }
 
