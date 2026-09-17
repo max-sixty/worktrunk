@@ -1367,7 +1367,7 @@ pub fn collect(
     // Calculate layout from items (worktrees, local branches, and remote branches).
     // The picker passes an explicit width because the list only gets part of the
     // terminal — the rest belongs to the preview pane — and takes its rows
-    // link-free because skim mangles OSC 8 (see `Destination`).
+    // link-free (see `LinkStyle::Unlinked`).
     let width = list_width.or_else(terminal_width).unwrap_or(usize::MAX);
     let destination = if progressive_handler.is_some() {
         super::layout::Destination::picker(width)

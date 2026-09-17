@@ -679,7 +679,7 @@ pub enum LinkStyle {
     /// itself inside the escape.
     Linked,
     /// The same short text, with neither escape nor underline: a picker row is
-    /// parsed by `ansi_to_tui` (`items::parse_ansi_line`), whose OSC arm reads
+    /// parsed by `ansi_to_tui` (`items::ansi_to_line`), whose OSC arm reads
     /// to a BEL, while `osc8` terminates a link with ST — so the parser runs
     /// off the end of the line and takes the link's own text with it. Nothing
     /// on those rows is clickable, so nothing is underlined.
@@ -711,7 +711,8 @@ impl LinkStyle {
 /// The two travel together because one fact decides both. `wt list` writes to
 /// the terminal, so it gets the full width and its escapes arrive intact. The
 /// picker hands its rows to skim, which grants the list only part of the
-/// terminal — the rest is the preview pane — and mangles OSC 8 on the way.
+/// terminal — the rest is the preview pane — and takes them link-free
+/// ([`LinkStyle::Unlinked`] has the reason).
 #[derive(Clone, Copy, Debug)]
 pub struct Destination {
     pub width: usize,
