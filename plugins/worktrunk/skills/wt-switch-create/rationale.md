@@ -206,8 +206,8 @@ cross-repo entry after `cd`, both reported "Allowed by PermissionRequest hook"
 with no dialog, and the launch repo's marker still read 🤖 afterwards. The same
 cross-repo call without the `cd` showed the dialog and set 💬, and so did a
 worktree registered off the template path. An approved entry into the main
-working tree, which sits at the default branch's expected path, was still
-refused by the tool.
+worktree, which sits at the default branch's expected path, was still refused
+by the tool.
 
 ### How they compose
 
@@ -315,11 +315,11 @@ exits 1 with empty stdout.
 - A pinned or already-in-worktree session can't even re-enter a *same-repo*
   sibling worktree (the stricter `.claude/worktrees/` check); it lands in the
   same reachability test and the same escalation.
-- Where the plugin's hooks don't run, or the target is off the `worktree-path`
-  template (an existing branch whose worktree lives elsewhere, a detached
-  worktree), step 3's entry
-  asks the user to confirm, once per call, and a background session waits at
-  it until someone attaches (M2). `permissions.allow` can't answer it.
+- Where the plugin's hooks don't run, or the worktree is off the
+  `worktree-path` template (an existing branch whose worktree lives elsewhere,
+  a detached worktree), step 3's entry asks the user to confirm, once per call,
+  and a background session waits at it until someone attaches (M2).
+  `permissions.allow` can't answer it.
 - A subagent's `cd` doesn't carry to its next call, and it gets no reset notice
   (M1), so from a subagent step 3 can't enter another repo's worktree: the
   entry reaches the hook with the subagent's own repo as `cwd`.

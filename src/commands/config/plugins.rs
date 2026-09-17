@@ -123,22 +123,23 @@ struct PermissionRequest {
 /// `.claude/worktrees/`, which in worktrunk's layout is every worktree, and a
 /// background session waits at that dialog until someone attaches. This
 /// extends Claude Code's exemption to worktrunk's managed location: it prints
-/// the `allow` decision when the target is a worktree of the repository the
-/// payload's `cwd` is in, sitting at the path the `worktree-path` template
-/// gives its branch. Every other payload exits 1 with nothing on stdout, so the
-/// dialog appears and the hook command's `||` sets the 💬 marker.
+/// the `allow` decision when the call's `path` names a worktree of the
+/// repository the payload's `cwd` is in, sitting at the path the
+/// `worktree-path` template gives its branch. Every other payload exits 1 with
+/// nothing on stdout, so the dialog appears and the hook command's `||` sets
+/// the 💬 marker.
 pub fn handle_claude_approve_enter_worktree() -> anyhow::Result<()> {
     let request: PermissionRequest = serde_json::from_reader(std::io::stdin().lock())
         .context("Failed to parse PermissionRequest payload")?;
 
     if request.tool_name == "EnterWorktree"
-        && let Some(target) = request.tool_input.get("path").and_then(|p| p.as_str())
+        && let Some(path) = request.tool_input.get("path").and_then(|p| p.as_str())
     {
-        let target = request.cwd.join(target);
+        let path = request.cwd.join(path);
         let repo = Repository::at(&request.cwd)?;
         let config = repo.user_config();
         let managed = repo.list_worktrees()?.iter().any(|wt| {
-            paths_match(&wt.path, &target) && is_worktree_at_expected_path(wt, &repo, config)
+            paths_match(&wt.path, &path) && is_worktree_at_expected_path(wt, &repo, config)
         });
         if managed {
             return print_json(&serde_json::json!({

@@ -6302,7 +6302,7 @@ fn test_worktree_remove_hook_skips_path_holding_no_worktree(mut repo: TestRepo) 
 /// dialog waits. Each case that declines differs from an approved one in a
 /// single input — the tool, a worktree off the `worktree-path` template, the
 /// repository of the `cwd` — and must print nothing, so the dialog stays, and
-/// set 💬. The `cwd` pair shares its target, which pins that the session's
+/// set 💬. The `cwd` pair shares its worktree, which pins that the session's
 /// directory decides. It runs the real command out of `hooks.json`.
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 #[rstest]
@@ -6345,7 +6345,7 @@ fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: Te
     // Fire the hook as Claude Code does: the payload on stdin, the plugin root
     // and the launch project dir in the environment. Returns stdout and the
     // marker the call left, starting from none.
-    let run_hook = |tool: &str, cwd: &Path, target: &Path| -> (String, String) {
+    let run_hook = |tool: &str, cwd: &Path, path: &Path| -> (String, String) {
         let _ = repo
             .git_command()
             .args(["config", "--unset", &marker_key])
@@ -6367,7 +6367,7 @@ fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: Te
             "hook_event_name": "PermissionRequest",
             "tool_name": tool,
             "cwd": cwd,
-            "tool_input": { "path": target },
+            "tool_input": { "path": path },
         });
         child
             .stdin
@@ -6379,7 +6379,7 @@ fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: Te
         assert!(
             output.status.success(),
             "the hook command must exit 0 for {tool} {}; got {}\nstderr:\n{}",
-            target.display(),
+            path.display(),
             output.status,
             String::from_utf8_lossy(&output.stderr)
         );
@@ -6389,12 +6389,12 @@ fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: Te
         )
     };
 
-    for (cwd, target) in [
+    for (cwd, path) in [
         (repo.root_path(), feature.as_path()),
         (repo.root_path(), feature_link.as_path()),
         (other.root_path(), other_feature.as_path()),
     ] {
-        let (stdout, marker) = run_hook("EnterWorktree", cwd, target);
+        let (stdout, marker) = run_hook("EnterWorktree", cwd, path);
         let decision: serde_json::Value = serde_json::from_str(&stdout)
             .unwrap_or_else(|e| panic!("expected an allow decision, got {stdout:?}: {e}"));
         assert_eq!(
@@ -6404,7 +6404,7 @@ fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: Te
                 "decision": { "behavior": "allow" },
             }),
             "entering {} from {} must be approved",
-            target.display(),
+            path.display(),
             cwd.display()
         );
         assert!(
@@ -6413,21 +6413,21 @@ fn test_permission_request_hook_approves_entering_managed_worktrees(mut repo: Te
         );
     }
 
-    for (tool, cwd, target) in [
+    for (tool, cwd, path) in [
         ("Bash", repo.root_path(), feature.as_path()),
         ("EnterWorktree", repo.root_path(), stray.as_path()),
         ("EnterWorktree", repo.root_path(), other_feature.as_path()),
     ] {
-        let (stdout, marker) = run_hook(tool, cwd, target);
+        let (stdout, marker) = run_hook(tool, cwd, path);
         assert!(
             stdout.is_empty(),
             "{tool} {} must get no decision, leaving the dialog; got {stdout:?}",
-            target.display()
+            path.display()
         );
         assert!(
             marker.contains('💬'),
             "{tool} {} leaves a dialog waiting, so it must set 💬; got {marker:?}",
-            target.display()
+            path.display()
         );
     }
 }
