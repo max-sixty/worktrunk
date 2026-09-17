@@ -3662,22 +3662,39 @@ fn test_save_to_rewrites_commented_inline_section_as_parseable_toml() {
 }
 
 #[test]
-fn test_save_to_rewrites_inline_commit_without_a_bare_header() {
-    // A `commit` holding only `generation`, written inline, becomes a standard
-    // table when the command changes. Like a `commit` the save inserts, it
-    // writes only `[commit.generation]`, not an empty `[commit]` above it.
+fn test_save_to_rewrites_inline_commit_and_projects_without_bare_headers() {
+    // `commit` and `projects` holding only subtables, written inline, become
+    // standard tables when a value inside changes. Like the tables a save
+    // inserts, they write only their subtables' headers, not an empty
+    // `[commit]` or `[projects]` — and the comments on each line move onto the
+    // first header that is written.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
-    let original = "commit = { generation = { command = \"old\" } }\n";
+    let original = r#"# why we generate
+commit = { generation = { command = "old" } } # trailing
+
+# per repo
+projects = { "example.com/org/repo" = { worktree-path = "old" } }
+"#;
     std::fs::write(&config_path, original).unwrap();
 
     let mut config = UserConfig::load_from_str(original).unwrap();
     config.commit.generation.as_mut().unwrap().command = Some("new".to_string());
+    config
+        .projects
+        .get_mut("example.com/org/repo")
+        .unwrap()
+        .worktree_path = Some("new".to_string());
     config.save_to(&config_path).unwrap();
 
     insta::assert_snapshot!(std::fs::read_to_string(&config_path).unwrap(), @r#"
-    [commit.generation]
+    # why we generate
+    [commit.generation] # trailing
     command = "new"
+
+    # per repo
+    [projects."example.com/org/repo"]
+    worktree-path = "new"
     "#);
 }
 

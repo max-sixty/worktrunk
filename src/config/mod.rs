@@ -156,7 +156,7 @@ pub fn is_user_project_override_key(key: &str) -> bool {
 }
 
 /// Replace a key's inline-table value with a standard table, carrying the line's
-/// comments onto the table header.
+/// comments onto the first header the table writes.
 ///
 /// The key was parsed from `merge = { … }`, so its leaf decor holds whatever
 /// preceded the line — comments, blank lines — plus the space before `=`. A
@@ -170,6 +170,10 @@ pub fn is_user_project_override_key(key: &str) -> bool {
 /// `existing` before the replacement and lands after the header's `]`. It is
 /// carried only when it holds a comment; bare whitespace there would just trail
 /// the header.
+///
+/// An implicit table with no values of its own writes no header — `toml_edit`
+/// hides it — so both comments go on its first subtable's header instead:
+/// `commit = { generation = { … } }` becomes `[commit.generation]` alone.
 ///
 /// Both places that rewrite a table the user wrote inline go through here — the
 /// save-path merge in `user::persistence`, and `ensure_standard_table_parent`
@@ -185,17 +189,29 @@ pub(crate) fn replace_inline_with_table(
         .and_then(|k| k.leaf_decor().prefix())
         .filter(|prefix| prefix.as_str() != Some(""))
         .cloned();
-    if let Some(prefix) = prefix {
-        table.decor_mut().set_prefix(prefix);
-    }
     let suffix = existing
         .get(key)
         .and_then(|item| item.as_inline_table())
         .and_then(|inline| inline.decor().suffix())
         .filter(|suffix| suffix.as_str().is_some_and(|s| s.contains('#')))
         .cloned();
-    if let Some(suffix) = suffix {
-        table.decor_mut().set_suffix(suffix);
+    let first_subtable = (table.is_implicit() && table.get_values().is_empty())
+        .then(|| table.iter().find(|(_, item)| item.is_table()))
+        .flatten()
+        .map(|(subtable, _)| subtable.to_owned());
+    let header = match &first_subtable {
+        Some(subtable) => table
+            .get_mut(subtable)
+            .and_then(toml_edit::Item::as_table_mut),
+        None => Some(&mut table),
+    };
+    if let Some(header) = header {
+        if let Some(prefix) = prefix {
+            header.decor_mut().set_prefix(prefix);
+        }
+        if let Some(suffix) = suffix {
+            header.decor_mut().set_suffix(suffix);
+        }
     }
     if let Some(mut key_mut) = existing.key_mut(key) {
         key_mut.leaf_decor_mut().clear();
