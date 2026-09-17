@@ -17,14 +17,18 @@ Arguments: `$ARGUMENTS`. Grammar: `[<branch>] [<repo>] [-- <task>]`.
 
 Tokens before the `--` are the branch and/or repo. A path-shaped token
 (starting with `/`, `~`, `./`, or `../`) is the repo. A bare name can be
-either, so make an informed guess: it is the repo when a git repository by that
-name exists where the user keeps repos (beside the current repo, or in a
-workspace directory like `~/workspace`), and otherwise the branch (`docs` is a
-branch, not the current repo's `docs/` directory). Two tokens that both read as branches don't fit the
-grammar — ask. Without a `--`, judge where the task starts: leading tokens that
-read as a branch name (`fix-auth`) or a repo are consumed as such, and the
-rest is the task; otherwise the whole input is the task (`fix the parser bug`
-has no branch-shaped lead — all task).
+either, so make an informed guess. It is the branch when the current repo
+already has a branch by that name, as it is for `wt switch` itself. Otherwise
+it is the repo when a git repository by that name exists where the user keeps
+repos (beside the current repo, or in a workspace directory like
+`~/workspace`), and the branch when none does (`docs` is a branch, not the
+current repo's `docs/` directory). A name read as the repo carries its absolute
+path forward: that path, not the bare token, is the `<repo>` in step 3. Two
+tokens that both read as branches don't fit the grammar — ask. Without a `--`,
+judge where the task starts: leading tokens that read as a branch name
+(`fix-auth`) or a repo are consumed as such, and the rest is the task;
+otherwise the whole input is the task (`fix the parser bug` has no
+branch-shaped lead — all task).
 
 ```
 /wt-switch-create my-feature -- fix the parser bug
